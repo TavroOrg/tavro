@@ -1,4 +1,4 @@
-# Tavro Local Stack
+# Tavro Agent Catalog
 
 Run the full Tavro platform on your own machine using Docker. No coding knowledge is required — just follow each step in order.
 
