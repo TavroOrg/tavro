@@ -1,0 +1,44 @@
+catalog_connector:
+  azure:
+    client_id: YOUR_AZURE_CLIENT_ID
+    client_secret: YOUR_AZURE_CLIENT_SECRET
+    tenant_id: YOUR_AZURE_TENANT_ID
+    scope: https://YOUR_ORG.crm.dynamics.com/.default
+    org_url: https://YOUR_ORG.crm.dynamics.com
+
+secrets:
+  OPENAI_API_KEY: ""
+
+fastapi:
+  fast_api_host: "localhost"
+  fast_api_port: "80"
+
+mcp:
+  mcp_host: "localhost"
+  mcp_port: "9000"
+  # Optional: set to your public ngrok URL when exposing the MCP server remotely.
+  # Example: "https://abc123.ngrok-free.app"
+  # Leave empty to default to http://localhost:9000
+  mcp_root_url: ""
+
+crewai:
+  OTEL_SDK_DISABLED: true
+  CREWAI_DISABLE_TELEMETRY: true
+  CREWAI_TRACING_ENABLED: false
+
+oAuth:
+  GITHUB_CLIENT_ID: ""
+  GITHUB_CLIENT_SECRET: ""
+  JWT_SIGNING_KEY: "super_secret_random_string_change_this"
+
+databases:
+  CORE_GLUE_DB_NAME: "core"
+  CURATED_GLUE_DB_NAME: "curated"
+  RISK_MANAGEMENT_GLUE_DB_NAME: "risk_management"
+
+postgres:
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "admin"
+  POSTGRES_PASSWORD: "admin"
+  POSTGRES_DB: "agent_db"

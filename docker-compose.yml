@@ -1,0 +1,130 @@
+x-worker-base: &worker_base
+    image: tavro-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+
+services:
+
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: postgres-setup
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: agent_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  worker:
+    <<: *worker_base
+    container_name: worker
+    command: tail -f /dev/null
+    environment:
+      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
+      DROP_DIR: /app/sample-data
+      API_URL: http://fastapi:80/classify-risk
+    volumes:
+      - ./sample-data:/app/sample-data
+    depends_on:
+      postgres:
+        condition: service_healthy   # ← waits for healthcheck to pass
+
+  sample-loader:
+    <<: *worker_base
+    container_name: sample-loader
+    profiles: ["manual"]
+    command: python -u worker.py
+    environment:
+      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
+      DROP_DIR: /app/sample-data
+      API_URL: http://fastapi:80/classify-risk
+    volumes:
+      - ./sample-data:/app/sample-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fastapi:
+        condition: service_started
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: mcp-server
+    ports:
+      - "9000:9000"
+    environment:
+      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: agent_db
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
+      mcp_host: 0.0.0.0
+      mcp_port: "9000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./agent_cards:/app/agent_cards
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  connector:
+    profiles: ["manual"]        # never starts automatically
+    <<: *worker_base
+    container_name: connector
+    command: python -u run_connectors.py
+    environment:
+      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fastapi:
+        condition: service_started
+
+  temporal:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    container_name: temporal
+    command: temporal server start-dev --ip 0.0.0.0 --ui-public-path /temporal --ui-port 8233
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    container_name: fastapi
+    command: python -m services.app
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
+    ports:
+      - "80:80"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./agent_cards:/app/agent_cards
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+volumes:
+  postgres_data:

@@ -1,0 +1,583 @@
+{
+  "capabilities": {
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "text"
+  ],
+  "defaultOutputModes": [
+    "text"
+  ],
+  "name": "Loan Document Intelligence Agent",
+  "description": "A unified AI agent that manages the full lifecycle of syndicated loan document processing. It ingests credit agreements (PDF/DOCX), extracts loan reference data including SOFR and floating rate instruments, validates against the Loan Administration System, reconciles discrepancies, routes exceptions to operations teams, and emits a data quality report — all in a single orchestrated workflow with built-in immutable audit logging.",
+  "preferredTransport": "JSONRPC",
+  "protocol_version": "0.3.0",
+  "instruction_sets": [],
+  "skills": [],
+  "provider": {
+    "organization": "",
+    "url": ""
+  },
+  "url": "",
+  "documentation_url": null,
+  "icon_url": null,
+  "security": null,
+  "security_schemes": null,
+  "signatures": null,
+  "supports_authenticated_extended_card": true,
+  "additional_interfaces": null,
+  "version": "",
+  "identification": {
+    "agent_id": "TAVAC0004460",
+    "agent_internal_id": "TAVAC0004460",
+    "goal_orientation": "0.0",
+    "role": "",
+    "instruction": "Step 1 — Ingest: Accept credit agreement document (PDF/DOCX/TXT). Classify document type (original agreement, amendment letter, rate notice). Parse document structure including recitals, definitions, article-level provisions, and schedules. Extract mandatory fields per the loan reference data schema: facility type, currency, maturity date, SOFR spread, compounding convention, fallback language, margin grid, covenant definitions, and agent bank identifiers. Assign a confidence score to each extracted field and record the source citation (page number and clause reference).\n\nStep 2 — Validate: Query the Loan Administration System (Loan IQ / WSO) for the existing loan record using the deal identifier. Perform a field-by-field comparison between extracted values and system-of-record values. Apply business rules including: SOFR spread reasonableness checks, maturity date consistency, floating rate type-to-benchmark mapping validation, and compounding convention alignment with ARRC guidelines. Score each discrepancy by severity: Critical, Warning, or Informational.\n\nStep 3 — Reconcile: Auto-populate high-confidence, non-conflicting fields to the loan data staging layer for downstream system update. Route low-confidence or conflicting fields to the operations exception queue with full supporting evidence including extracted value, system value, confidence score, and source citation. Do not overwrite existing system-of-record values without operator confirmation for Critical-severity discrepancies.\n\nStep 4 — Report and Log: Emit a structured reconciliation report summarising extraction throughput, fields auto-populated, exceptions raised by severity, and STP rate. Write all events — document receipt, extraction output, validation decisions, exception routing, and operator overrides — to the immutable audit ledger with timestamps. Escalate critical exceptions that remain unresolved after 24 hours. Return structured JSON output to the calling system.",
+    "owner": null,
+    "environment": null,
+    "tags": null,
+    "governance_status": null,
+    "reviewer": null,
+    "cost_center": null
+  },
+  "configuration": {
+    "access_scope": null,
+    "memory_type": null,
+    "data_freshness_policy": null,
+    "autonomy_level": "0.0",
+    "reasoning_model": null
+  },
+  "ai_use_case": [
+    {
+    "identifier": null,
+    "name": null,
+    "description": null,
+    "proposed_by": null,
+    "owner": null,
+    "business_function": null,
+    "problem_statement": null,
+    "expected_benefits": null,
+    "priority": null,
+    "status": null
+  }
+],
+  "application": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "business_criticality": null,
+      "emergency_tier": null
+    }
+  ],
+  "ai_model": [
+    {
+      "name": null,
+      "owner": null,
+      "department_executive": null,
+      "description": null
+    }
+  ],
+  "business_process": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "business_criticality": null
+    }
+  ],
+  "physical_ai": [
+    {
+      "identifier": null,
+      "name": null,
+      "type": null,
+      "sensory_input_source": null
+    }
+  ],
+  "llm_model": [],
+  "guardrail": {
+    "name": null,
+    "description": null,
+    "model": null
+  },
+  "mcp_server": {
+    "name": null,
+    "url": null,
+    "version_number": null
+  },
+  "tool": [
+    {
+      "identifier": null,
+      "name": "Report Generator",
+      "description": "Produces structured reconciliation reports and data quality dashboards for operations management, risk teams, and auditors",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "Exception Queue Writer",
+      "description": "Routes low-confidence and conflicting extractions to the operations exception management system with full supporting evidence",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "Confidence Scoring Engine",
+      "description": "Assigns a confidence score to each extracted field based on extraction certainty, clause clarity, and field validation rules",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "LLM Extraction Engine (claude-sonnet)",
+      "description": "Uses large language model reasoning to identify and extract structured loan reference data fields from unstructured legal document text",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "Business Rules Engine",
+      "description": "Applies domain-specific validation rules for SOFR spreads, rate benchmarks, maturity dates, compounding conventions, and ARRC fallback language",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "Document Parser (PDF/DOCX)",
+      "description": "Ingests and parses credit agreement documents in PDF and DOCX format, handling complex structures including schedules, annexes, and cross-references",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "Audit Ledger",
+      "description": "Appends all processing events, extraction outputs, reconciliation decisions, and operator overrides to an immutable audit log with timestamps",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "NY Fed SOFR Rate Feed",
+      "description": "Retrieves current and historical SOFR benchmark rates for reasonableness validation of extracted spread values",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "LAS API Connector (Loan IQ / WSO)",
+      "description": "Queries and writes to the Loan Administration System to retrieve existing loan records and populate validated fields in the staging layer",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    }
+  ],
+  "data_source": [
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "03fd84aa3bfbfe508d52312c95e45a67",
+      "target_object_domain": null,
+      "target_object_name": "Report Generator",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "2efd44aa3bfbfe508d52312c95e45a36",
+      "target_object_domain": null,
+      "target_object_name": "Exception Queue Writer",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "4afd04aa3bfbfe508d52312c95e45a1d",
+      "target_object_domain": null,
+      "target_object_name": "Confidence Scoring Engine",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "86fdc0aa3bfbfe508d52312c95e45ab8",
+      "target_object_domain": null,
+      "target_object_name": "LLM Extraction Engine (claude-sonnet)",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "9afd04aa3bfbfe508d52312c95e45ada",
+      "target_object_domain": null,
+      "target_object_name": "Business Rules Engine",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "b1fdc0aa3bfbfe508d52312c95e45a6f",
+      "target_object_domain": null,
+      "target_object_name": "Document Parser (PDF/DOCX)",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "bafd44aa3bfbfe508d52312c95e45a79",
+      "target_object_domain": null,
+      "target_object_name": "Audit Ledger",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "bafd44aa3bfbfe508d52312c95e45aef",
+      "target_object_domain": null,
+      "target_object_name": "NY Fed SOFR Rate Feed",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "d2fd04aa3bfbfe508d52312c95e45a75",
+      "target_object_domain": null,
+      "target_object_name": "LAS API Connector (Loan IQ / WSO)",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "440e08aa3bfbfe508d52312c95e45a7c",
+      "target_object_domain": null,
+      "target_object_name": "Finastra Loan IQ Loan Administration System",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "57fd84aa3bfbfe508d52312c95e45ad3",
+      "target_object_domain": null,
+      "target_object_name": "Credit Agreements (PDF/DOCX)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "600e48aa3bfbfe508d52312c95e45ac4",
+      "target_object_domain": null,
+      "target_object_name": "General Ledger",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "6ffdc4aa3bfbfe508d52312c95e45a6a",
+      "target_object_domain": null,
+      "target_object_name": "Rate Notices",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "740e88aa3bfbfe508d52312c95e45a6f",
+      "target_object_domain": null,
+      "target_object_name": "Loan Reference Data Schema",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "840e48aa3bfbfe508d52312c95e45a0e",
+      "target_object_domain": null,
+      "target_object_name": "NY Fed SOFR Rate Feed",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "97fdc4aa3bfbfe508d52312c95e45a25",
+      "target_object_domain": null,
+      "target_object_name": "Amendment Letters",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "980e48aa3bfbfe508d52312c95e45a7b",
+      "target_object_domain": null,
+      "target_object_name": "Deal Reference Master",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "bbfdc4aa3bfbfe508d52312c95e45ac9",
+      "target_object_domain": null,
+      "target_object_name": "Agent Bank Confirmations",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "e40e88aa3bfbfe508d52312c95e45a19",
+      "target_object_domain": null,
+      "target_object_name": "Immutable Audit Ledger",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004460",
+      "source_object_domain": null,
+      "source_object_name": "Loan Document Intelligence Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "fffd08aa3bfbfe508d52312c95e45a28",
+      "target_object_domain": null,
+      "target_object_name": "IHS Markit WSO Loan Administration System",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    }
+  ],
+  "knowledge_source": {
+    "identifier": null,
+    "name": null,
+    "access_mechanism": null
+  },
+  "prompt_template": {
+    "identifier": null,
+    "name": null,
+    "description": null
+  },
+  "memory": {
+    "identifier": null,
+    "name": null,
+    "type": null
+  },
+  "regulation_or_framework": {
+    "name": null,
+    "type": null,
+    "regulatory_authority": null,
+    "jurisdiction": null,
+    "requirement": null
+  },
+  "control": [
+    {
+      "identifier": null,
+      "name": null,
+      "objective": null,
+      "domain": null
+    }
+  ],
+  "risk_assessment": {
+    "identifier": "TAVAGR0003800",
+    "name": "Loan Document Intelligence Agent_Assessment_2026-03-25",
+    "assessor": "Jane Doe",
+    "date": "2026-03-25 22:24:58",
+    "blended_risk_score": "6.2",
+    "blended_risk_classification": "Medium",
+    "aivss_score": "6",
+    "aivss_classification": "Medium",
+    "regulatory_risk_score": "7",
+    "regulatory_risk_classification": "High Risk",
+    "state": "Completed"
+  }
+}

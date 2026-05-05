@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1.6
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev gcc
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install tavro_agent_card-0.1.1-py3-none-any.whl
+
+COPY worker.py .
+COPY mcp_server ./mcp_server
+COPY risk_agents ./risk_agents
+COPY utils ./utils
+COPY config.yaml ./config.yaml
+
+CMD ["python", "-m", "mcp_server.server"]

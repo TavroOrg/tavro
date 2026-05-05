@@ -1,0 +1,13 @@
+crewai
+crewai_tools
+requests
+pydantic
+boto3
+fastapi
+uvicorn
+google-auth
+PyJWT
+temporalio
+rapidfuzz
+python-jose[cryptography]
+PyYAML
