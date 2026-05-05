@@ -1,0 +1,784 @@
+import { AgentData } from '../types/agent';
+import { UseCaseSummary, UseCaseDetail } from '../types/useCase';
+import { appLogger } from './logger';
+import { streamChat, getLLMConfig, ChatMessage } from './llmService';
+
+type ChatViewContext = {
+    viewType?: string;
+    viewData?: any;
+    /** Pre-built system prompt from buildSystemPrompt() — takes precedence over default */
+    systemPrompt?: string;
+};
+
+type UseCaseActionFields = {
+    title?: string;
+    description?: string;
+    business_problem_statement?: string;
+    expected_benefits?: string;
+    priority?: string;
+    regulatory_impact?: string[];
+    solution_approach?: string;
+    use_case_owner?: string;
+    impacted_business_applications?: string[];
+    impacted_business_processes?: string[];
+};
+
+function getRiskLevel(agent: AgentData): 'high' | 'medium' | 'low' {
+    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim();
+    if (brc === 'critical' || brc === 'high') return 'high';
+    if (brc === 'medium') return 'medium';
+    if (brc === 'low') return 'low';
+
+    const apps = agent.application ?? [];
+    if (apps.some(a =>
+        a.business_criticality?.toLowerCase().includes('high') ||
+        a.business_criticality?.toLowerCase().includes('critical') ||
+        a.emergency_tier?.toLowerCase().includes('critical') ||
+        a.emergency_tier?.toLowerCase().includes('mission critical')
+    )) return 'high';
+    if (apps.some(a =>
+        a.business_criticality?.toLowerCase().includes('medium') ||
+        a.emergency_tier?.toLowerCase().includes('business critical')
+    )) return 'medium';
+    return 'low';
+}
+
+function buildEnvSummary(environment: string, agents: AgentData[]) {
+    const counts = agents.reduce(
+        (acc, agent) => { acc[getRiskLevel(agent)]++; return acc; },
+        { high: 0, medium: 0, low: 0 }
+    );
+    return { environment, count: agents.length, ...counts, icon: null };
+}
+
+function unwrapToolResponse(data: any, keys: string[]): any {
+    let current = data;
+    if (Array.isArray(current)) current = current[0];
+    if (!current) return current;
+    for (const key of keys) {
+        if (current[key]) {
+            current = current[key];
+            break;
+        }
+    }
+    if (Array.isArray(current)) current = current[0];
+    return current;
+}
+
+function normaliseUseCase(raw: any): any {
+    if (!raw) return raw;
+    return Object.assign({}, raw, {
+        id: raw.id ?? raw.use_case_id ?? raw.identifier ?? raw.number,
+        identifier: raw.identifier ?? raw.use_case_id ?? raw.number ?? raw.id,
+        name: raw.name ?? raw.title ?? raw.use_case_name,
+        description: raw.description ?? raw.short_description ?? raw.summary,
+        status: raw.status ?? raw.state ?? raw.workflow_state,
+        owner: raw.owner ?? raw.use_case_owner ?? raw.assigned_to,
+        proposed_by: raw.proposed_by ?? raw.requested_by ?? raw.opened_by,
+        function: raw['function'] ?? raw.business_function ?? raw.category,
+        priority: raw.priority ?? raw.agent_risk_tier_art ?? raw.risk_tier,
+        problem_statement: raw.problem_statement ?? raw.business_problem ?? raw.problem,
+        expected_benefits: raw.expected_benefits ?? raw.benefits ?? raw.justification,
+        solution_approach: raw.solution_approach ?? raw.proposed_solution ?? raw.approach,
+        business_sponsors: raw.business_sponsors ?? raw.sponsor ?? raw.stakeholders,
+        use_case_type: raw.use_case_type ?? raw.type ?? raw.category_type,
+        overall_risk: raw.overall_risk ?? raw.overall_risk_classification ?? raw.risk_classification,
+        tag: raw.tag ?? raw.tags,
+        agents: raw.agents ?? raw.of_associated_agents ?? raw.agent_cards ?? raw.ai_agents,
+        applications: raw.applications ?? raw.of_associated_applications ?? raw.application ?? raw.apps,
+        business_processes: raw.business_processes ?? raw.of_associated_business_processes ?? raw.of_associated_processes ?? raw.processes ?? raw.business_process,
+        controls: raw.controls ?? raw.of_associated_controls ?? raw.control_list ?? raw.control,
+        risk_assessments: raw.risk_assessments ?? raw.of_associated_risk_assessments ?? raw.risk_assessment ?? raw.assessments,
+    });
+}
+
+function extractLabeledValue(text: string, labels: string[]): string | undefined {
+    const escaped = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const match = text.match(new RegExp(`(?:^|\\n|[,;])\\s*(?:${escaped})\\s*[:=-]\\s*([^\\n;]+)`, 'i'));
+    return match?.[1]?.trim().replace(/^["']|["']$/g, '');
+}
+
+function extractListValue(text: string, labels: string[]): string[] | undefined {
+    const value = extractLabeledValue(text, labels);
+    if (!value) return undefined;
+    return value.split(/[,|]/).map(item => item.trim()).filter(Boolean);
+}
+
+function extractQuotedAfter(text: string, verbs: string[]): string | undefined {
+    const verbPattern = verbs.join('|');
+    const quoted = text.match(new RegExp(`(?:${verbPattern})[^"']*["']([^"']+)["']`, 'i'));
+    if (quoted?.[1]) return quoted[1].trim();
+    const named = text.match(new RegExp(`(?:${verbPattern}).*?(?:called|named|titled)\\s+([^.,;\\n]+)`, 'i'));
+    return named?.[1]?.trim();
+}
+
+function parseUseCaseActionFields(userMessage: string): UseCaseActionFields {
+    const title = extractLabeledValue(userMessage, ['title', 'name', 'use case name']) || extractQuotedAfter(userMessage, ['create', 'register', 'add']);
+    const priority = extractLabeledValue(userMessage, ['priority']) || userMessage.match(/\b(critical|high|medium|low)\s+priority\b/i)?.[1];
+    return {
+        title,
+        description: extractLabeledValue(userMessage, ['description', 'overview', 'summary']),
+        business_problem_statement: extractLabeledValue(userMessage, ['business_problem_statement', 'business problem statement', 'problem statement', 'problem']),
+        expected_benefits: extractLabeledValue(userMessage, ['expected_benefits', 'expected benefits', 'benefits', 'value']),
+        priority: priority ? priority[0].toUpperCase() + priority.slice(1).toLowerCase() : undefined,
+        regulatory_impact: extractListValue(userMessage, ['regulatory_impact', 'regulatory impact', 'compliance']),
+        solution_approach: extractLabeledValue(userMessage, ['solution_approach', 'solution approach', 'approach']),
+        use_case_owner: extractLabeledValue(userMessage, ['use_case_owner', 'use case owner', 'owner']),
+        impacted_business_applications: extractListValue(userMessage, ['impacted_business_applications', 'impacted applications', 'applications']),
+        impacted_business_processes: extractListValue(userMessage, ['impacted_business_processes', 'impacted processes', 'business processes']),
+    };
+}
+
+function missingUseCaseFields(fields: UseCaseActionFields): string[] {
+    return ['title', 'description', 'business_problem_statement', 'expected_benefits', 'priority'].filter(key => !fields[key as keyof UseCaseActionFields]);
+}
+
+function formatToolResult(result: any): string {
+    if (!result) return 'The MCP tool completed but returned no details.';
+    if (typeof result === 'string') return result;
+    const id = result.identifier || result.number || result.id || result.sys_id;
+    const name = result.name || result.title || result.use_case_name;
+    const status = result.status || result.state || result.workflow_state;
+    return [
+        'MCP tool completed successfully.',
+        name ? `Name: ${name}` : '',
+        id ? `Identifier: ${id}` : '',
+        status ? `Status: ${status}` : '',
+    ].filter(Boolean).join('\n');
+}
+
+class McpClientService {
+    private initialized = false;
+    private sessionId: string | null = null;
+    private tenantId: string | null = null;
+    private _agentCache: AgentData[] | null = null;
+    private _useCaseCache: UseCaseSummary[] | null = null;
+    private _agentDetailCache = new Map<string, AgentData>();
+    private _riskSummaryCache = new Map<string, any>();
+    private _useCaseDetailCache = new Map<string, UseCaseDetail>();
+    private _pendingRequests = new Map<string, Promise<any>>();
+    private _cachedDataStore: any = null;
+
+    private getToken(): string {
+        return localStorage.getItem('tavro_id_token') || localStorage.getItem('tavro_access_token') || '';
+    }
+
+    private handleUnauthorized(bodyText?: string) {
+        appLogger.warn('401 Unauthorized — token rejected by MCP server', { body: bodyText });
+        localStorage.removeItem('tavro_auth');
+        localStorage.removeItem('tavro_access_token');
+        localStorage.removeItem('tavro_id_token');
+        localStorage.removeItem('tavro_raw_access_token');
+        localStorage.removeItem('tavro_mcp_refresh_token');
+        localStorage.removeItem('tavro_pkce_verifier');
+        localStorage.removeItem('tavro_auth_flow_origin');
+        this.disconnect();
+        window.dispatchEvent(new CustomEvent('tavro:unauthorized', { detail: { body: bodyText } }));
+    }
+
+    /** Manual connect via fetch to capture mcp-session-id and tenant_id */
+    async connect(): Promise<void> {
+        if (this.initialized) return;
+
+        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const savedTenantId = localStorage.getItem('tavro_tenant_id');
+
+        if (localStorage.getItem('tavro_cache_mode') === 'true') {
+            this.initialized = true;
+            return;
+        }
+
+        const token = this.getToken();
+        if (!token) throw new Error('No auth token. Please log in again.');
+
+        try {
+            const initBody = {
+                jsonrpc: '2.0',
+                id: 'init',
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {},
+                    clientInfo: { name: 'tavro-app', version: '1.0.0' },
+                    meta: savedTenantId ? { tenant_id: savedTenantId } : {}
+                }
+            };
+
+            const initHeaders = {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/event-stream',
+                ...(savedTenantId ? { 'tenant_id': savedTenantId } : {})
+            };
+
+            appLogger.info('MCP initialize → request', { headers: initHeaders, body: initBody });
+
+            const res = await fetch(mcpUrl, {
+                method: 'POST',
+                headers: initHeaders,
+                body: JSON.stringify(initBody)
+            });
+
+            if (!res.ok) {
+                const body = await res.text();
+                if (res.status === 401) this.handleUnauthorized(body);
+                throw new Error(`MCP initialization failed: HTTP ${res.status}: ${body}`);
+            }
+
+            // Capture session and tenant metadata from headers
+            this.sessionId = res.headers.get('mcp-session-id');
+            const serverTenantId = res.headers.get('x-tenant-id') || res.headers.get('mcp-tenant-id') || res.headers.get('tenant_id');
+
+            if (serverTenantId) {
+                this.tenantId = serverTenantId;
+                localStorage.setItem('tavro_tenant_id', serverTenantId);
+            } else if (savedTenantId) {
+                this.tenantId = savedTenantId;
+            }
+
+            this.initialized = true;
+            appLogger.info('MCP Session established', { sessionId: this.sessionId, tenantId: this.tenantId });
+
+        } catch (err: any) {
+            appLogger.error('MCP Manual connection failed', { error: err.message });
+            throw err;
+        }
+    }
+
+    private async callTool(name: string, args: any = {}): Promise<any> {
+        if (localStorage.getItem('tavro_cache_mode') === 'true') return await this._getCachedToolResult(name, args);
+
+        const token = this.getToken();
+        if (!token) throw new Error('No auth token');
+
+        if (!this.initialized) await this.connect();
+
+        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const t0 = Date.now();
+
+        // Ensure mandatory original_prompt is present for server.py logging
+        const toolArgs = {
+            original_prompt: args.original_prompt || `User requested ${name} via Dashboard UI`,
+            ...args
+        };
+
+        const requestBody = {
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'tools/call',
+            params: {
+                name,
+                arguments: toolArgs
+            }
+        };
+
+        const requestHeaders = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'mcp-session-id': this.sessionId || '',
+            'Accept': 'application/json, text/event-stream',
+            ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
+        };
+
+        appLogger.tool(`${name} → request`, { headers: requestHeaders, body: requestBody });
+
+        try {
+            const res = await fetch(mcpUrl, {
+                method: 'POST',
+                headers: requestHeaders,
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!res.ok) {
+                const body = await res.text();
+                if (res.status === 401) this.handleUnauthorized(body);
+                throw new Error(`Tool call failed: HTTP ${res.status}: ${body}`);
+            }
+
+            const rawText = await res.text();
+            let json: any;
+
+            if (res.headers.get('content-type')?.includes('text/event-stream')) {
+                // Extract JSON from SSE format: "data: { ... }"
+                const lines = rawText.split('\n');
+                for (const line of lines) {
+                    if (line.trim().startsWith('data:')) {
+                        const data = line.trim().slice(5).trim();
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.result || parsed.error || parsed.method) {
+                                json = parsed;
+                                break;
+                            }
+                        } catch { /* skip */ }
+                    }
+                }
+            } else {
+                try { json = JSON.parse(rawText); } catch { throw new Error(`Failed to parse JSON response: ${rawText.substring(0, 100)}`); }
+            }
+
+            if (!json) throw new Error(`No valid MCP response found in: ${rawText.substring(0, 100)}`);
+            if (json.error) {
+                throw new Error(`MCP Error ${json.error.code}: ${json.error.message}`);
+            }
+
+            const content = json.result?.content as any[];
+            if (!content || !content.length) return null;
+
+            const text = content[0].text;
+            let result: any;
+            try { result = JSON.parse(text); } catch { result = text; }
+            appLogger.tool(`${name} ← result`, { response: result, durationMs: Date.now() - t0 });
+            return result;
+
+        } catch (err: any) {
+            appLogger.error(`callTool failed — ${name}`, { error: err.message });
+            throw err;
+        }
+    }
+
+    async listTools(): Promise<{ name: string; description?: string }[]> {
+        if (localStorage.getItem('tavro_cache_mode') === 'true') {
+            return [
+                { name: 'get_agent_catalog', description: 'Get agent catalog' },
+                { name: 'get_agent_card', description: 'Get agent details' },
+                { name: 'get_agent_risk_summary', description: 'Get agent risk summary' },
+                { name: 'get_ai_use_case', description: 'Get AI use cases or details' }
+            ];
+        }
+        await this.connect();
+        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const res = await fetch(mcpUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.getToken()}`,
+                'Content-Type': 'application/json',
+                'mcp-session-id': this.sessionId || '',
+                'Accept': 'application/json, text/event-stream',
+                ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
+            },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'list_tools',
+                method: 'tools/list',
+                params: {}
+            })
+        });
+
+        const rawText = await res.text();
+        let json: any;
+
+        if (res.headers.get('content-type')?.includes('text/event-stream')) {
+            const lines = rawText.split('\n');
+            for (const line of lines) {
+                if (line.trim().startsWith('data:')) {
+                    const data = line.trim().slice(5).trim();
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.result) { json = parsed; break; }
+                    } catch { /* skip */ }
+                }
+            }
+        } else {
+            try { json = JSON.parse(rawText); } catch { json = {}; }
+        }
+
+        return (json?.result?.tools || []) as { name: string; description?: string }[];
+    }
+
+    async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}): AsyncGenerator<string> {
+        const actionHandled = await this._handleAssistantAction(userMessage, context);
+        if (actionHandled) {
+            yield actionHandled;
+            return;
+        }
+        const llmCfg = getLLMConfig();
+        if (llmCfg) {
+            try {
+                const [agents, useCases] = await Promise.all([this.getAllAgents(), this.getAllUseCases()]);
+                // ── System prompt ─────────────────────────────────────────────────────
+                // If buildSystemPrompt() has pre-built a context-aware prompt, use it.
+                // Otherwise fall back to a generic catalog-aware prompt.
+                const agentRows = agents.map(a => `- [AGENT:${a.identification?.agent_id || 'N/A'}] ${a.name} | risk:${getRiskLevel(a)}`).join('\n');
+                const useCaseRows = useCases.map(u => `- [USECASE:${u.identifier || 'N/A'}] ${u.name} | status:${u.status}`).join('\n');
+                const catalogBlock = `\n\n## Live Catalog Data\nAGENTS:\n${agentRows}\n\nUSE CASES:\n${useCaseRows}`;
+                const baseSystemPrompt = context.systemPrompt
+                    ? context.systemPrompt + catalogBlock
+                    : `You are Tavro AI assistant. You can answer questions about catalog data. If the user wants to perform an action, ask for missing required fields before claiming it was done. AGENTS:\n${agentRows}\nUSE CASES:\n${useCaseRows}`;
+                const messages: ChatMessage[] = [{ role: 'system', content: baseSystemPrompt }, ...history.slice(-10), { role: 'user', content: userMessage }];
+                for await (const chunk of streamChat(messages)) yield chunk;
+                return;
+            } catch (err: any) {
+                appLogger.error('LLM chat failed', { error: err?.message ?? String(err) });
+                yield `I could not reach the configured LLM (${llmCfg.provider} · ${llmCfg.model}): ${err?.message ?? 'unknown error'}\n\n${this._buildContextFallbackResponse(userMessage, context)}`;
+                return;
+            }
+        }
+        yield* this._intentChat(userMessage, context);
+    }
+
+    private async _handleAssistantAction(userMessage: string, context: ChatViewContext): Promise<string | null> {
+        const msg = userMessage.toLowerCase();
+        if ((msg.includes('create') || msg.includes('register') || msg.includes('add')) && msg.includes('use case')) {
+            const fields = parseUseCaseActionFields(userMessage);
+            const missing = missingUseCaseFields(fields);
+            if (missing.length) {
+                return `I can create the AI use case through the MCP tool, but I need these required fields first:\n${missing.map(field => `• ${field}`).join('\n')}\n\nYou can provide them as labels, for example: title: ..., description: ..., problem statement: ..., expected benefits: ..., priority: High.`;
+            }
+            try {
+                const result = await this.createAiUseCase({ ...fields, original_prompt: userMessage });
+                return `Created the AI use case using MCP tool \`create_ai_use_case\`.\n\n${formatToolResult(result)}`;
+            } catch (err: any) {
+                return `I tried to create the AI use case using MCP tool \`create_ai_use_case\`, but the tool call failed: ${err.message}`;
+            }
+        }
+        if ((msg.includes('risk assessment') || msg.includes('assess risk')) && (msg.includes('create') || msg.includes('request') || msg.includes('run'))) {
+            const agentId = extractLabeledValue(userMessage, ['agent_id', 'agent id', 'agent']) || context.viewData?.identification?.agent_id || context.viewData?.agent_id || context.viewData?.id;
+            if (!agentId) return 'I can request a risk assessment through MCP, but I need an agent ID. Provide it as `agent_id: ...` or open an agent detail page and ask again.';
+            try {
+                const result = await this.createRiskAssessment(agentId);
+                return `Requested a risk assessment using MCP tool \`create_risk_assessment\` for agent \`${agentId}\`.\n\n${formatToolResult(result)}`;
+            } catch (err: any) {
+                return `I tried to request the risk assessment using MCP tool \`create_risk_assessment\`, but the tool call failed: ${err.message}`;
+            }
+        }
+        if ((msg.includes('link') || msg.includes('associate')) && msg.includes('agent') && msg.includes('use case')) {
+            const useCaseId = extractLabeledValue(userMessage, ['use_case_id', 'use case id', 'ai_use_case_id']) || context.viewData?.identifier || context.viewData?.id;
+            const agentId = extractLabeledValue(userMessage, ['agent_id', 'agent id', 'agent_catalog_id']);
+            if (!useCaseId || !agentId) return 'I can link an agent to a use case through MCP, but I need both `use_case_id: ...` and `agent_id: ...`.';
+            try {
+                const result = await this.createAiUseCaseAgentRelationship(useCaseId, agentId);
+                return `Linked agent \`${agentId}\` to use case \`${useCaseId}\` using MCP tool \`create_ai_use_case_agent_relationship\`.\n\n${formatToolResult(result)}`;
+            } catch (err: any) {
+                return `I tried to link the agent and use case using MCP tool \`create_ai_use_case_agent_relationship\`, but the tool call failed: ${err.message}`;
+            }
+        }
+        return null;
+    }
+
+    private _buildContextFallbackResponse(userMessage: string, context: ChatViewContext): string {
+        const msg = userMessage.toLowerCase();
+        const data = context.viewData;
+        if (context.viewType === 'use_case_detail' && data) {
+            if (msg.includes('business impact') || msg.includes('impact')) {
+                return [
+                    `Based on the current use case, the business impact is tied to: ${data.name || data.title || 'this use case'}.`,
+                    data.problem_statement ? `Problem: ${data.problem_statement}` : '',
+                    data.expected_benefits ? `Expected benefits: ${data.expected_benefits}` : '',
+                    data.priority ? `Priority: ${data.priority}` : '',
+                ].filter(Boolean).join('\n\n');
+            }
+            return [
+                `Current use case: ${data.name || data.title || data.identifier || 'Untitled use case'}`,
+                data.description ? `Description: ${data.description}` : '',
+                data.status ? `Status: ${data.status}` : '',
+                data.owner ? `Owner: ${data.owner}` : '',
+                data.expected_benefits ? `Expected benefits: ${data.expected_benefits}` : '',
+            ].filter(Boolean).join('\n\n');
+        }
+        if (context.viewType === 'agent_detail' && data) {
+            if (msg.includes('risk')) {
+                const risk = data.risk_assessment?.blended_risk_classification || data.latest_risk_class || getRiskLevel(data);
+                return `Based on the current agent, the risk level is ${risk}.`;
+            }
+            return [
+                `Current agent: ${data.name || data.agent_name || 'Unnamed agent'}`,
+                data.description ? `Description: ${data.description}` : '',
+                data.identification?.agent_id ? `Agent ID: ${data.identification.agent_id}` : '',
+            ].filter(Boolean).join('\n\n');
+        }
+        return '';
+    }
+
+    private async *_intentChat(userMessage: string, context: ChatViewContext = {}): AsyncGenerator<string> {
+        const msg = userMessage.toLowerCase();
+        const fallback = this._buildContextFallbackResponse(userMessage, context);
+        if (fallback) {
+            yield fallback;
+            return;
+        }
+        try {
+            if (msg.includes('high risk')) {
+                const agents = await this.getAllAgents();
+                const hr = agents.filter(a => getRiskLevel(a) === 'high');
+                yield hr.length ? `High-risk agents:\n${hr.map(a => `• ${a.name}`).join('\n')}` : 'No high-risk agents.';
+                return;
+            }
+            const agents = await this.getAllAgents();
+            yield `Connected to Tavro MCP. Agents: ${agents.length}.`;
+        } catch { yield 'Error reaching MCP server.'; }
+    }
+
+    async disconnect(): Promise<void> {
+        this.sessionId = null;
+        this.initialized = false;
+    }
+
+    private static readonly MAX_RECORDS_PER_PAGE = 10;
+
+    async getCatalogPage(startRecord = 1): Promise<{ agents: AgentData[]; totalRecords: number }> {
+        if (this._agentCache) {
+            const sliced = this._agentCache.slice(startRecord - 1, startRecord - 1 + McpClientService.MAX_RECORDS_PER_PAGE);
+            return { agents: sliced, totalRecords: this._agentCache.length };
+        }
+        try {
+            const data = await this.callTool('get_agent_catalog', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}` });
+            let rawList: any[] = [];
+            if (Array.isArray(data)) rawList = data;
+            else if (data) {
+                const candidates = [data.agent_card, data.agent_cards, data.agents, data.catalog, data.items, data.records, data.data, data.results];
+                for (const c of candidates) { if (Array.isArray(c)) { rawList = c; break; } }
+            }
+            const agents = rawList.map(item => ({
+                ...item,
+                name: item.name || item.agent_name || 'Unnamed Agent',
+                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' }
+            }));
+            return { agents, totalRecords: data?.total_records ?? agents.length };
+        } catch (err) { throw err; }
+    }
+
+    async getCatalog(page = 1, pageSize = 10): Promise<AgentData[]> {
+        const { agents } = await this.getCatalogPage((page - 1) * pageSize + 1);
+        return agents;
+    }
+
+    async getAgentDetails(id: string): Promise<AgentData | undefined> {
+        if (this._agentDetailCache.has(id)) return this._agentDetailCache.get(id);
+        try {
+            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
+            const data = await this.callTool('get_agent_card', isId ? { agent_id: id } : { agent_name: id });
+            const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
+            if (agent) this._agentDetailCache.set(id, agent);
+            return agent;
+        } catch { return undefined; }
+    }
+
+    async getAgentRiskSummary(agentId: string): Promise<any> {
+        if (this._riskSummaryCache.has(agentId)) return this._riskSummaryCache.get(agentId);
+        try {
+            const data = await this.callTool('get_agent_risk_summary', { agent_id: agentId });
+            if (data) this._riskSummaryCache.set(agentId, data);
+            return data;
+        } catch { return undefined; }
+    }
+
+    async getAllAgents(): Promise<AgentData[]> {
+        if (this._agentCache) return this._agentCache;
+        const first = await this.getCatalogPage(1);
+        const all = [...first.agents];
+        const total = first.totalRecords;
+        let start = 11;
+        while (start <= total) {
+            const { agents } = await this.getCatalogPage(start);
+            all.push(...agents);
+            start += 10;
+        }
+        this._agentCache = all;
+        return all;
+    }
+
+    invalidateCache(): void {
+        this._agentCache = null;
+        this._useCaseCache = null;
+        this._agentDetailCache.clear();
+        this._riskSummaryCache.clear();
+        this._useCaseDetailCache.clear();
+        this._pendingRequests.clear();
+        this._cachedDataStore = null;
+    }
+
+    private async _loadCachedData(): Promise<void> {
+        const remoteUrl = localStorage.getItem('tavro_cached_data_url');
+        const localPath = localStorage.getItem('tavro_cached_data_local_path');
+        if (remoteUrl) {
+            try {
+                const res = await fetch(remoteUrl);
+                if (res.ok) { this._cachedDataStore = await res.json(); return; }
+            } catch { }
+        }
+        if (localPath) {
+            try {
+                const res = await fetch(new URL(localPath, window.location.origin).toString());
+                if (res.ok) { this._cachedDataStore = await res.json(); return; }
+            } catch { }
+        }
+        try {
+            const localData = await import('../data/mcpCachedData.json');
+            this._cachedDataStore = (localData as any).default ?? localData;
+        } catch { this._cachedDataStore = { tools: {} }; }
+    }
+
+    private async _getCachedToolResult(name: string, args: any): Promise<any> {
+        if (!this._cachedDataStore) await this._loadCachedData();
+        const tools = (this._cachedDataStore?.tools as Record<string, any>) ?? {};
+        const exact = tools[`${name}:${JSON.stringify(args)}`];
+        if (exact) return exact;
+        if (name === 'get_agent_card') return this._getCachedAgentDetail(args);
+        if (name === 'get_ai_use_case') return this._getCachedUseCaseDetail(args);
+        return null;
+    }
+
+    private _getCachedToolPages(prefix: string): any[] {
+        const tools = (this._cachedDataStore?.tools as Record<string, any>) ?? {};
+        return Object.entries(tools)
+            .filter(([key]) => key.startsWith(prefix))
+            .flatMap(([, value]) => {
+                if (Array.isArray(value)) return value;
+                if (Array.isArray(value?.data)) return value.data;
+                if (Array.isArray(value?.results)) return value.results;
+                if (Array.isArray(value?.items)) return value.items;
+                if (Array.isArray(value?.agent_card)) return value.agent_card;
+                if (Array.isArray(value?.ai_use_case_agent_card)) return value.ai_use_case_agent_card;
+                return [];
+            });
+    }
+
+    private _normaliseCachedAgent(raw: any): AgentData {
+        return {
+            ...raw,
+            name: raw.name || raw.agent_name || 'Unnamed Agent',
+            description: raw.description || raw.agent_description || raw.summary || '',
+            version: raw.version || '1.0',
+            identification: {
+                ...(raw.identification ?? {}),
+                agent_id: raw.identification?.agent_id || raw.agent_id || raw.agent_internal_id || raw.id || raw.name || raw.agent_name || 'Unknown',
+                owner: raw.identification?.owner || raw.owner || raw.agent_owner || raw.agent_owner_name,
+                instruction: raw.identification?.instruction || raw.instruction || raw.agent_description || raw.summary,
+                environment: raw.identification?.environment || raw.environment,
+            },
+            capabilities: raw.capabilities ?? {},
+            application: raw.application ?? [],
+            risk_assessment: raw.risk_assessment ?? {
+                blended_risk_classification: raw.latest_risk_class,
+                summary: raw.summary,
+            },
+        } as AgentData;
+    }
+
+    private _getCachedAgentDetail(args: any): any {
+        const target = String(args.agent_id || args.agent_name || '').toLowerCase();
+        if (!target) return null;
+        const found = this._getCachedToolPages('get_agent_catalog:').find(raw => {
+            const values = [
+                raw.agent_id,
+                raw.agent_internal_id,
+                raw.id,
+                raw.name,
+                raw.agent_name,
+                raw.identification?.agent_id,
+            ];
+            return values.some(value => String(value || '').toLowerCase() === target);
+        });
+        return found ? { agent_card: this._normaliseCachedAgent(found) } : null;
+    }
+
+    private _getCachedUseCaseDetail(args: any): any {
+        const target = String(args.use_case_id || args.title || '').toLowerCase();
+        if (!target) return null;
+        const found = this._getCachedToolPages('get_ai_use_case:').find(raw => {
+            const values = [
+                raw.use_case_id,
+                raw.identifier,
+                raw.number,
+                raw.id,
+                raw.title,
+                raw.name,
+                raw.use_case_name,
+            ];
+            return values.some(value => String(value || '').toLowerCase().trim() === target.trim());
+        });
+        return found ? { ai_use_case_agent_card: found } : null;
+    }
+
+    async generateCachedData(): Promise<string> {
+        localStorage.setItem('tavro_cache_mode', 'false');
+        try {
+            const tools: Record<string, any> = {};
+            const res = await this.callTool('get_agent_catalog', { start_record: 1, record_range: '1-10' });
+            tools[`get_agent_catalog:{"start_record":1,"record_range":"1-10"}`] = res;
+            return JSON.stringify({ tools }, null, 2);
+        } finally {
+            localStorage.setItem('tavro_cache_mode', 'true');
+        }
+    }
+
+    async getUseCaseCatalogPage(startRecord = 1): Promise<{ useCases: UseCaseSummary[]; totalRecords: number }> {
+        if (this._useCaseCache) {
+            const sliced = this._useCaseCache.slice(startRecord - 1, startRecord + 9);
+            return { useCases: sliced, totalRecords: this._useCaseCache.length };
+        }
+        try {
+            const data = await this.callTool('get_ai_use_case', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}` });
+            let rawList: any[] = [];
+            if (Array.isArray(data)) rawList = data;
+            else if (data) {
+                const candidates = [data.ai_use_case_agent_card, data.use_cases, data.ai_use_cases, data.useCases, data.items, data.results, data.data];
+                for (const c of candidates) { if (Array.isArray(c)) { rawList = c; break; } }
+            }
+            const useCases = rawList.map(normaliseUseCase);
+            return { useCases, totalRecords: data?.total_records ?? useCases.length };
+        } catch (err) { throw err; }
+    }
+
+    async getAllUseCases(): Promise<UseCaseSummary[]> {
+        if (this._useCaseCache) return this._useCaseCache;
+        const first = await this.getUseCaseCatalogPage(1);
+        const all = [...first.useCases];
+        const total = first.totalRecords;
+        let start = 11;
+        while (start <= total) {
+            const { useCases } = await this.getUseCaseCatalogPage(start);
+            all.push(...useCases);
+            start += 10;
+        }
+        this._useCaseCache = all;
+        return all;
+    }
+
+    async getUseCaseDetails(id: string): Promise<UseCaseDetail | undefined> {
+        if (this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
+        try {
+            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
+            const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
+            const unwrapped = unwrapToolResponse(data, ['ai_use_case_agent_card', 'use_case_card', 'ai_use_case', 'data']);
+            if (unwrapped) {
+                const detail = normaliseUseCase(unwrapped);
+                this._useCaseDetailCache.set(id, detail);
+                return detail;
+            }
+            return undefined;
+        } catch { return undefined; }
+    }
+
+    async createAiUseCase(fields: any): Promise<any> {
+        const data = await this.callTool('create_ai_use_case', fields);
+        this._useCaseCache = null;
+        return data;
+    }
+
+    async createAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
+        return await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+    }
+
+    async createAgent(args: any): Promise<any> {
+        return await this.callTool('create_agent', args);
+    }
+
+    async createRiskAssessment(agent_id: string): Promise<any> {
+        return await this.callTool('create_risk_assessment', { agent_id });
+    }
+
+    async getExecutiveRiskSummary(): Promise<any[]> {
+        const allAgents = await this.getAllAgents();
+        const envMap = new Map<string, AgentData[]>();
+        for (const agent of allAgents) {
+            const env = agent.identification?.environment || 'Unknown';
+            if (!envMap.has(env)) envMap.set(env, []);
+            envMap.get(env)!.push(agent);
+        }
+        return Array.from(envMap.entries()).map(([env, agents]) => buildEnvSummary(env, agents));
+    }
+}
+
+export const mcpClient = new McpClientService();

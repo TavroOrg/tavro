@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg text-slate-900 antialiased selection:bg-primary/20 transition-colors duration-300;
+  }
+  
+  .dark body {
+    @apply bg-[#0f172a] text-slate-100;
+  }
+}
+
+@layer components {
+
+  /* Minimal Enterprise UI Utilities */
+  .glass-panel {
+    @apply bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border;
+  }
+
+  .badge-success {
+    @apply bg-emerald-50 text-emerald-700 border-emerald-200;
+  }
+
+  .badge-warning {
+    @apply bg-amber-50 text-amber-700 border-amber-200;
+  }
+
+  .badge-danger {
+    @apply bg-rose-50 text-rose-700 border-rose-200;
+  }
+
+  .badge-primary {
+    @apply bg-blue-50 text-blue-700 border-blue-200;
+  }
+}
+
+/* Animations that Tailwind doesn't strictly cover instantly out of box */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

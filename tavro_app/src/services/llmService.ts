@@ -1,0 +1,262 @@
+/**
+ * llmService.ts
+ *
+ * Thin streaming wrapper for three LLM providers.
+ * Configuration is read from localStorage at call time so it always reflects
+ * the latest Settings page values — no module-level caching.
+ *
+ * Supported providers:
+ *   openai    → https://api.openai.com/v1/chat/completions
+ *   gemini    → https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent
+ *   anthropic → https://api.anthropic.com/v1/messages
+ */
+
+export type LLMProvider = 'openai' | 'gemini' | 'anthropic';
+
+export interface ChatMessage {
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+}
+
+export interface LLMConfig {
+    provider: LLMProvider;
+    model: string;
+    apiKey: string;
+}
+
+export const DEFAULT_MODELS: Record<LLMProvider, string> = {
+    openai: 'gpt-4o',
+    gemini: 'gemini-1.5-flash',
+    anthropic: 'claude-sonnet-4-5',
+};
+
+export const PROVIDER_HINTS: Record<LLMProvider, string> = {
+    openai: 'api.openai.com',
+    gemini: 'generativelanguage.googleapis.com',
+    anthropic: 'api.anthropic.com',
+};
+
+export const PROVIDER_LABELS: Record<LLMProvider, string> = {
+    openai: 'OpenAI',
+    gemini: 'Google Gemini',
+    anthropic: 'Anthropic Claude',
+};
+
+// ── localStorage helpers ──────────────────────────────────────────────────────
+
+const LS_ACTIVE = 'tavro_llm_active';
+
+// Per-provider keys
+const lsModel = (p: LLMProvider) => `tavro_llm_model_${p}`;
+const lsKey   = (p: LLMProvider) => `tavro_llm_key_${p}`;
+
+// Legacy single-provider keys (migrated on first read)
+const LS_LEGACY_PROVIDER = 'tavro_llm_provider';
+const LS_LEGACY_MODEL    = 'tavro_llm_model';
+const LS_LEGACY_KEY      = 'tavro_llm_key';
+
+function migrateLegacy(): void {
+    const legacyProvider = localStorage.getItem(LS_LEGACY_PROVIDER) as LLMProvider | null;
+    const legacyKey      = localStorage.getItem(LS_LEGACY_KEY);
+    if (legacyProvider && legacyKey && !localStorage.getItem(lsKey(legacyProvider))) {
+        const legacyModel = localStorage.getItem(LS_LEGACY_MODEL) || DEFAULT_MODELS[legacyProvider];
+        localStorage.setItem(lsKey(legacyProvider), legacyKey);
+        localStorage.setItem(lsModel(legacyProvider), legacyModel);
+        if (!localStorage.getItem(LS_ACTIVE)) localStorage.setItem(LS_ACTIVE, legacyProvider);
+        [LS_LEGACY_PROVIDER, LS_LEGACY_MODEL, LS_LEGACY_KEY].forEach(k => localStorage.removeItem(k));
+    }
+}
+
+/** Get config for a specific provider (returns null if no key saved) */
+export function getProviderConfig(provider: LLMProvider): LLMConfig | null {
+    migrateLegacy();
+    const apiKey = localStorage.getItem(lsKey(provider)) ?? '';
+    if (!apiKey) return null;
+    const model = localStorage.getItem(lsModel(provider)) || DEFAULT_MODELS[provider];
+    return { provider, model, apiKey };
+}
+
+/** Save config for a specific provider */
+export function saveProviderConfig(cfg: LLMConfig): void {
+    localStorage.setItem(lsKey(cfg.provider), cfg.apiKey);
+    localStorage.setItem(lsModel(cfg.provider), cfg.model.trim() || DEFAULT_MODELS[cfg.provider]);
+}
+
+/** Clear config for a specific provider */
+export function clearProviderConfig(provider: LLMProvider): void {
+    localStorage.removeItem(lsKey(provider));
+    localStorage.removeItem(lsModel(provider));
+    if (localStorage.getItem(LS_ACTIVE) === provider) localStorage.removeItem(LS_ACTIVE);
+}
+
+/** Get the currently active provider (the one the chat will use) */
+export function getActiveProvider(): LLMProvider | null {
+    migrateLegacy();
+    return (localStorage.getItem(LS_ACTIVE) as LLMProvider) || null;
+}
+
+/** Set the active provider */
+export function setActiveProvider(provider: LLMProvider): void {
+    localStorage.setItem(LS_ACTIVE, provider);
+}
+
+/** Get the active LLM config (active provider + its model/key) */
+export function getLLMConfig(): LLMConfig | null {
+    migrateLegacy();
+    const active = getActiveProvider();
+    if (!active) return null;
+    return getProviderConfig(active);
+}
+
+/** @deprecated use saveProviderConfig + setActiveProvider */
+export function saveLLMConfig(cfg: LLMConfig): void {
+    saveProviderConfig(cfg);
+    setActiveProvider(cfg.provider);
+}
+
+/** @deprecated use clearProviderConfig */
+export function clearLLMConfig(): void {
+    const active = getActiveProvider();
+    if (active) clearProviderConfig(active);
+}
+
+// ── Streaming helpers ──────────────────────────────────────────────────────────
+
+/** Parse SSE data lines and yield text deltas */
+async function* parseSSE(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    extractDelta: (parsed: any) => string
+): AsyncGenerator<string> {
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === '[DONE]') return;
+            try {
+                const parsed = JSON.parse(data);
+                const delta = extractDelta(parsed);
+                if (delta) yield delta;
+            } catch { /* skip malformed chunks */ }
+        }
+    }
+}
+
+// ── Provider implementations ─────────────────────────────────────────────────
+
+async function* streamOpenAI(cfg: LLMConfig, messages: ChatMessage[]): AsyncGenerator<string> {
+    const tokenLimitKey = /^(o\d|gpt-5)/i.test(cfg.model) ? 'max_completion_tokens' : 'max_tokens';
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify({
+            model: cfg.model,
+            messages,
+            stream: true,
+            [tokenLimitKey]: 1024,
+        }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message ?? `OpenAI error ${res.status}`);
+    }
+    yield* parseSSE(res.body!.getReader(), p => p?.choices?.[0]?.delta?.content ?? '');
+}
+
+async function* streamGemini(cfg: LLMConfig, messages: ChatMessage[]): AsyncGenerator<string> {
+    // Gemini uses a different message format — extract system prompt separately
+    const systemParts = messages.filter(m => m.role === 'system').map(m => ({ text: m.content }));
+    const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cfg.model}:streamGenerateContent?alt=sse&key=${cfg.apiKey}`;
+    const body: any = { 
+        contents, 
+        generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
+        tools: [{ googleSearch: {} }]
+    };
+    if (systemParts.length > 0) body.systemInstruction = { parts: systemParts };
+
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message ?? `Gemini error ${res.status}`);
+    }
+    yield* parseSSE(res.body!.getReader(), p => p?.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+}
+
+async function* streamAnthropic(cfg: LLMConfig, messages: ChatMessage[]): AsyncGenerator<string> {
+    const systemMsg = messages.find(m => m.role === 'system')?.content ?? '';
+    const chatMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
+    const modelsToTry = Array.from(new Set([
+        cfg.model,
+        'claude-sonnet-4-5',
+        'claude-3-5-sonnet-20241022',
+        'claude-3-5-haiku-20241022',
+        'claude-3-opus-20240229',  // note: opus is still valid
+    ].filter(Boolean)));    
+    const errors: string[] = [];
+
+    for (const model of modelsToTry) {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': cfg.apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true',
+            },
+            body: JSON.stringify({
+                model,
+                max_tokens: 1024,
+                system: systemMsg,
+                messages: chatMsgs,
+                stream: true,
+            }),
+        });
+        if (res.ok) {
+            if (model !== cfg.model) localStorage.setItem(lsModel('anthropic'), model);
+            yield* parseSSE(res.body!.getReader(), p => p?.delta?.text ?? '');
+            return;
+        }
+        const err = await res.json().catch(() => ({}));
+        const message = err?.error?.message ?? err?.message ?? JSON.stringify(err);
+        errors.push(`${model}: HTTP ${res.status} ${message}`);
+    }
+    throw new Error(`Anthropic model access failed. Tried: ${errors.join(' | ')}`);
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Stream a chat completion.
+ * @throws Error if no LLM is configured or the API returns an error.
+ */
+export async function* streamChat(messages: ChatMessage[]): AsyncGenerator<string> {
+    const cfg = getLLMConfig();
+    if (!cfg) {
+        throw new Error('NO_LLM_CONFIGURED');
+    }
+    switch (cfg.provider) {
+        case 'openai': yield* streamOpenAI(cfg, messages); break;
+        case 'gemini': yield* streamGemini(cfg, messages); break;
+        case 'anthropic': yield* streamAnthropic(cfg, messages); break;
+        default:
+            throw new Error(`Unknown LLM provider: ${cfg.provider}`);
+    }
+}

@@ -1,0 +1,97 @@
+services:
+
+  # ── PostgreSQL 16 + AGE + pgvector ──────────────────────────────────────────
+  tavro-postgres:
+    build:
+      context: .
+      dockerfile: tavro_Dockerfile
+      args:
+        AGE_VERSION: "1.5.0"
+        PG_MAJOR: "16"
+    container_name: tavro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:                     ${POSTGRES_USER}
+      POSTGRES_PASSWORD:                 ${POSTGRES_PASSWORD}
+      POSTGRES_DB:                       tavro
+      POSTGRES_SHARED_PRELOAD_LIBRARIES: "age"
+    ports:
+      - "5432:5432"       # keep open for Postico access on your Mac
+    volumes:
+      - tavro_pgdata:/var/lib/postgresql/data
+      - ./sql:/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d tavro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── FastAPI — Digital Twin API ───────────────────────────────────────────────
+  tavro-api:
+    build:
+      context: ./tavro_api
+      dockerfile: Dockerfile
+    container_name: tavro-api
+    restart: unless-stopped
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
+      RESEARCH_MAX_OUTPUT_TOKENS: "4096"
+      RESEARCH_MAX_SEARCH_TURNS:  "3"
+    # Port 8000 no longer exposed externally — nginx proxies to it
+    # Uncomment the lines below if you need direct API access for debugging:
+    ports:
+     - "8000:8000"
+    volumes:
+      - ./tavro_api:/app    # live reload for dev — remove for production
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── React App — served by Nginx ──────────────────────────────────────────────
+  tavro-app:
+    build:
+      context: ./tavro_app
+      dockerfile: Dockerfile
+      args:
+        VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
+    container_name: tavro-app
+    restart: unless-stopped
+    depends_on:
+      tavro-api:
+        condition: service_healthy
+    ports:
+      - "9000:80"             # app accessible at localhost:3000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ── pgAdmin 4 — database browser ────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: tavro-pgadmin
+    restart: unless-stopped
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "5050:80"
+    volumes:
+      - tavro_pgadmin:/var/lib/pgadmin
+
+volumes:
+  tavro_pgdata:
+  tavro_pgadmin:
