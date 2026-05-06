@@ -64,7 +64,7 @@ ngrok config add-authtoken <your-token>
 Open a terminal (PowerShell on Windows, Terminal on macOS/Linux) and run:
 
 ```bash
-git clone https://github.com/TavroOrg/tavro_open_source.git
+git clone https://github.com/TavroOrg/tavro.git
 cd tavro_open_source
 ```
 
