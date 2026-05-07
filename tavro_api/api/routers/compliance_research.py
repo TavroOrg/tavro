@@ -21,6 +21,8 @@ router = APIRouter()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL   = "claude-sonnet-4-6"
+OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL      = "gpt-4o"
 MAX_OUTPUT_TOKENS = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4096"))
 MAX_SEARCH_TURNS  = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "3"))
 
@@ -97,6 +99,70 @@ async def _call_anthropic(
     return resp.json()
 
 
+async def _call_openai(
+    api_key: str,
+    messages: list[dict],
+    system: str,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+) -> dict:
+    payload_messages = [{"role": "system", "content": system}] + messages
+    payload: dict[str, Any] = {
+        "model": OPENAI_MODEL,
+        "messages": payload_messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            OPENAI_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"OpenAI error {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    finish_reason = data.get("choices", [{}])[0].get("finish_reason", "stop")
+    return {
+        "stop_reason": "max_tokens" if finish_reason == "length" else "end_turn",
+        "content": [{"type": "text", "text": content}],
+        "usage": data.get("usage", {}),
+    }
+
+
+def _resolve_compliance_llm() -> tuple[str, str]:
+    """
+    Resolve provider/key for compliance research endpoints.
+    Priority:
+    1) COMPLIANCE_LLM_PROVIDER=openai|anthropic (if key exists)
+    2) ANTHROPIC_API_KEY if present (default, supports web search)
+    3) OPENAI_API_KEY if present
+    """
+    preferred = (os.getenv("COMPLIANCE_LLM_PROVIDER", "").strip().lower() or None)
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    if preferred == "openai":
+        if not openai_key:
+            raise HTTPException(status_code=500, detail="COMPLIANCE_LLM_PROVIDER=openai but OPENAI_API_KEY not configured")
+        return "openai", openai_key
+    if preferred == "anthropic":
+        if not anthropic_key:
+            raise HTTPException(status_code=500, detail="COMPLIANCE_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY not configured")
+        return "anthropic", anthropic_key
+
+    if anthropic_key:
+        return "anthropic", anthropic_key
+    if openai_key:
+        return "openai", openai_key
+    raise HTTPException(status_code=500, detail="No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+
+
 def _collect_text(data: dict) -> str:
     return "\n".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
 
@@ -107,17 +173,21 @@ def _collect_tool_results(data: dict) -> list[dict]:
 
 
 async def _run_research(
+    provider: str,
     api_key: str,
     system:  str,
     user_prompt: str,
 ) -> tuple[list[ResearchedDimension], list[str], str, int]:
     """Run multi-turn research and return (dimensions, sources, notice, turns_used)."""
     messages = [{"role": "user", "content": user_prompt}]
-    tools    = [{"type": "web_search_20250305", "name": "web_search"}]
-    data     = await _call_anthropic(api_key, messages, system, tools)
+    tools    = [{"type": "web_search_20250305", "name": "web_search"}] if provider == "anthropic" else None
+    if provider == "openai":
+        data = await _call_openai(api_key, messages, system, MAX_OUTPUT_TOKENS)
+    else:
+        data = await _call_anthropic(api_key, messages, system, tools)
     turns    = 0
 
-    for _ in range(MAX_SEARCH_TURNS):
+    for _ in range(MAX_SEARCH_TURNS if provider == "anthropic" else 0):
         if data.get("stop_reason") != "tool_use": break
         trs = _collect_tool_results(data)
         if not trs: break
@@ -127,7 +197,7 @@ async def _run_research(
         data = await _call_anthropic(api_key, messages, system, tools)
 
     # Force answer if still tool_use after cap
-    if data.get("stop_reason") == "tool_use":
+    if provider == "anthropic" and data.get("stop_reason") == "tool_use":
         trs = _collect_tool_results(data)
         if trs:
             messages.append({"role": "assistant", "content": data["content"]})
@@ -145,7 +215,10 @@ async def _run_research(
         except json.JSONDecodeError:
             messages.append({"role": "assistant", "content": raw})
             messages.append({"role": "user", "content": "Continue and complete the JSON from where you left off."})
-            cont = await _call_anthropic(api_key, messages, system, tools=None)
+            if provider == "openai":
+                cont = await _call_openai(api_key, messages, system, MAX_OUTPUT_TOKENS)
+            else:
+                cont = await _call_anthropic(api_key, messages, system, tools=None)
             raw  = raw + _collect_text(cont).strip()
 
     try:
@@ -231,8 +304,7 @@ Return ONLY the JSON. No other text."""
 
 @router.post("/research/regulation", response_model=ResearchResponse)
 async def research_regulation(body: RegResearchRequest):
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key: raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+    provider, api_key = _resolve_compliance_llm()
 
     jur_text = ", ".join(body.jurisdiction) or "US"
     ind_text = ", ".join(body.industry_tags) or "financial services"
@@ -248,7 +320,7 @@ Industry: {ind_text}
 Use web search to find the official regulation text, recent enforcement actions,
 and compliance requirements. Return ONLY the JSON object."""
 
-    dims, sources, notice, turns = await _run_research(api_key, REG_RESEARCH_SYSTEM, prompt)
+    dims, sources, notice, turns = await _run_research(provider, api_key, REG_RESEARCH_SYSTEM, prompt)
     return ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns)
 
 
@@ -258,8 +330,7 @@ and compliance requirements. Return ONLY the JSON object."""
 
 @router.post("/research/policy", response_model=ResearchResponse)
 async def research_policy(body: PolicyResearchRequest, db: AsyncSession = Depends(get_db)):
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key: raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+    provider, api_key = _resolve_compliance_llm()
 
     # Fetch company info for context
     company_row = await db.execute(
@@ -280,7 +351,7 @@ Policy name: {body.name}{desc_ctx}
 Identify the key requirements, controls, audit obligations, and business impact
 of this policy. The impact dimension is MANDATORY. Return ONLY the JSON object."""
 
-    dims, sources, notice, turns = await _run_research(api_key, POLICY_RESEARCH_SYSTEM, prompt)
+    dims, sources, notice, turns = await _run_research(provider, api_key, POLICY_RESEARCH_SYSTEM, prompt)
     return ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns)
 
 
