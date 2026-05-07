@@ -40,6 +40,7 @@ services:
     environment:
       DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY:             ${OPENAI_API_KEY}
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
     # Port 8000 no longer exposed externally — nginx proxies to it

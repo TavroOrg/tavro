@@ -20,6 +20,8 @@ router = APIRouter()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL   = "claude-sonnet-4-6"
+OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL      = "gpt-4o"
 
 # ── Token / turn caps (override via environment variables) ────────────────────
 # RESEARCH_MAX_OUTPUT_TOKENS: max tokens Claude may produce per API call.
@@ -149,6 +151,74 @@ async def _call_anthropic(
     return resp.json()
 
 
+async def _call_openai(
+    api_key:    str,
+    messages:   list[dict],
+    system:     str,
+    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
+) -> dict:
+    payload_messages = [{"role": "system", "content": system}] + messages
+    payload: dict[str, Any] = {
+        "model": OPENAI_MODEL,
+        "messages": payload_messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            OPENAI_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI API error {resp.status_code}: {resp.text[:400]}",
+        )
+
+    data = resp.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    finish_reason = data.get("choices", [{}])[0].get("finish_reason", "stop")
+    return {
+        "stop_reason": "max_tokens" if finish_reason == "length" else "end_turn",
+        "content": [{"type": "text", "text": content}],
+        "usage": data.get("usage", {}),
+    }
+
+
+def _resolve_blueprint_llm() -> tuple[str, str]:
+    """
+    Resolve provider/key for blueprint endpoints.
+    Priority:
+    1) BLUEPRINT_LLM_PROVIDER=openai|anthropic (if key exists)
+    2) OPENAI_API_KEY if present
+    3) ANTHROPIC_API_KEY if present
+    """
+    preferred = (os.getenv("BLUEPRINT_LLM_PROVIDER", "").strip().lower() or None)
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    if preferred == "openai":
+        if not openai_key:
+            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=openai but OPENAI_API_KEY not configured")
+        return "openai", openai_key
+    if preferred == "anthropic":
+        if not anthropic_key:
+            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY not configured")
+        return "anthropic", anthropic_key
+
+    if openai_key:
+        return "openai", openai_key
+    if anthropic_key:
+        return "anthropic", anthropic_key
+    raise HTTPException(status_code=500, detail="No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+
+
 def _collect_text(data: dict) -> str:
     return "\n".join(
         b["text"] for b in data.get("content", []) if b.get("type") == "text"
@@ -210,9 +280,7 @@ Do not write ```json or ``` anywhere. Start your response with { and end with }.
 
 @router.post("/research", response_model=ResearchResponse)
 async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get_db)):
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    provider, api_key = _resolve_blueprint_llm()
 
     ticker_line = f"Ticker: {body.ticker}" if body.ticker else ""
     user_prompt = (
@@ -225,16 +293,19 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
 
-    # Use web search only if turns > 0
+    # Anthropic path can use tool-based web search. OpenAI path uses plain prompt.
     tools = [{"type": "web_search_20250305", "name": "web_search"}] \
-            if RESEARCH_MAX_SEARCH_TURNS > 0 else None
+            if (provider == "anthropic" and RESEARCH_MAX_SEARCH_TURNS > 0) else None
 
     # ── Turn 1 ────────────────────────────────────────────────────────────────
-    data       = await _call_anthropic(api_key, messages, RESEARCH_SYSTEM, tools)
+    if provider == "openai":
+        data = await _call_openai(api_key, messages, RESEARCH_SYSTEM, RESEARCH_MAX_OUTPUT_TOKENS)
+    else:
+        data = await _call_anthropic(api_key, messages, RESEARCH_SYSTEM, tools)
     turns_used = 0
 
     # ── Follow-up turns while Claude uses web search ──────────────────────────
-    while data.get("stop_reason") == "tool_use" and turns_used < RESEARCH_MAX_SEARCH_TURNS:
+    while provider == "anthropic" and data.get("stop_reason") == "tool_use" and turns_used < RESEARCH_MAX_SEARCH_TURNS:
         tool_results = _collect_tool_results(data)
         if not tool_results:
             break
@@ -244,7 +315,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
         data = await _call_anthropic(api_key, messages, RESEARCH_SYSTEM, tools)
 
     # ── If we hit the turn cap but Claude still wants to search, force answer ──
-    if data.get("stop_reason") == "tool_use":
+    if provider == "anthropic" and data.get("stop_reason") == "tool_use":
         tool_results = _collect_tool_results(data)
         if tool_results:
             messages.append({"role": "assistant", "content": data["content"]})
@@ -291,11 +362,16 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 "Please continue and complete the JSON object from where you left off. "
                 "Return ONLY the continuation — no preamble, no backticks."
             )})
-            cont_data = await _call_anthropic(
-                api_key, messages, RESEARCH_SYSTEM,
-                tools=None,
-                max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
-            )
+            if provider == "openai":
+                cont_data = await _call_openai(
+                    api_key, messages, RESEARCH_SYSTEM, RESEARCH_MAX_OUTPUT_TOKENS
+                )
+            else:
+                cont_data = await _call_anthropic(
+                    api_key, messages, RESEARCH_SYSTEM,
+                    tools=None,
+                    max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
+                )
             continuation = _collect_text(cont_data).strip()
             # Merge: take the truncated part + continuation and re-extract
             merged = raw_text.rstrip() + continuation
@@ -324,10 +400,12 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
 @router.get("/research/config")
 async def research_config():
+    provider, _ = _resolve_blueprint_llm()
     return {
         "max_output_tokens": RESEARCH_MAX_OUTPUT_TOKENS,
         "max_search_turns":  RESEARCH_MAX_SEARCH_TURNS,
-        "model":             ANTHROPIC_MODEL,
+        "model":             OPENAI_MODEL if provider == "openai" else ANTHROPIC_MODEL,
+        "provider":          provider,
     }
 
 
@@ -468,9 +546,7 @@ async def suggest_dimension(
     Uses the company's existing blueprint dimensions as context.
     No web search — fast and cheap (single API call).
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    provider, api_key = _resolve_blueprint_llm()
 
     # Fetch a sample of existing node labels for context
     existing_rows = await db.execute(
@@ -499,13 +575,21 @@ Existing blueprint dimensions for context:
 
 Return ONLY the JSON object with "summary" and "tags" fields."""
 
-    data = await _call_anthropic(
-        api_key,
-        [{"role": "user", "content": user_prompt}],
-        SUGGEST_SYSTEM,
-        tools=None,
-        max_tokens=1024,
-    )
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_SYSTEM,
+            1024,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_SYSTEM,
+            tools=None,
+            max_tokens=1024,
+        )
 
     raw = _collect_text(data).strip()
 
