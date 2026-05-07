@@ -21,6 +21,13 @@ import BlueprintSetupPage from './pages/BlueprintSetupPage';
 import { BlueprintProvider } from './context/BlueprintContext';
 import PlaygroundPage from './pages/PlaygroundPage';
 import { PlaygroundProvider } from './context/PlaygroundContext';
+import CompliancePage from './pages/CompliancePage';
+import ComplianceItemPage from './pages/ComplianceItemPage';
+import ComplianceSetupPage from './pages/ComplianceSetupPage';
+import { ComplianceProvider } from './context/ComplianceContext';
+
+import AuditCenterPage from './pages/AuditCenterPage';
+import AuditRunDetailPage from './pages/AuditRunDetailPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
@@ -68,7 +75,9 @@ function App() {
                       <UseCaseProvider>
                         <PlaygroundProvider>
                           <BlueprintProvider>
-                            <Layout />
+                            <ComplianceProvider>
+                              <Layout />
+                            </ComplianceProvider>
                           </BlueprintProvider>
                         </PlaygroundProvider>
                       </UseCaseProvider>
@@ -90,6 +99,15 @@ function App() {
                 <Route path="blueprint/setup" element={<BlueprintSetupPage />} />
                 {/* ── Playground routes ── */}
                 <Route path="playground" element={<PlaygroundPage />} />
+
+                {/* ── Compliance routes (ADD THESE) ── */}
+                <Route path="compliance" element={<CompliancePage />} />
+                <Route path="compliance/new" element={<ComplianceSetupPage />} />
+                <Route path="compliance/:id" element={<ComplianceItemPage />} />
+
+                <Route path="audit" element={<AuditCenterPage />} />
+                <Route path="audit/:runId" element={<AuditRunDetailPage />} />
+
               </Route>
             </Routes>
           </div>

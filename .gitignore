@@ -1,0 +1,23 @@
+# ── ~/Documents/tavro/.gitignore ─────────────────────────────────────────────
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Python
+tavro_api/.venv/
+tavro_api/__pycache__/
+tavro_api/**/__pycache__/
+*.pyc
+
+# Node
+tavro_app/node_modules/
+tavro_app/dist/
+
+# Mac
+.DS_Store
+**/.DS_Store
+
+# Docker build cache
+tavro_app/.docker/

@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
-import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical } from 'lucide-react';
+import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck } from 'lucide-react';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useChatSync } from '../hooks/useChatSync';
+import AuditInitModal from '../components/audit/AuditInitModal';
 
 const AgentViewPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -16,6 +17,7 @@ const AgentViewPage: React.FC = () => {
     const [inspectJson] = useInspectJson();
     const [jsonOpen, setJsonOpen] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [auditModalOpen, setAuditModalOpen] = useState(false);
 
     const fetchAgent = async () => {
         if (!id) return;
@@ -108,6 +110,12 @@ const AgentViewPage: React.FC = () => {
                         <FlaskConical size={15} /> Launch in Playground
                     </button>
                     <button
+                        onClick={() => setAuditModalOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
+                    >
+                        <ShieldCheck size={15} /> Run Compliance Audit
+                    </button>
+                    <button
                         onClick={handleRequestRiskAssessment}
                         disabled={assessing}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
@@ -186,6 +194,16 @@ const AgentViewPage: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Audit modal */}
+            <AuditInitModal
+                open={auditModalOpen}
+                onClose={() => setAuditModalOpen(false)}
+                onLaunched={(runId) => navigate(`/audit/${runId}`)}
+                prefillAgentId={agent.identification?.agent_id ?? agent.name}
+                prefillAgentName={agent.name}
+                mode="agent"
+            />
         </div>
     );
 };
