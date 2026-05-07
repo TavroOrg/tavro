@@ -29,11 +29,11 @@ export const INFRA_PROVIDERS: InfraProviderMeta[] = [
   },
   {
     id:          'openai',
-    label:       'OpenAI ChatGPT',
-    shortLabel:  'ChatGPT',
+    label:       'OpenAI',
+    shortLabel:  'OpenAI',
     description: 'Direct OpenAI API with GPT models. Works immediately with your OpenAI API key.',
     available:   true,
-    icon:        '?',
+    icon:        '✨',
     configKeys:  ['OPENAI_API_KEY'],
   },
   {
