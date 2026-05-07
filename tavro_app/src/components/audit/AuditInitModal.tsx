@@ -99,8 +99,11 @@ const AuditInitModal: React.FC<Props> = ({
         compliance_item_id: selectedCompId || undefined,
         initiated_by:       'user',
       });
-      onLaunched(result.audit_run_id);
-      onClose();
+      // Small delay so the DB commit is visible before the detail page queries it
+      setTimeout(() => {
+        onLaunched(result.audit_run_id);
+        onClose();
+      }, 400);
     } catch (e: any) {
       setError(e.message ?? 'Failed to initiate audit');
     } finally {

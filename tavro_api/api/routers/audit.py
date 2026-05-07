@@ -57,7 +57,13 @@ class AuditRunResponse(BaseModel):
 # =============================================================
 
 def _row(r) -> dict:
-    return dict(r._mapping)
+    if r is None:
+        return {}
+    # Handle both raw Row and already-mapped RowMapping objects
+    try:
+        return dict(r._mapping)
+    except AttributeError:
+        return dict(r)
 
 
 async def _fetch_company(db: AsyncSession, company_id: str) -> dict | None:
@@ -410,7 +416,7 @@ async def _run_orchestrator(
                 SELECT risk_level FROM twin.audit_finding
                 WHERE audit_run_id=:rid AND status='completed' AND risk_level IS NOT NULL
             """), {"rid": audit_run_id})
-            risks = [r.risk_level for r in risk_rows if r.risk_level]
+            risks = [r['risk_level'] for r in risk_rows.mappings() if r['risk_level']]
             overall = min(risks, key=lambda x: risk_order.get(x, 99)) if risks else None
 
             await db.execute(text("""
@@ -487,7 +493,10 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
     })
     await db.commit()
 
-    # Launch background task
+    # Flush connection to ensure row is visible before background task reads it
+    await db.close()
+
+    # Launch background task — row is now committed and visible
     db_url = os.getenv("DATABASE_URL", "")
     asyncio.create_task(_run_orchestrator(run_id, body, db_url))
 
@@ -530,7 +539,7 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
                 WHERE audit_run_id=:rid
                 ORDER BY updated_at ASC
             """), {"rid": run_id})
-            all_findings = [dict(r._mapping) for r in new_findings_q]
+            all_findings = [dict(r) for r in new_findings_q.mappings()]
 
             for f in all_findings:
                 fid = str(f["id"])
@@ -584,7 +593,7 @@ async def list_runs(
         ORDER BY ar.created_at DESC
         LIMIT :lim
     """), {"cid": company_id, "lim": limit})
-    return [_row(r) for r in rows]
+    return [dict(r) for r in rows.mappings()]
 
 
 # =============================================================
@@ -598,14 +607,15 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     )
     run = run_row.mappings().first()
     if not run: raise HTTPException(404, "Audit run not found")
+    run_dict = dict(run)
 
     findings_rows = await db.execute(text("""
         SELECT * FROM twin.audit_finding
         WHERE audit_run_id=:rid ORDER BY risk_score DESC NULLS LAST
     """), {"rid": run_id})
-    findings = [_row(r) for r in findings_rows]
+    findings = [dict(r) for r in findings_rows.mappings()]
 
-    return {**_row(run), "findings": findings}
+    return {**run_dict, "findings": findings}
 
 
 # =============================================================
@@ -633,4 +643,4 @@ async def get_finding(run_id: str, finding_id: str, db: AsyncSession = Depends(g
     """), {"fid": finding_id, "rid": run_id})
     finding = row.mappings().first()
     if not finding: raise HTTPException(404, "Finding not found")
-    return _row(finding)
+    return dict(finding)

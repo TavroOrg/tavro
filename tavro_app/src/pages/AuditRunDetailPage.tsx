@@ -229,7 +229,7 @@ const AuditRunDetailPage: React.FC = () => {
 
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'all'>('all');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (attempt = 0) => {
     if (!runId) return;
     setLoading(true);
     try {
@@ -242,7 +242,18 @@ const AuditRunDetailPage: React.FC = () => {
       if (data.status === 'running' || data.status === 'pending') {
         startStream(runId);
       }
-    } finally { setLoading(false); }
+    } catch (err: any) {
+      // Retry up to 5 times with backoff — run may not be committed yet
+      if (attempt < 5) {
+        const delay = (attempt + 1) * 600;
+        setTimeout(() => load(attempt + 1), delay);
+        return;   // keep loading=true while retrying
+      }
+      // Give up after 5 attempts
+    } finally {
+      if (attempt >= 5) setLoading(false);
+    }
+    setLoading(false);
   }, [runId]);
 
   useEffect(() => { load(); return () => { cleanupRef.current?.(); }; }, [load]);
