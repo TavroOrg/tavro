@@ -12,6 +12,10 @@ from api.routers import blueprint
 
 from api.routers import playground
 
+from api.routers import compliance, compliance_research
+
+from api.routers import audit
+
 app = FastAPI(
     title="Tavro Digital Twin API",
     description="REST API for browsing, editing, and visualising the Tavro digital twin.",
@@ -34,6 +38,11 @@ app.include_router(source_refs.router, prefix="/api/v1/source-refs", tags=["Sour
 app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Graph"])
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
+
+app.include_router(compliance.router,          prefix="/api/v1/compliance",          tags=["Compliance"])
+app.include_router(compliance_research.router, prefix="/api/v1/compliance",          tags=["Compliance Research"])
+
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit"])
 
 @app.get("/health")
 def health():

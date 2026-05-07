@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     ActivitySquare, Library, Layers, Settings,
     LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
-    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical
+    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -218,6 +218,42 @@ const Layout: React.FC = () => {
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Blueprint</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/compliance')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
+                                    } ${location.pathname.startsWith('/compliance')
+                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Compliance" : undefined}
+                            >
+                                <Scale
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
+                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
+                                    }`}>Compliance</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/audit')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
+                                    } ${location.pathname.startsWith('/audit')
+                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Audit Center" : undefined}
+                            >
+                                <ShieldCheck
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
+                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
+                                    }`}>Audit Center</span>
                             </button>
                             <button
                                 onClick={() => navigate('/playground')}

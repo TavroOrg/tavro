@@ -4,7 +4,7 @@ import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, BrainCircuit, Link2, Search, X, Loader2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, BrainCircuit, Link2, Search, X, Loader2, CheckCircle2 , ShieldCheck } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 
@@ -247,12 +247,14 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onRefetc
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 import { useChatSync } from '../hooks/useChatSync';
+import AuditInitModal from '../components/audit/AuditInitModal';
 
 const UseCaseViewPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const [useCase, setUseCase] = useState<UseCaseDetail | null>(null);
     const [loading, setLoading] = useState(true);
+    const [auditModalOpen, setAuditModalOpen] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const { agents } = useCatalog();
@@ -298,6 +300,14 @@ const UseCaseViewPage: React.FC = () => {
                 >
                     <ArrowLeft size={16} /> Back to Use Cases
                 </button>
+                {useCase && (
+                    <button
+                        onClick={() => setAuditModalOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
+                    >
+                        <ShieldCheck size={15} /> Run Compliance Audit
+                    </button>
+                )}
 
             </div>
 
@@ -341,6 +351,16 @@ const UseCaseViewPage: React.FC = () => {
                     }
                 />
             )}
+
+            {/* Audit modal */}
+            <AuditInitModal
+                open={auditModalOpen}
+                onClose={() => setAuditModalOpen(false)}
+                onLaunched={(runId) => navigate(`/audit/${runId}`)}
+                prefillUseCaseId={useCase?.identifier ?? (useCase as any)?.id ?? ''}
+                prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
+                mode="use_case"
+            />
         </div>
     );
 };
