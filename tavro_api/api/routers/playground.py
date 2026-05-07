@@ -26,6 +26,8 @@ router = APIRouter()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL_DEFAULT = "gpt-4o"
 
 # ── In-memory session store ───────────────────────────────────────────────────
 # { session_id: { config, messages, created_at, updated_at } }
@@ -372,6 +374,72 @@ async def _run_agent_loop(
     return final_text or "[No response generated]", total_tokens
 
 
+def _openai_attachment_to_text(att: "Attachment") -> str:
+    mime = att.mime_type.lower()
+    raw = base64.b64decode(att.data)
+
+    if mime.startswith("text/"):
+        text_content = raw.decode("utf-8", errors="replace")[:10000]
+        return f"Attachment: {att.name}\n\n{text_content}"
+    return f"Attachment: {att.name} (type: {mime}) attached by user."
+
+
+async def _run_openai_chat(
+    config: SessionConfig,
+    history: list[dict],
+    user_message: str,
+    api_key: str,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int]:
+    messages = [{"role": "system", "content": config.system_prompt}]
+    messages.extend(history)
+
+    extra_attachment_text = ""
+    if attachments:
+        attachment_chunks = [_openai_attachment_to_text(att) for att in attachments]
+        extra_attachment_text = "\n\n" + "\n\n".join(attachment_chunks)
+
+    messages.append({
+        "role": "user",
+        "content": f"{user_message}{extra_attachment_text}",
+    })
+
+    payload: dict[str, Any] = {
+        "model": config.model or OPENAI_MODEL_DEFAULT,
+        "messages": messages,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            OPENAI_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI API error {resp.status_code}: {resp.text[:400]}",
+        )
+
+    data = resp.json()
+    content = (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+        .strip()
+    )
+    usage = data.get("usage", {}) or {}
+    tokens_used = int(usage.get("total_tokens", 0))
+
+    return content or "[No response generated]", tokens_used
+
+
 # =============================================================
 # POST /session — create a new session
 # =============================================================
@@ -420,11 +488,17 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
-
     config      = SessionConfig(**session["config"])
+    provider = (config.provider or "claude").lower()
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+
     now         = datetime.utcnow().isoformat()
     user_msg_id = str(uuid.uuid4())
 
@@ -452,10 +526,15 @@ async def send_message(
 
     # Run agent loop
     try:
-        response_text, tokens_used = await _run_agent_loop(
-            config, history, body.content, company_dims, api_key,
-            attachments=body.attachments,
-        )
+        if provider == "openai":
+            response_text, tokens_used = await _run_openai_chat(
+                config, history, body.content, api_key, attachments=body.attachments
+            )
+        else:
+            response_text, tokens_used = await _run_agent_loop(
+                config, history, body.content, company_dims, api_key,
+                attachments=body.attachments,
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -511,10 +590,6 @@ async def get_session_summary(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
-
     messages = [m for m in session["messages"] if m["role"] in ("user", "assistant")]
     if not messages:
         return {"summary": "No conversation to summarise yet."}
@@ -524,6 +599,7 @@ async def get_session_summary(session_id: str):
     )
 
     config = session["config"]
+    provider = (config.get("provider") or "claude").lower()
 
     prompt = f"""Analyse this agent prototype session and return a structured JSON summary.
 
@@ -541,27 +617,57 @@ Return ONLY a JSON object with this structure:
   "recommended_next_steps": ["concrete next steps to improve this agent"]
 }}"""
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            ANTHROPIC_API_URL,
-            headers={
-                "x-api-key":         api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type":      "application/json",
-            },
-            json={
-                "model":      ANTHROPIC_MODEL_DEFAULT,
-                "max_tokens": 1024,
-                "system":     "You are an AI evaluation assistant. Return only valid JSON.",
-                "messages":   [{"role": "user", "content": prompt}],
-            },
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                OPENAI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": OPENAI_MODEL_DEFAULT,
+                    "max_tokens": 1024,
+                    "messages": [
+                        {"role": "system", "content": "You are an AI evaluation assistant. Return only valid JSON."},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to generate summary")
+        data = resp.json()
+        raw = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
         )
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to generate summary")
-
-    data = resp.json()
-    raw  = " ".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                ANTHROPIC_API_URL,
+                headers={
+                    "x-api-key":         api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type":      "application/json",
+                },
+                json={
+                    "model":      ANTHROPIC_MODEL_DEFAULT,
+                    "max_tokens": 1024,
+                    "system":     "You are an AI evaluation assistant. Return only valid JSON.",
+                    "messages":   [{"role": "user", "content": prompt}],
+                },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to generate summary")
+        data = resp.json()
+        raw = " ".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
 
     # Strip fences
     import re
