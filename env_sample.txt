@@ -7,7 +7,8 @@ POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
 
 # Anthropic
-ANTHROPIC_API_KEY=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
+ANTHROPIC_API_KEY=sk-...
+OPENAI_API_KEY=sk-...
 
 # pgAdmin
 PGADMIN_DEFAULT_EMAIL=admin@tavro.local
