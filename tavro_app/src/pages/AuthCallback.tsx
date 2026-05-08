@@ -44,6 +44,82 @@ const AuthCallback: React.FC = () => {
         }
 
         if (code) {
+            const oidcProvider = localStorage.getItem('tavro_oidc_provider');
+            const expectedState = localStorage.getItem('tavro_oidc_state');
+            const returnedState = params.get('state');
+
+            if (oidcProvider === 'zitadel') {
+                if (expectedState && returnedState !== expectedState) {
+                    setStatus('error');
+                    setMessage('Authentication failed: state mismatch. Please sign in again.');
+                    setDebugInfo(`expected_state=${expectedState}; returned_state=${returnedState || ''}`);
+                    return;
+                }
+
+                const pkceVerifier = localStorage.getItem('tavro_pkce_verifier');
+                const issuer = localStorage.getItem('tavro_oidc_issuer');
+                const clientId = localStorage.getItem('tavro_oidc_client_id');
+                const redirectUri = localStorage.getItem('tavro_auth_redirect_uri') || `${window.location.origin}/auth/callback`;
+
+                if (!issuer || !clientId || !pkceVerifier) {
+                    setStatus('error');
+                    setMessage('ZITADEL login session is incomplete. Please sign in again.');
+                    return;
+                }
+
+                const exchangeZitadelToken = async () => {
+                    try {
+                        const response = await fetch(`${issuer}/oauth/v2/token`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                                'Accept': 'application/json',
+                            },
+                            body: new URLSearchParams({
+                                grant_type: 'authorization_code',
+                                client_id: clientId,
+                                code: code.trim(),
+                                redirect_uri: redirectUri,
+                                code_verifier: pkceVerifier,
+                            }).toString(),
+                        });
+
+                        const rawText = await response.text();
+                        let data: any = {};
+                        try { data = JSON.parse(rawText); } catch { data = {}; }
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status} - ${data.error_description || data.error || rawText.substring(0, 250)}`);
+                        }
+
+                        if (!data.access_token) {
+                            throw new Error('No access token in ZITADEL response.');
+                        }
+
+                        localStorage.setItem('tavro_access_token', data.access_token);
+                        if (data.id_token) localStorage.setItem('tavro_id_token', data.id_token);
+                        if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
+                        localStorage.removeItem('tavro_pkce_verifier');
+                        localStorage.removeItem('tavro_oidc_state');
+                        localStorage.setItem('tavro_auth', 'true');
+
+                        setStatus('success');
+                        setMessage('Authentication successful! Redirecting...');
+                        const origin = localStorage.getItem('tavro_auth_flow_origin');
+                        localStorage.removeItem('tavro_auth_flow_origin');
+                        setTimeout(() => navigate(origin === 'login' ? '/' : '/settings'), 1500);
+                    } catch (err: any) {
+                        console.error('[AuthCallback] ZITADEL token exchange exception:', err);
+                        setStatus('error');
+                        setMessage(`Token exchange failed: ${err.message}`);
+                        setDebugInfo(err.message);
+                    }
+                };
+
+                exchangeZitadelToken();
+                return;
+            }
+
             const pkceVerifier = localStorage.getItem('tavro_pkce_verifier');
             const dcrClientId = localStorage.getItem('tavro_dcr_client_id');
             const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/google/mcp';
