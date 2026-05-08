@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+
+# 1) Install shared deps first so this layer can be reused across services.
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+
+# 2) Install worker-specific wheel.
+COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl .
+RUN --mount=type=cache,target=/root/.cache/pip pip install tavro_agent_card-0.1.1-py3-none-any.whl
+
+# 3) Verify at build time.
+RUN python -c "from tavro_agent_card import TavroAgentCard; print('TavroAgentCard import OK')"
+
+COPY worker.py .
+COPY run_connectors.py .
+COPY config.yaml .
+COPY config.yaml.example .
+COPY catalog_connector ./catalog_connector
+COPY utils ./utils
+
+CMD ["python", "worker.py"]

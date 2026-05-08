@@ -1,0 +1,60 @@
+{
+  "mcp_server": {
+    "name": null,
+    "title": null,
+    "url": null,
+    "version_number": null,
+    "protocol_version": null
+  },
+
+  "tool": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "delegation_possible": null,
+      "allowed_delegates": null,
+      "input_schema": {
+        "type": null,
+        "properties": {
+          "input": {
+            "type": null,
+            "description": null
+          }
+        }
+      },
+      "output_schema": {
+        "type": null,
+        "properties": {
+          "output": {
+            "type": null,
+            "description": null
+          }
+        }
+      }
+    }
+  ],
+
+  "resource": [
+    {
+      "name": null,
+      "description": null,
+      "uri_template": null
+    }
+  ],
+
+  "prompt_template": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "arguments": [
+        {
+          "name": null,
+          "description": null,
+          "required": null
+        }
+      ]
+    }
+  ]
+}

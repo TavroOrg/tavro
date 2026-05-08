@@ -1,0 +1,551 @@
+{
+  "capabilities": {
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "text"
+  ],
+  "defaultOutputModes": [
+    "text"
+  ],
+  "name": "SecuritizedDataQualityAgent",
+  "description": "A single autonomous AI agent for a buy-side investment management firm that ingests unstructured securitized product documents, extracts Critical Data Elements (CDEs), maps them to the FIBO ontology, and performs automated validation against source system records. The agent surfaces discrepancies, misclassifications (e.g., AT1/CoCo bonds), dual CUSIP linkage gaps (144A/Reg S), and benchmark transition errors for human analyst review, while maintaining full BCBS 239-compliant data lineage from source document to reported risk figure.",
+  "preferredTransport": "JSONRPC",
+  "protocol_version": "0.3.0",
+  "instruction_sets": [],
+  "skills": [],
+  "provider": {
+    "organization": "",
+    "url": ""
+  },
+  "url": "",
+  "documentation_url": null,
+  "icon_url": null,
+  "security": null,
+  "security_schemes": null,
+  "signatures": null,
+  "supports_authenticated_extended_card": true,
+  "additional_interfaces": null,
+  "version": "",
+  "identification": {
+    "agent_id": "TAVAC0004434",
+    "agent_internal_id": "TAVAC0004434",
+    "goal_orientation": "0.5",
+    "role": "",
+    "instruction": "You are a specialized financial data agent for a buy-side investment management firm. Your mission is to process unstructured securitized product documents (Offering Circulars, Prospectus Supplements, Term Sheets, Indentures) and ensure the integrity of the firm's securities reference data. For each document: (1) Extract all Critical Data Elements as defined in the CDE registry including CUSIP, ISIN, offering type (144A/Reg S), instrument/deal type, issuer legal name, issuer LEI, tranche/class, principal amount, currency, coupon type, original and current reference index, credit spread, maturity date, seniority/capital tier, credit ratings, governing law, co-lead bookrunners, trustee, AT1 trigger levels, write-down/conversion mechanisms, companion CUSIPs, and collateral type; (2) Map each element to its canonical FIBO ontology class across SEC, FBC, IND, and BE modules; (3) Query the source system for the existing instrument record; (4) Apply the validation rule engine to compare extracted vs. recorded values; (5) Classify any discrepancy by severity: Critical, High, Medium, or Informational; (6) Generate a structured exception report with document citations including page and section references; (7) For Critical/High discrepancies, create an analyst task in the operations workflow system. Always maintain a complete, auditable log of every extraction, mapping decision, and validation result for BCBS 239 data lineage purposes. Never auto-correct source system records without explicit human approval.",
+    "owner": null,
+    "environment": null,
+    "tags": null,
+    "governance_status": null,
+    "reviewer": null,
+    "cost_center": null
+  },
+  "configuration": {
+    "access_scope": null,
+    "memory_type": null,
+    "data_freshness_policy": null,
+    "autonomy_level": "0.5",
+    "reasoning_model": null
+  },
+  "ai_use_case": [
+    {
+    "identifier": null,
+    "name": null,
+    "description": null,
+    "proposed_by": null,
+    "owner": null,
+    "business_function": null,
+    "problem_statement": null,
+    "expected_benefits": null,
+    "priority": null,
+    "status": null
+  }
+],
+  "application": [
+    {
+      "identifier": "a04f3a752b4db610c911fe2bf291bfc4",
+      "name": "Snowflake",
+      "description": "Snowflake is a cloud-agnostic (not AWS, Azure, or GCP specific) data warehouse solution whose initial use case is to serve as a data repository in order to serve core data needs (Fiserv solution data such as Signature, etc.) for both internal BankUnited as well as trusted 3rd party partner access.",
+      "business_criticality": "Low",
+      "emergency_tier": "Non Critical"
+    }
+  ],
+  "ai_model": [
+    {
+      "name": null,
+      "owner": null,
+      "department_executive": null,
+      "description": null
+    }
+  ],
+  "business_process": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "business_criticality": null
+    }
+  ],
+  "physical_ai": [
+    {
+      "identifier": null,
+      "name": null,
+      "type": null,
+      "sensory_input_source": null
+    }
+  ],
+  "llm_model": [],
+  "guardrail": {
+    "name": null,
+    "description": null,
+    "model": null
+  },
+  "mcp_server": {
+    "name": null,
+    "url": null,
+    "version_number": null
+  },
+  "tool": [
+    {
+      "identifier": null,
+      "name": "validation_rule_engine",
+      "description": "Configurable rule engine that compares extracted CDEs against source system records and classifies discrepancies by severity",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "bloomberg_reference_data_api",
+      "description": "API to Bloomberg BVAL for reference pricing, benchmark rate data, and instrument identifiers",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "workflow_ticketing_api",
+      "description": "Creates and routes exception tickets to operations analyst queue with AI-generated explanations and remediation suggestions",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "source_system_query_api",
+      "description": "Read-only API to query OMS and Risk Data Warehouse for existing instrument records to compare against extracted values",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "cusip_isin_lookup",
+      "description": "API to CUSIP Global Services and ANNA for identifier validation and 144A/Reg S companion CUSIP resolution",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "document_parser_ocr",
+      "description": "Parses and extracts text from PDF, Word, and HTML securitized product documents using OCR (e.g., AWS Textract or Azure Document Intelligence)",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "llm_ner_extractor",
+      "description": "LLM-based Named Entity Recognition engine for extracting Critical Data Elements from parsed document text",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "data_lineage_logging_service",
+      "description": "Logs all extraction, mapping, and validation actions with document citations for BCBS 239 audit trail compliance",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    },
+    {
+      "identifier": null,
+      "name": "fibo_ontology_lookup",
+      "description": "API to look up and map extracted CDEs to canonical FIBO ontology classes and properties",
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    }
+  ],
+  "data_source": [
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "36dc66a7ebabf610e182f896fcd0cd87",
+      "target_object_domain": null,
+      "target_object_name": "validation_rule_engine",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "47dca6a7ebabf610e182f896fcd0cd4c",
+      "target_object_domain": null,
+      "target_object_name": "bloomberg_reference_data_api",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "4bdca6a7ebabf610e182f896fcd0cd90",
+      "target_object_domain": null,
+      "target_object_name": "workflow_ticketing_api",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "a2dc66a7ebabf610e182f896fcd0cd47",
+      "target_object_domain": null,
+      "target_object_name": "source_system_query_api",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "b2dc66a7ebabf610e182f896fcd0cde4",
+      "target_object_domain": null,
+      "target_object_name": "cusip_isin_lookup",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "c2dc26a7ebabf610e182f896fcd0cd68",
+      "target_object_domain": null,
+      "target_object_name": "document_parser_ocr",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "dadc26a7ebabf610e182f896fcd0cda5",
+      "target_object_domain": null,
+      "target_object_name": "llm_ner_extractor",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "dfdce6a7ebabf610e182f896fcd0cd07",
+      "target_object_domain": null,
+      "target_object_name": "data_lineage_logging_service",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "eedc26a7ebabf610e182f896fcd0cdfb",
+      "target_object_domain": null,
+      "target_object_name": "fibo_ontology_lookup",
+      "target_object_type": "Tool",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "1cec6aa7ebabf610e182f896fcd0cd4f",
+      "target_object_domain": null,
+      "target_object_name": "Order Management System (OMS - read-only)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "37dc2aa7ebabf610e182f896fcd0cd3e",
+      "target_object_domain": null,
+      "target_object_name": "Indentures and Term Sheets (PDF/HTML/Word)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "63dce6a7ebabf610e182f896fcd0cd4f",
+      "target_object_domain": null,
+      "target_object_name": "Offering Circulars (PDF/HTML/Word - Document Management System)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "64ecaaa7ebabf610e182f896fcd0cd59",
+      "target_object_domain": null,
+      "target_object_name": "FIBO Ontology Repository (EDM Council - semantic mapping reference)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "84ec2aa7ebabf610e182f896fcd0cdfc",
+      "target_object_domain": null,
+      "target_object_name": "CUSIP Global Services / ANNA (ISIN/CUSIP Lookups)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "98ec6aa7ebabf610e182f896fcd0cda3",
+      "target_object_domain": null,
+      "target_object_name": "Portfolio Accounting System (read-only)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "e4ecaaa7ebabf610e182f896fcd0cd04",
+      "target_object_domain": null,
+      "target_object_name": "Risk Data Warehouse (read-only)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "efdce6a7ebabf610e182f896fcd0cddf",
+      "target_object_domain": null,
+      "target_object_name": "Prospectus Supplements (PDF/HTML/Word - Document Management System)",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004434",
+      "source_object_domain": null,
+      "source_object_name": "SecuritizedDataQualityAgent",
+      "source_object_type": "Agent",
+      "target_object_id": "f3dc2aa7ebabf610e182f896fcd0cd84",
+      "target_object_domain": null,
+      "target_object_name": "Bloomberg Terminal / BVAL Data Feeds",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "No",
+      "uses_phi": "No",
+      "uses_pci": "No"
+    }
+  ],
+  "knowledge_source": {
+    "identifier": null,
+    "name": null,
+    "access_mechanism": null
+  },
+  "prompt_template": {
+    "identifier": null,
+    "name": null,
+    "description": null
+  },
+  "memory": {
+    "identifier": null,
+    "name": null,
+    "type": null
+  },
+  "regulation_or_framework": {
+    "name": null,
+    "type": null,
+    "regulatory_authority": null,
+    "jurisdiction": null,
+    "requirement": null
+  },
+  "control": [
+    {
+      "identifier": null,
+      "name": "Data Quality Rules",
+      "objective": "Define criteria to check and maintain data accuracy, completeness, and consistency",
+      "domain": "Data Quality"
+    }
+  ],
+  "risk_assessment": {
+    "identifier": "TAVAGR0003785",
+    "name": "SecuritizedDataQualityAgent_Assessment_2026-03-17",
+    "assessor": "John Doe",
+    "date": "2026-03-17 12:56:30",
+    "blended_risk_score": "2.52",
+    "blended_risk_classification": "Low",
+    "aivss_score": "2.9",
+    "aivss_classification": "High",
+    "regulatory_risk_score": "1",
+    "regulatory_risk_classification": "Other",
+    "state": "Completed"
+  }
+}

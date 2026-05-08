@@ -2,13 +2,17 @@
 # Secrets for docker-compose. Never commit this file to git.
 # Add .env to your .gitignore if not already there.
 
-# PostgreSQL
+# ── Digital Twin PostgreSQL ──────────────────────────────────────────────────
 POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
 
-# Anthropic
-ANTHROPIC_API_KEY=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
+# ── AI Keys ──────────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 
-# pgAdmin
+# ── pgAdmin ───────────────────────────────────────────────────────────────────
 PGADMIN_DEFAULT_EMAIL=admin@tavro.local
 PGADMIN_DEFAULT_PASSWORD=pgadmin_changeme
+
+# Note: the risk stack shares the same PostgreSQL instance (tavro-postgres).
+# No separate risk database credentials are needed.
