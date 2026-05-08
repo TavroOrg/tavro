@@ -36,23 +36,23 @@ const CreateAgentPage: React.FC = () => {
     }
   };
 
-  const inputCls = 'w-full text-sm border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all bg-white placeholder:text-slate-400';
-  const labelCls = 'block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5';
+  const inputCls = 'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500';
+  const labelCls = 'block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1.5';
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-3xl mx-auto pb-12">
       <div className="flex items-center justify-between">
-        <button onClick={() => navigate('/catalog')} className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-all bg-transparent border-none cursor-pointer">
+        <button onClick={() => navigate('/catalog')} className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer">
           <ArrowLeft size={16} /> Back to Agents
         </button>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
-        <div className="flex items-center gap-3 px-8 py-6 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm overflow-hidden border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-3 px-8 py-6 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-50 to-white dark:from-slate-900 dark:to-slate-800">
           <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl"><Bot size={24} /></div>
           <div>
-            <h2 className="text-xl font-bold text-slate-800 tracking-tight">Create Agent</h2>
-            <p className="text-sm text-slate-500 mt-0.5">Register a new agent in the catalog</p>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Create Agent</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Register a new agent in the catalog</p>
           </div>
         </div>
 
@@ -95,15 +95,15 @@ const CreateAgentPage: React.FC = () => {
             </div>
 
             {error && (
-              <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+              <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl px-4 py-3 text-sm">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
           </div>
 
-          <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-slate-50">
-            <button type="button" onClick={() => navigate('/catalog')} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-all">Cancel</button>
+          <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+            <button type="button" onClick={() => navigate('/catalog')} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">Cancel</button>
             <button type="submit" disabled={saving || !form.name.trim() || success} className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'}`}>
               {saving ? <Loader2 size={16} className="animate-spin" /> : success ? <CheckCircle2 size={16} /> : <Bot size={16} />}
               {saving ? 'Creating...' : success ? 'Created!' : 'Create Agent'}
