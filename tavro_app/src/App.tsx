@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import HomePage from './pages/HomePage';
 import Dashboard from './pages/Dashboard';
+import CreateAgentPage from './pages/CreateAgentPage';
 import AgentViewPage from './pages/AgentViewPage';
 import InsightsPage from './pages/InsightsPage';
 import Settings from './pages/Settings';
@@ -87,6 +88,7 @@ function App() {
               >
                 <Route index element={<HomePage />} />
                 <Route path="catalog" element={<Dashboard />} />
+                <Route path="agents/new" element={<CreateAgentPage />} />
                 <Route path="use-cases" element={<UseCasePage />} />
                 <Route path="use-cases/new" element={<CreateUseCasePage />} />
                 <Route path="use-case/:id" element={<UseCaseViewPage />} />
