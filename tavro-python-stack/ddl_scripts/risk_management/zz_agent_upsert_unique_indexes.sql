@@ -1,0 +1,5 @@
+CREATE UNIQUE INDEX IF NOT EXISTS ux_risk_management_agent_risk_assessment_assessment_id
+ON risk_management.agent_risk_assessment (assessment_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_risk_management_agent_risk_scenarios_risk_scenario_id
+ON risk_management.agent_risk_scenarios (risk_scenario_id);

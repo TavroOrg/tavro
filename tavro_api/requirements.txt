@@ -1,3 +1,4 @@
+# ── Digital Twin API ──────────────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.30.1
 asyncpg==0.29.0
@@ -7,3 +8,17 @@ httpx==0.27.0
 python-dotenv==1.0.1
 pandas==2.2.2
 openpyxl==3.1.2
+
+# ── Risk Stack ────────────────────────────────────────────────────────────────
+temporalio
+crewai
+crewai_tools
+psycopg2-binary
+cvss
+rapidfuzz
+PyYAML
+python-jose[cryptography]
+PyJWT
+google-auth
+requests
+boto3
