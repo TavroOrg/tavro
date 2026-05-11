@@ -157,9 +157,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       zitadel-api:
-        condition: service_healthy
+        condition: service_started
       zitadel-login:
-        condition: service_healthy
+        condition: service_started
 
   zitadel-api:
     image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION}
@@ -209,10 +209,10 @@ services:
         - CMD
         - /app/zitadel
         - ready
-      interval: 10s
+      interval: 15s
       timeout: 30s
-      retries: 12
-      start_period: 20s
+      retries: 20
+      start_period: 90s
     volumes:
       - zitadel-bootstrap:/zitadel/bootstrap:rw
     depends_on:
@@ -287,7 +287,7 @@ services:
       - zitadel-bootstrap:/zitadel/bootstrap:ro
     depends_on:
       zitadel-api:
-        condition: service_healthy
+        condition: service_started
     labels:
       - traefik.enable=true
       - traefik.http.services.zitadel-login.loadbalancer.server.port=3000
@@ -345,7 +345,7 @@ services:
       - tavro_runtime_config:/runtime:rw
     depends_on:
       zitadel-api:
-        condition: service_healthy
+        condition: service_started
 
   redis:
     image: ${REDIS_IMAGE}
@@ -449,3 +449,4 @@ volumes:
   tavro_pgadmin:
   zitadel-bootstrap:
   tavro_runtime_config:
+
