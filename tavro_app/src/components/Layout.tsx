@@ -12,6 +12,7 @@ import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
 import { Network } from 'lucide-react';
+import travoLogo from '../assets/travo_logo.png';
 
 type ActivePanel = 'chat' | 'devlog' | null;
 
@@ -147,14 +148,14 @@ const Layout: React.FC = () => {
                     <div className="flex flex-col">
                         {/* Logo */}
                         <div
-                            className={`flex items-center ${isLeftPanelOpen ? 'px-6' : 'px-0 justify-center'} py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
+                            className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
                             onClick={() => navigate('/')}
                         >
-                            <div className="bg-blue-600 text-white p-2 rounded-lg shadow-sm flex-shrink-0">
-                                <Layers size={22} />
+                            <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
+                                <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
                             </div>
                             <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
-                                Agent <span className="text-blue-600">BizOps</span>
+                                Tavro Agent <span className="text-blue-600">BizOps</span>
                             </span>
                         </div>
 
@@ -320,23 +321,23 @@ const Layout: React.FC = () => {
                     </div>
 
                     {/* Bottom Actions */}
-                    <div className={`flex flex-col gap-1 border-t border-slate-100 bg-slate-50/50 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
                         <button
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
                                 ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                : 'bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'}`}
                             title={!isLeftPanelOpen ? "Settings" : undefined}
                         >
-                            <Settings size={18} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                            <Settings size={18} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-300'}`} />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Settings</span>
                         </button>
                         <button
                             onClick={handleLogout}
-                            className={`flex items-center py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-all w-full mt-2 group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
+                            className={`flex items-center py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full mt-2 group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
                             title={!isLeftPanelOpen ? "Sign Out" : undefined}
                         >
-                            <LogOut size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-500 group-hover:text-red-500 transition-colors" />
+                            <LogOut size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Sign Out</span>
                         </button>
                     </div>

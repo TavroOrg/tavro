@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS twin.company (
 CREATE UNIQUE INDEX IF NOT EXISTS company_name_region_uidx
     ON twin.company (lower(name), lower(region));
 
+
 CREATE TABLE IF NOT EXISTS twin.dim_type (
     id             UUID              PRIMARY KEY DEFAULT gen_random_uuid(),
     name           TEXT              NOT NULL UNIQUE,

@@ -243,7 +243,7 @@ const PlaygroundPage: React.FC = () => {
           {!sessionActive ? (
             <button
               onClick={startSession}
-              disabled={!config.useCaseTitle}
+              disabled={!config.agentName.trim()}
               className="flex items-center gap-2 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={14} /> Start session
@@ -432,7 +432,7 @@ const PlaygroundPage: React.FC = () => {
             {!sessionActive && (
               <button
                 onClick={() => { startSession(); setActiveTab('chat'); }}
-                disabled={!config.useCaseTitle}
+                disabled={!config.agentName.trim()}
                 className="flex items-center justify-center gap-2 w-full py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Play size={15} /> Start session and interact

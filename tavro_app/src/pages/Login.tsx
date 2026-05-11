@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Layers, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 import { generatePKCE } from '../services/pkce';
+import travoLogo from '../assets/travo_logo.png';
 
 /**
  * Login Page — FastMCP OAuth 2.0 Authorization Code + PKCE flow.
@@ -110,10 +111,10 @@ const Login: React.FC = () => {
             <div className="w-full max-w-md animate-fade-in">
                 {/* Logo Section */}
                 <div className="flex flex-col items-center mb-10">
-                    <div className="p-4 bg-blue-600 rounded-2xl shadow-2xl shadow-blue-500/20 mb-4">
-                        <Layers size={40} className="text-white" />
+                    <div className="p-4 bg-white rounded-2xl shadow-2xl shadow-blue-500/20 mb-4">
+                        <img src={travoLogo} alt="Tavro" className="w-10 h-10 object-contain" />
                     </div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">Agent Biz Ops</h1>
+                    <h1 className="text-3xl font-bold text-white tracking-tight">Tavro Agent BizOps</h1>
                     <p className="text-slate-500 font-medium mt-1">Enterprise Agentic Operations</p>
                 </div>
 
@@ -192,7 +193,7 @@ const Login: React.FC = () => {
                         )}
                     </form>
                     <div className="mt-6 pt-5 border-t border-white/10 text-center text-xs text-slate-500">
-                        Agent Biz Ops is built on the FastMCP framework. FastMCP handles secure authentication flows, including OAuth with Google and Cognito. When you click the button above, you are redirected to FastMCP to verify your enterprise identity.
+                        Tavro Agent BizOps is built on the FastMCP framework. FastMCP handles secure authentication flows, including OAuth with Google and Cognito. When you click the button above, you are redirected to FastMCP to verify your enterprise identity.
                     </div>
                 </div>
             </div>
