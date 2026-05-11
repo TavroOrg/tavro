@@ -18,11 +18,11 @@ const HomePage: React.FC = () => {
                 <div className="mx-auto w-20 h-20 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 dark:shadow-blue-900/20 mb-6 bg-white">
                     <img src={travoLogo} alt="Tavro" className="w-16 h-16 object-contain" />
                 </div>
-
+                
                 <h1 className="text-3xl md:text-4xl font-bold text-slate-800 dark:text-white tracking-tight mb-4">
                     Welcome to <span className="text-blue-600 dark:text-blue-400">Tavro Agent BizOps</span>
                 </h1>
-
+                
                 <p className="text-slate-500 dark:text-slate-400 text-lg max-w-xl mx-auto mb-10 leading-relaxed">
                     Your command center for Agent Business Operations. Get started by exploring your catalog of agents or reviewing AI use cases.
                 </p>
