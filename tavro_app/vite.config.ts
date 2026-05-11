@@ -7,6 +7,16 @@ export default defineConfig({
   server: {
     port: 9000,
     proxy: {
+      '/runtime': {
+        target: 'http://localhost:9000',
+        changeOrigin: true,
+        bypass: (req) => {
+          const host = req.headers.host || '';
+          if (host.startsWith('localhost:9000') || host.startsWith('127.0.0.1:9000')) {
+            return false;
+          }
+        }
+      },
       '/api/github': {
         target: 'https://github.com',
         changeOrigin: true,

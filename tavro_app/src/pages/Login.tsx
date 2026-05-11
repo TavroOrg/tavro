@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { generatePKCE } from '../services/pkce';
+import { loadAuthConfig } from '../services/authConfig';
 
 /**
  * Login Page - ZITADEL OAuth 2.0 Authorization Code + PKCE flow.
@@ -12,9 +13,10 @@ const Login: React.FC = () => {
 
     useEffect(() => {
         const redirectToZitadel = async () => {
-            const issuer = import.meta.env.VITE_ZITADEL_ISSUER?.replace(/\/$/, '');
-            const clientId = import.meta.env.VITE_ZITADEL_CLIENT_ID;
-            const redirectPath = import.meta.env.VITE_ZITADEL_REDIRECT_PATH || '/auth/callback';
+            const authConfig = await loadAuthConfig();
+            const issuer = authConfig.zitadelIssuer;
+            const clientId = authConfig.zitadelClientId;
+            const redirectPath = authConfig.zitadelRedirectPath;
             const redirectUri = `${window.location.origin}${redirectPath}`;
 
             if (!issuer || !clientId) {
@@ -55,7 +57,7 @@ const Login: React.FC = () => {
             authUrl.searchParams.set('client_id', clientId);
             authUrl.searchParams.set('response_type', 'code');
             authUrl.searchParams.set('redirect_uri', redirectUri);
-            authUrl.searchParams.set('scope', import.meta.env.VITE_ZITADEL_SCOPE || 'openid profile email');
+            authUrl.searchParams.set('scope', authConfig.zitadelScope);
             authUrl.searchParams.set('code_challenge', challenge);
             authUrl.searchParams.set('code_challenge_method', 'S256');
             authUrl.searchParams.set('state', state);

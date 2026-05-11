@@ -73,7 +73,9 @@ services:
       tavro-api:
         condition: service_healthy
     ports:
-      - "9000:80"             # app accessible at localhost:3000
+      - "9000:80"
+    volumes:
+      - tavro_runtime_config:/usr/share/nginx/html/runtime:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
       interval: 20s
@@ -141,6 +143,10 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
       ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Automatically Initialized IAM_LOGIN_CLIENT
       ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${LOGIN_CLIENT_PAT_EXPIRATION}
+      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/bootstrap/admin.pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: tavro-zitadel-admin
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Tavro ZITADEL bootstrap admin
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_ADMIN_PAT_EXPIRATION}
 
       ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: true
       ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: ${ZITADEL_PUBLIC_SCHEME}://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/
@@ -212,7 +218,12 @@ services:
       - traefik.http.routers.zitadel-canonical-websecure.priority=100
 
   zitadel-login:
-    image: ghcr.io/zitadel/zitadel-login:${ZITADEL_VERSION}
+    build:
+      context: .
+      dockerfile: tavro_zitadel_login.Dockerfile
+      args:
+        ZITADEL_VERSION: ${ZITADEL_VERSION}
+    image: tavro-zitadel-login:${ZITADEL_VERSION}
     restart: unless-stopped
     user: "0"
     environment:
@@ -270,6 +281,34 @@ services:
       - traefik.http.routers.zitadel-login-websecure.service=zitadel-login
       - traefik.http.routers.zitadel-login-websecure.priority=250
 
+  zitadel-configure-app:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /work
+    command:
+      - /bin/sh
+      - -c
+      - node /work/scripts/configure-zitadel-app.mjs && tail -f /dev/null
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      ZITADEL_REQUEST_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      ZITADEL_REQUEST_PROTO: ${ZITADEL_PUBLIC_SCHEME}
+      ZITADEL_ADMIN_TOKEN_FILE: /zitadel/bootstrap/admin.pat
+      TAVRO_RUNTIME_CONFIG_FILE: /runtime/tavro-runtime-config.json
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
+      VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+      ZITADEL_PROJECT_NAME: ${ZITADEL_PROJECT_NAME:-tavro-mcp}
+      ZITADEL_APP_NAME: ${ZITADEL_APP_NAME:-tavro-mcp}
+      ZITADEL_APP_REDIRECT_URIS: ${ZITADEL_APP_REDIRECT_URIS}
+      ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS: ${ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS}
+    volumes:
+      - ./scripts:/work/scripts:ro
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+      - tavro_runtime_config:/runtime:rw
+    depends_on:
+      zitadel-api:
+        condition: service_healthy
 
   redis:
     image: ${REDIS_IMAGE}
@@ -297,3 +336,4 @@ volumes:
   tavro_pgdata:
   tavro_pgadmin:
   zitadel-bootstrap:
+  tavro_runtime_config:
