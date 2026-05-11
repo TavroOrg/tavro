@@ -1,6 +1,12 @@
+x-risk-worker-base: &risk_worker_base
+  image: tavro-risk-worker:local
+  build:
+    context: ./tavro-python-stack
+    dockerfile: Dockerfile.worker
+
 services:
 
-  # ── PostgreSQL 16 + AGE + pgvector ──────────────────────────────────────────
+  # ── PostgreSQL 16 + AGE + pgvector + Risk schemas ────────────────────────────
   tavro-postgres:
     build:
       context: .
@@ -27,34 +33,65 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── FastAPI — Digital Twin API ───────────────────────────────────────────────
+  # ── Temporal — Workflow Engine ───────────────────────────────────────────────
+  risk-temporal:
+    build:
+      context: ./tavro-python-stack
+      dockerfile: services/Dockerfile
+    container_name: risk-temporal
+    restart: unless-stopped
+    command: temporal server start-dev --ip 0.0.0.0 --ui-public-path /temporal --ui-port 8233
+    ports:
+      - "7233:7233"   # Temporal gRPC
+      - "8233:8233"   # Temporal web UI → http://localhost:8233/temporal
+
+  # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
   tavro-api:
     build:
-      context: ./tavro_api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: tavro_api/Dockerfile
     container_name: tavro-api
     restart: unless-stopped
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      risk-temporal:
+        condition: service_started
     environment:
+      # Digital Twin DB (asyncpg)
       DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      # AI keys
       ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY:             ${OPENAI_API_KEY}
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
-    # Port 8000 no longer exposed externally — nginx proxies to it
-    # Uncomment the lines below if you need direct API access for debugging:
+      # Risk DB (psycopg2 — same postgres instance, different schemas)
+      POSTGRES_HOST:     tavro-postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       tavro
+      # Risk schema names
+      CORE_GLUE_DB_NAME:            core
+      CURATED_GLUE_DB_NAME:         curated
+      RISK_MANAGEMENT_GLUE_DB_NAME: risk_management
+      # Temporal
+      TEMPORAL_ADDRESS:     risk-temporal:7233
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
     ports:
-     - "8000:8000"
+      - "8000:8000"
     volumes:
-      - ./tavro_api:/app    # live reload for dev — remove for production
+      - ./tavro_api:/app                                       # live reload — tavro_api code
+      - ./tavro-python-stack/services:/app/services:ro         # live reload — risk services
+      - ./tavro-python-stack/utils:/app/utils:ro               # live reload — risk utils
+      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro   # risk config
+      - ./tavro-python-stack/agent_cards:/app/agent_cards      # agent card output dir
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
 
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
@@ -331,6 +368,81 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
 
+  # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────
+  risk-mcp-server:
+    build:
+      context: ./tavro-python-stack
+      dockerfile: Dockerfile.mcp
+    container_name: risk-mcp-server
+    restart: unless-stopped
+    ports:
+      - "9001:9000"   # 9000 is taken by tavro-app; host port is 9001
+    environment:
+      PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      POSTGRES_HOST:     tavro-postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       tavro
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
+      mcp_host:          0.0.0.0
+      mcp_port:          "9000"
+    volumes:
+      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
+      - ./tavro-python-stack/agent_cards:/app/agent_cards
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+
+  # ── Risk Worker — idle container for manual commands ─────────────────────────
+  risk-worker:
+    <<: *risk_worker_base
+    container_name: risk-worker
+    restart: unless-stopped
+    command: tail -f /dev/null
+    environment:
+      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DROP_DIR: /app/sample-data
+      API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
+    volumes:
+      - ./tavro-python-stack/sample-data:/app/sample-data
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+
+  # ── Sample Loader — one-shot: load sample agent cards ────────────────────────
+  risk-sample-loader:
+    <<: *risk_worker_base
+    container_name: risk-sample-loader
+    profiles: ["manual"]
+    command: python -u worker.py
+    environment:
+      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DROP_DIR: /app/sample-data
+      API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
+    volumes:
+      - ./tavro-python-stack/sample-data:/app/sample-data
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+      tavro-api:
+        condition: service_healthy
+
+  # ── Connector — one-shot: pull agent cards from external sources ──────────────
+  risk-connector:
+    profiles: ["manual"]
+    <<: *risk_worker_base
+    container_name: risk-connector
+    command: python -u run_connectors.py
+    environment:
+      PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+    volumes:
+      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+      tavro-api:
+        condition: service_healthy
 
 volumes:
   tavro_pgdata:

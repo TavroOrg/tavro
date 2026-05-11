@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
@@ -95,6 +95,12 @@ const Dashboard: React.FC = () => {
                 {/* Pagination controls — only shown when NOT searching */}
                 {!isSearching && (
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => navigate('/agents/new')}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
+                        >
+                            <Plus size={16} /> New Agent
+                        </button>
                         <button
                             onClick={handlePrev}
                             disabled={page === 1 || loading}

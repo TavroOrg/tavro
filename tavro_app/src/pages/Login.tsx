@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import { generatePKCE } from '../services/pkce';
 import { loadAuthConfig } from '../services/authConfig';
 

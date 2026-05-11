@@ -1,0 +1,295 @@
+{
+  "capabilities": {
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "text"
+  ],
+  "defaultOutputModes": [
+    "text"
+  ],
+  "name": "Sales Engagement Planning Agent",
+  "description": "Your main role is to help sales reps plan for sales calls with doctors, call center agents, pricing strategy for a drug. ",
+  "preferredTransport": "JSONRPC",
+  "protocol_version": "0.3.0",
+  "instruction_sets": [],
+  "skills": [],
+  "provider": {
+    "organization": "",
+    "url": ""
+  },
+  "url": "",
+  "documentation_url": null,
+  "icon_url": null,
+  "security": null,
+  "security_schemes": null,
+  "signatures": null,
+  "supports_authenticated_extended_card": true,
+  "additional_interfaces": null,
+  "version": "",
+  "identification": {
+    "agent_id": "TAVAC0004410",
+    "agent_internal_id": "TAVAC0004410",
+    "goal_orientation": "0.0",
+    "role": "",
+    "instruction": "Objective\nSupport pharmaceutical sales representatives in preparing for interactions with healthcare providers by analyzing relevant commercial, clinical, and engagement data and generating insights that help guide compliant and informed sales discussions.\nYour task is to review available engagement and prescribing data and generate recommended insights that sales representatives can use when planning meetings or calls with healthcare providers.\n\nCore Rules\nAlways base insights on available commercial, clinical, and engagement data.\nNever generate or suggest off-label promotional claims.\nOnly reference approved drug indications and validated clinical evidence.\nDo not fabricate prescribing trends, physician behavior, or payer coverage data.\nClearly distinguish between data-driven insights and inferred recommendations.\nFlag any missing, incomplete, or conflicting data sources.\nEnsure all recommendations remain compliant with pharmaceutical promotional regulations.\nDo not suggest pricing strategies or promotional actions that violate regulatory guidelines.\nTreat all outputs as sales preparation guidance, not instructions for direct physician communication.\nMaintain confidentiality of physician and patient-related data.\n\nStep 1 — Retrieve Engagement Context\nGather all relevant inputs for the healthcare provider engagement, including where available:\nphysician profile and specialty\nprevious sales interactions\nprescribing history and trends\npayer formulary coverage\nrecent clinical studies related to promoted drugs\ntreatment guidelines\ninternal sales performance insights\nIf important information is missing, note the gap before generating recommendations.\n\nStep 2 — Validate Data Quality\n\nReview retrieved information for:\noutdated prescribing data\nmissing physician profile details\nconflicting payer coverage information\nincomplete engagement history\nFlag potential inconsistencies before continuing.\n\nStep 3 — Analyze Physician Engagement Patterns\nEvaluate the physician’s engagement history and prescribing behavior, including:\nhistorical interactions with sales representatives\nprescribing patterns within therapeutic areas\nresponse to previous clinical information\nareas of clinical interest\nAvoid assumptions beyond the available evidence.\n\nStep 4 — Review Clinical and Market Context\nAnalyze relevant information that may influence discussions, such as:\nnewly published clinical studies\ntreatment guideline updates\nformulary or payer coverage changes\ntherapeutic competition in the market\nOnly reference validated and approved clinical information.\n\nStep 5 — Generate Engagement Insights\nProduce recommended insights that may help guide the sales representative’s preparation.\nExamples include:\nrelevant clinical updates\ntherapeutic insights related to physician specialty\nformulary considerations affecting prescribing\ndiscussion themes aligned with the physician’s interests\nEnsure recommendations remain compliant with pharmaceutical promotional standards.\n\nStep 6 — Identify Risks or Compliance Considerations\nHighlight potential risks such as:\noff-label discussion risk\noutdated clinical references\nincomplete data sources\npayer restrictions affecting prescribing\nClearly flag compliance considerations.\n\nStep 7 — Generate Recommendations\nProduce a summary of recommended engagement insights including:\nphysician context summary\nprescribing insights\nrelevant clinical updates\nrecommended discussion themes\ncompliance considerations\nDo not generate promotional claims beyond approved drug labeling.\n\nStep 8 — Human Review Safeguard\nExplicitly state that all results require scientist review.\n\nFinal Output Format\nSales Engagement Planning Summary\nPhysician Context\n- Specialty:\n- Engagement History:\n- Prescribing Trends:\nRelevant Insights\n- Clinical updates related to therapy\n- Formulary or payer coverage considerations\n- Therapeutic discussion themes\nRecommended Preparation Points\n1. Key insight\n2. Supporting evidence\n3. Compliance note\nData Quality Notes\n- Missing or incomplete information\nHuman Review Required\nSales representatives must review and validate all insights before using them in physician interactions.",
+    "owner": "Jane Doe",
+    "environment": null,
+    "tags": null,
+    "governance_status": null,
+    "reviewer": null,
+    "cost_center": null
+  },
+  "configuration": {
+    "access_scope": null,
+    "memory_type": null,
+    "data_freshness_policy": null,
+    "autonomy_level": "0.0",
+    "reasoning_model": null
+  },
+  "ai_use_case": [
+    {
+    "identifier": null,
+    "name": null,
+    "description": null,
+    "proposed_by": null,
+    "owner": null,
+    "business_function": null,
+    "problem_statement": null,
+    "expected_benefits": null,
+    "priority": null,
+    "status": null
+  }
+],
+  "application": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "business_criticality": null,
+      "emergency_tier": null
+    }
+  ],
+  "ai_model": [
+    {
+      "name": null,
+      "owner": null,
+      "department_executive": null,
+      "description": null
+    }
+  ],
+  "business_process": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "business_criticality": null
+    }
+  ],
+  "physical_ai": [
+    {
+      "identifier": null,
+      "name": null,
+      "type": null,
+      "sensory_input_source": null
+    }
+  ],
+  "llm_model": [],
+  "guardrail": {
+    "name": null,
+    "description": null,
+    "model": null
+  },
+  "mcp_server": {
+    "name": null,
+    "url": null,
+    "version_number": null
+  },
+  "tool": [
+    {
+      "identifier": null,
+      "name": null,
+      "description": null,
+      "delegation_possible": "false",
+      "allowed_delegates": null,
+      "parameter_name": null,
+      "parameter_type": null,
+      "default_value": null,
+      "input_schema": null,
+      "output_schema": null
+    }
+  ],
+  "data_source": [
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "TAVAC0004410",
+      "source_object_domain": null,
+      "source_object_name": "Sales Engagement Planning Agent",
+      "source_object_type": "Agent",
+      "target_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "target_object_domain": null,
+      "target_object_name": "sales_engagement_data_source",
+      "target_object_type": "Table",
+      "access_level": null,
+      "uses_pii": "Yes",
+      "uses_phi": "Yes",
+      "uses_pci": "No"
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "19eebd653b2ffed08d52312c95e45ada",
+      "target_object_domain": null,
+      "target_object_name": "Drug Name",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "3bbe3d253b2ffed08d52312c95e45a5c",
+      "target_object_domain": null,
+      "target_object_name": "Engagement Date",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "55def5653b2ffed08d52312c95e45a1c",
+      "target_object_domain": null,
+      "target_object_name": "Interaction Type",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "ca6ef5253b2ffed08d52312c95e45af9",
+      "target_object_domain": null,
+      "target_object_name": "Physician ID",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "d3ae35653b2ffed08d52312c95e45a8f",
+      "target_object_domain": null,
+      "target_object_name": "Sales Representative ID",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "db9e71653b2ffed08d52312c95e45ab2",
+      "target_object_domain": null,
+      "target_object_name": "Physician Specialty",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    },
+    {
+      "relationship_id": null,
+      "parent_relationship_id": null,
+      "source_object_id": "821e3de13b2ffed08d52312c95e45a49",
+      "source_object_domain": null,
+      "source_object_name": "sales_engagement_data_source",
+      "source_object_type": "Table",
+      "target_object_id": "e37efde13b2ffed08d52312c95e45ab0",
+      "target_object_domain": null,
+      "target_object_name": "Physician Name",
+      "target_object_type": "Column",
+      "access_level": null,
+      "uses_pii": null,
+      "uses_phi": null,
+      "uses_pci": null
+    }
+  ],
+  "knowledge_source": {
+    "identifier": null,
+    "name": null,
+    "access_mechanism": null
+  },
+  "prompt_template": {
+    "identifier": null,
+    "name": null,
+    "description": null
+  },
+  "memory": {
+    "identifier": null,
+    "name": null,
+    "type": null
+  },
+  "regulation_or_framework": {
+    "name": null,
+    "type": null,
+    "regulatory_authority": null,
+    "jurisdiction": null,
+    "requirement": null
+  },
+  "control": [
+    {
+      "identifier": null,
+      "name": null,
+      "objective": null,
+      "domain": null
+    }
+  ],
+  "risk_assessment": {
+    "identifier": "TAVAGR0003768",
+    "name": "Sales Engagement Planning Agent_Assessment_2026-03-10",
+    "assessor": "Jane Doe",
+    "date": "2026-03-25 13:02:14",
+    "blended_risk_score": "6.2",
+    "blended_risk_classification": "Medium",
+    "aivss_score": "6",
+    "aivss_classification": "Medium",
+    "regulatory_risk_score": "7",
+    "regulatory_risk_classification": "High Risk",
+    "state": "Completed"
+  }
+}

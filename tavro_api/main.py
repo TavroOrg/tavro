@@ -1,35 +1,90 @@
-# =============================================================
-# Tavro Digital Twin — FastAPI
-# main.py
-# =============================================================
+import asyncio
+import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from temporalio.worker import Worker
+from temporalio.client import Client
 
 from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph
-
 from api.routers import blueprint
-
 from api.routers import playground
-
 from api.routers import compliance, compliance_research
-
 from api.routers import audit
+from api.routers import risk
+
+from services.workflow.workflow import RiskManagerWorkflow
+from services.activity.activities import (
+    classify_risk_activity,
+    aars_risk_evaluation_activity,
+    insert_risk_assessment_activity,
+    score_cvss_activity,
+    update_cvss_activity,
+    insert_core_activity,
+    summary_activity,
+    insert_summary_activity,
+    update_data_sources,
+    refresh_curated_agent_360_activity,
+    create_local_agent_card_activity,
+)
+
+TASK_QUEUE = "risk-classification-queue"
+TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+
+
+async def _run_temporal_worker():
+    print("Connecting Temporal worker...")
+    client = await Client.connect(TEMPORAL_ADDRESS)
+    worker = Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RiskManagerWorkflow],
+        activities=[
+            classify_risk_activity,
+            aars_risk_evaluation_activity,
+            insert_risk_assessment_activity,
+            score_cvss_activity,
+            update_cvss_activity,
+            insert_core_activity,
+            summary_activity,
+            insert_summary_activity,
+            update_data_sources,
+            refresh_curated_agent_360_activity,
+            create_local_agent_card_activity,
+        ],
+    )
+    print(f"Temporal worker listening on queue: {TASK_QUEUE}")
+    await worker.run()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    worker_task = asyncio.create_task(_run_temporal_worker())
+    yield
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
+
 
 app = FastAPI(
-    title="Tavro Digital Twin API",
-    description="REST API for browsing, editing, and visualising the Tavro digital twin.",
+    title="Tavro API",
+    description="REST API for the Tavro digital twin and risk classification platform.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten to your React dev server in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Digital Twin routes ───────────────────────────────────────────────────────
 app.include_router(companies.router,   prefix="/api/v1/companies",   tags=["Companies"])
 app.include_router(dim_types.router,   prefix="/api/v1/dim-types",   tags=["Dimension Types"])
 app.include_router(dim_nodes.router,   prefix="/api/v1/dim-nodes",   tags=["Dimension Nodes"])
@@ -38,11 +93,13 @@ app.include_router(source_refs.router, prefix="/api/v1/source-refs", tags=["Sour
 app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Graph"])
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
+app.include_router(compliance.router,          prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(compliance_research.router, prefix="/api/v1/compliance", tags=["Compliance Research"])
+app.include_router(audit.router,       prefix="/api/v1/audit",       tags=["Audit"])
 
-app.include_router(compliance.router,          prefix="/api/v1/compliance",          tags=["Compliance"])
-app.include_router(compliance_research.router, prefix="/api/v1/compliance",          tags=["Compliance Research"])
+# ── Risk Classification routes ────────────────────────────────────────────────
+app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
 
-app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit"])
 
 @app.get("/health")
 def health():
