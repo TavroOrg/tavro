@@ -159,28 +159,26 @@ class McpClientService {
     private _pendingRequests = new Map<string, Promise<any>>();
     private _cachedDataStore: any = null;
 
+    private getMcpUrl(): string {
+        const configured = localStorage.getItem('tavro_mcp_url')?.trim();
+        return configured || 'http://localhost:9001/mcp';
+    }
+
     private getToken(): string {
         return localStorage.getItem('tavro_id_token') || localStorage.getItem('tavro_access_token') || '';
     }
 
     private handleUnauthorized(bodyText?: string) {
-        appLogger.warn('401 Unauthorized — token rejected by MCP server', { body: bodyText });
-        localStorage.removeItem('tavro_auth');
-        localStorage.removeItem('tavro_access_token');
-        localStorage.removeItem('tavro_id_token');
-        localStorage.removeItem('tavro_raw_access_token');
-        localStorage.removeItem('tavro_mcp_refresh_token');
-        localStorage.removeItem('tavro_pkce_verifier');
-        localStorage.removeItem('tavro_auth_flow_origin');
+        appLogger.warn('401 Unauthorized - token rejected by MCP server (preserving app login session)', { body: bodyText });
         this.disconnect();
-        window.dispatchEvent(new CustomEvent('tavro:unauthorized', { detail: { body: bodyText } }));
+        throw new Error('MCP rejected authentication (401). Check MCP URL/provider alignment in Settings.');
     }
 
     /** Manual connect via fetch to capture mcp-session-id and tenant_id */
     async connect(): Promise<void> {
         if (this.initialized) return;
 
-        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const mcpUrl = this.getMcpUrl();
         const savedTenantId = localStorage.getItem('tavro_tenant_id');
 
         if (localStorage.getItem('tavro_cache_mode') === 'true') {
@@ -253,7 +251,7 @@ class McpClientService {
 
         if (!this.initialized) await this.connect();
 
-        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const mcpUrl = this.getMcpUrl();
         const t0 = Date.now();
 
         // Ensure mandatory original_prompt is present for server.py logging
@@ -347,7 +345,7 @@ class McpClientService {
             ];
         }
         await this.connect();
-        const mcpUrl = localStorage.getItem('tavro_mcp_url') || 'https://agent-cloud.tavro.ai/cognito/mcp';
+        const mcpUrl = this.getMcpUrl();
         const res = await fetch(mcpUrl, {
             method: 'POST',
             headers: {
