@@ -3,7 +3,8 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     ActivitySquare, Library, Layers, Settings,
     LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
-    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck
+    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
+    AppWindow, BriefcaseBusiness
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -207,6 +208,28 @@ const Layout: React.FC = () => {
                             >
                                 <Library size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
+                            </button>
+
+                            <button
+                                onClick={() => navigate('/applications')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
+                                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Applications" : undefined}
+                            >
+                                <AppWindow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
+                            </button>
+
+                            <button
+                                onClick={() => navigate('/processes')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
+                                    ? 'bg-emerald-50 dark:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Business Processes" : undefined}
+                            >
+                                <BriefcaseBusiness size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Business Processes</span>
                             </button>
 
                             <button

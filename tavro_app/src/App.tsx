@@ -29,6 +29,10 @@ import { ComplianceProvider } from './context/ComplianceContext';
 
 import AuditCenterPage from './pages/AuditCenterPage';
 import AuditRunDetailPage from './pages/AuditRunDetailPage';
+import BusinessApplicationsPage from './pages/BusinessApplicationsPage';
+import BusinessApplicationViewPage from './pages/BusinessApplicationViewPage';
+import BusinessProcessesPage from './pages/BusinessProcessesPage';
+import BusinessProcessViewPage from './pages/BusinessProcessViewPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
@@ -110,6 +114,10 @@ function App() {
 
                 <Route path="audit" element={<AuditCenterPage />} />
                 <Route path="audit/:runId" element={<AuditRunDetailPage />} />
+                <Route path="applications" element={<BusinessApplicationsPage />} />
+                <Route path="applications/:id" element={<BusinessApplicationViewPage />} />
+                <Route path="processes" element={<BusinessProcessesPage />} />
+                <Route path="processes/:id" element={<BusinessProcessViewPage />} />
 
               </Route>
             </Routes>

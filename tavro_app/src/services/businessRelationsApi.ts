@@ -1,0 +1,82 @@
+import type {
+  AgentRelationsPayload,
+  BusinessApplicationRecord,
+  BusinessProcessRecord,
+} from '../types/businessRelations';
+
+const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
+const V1 = `${BASE}/api/v1/business-relations`;
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem('tavro_access_token');
+  return token
+    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    : { 'Content-Type': 'application/json' };
+}
+
+async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${V1}${path}`, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+class BusinessRelationsApi {
+  async listApplications(search?: string): Promise<BusinessApplicationRecord[]> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/applications${suffix}`);
+  }
+
+  async getApplication(applicationId: string): Promise<BusinessApplicationRecord> {
+    return req(`/applications/${encodeURIComponent(applicationId)}`);
+  }
+
+  async listProcesses(search?: string): Promise<BusinessProcessRecord[]> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/processes${suffix}`);
+  }
+
+  async getProcess(processId: string): Promise<BusinessProcessRecord> {
+    return req(`/processes/${encodeURIComponent(processId)}`);
+  }
+
+  async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
+    return req(`/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromApplication(agentId: string, applicationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async linkAgentToProcess(agentId: string, processId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+      method: 'DELETE',
+    });
+  }
+}
+
+export const businessRelationsApi = new BusinessRelationsApi();
