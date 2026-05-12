@@ -168,7 +168,7 @@ class CopilotConnector(BaseConnector):
 
         init_pool()
 
-        for agent in agent_cards[:2]:
+        for agent in agent_cards:
             process_card(agent["data"])
 
         print("Copilot execution completed successfully")
