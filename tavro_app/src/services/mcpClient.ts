@@ -2,6 +2,7 @@ import { AgentData } from '../types/agent';
 import { UseCaseSummary, UseCaseDetail } from '../types/useCase';
 import { appLogger } from './logger';
 import { streamChat, getLLMConfig, ChatMessage } from './llmService';
+import { isAccessTokenExpired, refreshAccessToken } from './auth';
 
 type ChatViewContext = {
     viewType?: string;
@@ -165,13 +166,35 @@ class McpClientService {
     }
 
     private getToken(): string {
-        return localStorage.getItem('tavro_id_token') || localStorage.getItem('tavro_access_token') || '';
+        // MCP OAuth token takes priority over Zitadel tokens
+        return localStorage.getItem('tavro_mcp_access_token')
+            || localStorage.getItem('tavro_access_token')
+            || localStorage.getItem('tavro_id_token')
+            || '';
+    }
+
+    private async ensureValidToken(): Promise<string> {
+        // If a dedicated MCP OAuth token exists, use it directly —
+        // its lifecycle is managed by the MCP OAuth flow, not Zitadel.
+        const mcpToken = localStorage.getItem('tavro_mcp_access_token');
+        if (mcpToken) return mcpToken;
+
+        // Fall back to Zitadel token with silent refresh
+        if (isAccessTokenExpired()) {
+            const ok = await refreshAccessToken();
+            if (!ok) {
+                throw new Error('Token refresh failed. Please log in again.');
+            }
+        }
+        const token = this.getToken();
+        if (!token) throw new Error('No auth token. Please log in again.');
+        return token;
     }
 
     private handleUnauthorized(bodyText?: string) {
-        appLogger.warn('401 Unauthorized - token rejected by MCP server (preserving app login session)', { body: bodyText });
+        appLogger.warn('401 Unauthorized from MCP server', { body: bodyText });
         this.disconnect();
-        throw new Error('MCP rejected authentication (401). Check MCP URL/provider alignment in Settings.');
+        throw new Error('MCP request unauthorized. Please check your credentials.');
     }
 
     /** Manual connect via fetch to capture mcp-session-id and tenant_id */
@@ -186,8 +209,7 @@ class McpClientService {
             return;
         }
 
-        const token = this.getToken();
-        if (!token) throw new Error('No auth token. Please log in again.');
+        const token = await this.ensureValidToken();
 
         try {
             const initBody = {
@@ -206,6 +228,7 @@ class McpClientService {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json, text/event-stream',
+                'ngrok-skip-browser-warning': 'true',
                 ...(savedTenantId ? { 'tenant_id': savedTenantId } : {})
             };
 
@@ -243,61 +266,69 @@ class McpClientService {
         }
     }
 
+    // Write tools always execute live — cache mode only applies to reads.
+    private static readonly WRITE_TOOLS = new Set([
+        'create_agent',
+        'create_ai_use_case',
+        'create_ai_use_case_agent_relationship',
+        'create_risk_assessment',
+    ]);
+
     private async callTool(name: string, args: any = {}): Promise<any> {
-        if (localStorage.getItem('tavro_cache_mode') === 'true') return await this._getCachedToolResult(name, args);
+        const isCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
+        if (isCacheMode && !McpClientService.WRITE_TOOLS.has(name)) {
+            return await this._getCachedToolResult(name, args);
+        }
 
-        const token = this.getToken();
-        if (!token) throw new Error('No auth token');
-
+        const token = await this.ensureValidToken();
+        if (!this.sessionId) this.initialized = false;
         if (!this.initialized) await this.connect();
 
         const mcpUrl = this.getMcpUrl();
         const t0 = Date.now();
-
-        // Ensure mandatory original_prompt is present for server.py logging
         const toolArgs = {
             original_prompt: args.original_prompt || `User requested ${name} via Dashboard UI`,
             ...args
         };
-
         const requestBody = {
             jsonrpc: '2.0',
             id: Date.now(),
             method: 'tools/call',
-            params: {
-                name,
-                arguments: toolArgs
-            }
+            params: { name, arguments: toolArgs }
         };
-
         const requestHeaders = {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
             'mcp-session-id': this.sessionId || '',
             'Accept': 'application/json, text/event-stream',
+            'ngrok-skip-browser-warning': 'true',
             ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
         };
 
-        appLogger.tool(`${name} → request`, { headers: requestHeaders, body: requestBody });
+        appLogger.tool(`${name} -> request`, { headers: requestHeaders, body: requestBody });
 
-        try {
+        const executeToolCall = async (): Promise<any> => {
             const res = await fetch(mcpUrl, {
                 method: 'POST',
                 headers: requestHeaders,
                 body: JSON.stringify(requestBody)
             });
+            const rawText = await res.text();
 
             if (!res.ok) {
-                const body = await res.text();
-                if (res.status === 401) this.handleUnauthorized(body);
-                throw new Error(`Tool call failed: HTTP ${res.status}: ${body}`);
+                if (res.status === 401) this.handleUnauthorized(rawText);
+                const isSessionError = (res.status === 404 || res.status === 400)
+                    && rawText.toLowerCase().includes('session not found');
+                if (isSessionError) {
+                    const e: any = new Error(`Tool call failed: HTTP ${res.status}: ${rawText}`);
+                    e.code = 'MCP_SESSION_NOT_FOUND';
+                    throw e;
+                }
+                throw new Error(`Tool call failed: HTTP ${res.status}: ${rawText}`);
             }
 
-            const rawText = await res.text();
             let json: any;
-
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
-                // Extract JSON from SSE format: "data: { ... }"
                 const lines = rawText.split('\n');
                 for (const line of lines) {
                     if (line.trim().startsWith('data:')) {
@@ -308,7 +339,7 @@ class McpClientService {
                                 json = parsed;
                                 break;
                             }
-                        } catch { /* skip */ }
+                        } catch { }
                     }
                 }
             } else {
@@ -317,20 +348,39 @@ class McpClientService {
 
             if (!json) throw new Error(`No valid MCP response found in: ${rawText.substring(0, 100)}`);
             if (json.error) {
+                if (String(json.error.message || '').toLowerCase().includes('session not found')) {
+                    const e: any = new Error(`MCP Error ${json.error.code}: ${json.error.message}`);
+                    e.code = 'MCP_SESSION_NOT_FOUND';
+                    throw e;
+                }
                 throw new Error(`MCP Error ${json.error.code}: ${json.error.message}`);
             }
 
             const content = json.result?.content as any[];
             if (!content || !content.length) return null;
-
             const text = content[0].text;
-            let result: any;
-            try { result = JSON.parse(text); } catch { result = text; }
-            appLogger.tool(`${name} ← result`, { response: result, durationMs: Date.now() - t0 });
-            return result;
+            try { return JSON.parse(text); } catch { return text; }
+        };
 
+        try {
+            let result: any;
+            try {
+                result = await executeToolCall();
+            } catch (err: any) {
+                if (err?.code === 'MCP_SESSION_NOT_FOUND') {
+                    appLogger.warn(`Stale MCP session for ${name}; reconnecting and retrying once.`);
+                    this.sessionId = null;
+                    this.initialized = false;
+                    await this.connect();
+                    result = await executeToolCall();
+                } else {
+                    throw err;
+                }
+            }
+            appLogger.tool(`${name} <- result`, { response: result, durationMs: Date.now() - t0 });
+            return result;
         } catch (err: any) {
-            appLogger.error(`callTool failed — ${name}`, { error: err.message });
+            appLogger.error(`callTool failed - ${name}`, { error: err.message });
             throw err;
         }
     }
@@ -353,6 +403,7 @@ class McpClientService {
                 'Content-Type': 'application/json',
                 'mcp-session-id': this.sessionId || '',
                 'Accept': 'application/json, text/event-stream',
+                'ngrok-skip-browser-warning': 'true',
                 ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
             },
             body: JSON.stringify({
@@ -750,8 +801,46 @@ class McpClientService {
     }
 
     async createAiUseCase(fields: any): Promise<any> {
-        const data = await this.callTool('create_ai_use_case', fields);
-        this._useCaseCache = null;
+        // Server-side create_ai_use_case is strict; pass only supported args.
+        const title = (fields?.title ?? '').trim();
+        const description = (fields?.description ?? '').trim() || title;
+        const businessProblemStatement = (fields?.business_problem_statement ?? '').trim() || description;
+        const expectedBenefits = (fields?.expected_benefits ?? '').trim() || description;
+        const rawPriority = String(fields?.priority ?? '').trim();
+        const priorityMap: Record<string, string> = {
+            'critical': '1 - Critical',
+            'high': '2 - High',
+            'medium': '3 - Moderate',
+            'moderate': '3 - Moderate',
+            'low': '4 - Low',
+            'planning': '5 - Planning',
+            '1': '1 - Critical',
+            '2': '2 - High',
+            '3': '3 - Moderate',
+            '4': '4 - Low',
+            '5': '5 - Planning',
+            '1 - critical': '1 - Critical',
+            '2 - high': '2 - High',
+            '3 - moderate': '3 - Moderate',
+            '4 - low': '4 - Low',
+            '5 - planning': '5 - Planning',
+        };
+        const priority = priorityMap[rawPriority.toLowerCase()] || '3 - Moderate';
+        const payload = {
+            title,
+            description,
+            business_problem_statement: businessProblemStatement,
+            expected_benefits: expectedBenefits,
+            priority,
+            ...(fields?.regulatory_impact ? { regulatory_impact: fields.regulatory_impact } : {}),
+            ...(fields?.solution_approach ? { solution_approach: fields.solution_approach } : {}),
+            ...(fields?.use_case_owner ? { use_case_owner: fields.use_case_owner } : {}),
+            ...(fields?.impacted_business_applications ? { impacted_business_applications: fields.impacted_business_applications } : {}),
+            ...(fields?.impacted_business_processes ? { impacted_business_processes: fields.impacted_business_processes } : {}),
+            ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
+        };
+        const data = await this.callTool('create_ai_use_case', payload);
+        this.invalidateCache();
         return data;
     }
 
@@ -760,7 +849,22 @@ class McpClientService {
     }
 
     async createAgent(args: any): Promise<any> {
-        return await this.callTool('create_agent', args);
+        // Server-side create_agent has a strict signature; drop unsupported
+        // UI-only fields (owner/role/environment) to avoid tool validation errors.
+        const agentName = (args?.agent_name ?? '').trim();
+        const description = (args?.description ?? '').trim() || agentName;
+        const instruction = (args?.instruction ?? '').trim() || description;
+        const payload = {
+            agent_name: agentName,
+            description,
+            instruction,
+            ...(args?.tools ? { tools: args.tools } : {}),
+            ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
+        };
+        const data = await this.callTool('create_agent', payload);
+        this.invalidateCache();
+        return data;
     }
 
     async createRiskAssessment(agent_id: string): Promise<any> {

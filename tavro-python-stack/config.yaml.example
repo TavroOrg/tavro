@@ -55,7 +55,7 @@ fastapi:
 
 mcp:
   mcp_host: "localhost"
-  mcp_port: "9000"
+  mcp_port: "9001"
   # Optional: set to your public ngrok URL when exposing the MCP server remotely.
   # Example: "https://abc123.ngrok-free.app"
   # Leave empty to default to http://localhost:9000

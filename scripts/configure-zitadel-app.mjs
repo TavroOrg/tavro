@@ -31,7 +31,10 @@ const postLogoutRedirectUris = required("ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS")
 const body = {
   redirectUris,
   responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-  grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+  grantTypes: [
+    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+  ],
   appType: "OIDC_APP_TYPE_WEB",
   authMethodType: "OIDC_AUTH_METHOD_TYPE_NONE",
   postLogoutRedirectUris,
@@ -178,7 +181,7 @@ function writeRuntimeConfig(clientId) {
     zitadelIssuer: issuer,
     zitadelClientId: clientId,
     zitadelRedirectPath: process.env.VITE_ZITADEL_REDIRECT_PATH || "/auth/callback",
-    zitadelScope: process.env.VITE_ZITADEL_SCOPE || "openid profile email",
+    zitadelScope: process.env.VITE_ZITADEL_SCOPE || "openid profile email offline_access",
   };
 
   fs.mkdirSync(path.dirname(runtimeConfigFile), { recursive: true });
