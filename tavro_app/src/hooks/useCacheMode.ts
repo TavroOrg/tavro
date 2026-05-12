@@ -17,8 +17,6 @@ export function useCacheMode(): [boolean, (value: boolean) => void] {
         localStorage.setItem(CACHE_MODE_KEY, value ? 'true' : 'false');
         setCacheModeState(value);
         window.dispatchEvent(new Event('tavro_settings_change'));
-        // Refresh the page so all services pick up the new mode.
-        window.location.reload();
     };
 
     useEffect(() => {

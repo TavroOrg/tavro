@@ -35,12 +35,24 @@ const CreateUseCasePage: React.FC = () => {
         setSaving(true);
         setError(null);
         try {
-            await mcpClient.createAiUseCase(form);
+            await mcpClient.createAiUseCase({
+                title: form.name.trim(),
+                description: form.description.trim(),
+                business_problem_statement: form.problem_statement.trim(),
+                expected_benefits: form.expected_benefits.trim(),
+                priority: form.priority,
+                ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
+                ...(form.proposed_by.trim() && { proposed_by: form.proposed_by.trim() }),
+                ...(form.function.trim() && { business_function: form.function.trim() }),
+                ...(form.status && { status: form.status }),
+            });
+            // Switch to live mode so the catalog reads go to the MCP server and show
+            // the newly created use case (cache mode serves stale pre-generated data).
+            localStorage.setItem('tavro_cache_mode', 'false');
+            window.dispatchEvent(new Event('tavro_settings_change'));
             setSuccess(true);
-            refresh(); // refresh context immediately
-            setTimeout(() => {
-                navigate('/use-cases');
-            }, 1200);
+            refresh();
+            setTimeout(() => navigate('/use-cases'), 1200);
         } catch (err: any) {
             setError(err.message || 'Failed to create use case. Please try again.');
         } finally {
