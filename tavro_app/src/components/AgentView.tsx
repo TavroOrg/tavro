@@ -4,6 +4,7 @@ import AgentHeader from './AgentHeader';
 import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
 import AgentImpact from './AgentImpact';
+import AgentRelatedTab from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
@@ -12,12 +13,22 @@ interface AgentViewProps {
     agent: AgentData;
 }
 
-type TabType = 'IDENTIFICATION' | 'CONFIG' | 'IMPACT' | 'LINEAGE' | 'RISK' | 'CONTEXT';
+type TabType =
+    | 'IDENTIFICATION'
+    | 'CONFIG'
+    | 'IMPACT'
+    | 'RELATED_APPLICATIONS'
+    | 'RELATED_PROCESSES'
+    | 'LINEAGE'
+    | 'RISK'
+    | 'CONTEXT';
 
 const TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
     { id: 'CONFIG', label: 'Technical Configuration' },
     { id: 'IMPACT', label: 'Business Impact' },
+    { id: 'RELATED_APPLICATIONS', label: 'Applications' },
+    { id: 'RELATED_PROCESSES', label: 'Processes' },
     { id: 'LINEAGE', label: 'Lineage Map' },
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
@@ -64,6 +75,14 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
 
                 {activeTab === 'IMPACT' && (
                     <div className="mt-4"><AgentImpact agent={agent} /></div>
+                )}
+
+                {activeTab === 'RELATED_APPLICATIONS' && (
+                    <div className="mt-4"><AgentRelatedTab agent={agent} mode="applications" /></div>
+                )}
+
+                {activeTab === 'RELATED_PROCESSES' && (
+                    <div className="mt-4"><AgentRelatedTab agent={agent} mode="processes" /></div>
                 )}
 
                 {activeTab === 'LINEAGE' && (

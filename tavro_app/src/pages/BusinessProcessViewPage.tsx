@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
-  CheckCircle2,
   Loader2,
   PlusCircle,
   Search,
@@ -28,6 +27,15 @@ const BusinessProcessViewPage: React.FC = () => {
   const [searchAgents, setSearchAgents] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+
+  const agentNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of agents) {
+      const aid = a.identification?.agent_id;
+      if (aid) map.set(aid, a.name);
+    }
+    return map;
+  }, [agents]);
 
   const load = async () => {
     if (!id) return;
@@ -261,17 +269,19 @@ const BusinessProcessViewPage: React.FC = () => {
               )}
               {process.related_agents.map((rel, idx) => {
                 const relId = rel.agent_id || `missing-${idx}`;
+                const displayName = rel.agent_id
+                  ? (agentNameById.get(rel.agent_id) || rel.agent_name || rel.agent_id)
+                  : (rel.agent_name || 'Unknown Agent');
                 return (
                   <div key={`${relId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       {rel.agent_id ? (
                         <Link to={`/agent/${encodeURIComponent(rel.agent_id)}`} className="text-sm font-semibold text-emerald-700 hover:underline">
-                          {rel.agent_name || rel.agent_id}
+                          {displayName}
                         </Link>
                       ) : (
-                        <p className="text-sm font-semibold text-slate-700">{rel.agent_name || 'Unknown Agent'}</p>
+                        <p className="text-sm font-semibold text-slate-700">{displayName}</p>
                       )}
-                      <p className="text-[11px] font-mono text-slate-400">{rel.agent_id || 'No agent_id on relation'}</p>
                     </div>
                     <button
                       onClick={() => rel.agent_id && removeAgent(rel.agent_id)}
@@ -325,11 +335,6 @@ const BusinessProcessViewPage: React.FC = () => {
                 );
               })}
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-            <CheckCircle2 size={13} />
-            Relation changes are persisted in `core.agent_business_processes` and synchronized to `core.business_processes`.
           </div>
         </div>
       )}
