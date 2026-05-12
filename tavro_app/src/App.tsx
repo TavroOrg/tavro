@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { isAccessTokenExpired, refreshAccessToken, clearAuth } from './services/auth';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import HomePage from './pages/HomePage';
@@ -35,25 +37,57 @@ import BusinessProcessesPage from './pages/BusinessProcessesPage';
 import BusinessProcessViewPage from './pages/BusinessProcessViewPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
+
+type AuthStatus = 'checking' | 'ok' | 'expired';
+
+function useAuthCheck(): AuthStatus {
+  const [status, setStatus] = useState<AuthStatus>(() => {
+    if (localStorage.getItem('tavro_auth') !== 'true') return 'expired';
+    if (!isAccessTokenExpired()) return 'ok';
+    return 'checking'; // token expired — try silent refresh
+  });
+
+  useEffect(() => {
+    if (status !== 'checking') return;
+    refreshAccessToken().then(ok => setStatus(ok ? 'ok' : 'expired'));
+  }, [status]);
+
+  // Re-run the check whenever session_expired fires from an API layer.
+  useEffect(() => {
+    const handler = () => setStatus('expired');
+    window.addEventListener('tavro:session_expired', handler);
+    return () => window.removeEventListener('tavro:session_expired', handler);
+  }, []);
+
+  return status;
+}
+
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
-  const isAuthenticated = localStorage.getItem('tavro_auth') === 'true';
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  const auth = useAuthCheck();
+  if (auth === 'checking') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-blue-500" />
+      </div>
+    );
+  }
+  return auth === 'ok' ? children : <Navigate to="/login" replace />;
 };
 
 /**
- * Listens for 'tavro:unauthorized' dispatched by McpClientService (401 responses).
- * Uses React Router navigate() — soft redirect that preserves the console.
+ * Listens for 'tavro:session_expired' — dispatched by API clients when a
+ * token refresh attempt fails. Clears auth state then soft-redirects to /login.
  */
-function UnauthorizedHandler() {
+function SessionExpiredHandler() {
   const navigate = useNavigate();
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      console.warn('[App] tavro:unauthorized — navigating to /login:', detail?.body);
+    const handler = () => {
+      console.warn('[App] tavro:session_expired — clearing auth and navigating to /login');
+      clearAuth();
       navigate('/login', { replace: true });
     };
-    window.addEventListener('tavro:unauthorized', handler);
-    return () => window.removeEventListener('tavro:unauthorized', handler);
+    window.addEventListener('tavro:session_expired', handler);
+    return () => window.removeEventListener('tavro:session_expired', handler);
   }, [navigate]);
   return null;
 }
@@ -64,7 +98,7 @@ function App() {
     <BrowserRouter>
       <ThemeProvider>
         <ChatProvider>
-          <UnauthorizedHandler />
+          <SessionExpiredHandler />
           <div className="App">
             <Routes>
               {/* Public routes */}
