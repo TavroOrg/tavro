@@ -1345,11 +1345,27 @@ class AgentMetadataExporter:
         """
         Retrieve paginated application catalog with single optimized query.
         """
-        start, end = cls._resolve_record_window(start_record=start_record, max_records=max_records, record_range=record_range)
-        tenant_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""] else ""
+        start, end = cls._resolve_record_window(
+            start_record=start_record,
+            max_records=max_records,
+            record_range=record_range
+        )
 
-        # Single query with window function - no pagination filter needed
-        result_rows = cls.execute_select(f"SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records FROM {cls.CORE_GLUE_DB_NAME}.business_applications WHERE is_current = true {tenant_where}")
+        tenant_where = (
+            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
+            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+            else ""
+        )
+
+        query = f"""
+            SELECT *,
+                ROW_NUMBER() OVER () AS rn,
+                COUNT(*) OVER () AS total_records
+            FROM {cls.CORE_GLUE_DB_NAME}.business_applications
+            {tenant_where}
+        """
+
+        result_rows = cls.execute_select(query)
 
         total = 0
         rows = []
@@ -1361,7 +1377,13 @@ class AgentMetadataExporter:
             if start <= rn <= end:
                 rows.append(row)
 
-        return {"start_record": start, "end_record": end, "record_count": len(rows), "total_records": total, "data": rows}
+        return {
+            "start_record": start,
+            "end_record": end,
+            "record_count": len(rows),
+            "total_records": total,
+            "data": rows
+        }
 
     @classmethod
     def get_process_catalog(
@@ -1374,11 +1396,27 @@ class AgentMetadataExporter:
         """
         Retrieve paginated process catalog with single optimized query.
         """
-        start, end = cls._resolve_record_window(start_record=start_record, max_records=max_records, record_range=record_range)
-        tenant_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""] else ""
+        start, end = cls._resolve_record_window(
+            start_record=start_record,
+            max_records=max_records,
+            record_range=record_range
+        )
 
-        # Single query with window function
-        result_rows = cls.execute_select(f"SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records FROM {cls.CORE_GLUE_DB_NAME}.business_processes WHERE is_current = true {tenant_where}")
+        tenant_where = (
+            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
+            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+            else ""
+        )
+
+        query = f"""
+            SELECT *,
+                ROW_NUMBER() OVER () AS rn,
+                COUNT(*) OVER () AS total_records
+            FROM {cls.CORE_GLUE_DB_NAME}.business_processes
+            {tenant_where}
+        """
+
+        result_rows = cls.execute_select(query)
 
         total = 0
         rows = []
@@ -1390,7 +1428,13 @@ class AgentMetadataExporter:
             if start <= rn <= end:
                 rows.append(row)
 
-        return {"start_record": start, "end_record": end, "record_count": len(rows), "total_records": total, "data": rows}
+        return {
+            "start_record": start,
+            "end_record": end,
+            "record_count": len(rows),
+            "total_records": total,
+            "data": rows
+        }
 
     @classmethod
     def create_company(
