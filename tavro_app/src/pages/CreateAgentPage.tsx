@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
@@ -22,6 +22,7 @@ const CreateAgentPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const redirectTimerRef = useRef<number | null>(null);
 
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
@@ -46,14 +47,24 @@ const CreateAgentPage: React.FC = () => {
         ...(form.environment.trim() && { environment: form.environment.trim() }),
       });
       setSuccess(true);
+      sessionStorage.setItem(
+        'tavro_catalog_notice',
+        'Agent created successfully. Risk assessment has been triggered and is processing in the background. The agent will appear in the catalog shortly.'
+      );
       refresh();
-      setTimeout(() => navigate('/catalog'), 1000);
+      redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);
     } catch (err: any) {
       setError(err.message || 'Failed to create agent.');
     } finally {
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const inputCls =
     'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500';

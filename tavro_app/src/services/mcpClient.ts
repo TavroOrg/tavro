@@ -281,34 +281,21 @@ class McpClientService {
         }
 
         const token = await this.ensureValidToken();
-
-        // If there's no real session (e.g. connect() ran in cache-mode and
-        // only set initialized without talking to the server), force a real
-        // connect before making a live request.
-        if (!this.sessionId) {
-            this.initialized = false;
-        }
+        if (!this.sessionId) this.initialized = false;
         if (!this.initialized) await this.connect();
 
         const mcpUrl = this.getMcpUrl();
         const t0 = Date.now();
-
-        // Ensure mandatory original_prompt is present for server.py logging
         const toolArgs = {
             original_prompt: args.original_prompt || `User requested ${name} via Dashboard UI`,
             ...args
         };
-
         const requestBody = {
             jsonrpc: '2.0',
             id: Date.now(),
             method: 'tools/call',
-            params: {
-                name,
-                arguments: toolArgs
-            }
+            params: { name, arguments: toolArgs }
         };
-
         const requestHeaders = {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
@@ -318,26 +305,30 @@ class McpClientService {
             ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
         };
 
-        appLogger.tool(`${name} → request`, { headers: requestHeaders, body: requestBody });
+        appLogger.tool(`${name} -> request`, { headers: requestHeaders, body: requestBody });
 
-        try {
+        const executeToolCall = async (): Promise<any> => {
             const res = await fetch(mcpUrl, {
                 method: 'POST',
                 headers: requestHeaders,
                 body: JSON.stringify(requestBody)
             });
+            const rawText = await res.text();
 
             if (!res.ok) {
-                const body = await res.text();
-                if (res.status === 401) this.handleUnauthorized(body);
-                throw new Error(`Tool call failed: HTTP ${res.status}: ${body}`);
+                if (res.status === 401) this.handleUnauthorized(rawText);
+                const isSessionError = (res.status === 404 || res.status === 400)
+                    && rawText.toLowerCase().includes('session not found');
+                if (isSessionError) {
+                    const e: any = new Error(`Tool call failed: HTTP ${res.status}: ${rawText}`);
+                    e.code = 'MCP_SESSION_NOT_FOUND';
+                    throw e;
+                }
+                throw new Error(`Tool call failed: HTTP ${res.status}: ${rawText}`);
             }
 
-            const rawText = await res.text();
             let json: any;
-
             if (res.headers.get('content-type')?.includes('text/event-stream')) {
-                // Extract JSON from SSE format: "data: { ... }"
                 const lines = rawText.split('\n');
                 for (const line of lines) {
                     if (line.trim().startsWith('data:')) {
@@ -348,7 +339,7 @@ class McpClientService {
                                 json = parsed;
                                 break;
                             }
-                        } catch { /* skip */ }
+                        } catch { }
                     }
                 }
             } else {
@@ -357,20 +348,39 @@ class McpClientService {
 
             if (!json) throw new Error(`No valid MCP response found in: ${rawText.substring(0, 100)}`);
             if (json.error) {
+                if (String(json.error.message || '').toLowerCase().includes('session not found')) {
+                    const e: any = new Error(`MCP Error ${json.error.code}: ${json.error.message}`);
+                    e.code = 'MCP_SESSION_NOT_FOUND';
+                    throw e;
+                }
                 throw new Error(`MCP Error ${json.error.code}: ${json.error.message}`);
             }
 
             const content = json.result?.content as any[];
             if (!content || !content.length) return null;
-
             const text = content[0].text;
-            let result: any;
-            try { result = JSON.parse(text); } catch { result = text; }
-            appLogger.tool(`${name} ← result`, { response: result, durationMs: Date.now() - t0 });
-            return result;
+            try { return JSON.parse(text); } catch { return text; }
+        };
 
+        try {
+            let result: any;
+            try {
+                result = await executeToolCall();
+            } catch (err: any) {
+                if (err?.code === 'MCP_SESSION_NOT_FOUND') {
+                    appLogger.warn(`Stale MCP session for ${name}; reconnecting and retrying once.`);
+                    this.sessionId = null;
+                    this.initialized = false;
+                    await this.connect();
+                    result = await executeToolCall();
+                } else {
+                    throw err;
+                }
+            }
+            appLogger.tool(`${name} <- result`, { response: result, durationMs: Date.now() - t0 });
+            return result;
         } catch (err: any) {
-            appLogger.error(`callTool failed — ${name}`, { error: err.message });
+            appLogger.error(`callTool failed - ${name}`, { error: err.message });
             throw err;
         }
     }
@@ -791,7 +801,45 @@ class McpClientService {
     }
 
     async createAiUseCase(fields: any): Promise<any> {
-        const data = await this.callTool('create_ai_use_case', fields);
+        // Server-side create_ai_use_case is strict; pass only supported args.
+        const title = (fields?.title ?? '').trim();
+        const description = (fields?.description ?? '').trim() || title;
+        const businessProblemStatement = (fields?.business_problem_statement ?? '').trim() || description;
+        const expectedBenefits = (fields?.expected_benefits ?? '').trim() || description;
+        const rawPriority = String(fields?.priority ?? '').trim();
+        const priorityMap: Record<string, string> = {
+            'critical': '1 - Critical',
+            'high': '2 - High',
+            'medium': '3 - Moderate',
+            'moderate': '3 - Moderate',
+            'low': '4 - Low',
+            'planning': '5 - Planning',
+            '1': '1 - Critical',
+            '2': '2 - High',
+            '3': '3 - Moderate',
+            '4': '4 - Low',
+            '5': '5 - Planning',
+            '1 - critical': '1 - Critical',
+            '2 - high': '2 - High',
+            '3 - moderate': '3 - Moderate',
+            '4 - low': '4 - Low',
+            '5 - planning': '5 - Planning',
+        };
+        const priority = priorityMap[rawPriority.toLowerCase()] || '3 - Moderate';
+        const payload = {
+            title,
+            description,
+            business_problem_statement: businessProblemStatement,
+            expected_benefits: expectedBenefits,
+            priority,
+            ...(fields?.regulatory_impact ? { regulatory_impact: fields.regulatory_impact } : {}),
+            ...(fields?.solution_approach ? { solution_approach: fields.solution_approach } : {}),
+            ...(fields?.use_case_owner ? { use_case_owner: fields.use_case_owner } : {}),
+            ...(fields?.impacted_business_applications ? { impacted_business_applications: fields.impacted_business_applications } : {}),
+            ...(fields?.impacted_business_processes ? { impacted_business_processes: fields.impacted_business_processes } : {}),
+            ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
+        };
+        const data = await this.callTool('create_ai_use_case', payload);
         this.invalidateCache();
         return data;
     }

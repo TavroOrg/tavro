@@ -5,6 +5,7 @@ import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
 import AgentCatalog from '../components/AgentCatalog';
+import TimedInfoToast from '../components/TimedInfoToast';
 
 /** Server-enforced page size (max_records). */
 const PAGE_SIZE = 10;
@@ -77,6 +78,7 @@ const Dashboard: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
+            <TimedInfoToast storageKey="tavro_catalog_notice" />
 
             {/* Header row: title + pagination (hidden during search) */}
             <div className="flex items-center justify-between">

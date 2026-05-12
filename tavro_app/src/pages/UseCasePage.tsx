@@ -5,6 +5,7 @@ import { UseCaseSummary } from '../types/useCase';
 import { mcpClient } from '../services/mcpClient';
 import { useUseCases } from '../context/UseCaseContext';
 import UseCaseCatalog from '../components/UseCaseCatalog';
+import TimedInfoToast from '../components/TimedInfoToast';
 
 /** Server-enforced page size. */
 const PAGE_SIZE = 10;
@@ -66,6 +67,7 @@ const UseCasePage: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
+            <TimedInfoToast storageKey="tavro_use_case_notice" />
 
             {/* Header + pagination */}
             <div className="flex items-center justify-between">
