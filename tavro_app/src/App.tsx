@@ -149,8 +149,10 @@ function App() {
                 <Route path="audit" element={<AuditCenterPage />} />
                 <Route path="audit/:runId" element={<AuditRunDetailPage />} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />
+                <Route path="applications/new" element={<BusinessApplicationViewPage />} />
                 <Route path="applications/:id" element={<BusinessApplicationViewPage />} />
                 <Route path="processes" element={<BusinessProcessesPage />} />
+                <Route path="processes/new" element={<BusinessProcessViewPage />} />
                 <Route path="processes/:id" element={<BusinessProcessViewPage />} />
 
               </Route>

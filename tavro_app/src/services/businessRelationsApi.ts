@@ -1,7 +1,9 @@
 import type {
   AgentRelationsPayload,
   BusinessApplicationRecord,
+  BusinessApplicationUpsertPayload,
   BusinessProcessRecord,
+  BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
@@ -39,6 +41,29 @@ class BusinessRelationsApi {
     return req(`/applications/${encodeURIComponent(applicationId)}`);
   }
 
+  async createApplication(payload: BusinessApplicationUpsertPayload): Promise<BusinessApplicationRecord> {
+    return req('/applications', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateApplication(
+    applicationId: string,
+    payload: BusinessApplicationUpsertPayload,
+  ): Promise<BusinessApplicationRecord> {
+    return req(`/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteApplication(applicationId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async listProcesses(search?: string): Promise<BusinessProcessRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
@@ -48,6 +73,29 @@ class BusinessRelationsApi {
 
   async getProcess(processId: string): Promise<BusinessProcessRecord> {
     return req(`/processes/${encodeURIComponent(processId)}`);
+  }
+
+  async createProcess(payload: BusinessProcessUpsertPayload): Promise<BusinessProcessRecord> {
+    return req('/processes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateProcess(
+    processId: string,
+    payload: BusinessProcessUpsertPayload,
+  ): Promise<BusinessProcessRecord> {
+    return req(`/processes/${encodeURIComponent(processId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteProcess(processId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}`, {
+      method: 'DELETE',
+    });
   }
 
   async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {

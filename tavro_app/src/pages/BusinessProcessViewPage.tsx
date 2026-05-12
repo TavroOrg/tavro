@@ -3,27 +3,226 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
+  Info,
   Loader2,
+  Pencil,
   PlusCircle,
+  Save,
   Search,
+  Trash2,
   Unlink2,
   Workflow,
+  XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
-import type { BusinessProcessRecord } from '../types/businessRelations';
+import type {
+  BusinessProcessRecord,
+  BusinessProcessUpsertPayload,
+} from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 
 type Tab = 'overview' | 'related';
+type Option = { label: string; value: string };
+
+const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: 'Tier 1 (Systemic)', value: '1.0' },
+  { label: 'Tier 2 (Core)', value: '0.7' },
+  { label: 'Tier 3 (Operational)', value: '0.4' },
+  { label: 'Tier 4 (Experimental)', value: '0.1' },
+];
+
+const REPUTATIONAL_IMPACT_OPTIONS: Option[] = [
+  { label: 'Toxic', value: '1' },
+  { label: 'Adverse', value: '0.7' },
+  { label: 'Private', value: '0.4' },
+  { label: 'Contained', value: '0.1' },
+];
+
+const FINANCIAL_IMPACT_OPTIONS: Option[] = [
+  { label: 'Systemic', value: '1' },
+  { label: 'Material', value: '0.7' },
+  { label: 'Absorbable', value: '0.4' },
+  { label: 'Immaterial', value: '0.1' },
+];
+
+const REGULATORY_IMPACT_OPTIONS: Option[] = [
+  { label: 'Restricted', value: '1' },
+  { label: 'Statutory', value: '0.7' },
+  { label: 'Governed', value: '0.4' },
+  { label: 'Unregulated', value: '0.1' },
+];
+
+const PROCESS_HEALTH_OPTIONS: Option[] = [
+  { label: 'Stable', value: 'Stable' },
+  { label: 'Needs Improvement', value: 'Needs Improvement' },
+  { label: 'At Risk', value: 'At Risk' },
+];
+
+interface ProcessFormState {
+  process_number: string;
+  process_name: string;
+  process_description: string;
+  parent_process_id: string;
+  stakeholders: string;
+  owner: string;
+  operators: string;
+  business_criticality: string;
+  reputational_impact: string;
+  num_of_associated_agents: string;
+  agent_risk_tier: string;
+  residual_risk_classification: string;
+  inherent_risk_classification: string;
+  financial_impact: string;
+  regulatory_impact: string;
+  agent_risk_exposure: string;
+  blended_risk_score: string;
+  residual_risk_classification_score: string;
+  inherent_risk_classification_score: string;
+  sla: string;
+  process_health_state: string;
+}
+
+const HINTS: Record<string, string> = {
+  business_criticality:
+    'Business Criticality indicates how essential a process is. Tier 1 is mission-critical and Tier 4 has minimal business impact.',
+  reputational_impact:
+    'Reputational Impact captures external visibility risk from Toxic to Contained.',
+  financial_impact:
+    'Financial Impact captures severity from Systemic to Immaterial.',
+  regulatory_impact:
+    'Regulatory Impact captures compliance exposure from Restricted to Unregulated.',
+  associated_agents:
+    'Indicates the total number of agents associated with the process.',
+  agent_risk_exposure:
+    'ARE represents process risk using highest related agent AIVSS and average criticality/financial/reputational/regulatory impacts.',
+};
+
+const inputCls =
+  'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
+const textAreaCls = `${inputCls} resize-none`;
+
+const toText = (value: unknown, fallback = ''): string => {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+};
+
+const toNullable = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const emptyForm = (): ProcessFormState => ({
+  process_number: '',
+  process_name: '',
+  process_description: '',
+  parent_process_id: '',
+  stakeholders: '',
+  owner: '',
+  operators: '',
+  business_criticality: '',
+  reputational_impact: '',
+  num_of_associated_agents: '0',
+  agent_risk_tier: '',
+  residual_risk_classification: '',
+  inherent_risk_classification: '',
+  financial_impact: '',
+  regulatory_impact: '',
+  agent_risk_exposure: '0',
+  blended_risk_score: '0',
+  residual_risk_classification_score: '0',
+  inherent_risk_classification_score: '0',
+  sla: '',
+  process_health_state: '',
+});
+
+const formFromProcess = (proc: BusinessProcessRecord): ProcessFormState => ({
+  process_number: toText(proc.process_number),
+  process_name: toText(proc.process_name),
+  process_description: toText(proc.process_description),
+  parent_process_id: toText(proc.parent_process_id),
+  stakeholders: toText(proc.stakeholders),
+  owner: toText(proc.owner),
+  operators: toText(proc.operators),
+  business_criticality: toText(proc.business_criticality),
+  reputational_impact: toText(proc.reputational_impact),
+  num_of_associated_agents: toText(proc.num_of_associated_agents, '0'),
+  agent_risk_tier: toText(proc.agent_risk_tier),
+  residual_risk_classification: toText(proc.residual_risk_classification),
+  inherent_risk_classification: toText(proc.inherent_risk_classification),
+  financial_impact: toText(proc.financial_impact),
+  regulatory_impact: toText(proc.regulatory_impact),
+  agent_risk_exposure: toText(proc.agent_risk_exposure, '0'),
+  blended_risk_score: toText(proc.blended_risk_score, '0'),
+  residual_risk_classification_score: toText(proc.residual_risk_classification_score, '0'),
+  inherent_risk_classification_score: toText(proc.inherent_risk_classification_score, '0'),
+  sla: toText(proc.sla),
+  process_health_state: toText(proc.process_health_state),
+});
+
+const buildProcessPayload = (form: ProcessFormState): BusinessProcessUpsertPayload => ({
+  process_number: toNullable(form.process_number),
+  process_name: toNullable(form.process_name),
+  process_description: toNullable(form.process_description),
+  parent_process_id: toNullable(form.parent_process_id),
+  stakeholders: toNullable(form.stakeholders),
+  owner: toNullable(form.owner),
+  operators: toNullable(form.operators),
+  business_criticality: toNullable(form.business_criticality),
+  reputational_impact: toNullable(form.reputational_impact),
+  financial_impact: toNullable(form.financial_impact),
+  regulatory_impact: toNullable(form.regulatory_impact),
+  sla: toNullable(form.sla),
+  process_health_state: toNullable(form.process_health_state),
+});
+
+const labelFromOptions = (value: string, options: Option[]): string => {
+  if (!value) return 'N/A';
+  const found = options.find(o => o.value === value);
+  return found ? found.label : value;
+};
+
+const HintLabel: React.FC<{ label: string; hint?: string }> = ({ label, hint }) => (
+  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+    {label}
+    {hint && (
+      <span title={hint}>
+        <Info size={12} className="text-slate-400" />
+      </span>
+    )}
+  </label>
+);
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-4">
+    <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+    {children}
+  </div>
+);
+
+const ReadValue: React.FC<{ label: string; value: string; hint?: string }> = ({ label, value, hint }) => (
+  <div className="flex flex-col gap-1.5">
+    <HintLabel label={label} hint={hint} />
+    <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">{value || 'N/A'}</p>
+  </div>
+);
 
 const BusinessProcessViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { agents } = useCatalog();
+  const isCreateMode = !id || id === 'new';
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<ProcessFormState>(emptyForm);
+  const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
+  const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
+  const [editing, setEditing] = useState(isCreateMode);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   const [searchAgents, setSearchAgents] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
@@ -37,13 +236,35 @@ const BusinessProcessViewPage: React.FC = () => {
     return map;
   }, [agents]);
 
+  const processNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of allProcesses) {
+      map.set(p.business_process_id, p.process_name || p.business_process_id);
+    }
+    return map;
+  }, [allProcesses]);
+
+  const loadParentOptions = async () => {
+    try {
+      const data = await businessRelationsApi.listProcesses();
+      setAllProcesses(data);
+    } catch {
+      setAllProcesses([]);
+    }
+  };
+
   const load = async () => {
-    if (!id) return;
+    if (!id || isCreateMode) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await businessRelationsApi.getProcess(id);
-      setProcess(data);
+      const [proc, processes] = await Promise.all([
+        businessRelationsApi.getProcess(id),
+        businessRelationsApi.listProcesses(),
+      ]);
+      setProcess(proc);
+      setForm(formFromProcess(proc));
+      setAllProcesses(processes);
     } catch (err: any) {
       setError(err.message || 'Failed to load business process');
     } finally {
@@ -52,8 +273,19 @@ const BusinessProcessViewPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isCreateMode) {
+      setProcess(null);
+      setForm(emptyForm());
+      setEditing(true);
+      setLoading(false);
+      setTab('overview');
+      setError(null);
+      loadParentOptions();
+      return;
+    }
+    setEditing(false);
     load();
-  }, [id]);
+  }, [id, isCreateMode]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -76,6 +308,57 @@ const BusinessProcessViewPage: React.FC = () => {
       );
     });
   }, [agents, linkedAgentIds, searchAgents]);
+
+  const setField = (key: keyof ProcessFormState, value: string) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setActionError(null);
+    try {
+      const payload = buildProcessPayload(form);
+      if (isCreateMode) {
+        const created = await businessRelationsApi.createProcess(payload);
+        navigate(`/processes/${encodeURIComponent(created.business_process_id)}`, { replace: true });
+        return;
+      }
+      if (!process) return;
+      const updated = await businessRelationsApi.updateProcess(process.business_process_id, payload);
+      setProcess(updated);
+      setForm(formFromProcess(updated));
+      setEditing(false);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to save process');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setActionError(null);
+    if (isCreateMode) {
+      navigate('/processes');
+      return;
+    }
+    if (process) setForm(formFromProcess(process));
+    setEditing(false);
+  };
+
+  const handleDelete = async () => {
+    if (!process) return;
+    const ok = window.confirm(`Delete process "${process.process_name || process.business_process_id}"?`);
+    if (!ok) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await businessRelationsApi.deleteProcess(process.business_process_id);
+      navigate('/processes');
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to delete process');
+      setDeleting(false);
+    }
+  };
 
   const addAgent = async (agentId: string) => {
     if (!process) return;
@@ -114,7 +397,7 @@ const BusinessProcessViewPage: React.FC = () => {
     );
   }
 
-  if (error || !process) {
+  if (error) {
     return (
       <div className="flex flex-col gap-4">
         <button
@@ -127,12 +410,20 @@ const BusinessProcessViewPage: React.FC = () => {
           <AlertCircle size={20} className="mt-0.5 shrink-0" />
           <div>
             <p className="font-bold text-sm">Could not load process</p>
-            <p className="text-xs mt-1 text-red-400">{error || 'Unknown error'}</p>
+            <p className="text-xs mt-1 text-red-400">{error}</p>
           </div>
         </div>
       </div>
     );
   }
+
+  const processTitle = form.process_name || process?.process_name || 'New Process';
+  const processId = process?.business_process_id || 'Will be generated on create';
+  const currentProcessId = process?.business_process_id || '';
+
+  const selectableParents = allProcesses.filter(
+    p => p.business_process_id !== currentProcessId,
+  );
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
@@ -143,32 +434,63 @@ const BusinessProcessViewPage: React.FC = () => {
         >
           <ArrowLeft size={16} /> Back to Processes
         </button>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {editing ? (
+            <>
+              <button
+                onClick={handleCancelEdit}
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              >
+                <XCircle size={15} /> Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                {isCreateMode ? 'Create Process' : 'Save Changes'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  setTab('overview');
+                  setEditing(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              >
+                <Pencil size={15} /> Edit
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                Delete
+              </button>
+            </>
+          )}
+        </div>
       </div>
+
+      {actionError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {actionError}
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="h-2 bg-gradient-to-r from-emerald-600 to-teal-500" />
         <div className="p-6">
-          <h2 className="text-xl font-bold text-slate-800">
-            {process.process_name || process.business_process_id}
-          </h2>
-          <p className="text-xs font-mono text-slate-400 mt-1">{process.business_process_id}</p>
-          <p className="text-sm text-slate-600 mt-3">
-            {process.process_description || 'No description available.'}
-          </p>
-          <div className="flex items-center gap-2 mt-4 flex-wrap">
-            {process.business_criticality && (
-              <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                {process.business_criticality}
-              </span>
-            )}
-            <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
-              {process.related_agent_count} related agents
-            </span>
-            <span className="text-[10px] font-semibold bg-cyan-50 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-              <Workflow size={10} />
-              {process.related_processes.length} related processes
-            </span>
-          </div>
+          <h2 className="text-xl font-bold text-slate-800">{processTitle}</h2>
+          <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
+          <p className="text-sm text-slate-600 mt-3">{form.process_description || 'No description available.'}</p>
         </div>
       </div>
 
@@ -181,76 +503,259 @@ const BusinessProcessViewPage: React.FC = () => {
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
-          Overview
+          Details
         </button>
-        <button
-          onClick={() => setTab('related')}
-          className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
-            tab === 'related'
-              ? 'border-emerald-600 text-emerald-700'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Related Agents
-        </button>
+        {!isCreateMode && !editing && (
+          <button
+            onClick={() => setTab('related')}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+              tab === 'related'
+                ? 'border-emerald-600 text-emerald-700'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Related Agents
+          </button>
+        )}
       </div>
 
       {tab === 'overview' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Owner</p>
-            <p className="text-sm text-slate-700 mt-1">{process.owner || 'N/A'}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Parent Process</p>
-            <p className="text-sm text-slate-700 mt-1">
-              {process.parent_process_name || process.parent_process_id || 'N/A'}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Operators</p>
-            <p className="text-sm text-slate-700 mt-1">{process.operators || 'N/A'}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Stakeholders</p>
-            <p className="text-sm text-slate-700 mt-1">{process.stakeholders || 'N/A'}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Agent Risk Tier</p>
-            <p className="text-sm text-slate-700 mt-1">{process.agent_risk_tier || 'N/A'}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Regulatory Impact</p>
-            <p className="text-sm text-slate-700 mt-1">{process.regulatory_impact || 'N/A'}</p>
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 p-4 md:col-span-2">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Related Processes</p>
-            {process.related_processes.length === 0 && (
-              <p className="text-sm text-slate-500">No process relationships recorded.</p>
-            )}
-            {process.related_processes.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {process.related_processes.map(rel => (
-                  <Link
-                    key={`${rel.business_process_id}-${rel.relationship_type ?? 'RELATED'}`}
-                    to={`/processes/${encodeURIComponent(rel.business_process_id)}`}
-                    className="text-xs bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full px-2.5 py-1 inline-flex items-center gap-1 hover:bg-cyan-100"
-                  >
-                    <Workflow size={11} />
-                    {rel.process_name || rel.business_process_id}
-                    <span className="font-semibold">
-                      ({rel.relationship_type || 'RELATED'})
-                    </span>
-                  </Link>
-                ))}
+        <div className="flex flex-col gap-4">
+          <Section title="Details">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Process Number" />
+                {editing ? (
+                  <input
+                    value={form.process_number}
+                    onChange={(e) => setField('process_number', e.target.value)}
+                    className={inputCls}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.process_number || 'N/A'}
+                  </p>
+                )}
               </div>
-            )}
-          </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Name" />
+                {editing ? (
+                  <input
+                    value={form.process_name}
+                    onChange={(e) => setField('process_name', e.target.value)}
+                    className={inputCls}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.process_name || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="md:col-span-2 flex flex-col gap-1.5">
+                <HintLabel label="Description" />
+                {editing ? (
+                  <textarea
+                    value={form.process_description}
+                    onChange={(e) => setField('process_description', e.target.value)}
+                    rows={3}
+                    className={textAreaCls}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]">
+                    {form.process_description || 'N/A'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Process Hierarchy and Ownership">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Parent Process ID" />
+                {editing ? (
+                  <select
+                    value={form.parent_process_id}
+                    onChange={(e) => setField('parent_process_id', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">None</option>
+                    {selectableParents.map(p => (
+                      <option key={p.business_process_id} value={p.business_process_id}>
+                        {(p.process_name || p.business_process_id)} ({p.business_process_id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.parent_process_id
+                      ? `${processNameById.get(form.parent_process_id) || form.parent_process_id} (${form.parent_process_id})`
+                      : 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              {[
+                ['stakeholders', 'Stakeholders'],
+                ['owner', 'Owner'],
+                ['operators', 'Operators'],
+              ].map(([field, label]) => (
+                <div key={field} className="flex flex-col gap-1.5">
+                  <HintLabel label={label} />
+                  {editing ? (
+                    <input
+                      value={form[field as keyof ProcessFormState]}
+                      onChange={(e) => setField(field as keyof ProcessFormState, e.target.value)}
+                      className={inputCls}
+                    />
+                  ) : (
+                    <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                      {form[field as keyof ProcessFormState] || 'N/A'}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Business Criticality and Impact">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
+                {editing ? (
+                  <select
+                    value={form.business_criticality}
+                    onChange={(e) => setField('business_criticality', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {BUSINESS_CRITICALITY_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS)}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
+                {editing ? (
+                  <select
+                    value={form.reputational_impact}
+                    onChange={(e) => setField('reputational_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS)}
+                  </p>
+                )}
+              </div>
+
+              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
+              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
+              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'N/A'} />
+              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'N/A'} />
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Financial Impact" hint={HINTS.financial_impact} />
+                {editing ? (
+                  <select
+                    value={form.financial_impact}
+                    onChange={(e) => setField('financial_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {FINANCIAL_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS)}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Regulatory Impact" hint={HINTS.regulatory_impact} />
+                {editing ? (
+                  <select
+                    value={form.regulatory_impact}
+                    onChange={(e) => setField('regulatory_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {REGULATORY_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {labelFromOptions(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS)}
+                  </p>
+                )}
+              </div>
+
+              <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+              <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
+              <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
+              <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
+            </div>
+          </Section>
+
+          <Section title="Compliance and Health">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="SLA" />
+                {editing ? (
+                  <input
+                    value={form.sla}
+                    onChange={(e) => setField('sla', e.target.value)}
+                    className={inputCls}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.sla || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Process Health State" />
+                {editing ? (
+                  <select
+                    value={form.process_health_state}
+                    onChange={(e) => setField('process_health_state', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {PROCESS_HEALTH_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {labelFromOptions(form.process_health_state, PROCESS_HEALTH_OPTIONS)}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
         </div>
       )}
 
-      {tab === 'related' && (
+      {tab === 'related' && process && (
         <div className="flex flex-col gap-4">
           {relationError && (
             <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
@@ -336,6 +841,27 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
+
+          <Section title="Related Processes">
+            {process.related_processes.length === 0 && (
+              <p className="text-sm text-slate-500">No process relationships recorded.</p>
+            )}
+            {process.related_processes.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {process.related_processes.map(rel => (
+                  <Link
+                    key={`${rel.business_process_id}-${rel.relationship_type ?? 'RELATED'}`}
+                    to={`/processes/${encodeURIComponent(rel.business_process_id)}`}
+                    className="text-xs bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full px-2.5 py-1 inline-flex items-center gap-1 hover:bg-cyan-100"
+                  >
+                    <Workflow size={11} />
+                    {rel.process_name || rel.business_process_id}
+                    <span className="font-semibold">({rel.relationship_type || 'RELATED'})</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Section>
         </div>
       )}
     </div>

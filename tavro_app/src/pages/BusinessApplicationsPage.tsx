@@ -8,6 +8,7 @@ import {
   Layers,
   LayoutGrid,
   List,
+  PlusCircle,
   Search,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
@@ -128,6 +129,12 @@ const BusinessApplicationsPage: React.FC = () => {
               </button>
             </div>
           )}
+          <button
+            onClick={() => navigate('/applications/new')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all"
+          >
+            <PlusCircle size={15} /> New Application
+          </button>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   List,
   LayoutGrid,
+  PlusCircle,
   Search,
   Workflow,
 } from 'lucide-react';
@@ -14,6 +15,12 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
 
 const PAGE_SIZE = 10;
+const PROCESS_CRITICALITY_LABELS: Record<string, string> = {
+  '1.0': 'Tier 1 (Systemic)',
+  '0.7': 'Tier 2 (Core)',
+  '0.4': 'Tier 3 (Operational)',
+  '0.1': 'Tier 4 (Experimental)',
+};
 
 const BusinessProcessesPage: React.FC = () => {
   const navigate = useNavigate();
@@ -63,6 +70,10 @@ const BusinessProcessesPage: React.FC = () => {
 
   const handlePrev = () => setPage(p => Math.max(1, p - 1));
   const handleNext = () => setPage(p => Math.min(totalPages, p + 1));
+  const displayCriticality = (value: string | null | undefined) => {
+    if (!value) return 'N/A';
+    return PROCESS_CRITICALITY_LABELS[value] || value;
+  };
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
@@ -128,6 +139,12 @@ const BusinessProcessesPage: React.FC = () => {
               </button>
             </div>
           )}
+          <button
+            onClick={() => navigate('/processes/new')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all"
+          >
+            <PlusCircle size={15} /> New Process
+          </button>
         </div>
       </div>
 
@@ -172,7 +189,7 @@ const BusinessProcessesPage: React.FC = () => {
                 <div className="flex items-center gap-2 flex-wrap">
                   {proc.business_criticality && (
                     <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                      {proc.business_criticality}
+                      {displayCriticality(proc.business_criticality)}
                     </span>
                   )}
                   {proc.related_processes.length > 0 && (
@@ -211,7 +228,7 @@ const BusinessProcessesPage: React.FC = () => {
                 <div className="text-sm text-slate-500 truncate">{proc.owner || 'N/A'}</div>
                 <div>
                   <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                    {proc.business_criticality || 'N/A'}
+                    {displayCriticality(proc.business_criticality)}
                   </span>
                 </div>
                 <div className="text-sm font-semibold text-emerald-700">{proc.related_agent_count}</div>

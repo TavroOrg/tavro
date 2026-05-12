@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,101 @@ from api.database import get_db
 router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
+
+_APPLICATION_EDITABLE_COLUMNS: set[str] = {
+    "application_name",
+    "emergency_tier",
+    "business_owner",
+    "application_portfolio_manager",
+    "vendor_name",
+    "business_criticality",
+    "it_application_owner",
+    "application_description",
+    "embedded_ai",
+    "opt_out_option",
+    "privacy_policy_url",
+    "data_excluded_from_ai_training",
+    "vendor_description",
+    "current_installed_version",
+    "is_current_version_supported",
+    "latest_released_version",
+    "latest_release_date",
+    "latest_release_documentation_link",
+}
+
+_APPLICATION_READONLY_DEFAULTS: dict[str, Any] = {
+    "agent_risk_exposure": 0.0,
+    "num_of_associated_agents": 0,
+    "blended_risk_score": 0.0,
+    "inherent_risk_classification_score": 0.0,
+    "residual_risk_classification_score": 0.0,
+}
+
+_APPLICATION_ALIAS_MAP: dict[str, str] = {
+    "are": "agent_risk_exposure",
+    "associated_agents": "num_of_associated_agents",
+    "embededd_ai": "embedded_ai",
+    "data_specifically_excluded_from_ai_training": "data_excluded_from_ai_training",
+    "is_current_installed_version_supported": "is_current_version_supported",
+}
+
+_PROCESS_EDITABLE_COLUMNS: set[str] = {
+    "process_number",
+    "process_name",
+    "process_description",
+    "parent_process_id",
+    "stakeholders",
+    "owner",
+    "operators",
+    "business_criticality",
+    "reputational_impact",
+    "financial_impact",
+    "regulatory_impact",
+    "sla",
+    "process_health_state",
+}
+
+_PROCESS_READONLY_DEFAULTS: dict[str, Any] = {
+    "num_of_associated_agents": 0,
+    "agent_risk_exposure": 0.0,
+    "blended_risk_score": 0.0,
+    "residual_risk_classification_score": 0.0,
+    "inherent_risk_classification_score": 0.0,
+}
+
+_PROCESS_ALIAS_MAP: dict[str, str] = {
+    "number": "process_number",
+    "name": "process_name",
+    "associated_agents": "num_of_associated_agents",
+    "are": "agent_risk_exposure",
+}
+
+_PROCESS_LABEL_TO_VALUE_MAP: dict[str, dict[str, str]] = {
+    "business_criticality": {
+        "Tier 1 (Systemic)": "1.0",
+        "Tier 2 (Core)": "0.7",
+        "Tier 3 (Operational)": "0.4",
+        "Tier 4 (Experimental)": "0.1",
+    },
+    "reputational_impact": {
+        "Toxic": "1",
+        "Adverse": "0.7",
+        "Private": "0.4",
+        "Contained": "0.1",
+    },
+    "financial_impact": {
+        "Systemic": "1",
+        "Material": "0.7",
+        "Absorbable": "0.4",
+        "Immaterial": "0.1",
+    },
+    "regulatory_impact": {
+        "Restricted": "1",
+        "Statutory": "0.7",
+        "Governed": "0.4",
+        "Unregulated": "0.1",
+    },
+}
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -96,6 +192,65 @@ def _col_expr(alias: str, cols: set[str], col_name: str) -> str:
     if col_name in cols:
         return f"{alias}.{col_name} AS {col_name}"
     return f"NULL AS {col_name}"
+
+
+def _text_or_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _clean(value)
+    return _clean(str(value))
+
+
+def _canonical_payload(raw_payload: Optional[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
+    payload = raw_payload or {}
+    out: dict[str, Any] = {}
+    for key, value in payload.items():
+        canonical = alias_map.get(key, key)
+        out[canonical] = value
+    return out
+
+
+def _pick_text_columns(
+    payload: dict[str, Any],
+    *,
+    allowed_columns: set[str],
+    existing_columns: set[str],
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    for col in allowed_columns:
+        if col not in existing_columns or col not in payload:
+            continue
+        updates[col] = _text_or_none(payload.get(col))
+    return updates
+
+
+def _normalize_process_dropdown_values(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    for field, label_map in _PROCESS_LABEL_TO_VALUE_MAP.items():
+        if field not in normalized:
+            continue
+        raw_value = _text_or_none(normalized.get(field))
+        if raw_value is None:
+            normalized[field] = None
+            continue
+        normalized[field] = label_map.get(raw_value, raw_value)
+    return normalized
+
+
+async def _process_exists(db: AsyncSession, business_process_id: str) -> bool:
+    row = await db.execute(
+        text(
+            """
+            SELECT 1
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    return row.first() is not None
 
 
 async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
@@ -519,8 +674,144 @@ async def get_business_application(
         raise HTTPException(
             status_code=404,
             detail=f"Business application '{business_application_id}' not found",
-        )
+    )
     return rows[0]
+
+
+@router.post("/applications", status_code=201)
+async def create_business_application(
+    body: Optional[dict[str, Any]] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    app_cols = await _table_columns(db, "core", "business_applications")
+    canonical = _canonical_payload(body, _APPLICATION_ALIAS_MAP)
+
+    app_id = _text_or_none(canonical.get("business_application_id")) or uuid4().hex
+    existing = await _fetch_applications(db, application_id=app_id)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Business application '{app_id}' already exists",
+        )
+
+    insert_values: dict[str, Any] = {"business_application_id": app_id}
+    insert_values.update(
+        _pick_text_columns(
+            canonical,
+            allowed_columns=_APPLICATION_EDITABLE_COLUMNS,
+            existing_columns=app_cols,
+        )
+    )
+
+    for col, default_value in _APPLICATION_READONLY_DEFAULTS.items():
+        if col in app_cols:
+            insert_values[col] = default_value
+
+    if "created_ts" in app_cols:
+        insert_values["created_ts"] = None
+    if "updated_ts" in app_cols:
+        insert_values["updated_ts"] = None
+
+    insert_columns = [col for col in insert_values.keys() if col in app_cols]
+    param_columns = [col for col in insert_columns if col not in {"created_ts", "updated_ts"}]
+    params = {col: insert_values[col] for col in param_columns}
+
+    columns_sql = ", ".join(insert_columns)
+    values_sql = ", ".join(
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        for col in insert_columns
+    )
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO core.business_applications ({columns_sql})
+            VALUES ({values_sql})
+            """
+        ),
+        params,
+    )
+    await db.commit()
+    rows = await _fetch_applications(db, application_id=app_id)
+    return rows[0]
+
+
+@router.patch("/applications/{business_application_id}")
+async def update_business_application(
+    business_application_id: str,
+    body: Optional[dict[str, Any]] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    app_cols = await _table_columns(db, "core", "business_applications")
+    existing = await _fetch_applications(db, application_id=business_application_id)
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Business application '{business_application_id}' not found",
+        )
+
+    canonical = _canonical_payload(body, _APPLICATION_ALIAS_MAP)
+    updates = _pick_text_columns(
+        canonical,
+        allowed_columns=_APPLICATION_EDITABLE_COLUMNS,
+        existing_columns=app_cols,
+    )
+    if not updates:
+        raise HTTPException(status_code=400, detail="No editable fields provided for update")
+
+    updates["business_application_id"] = business_application_id
+    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_application_id")
+    if "updated_ts" in app_cols:
+        set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
+
+    await db.execute(
+        text(
+            f"""
+            UPDATE core.business_applications
+            SET {set_clause}
+            WHERE business_application_id = :business_application_id
+            """
+        ),
+        updates,
+    )
+    await db.commit()
+    rows = await _fetch_applications(db, application_id=business_application_id)
+    return rows[0]
+
+
+@router.delete("/applications/{business_application_id}")
+async def delete_business_application(
+    business_application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    if await _table_exists(db, "core", "agent_business_applications"):
+        aba_cols = await _table_columns(db, "core", "agent_business_applications")
+        if "business_application_id" in aba_cols:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM core.agent_business_applications
+                    WHERE business_application_id = :business_application_id
+                    """
+                ),
+                {"business_application_id": business_application_id},
+            )
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.business_applications
+            WHERE business_application_id = :business_application_id
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Business application '{business_application_id}' not found",
+        )
+    await db.commit()
+    return {"status": "deleted", "business_application_id": business_application_id}
 
 
 @router.get("/processes")
@@ -546,8 +837,202 @@ async def get_business_process(
         raise HTTPException(
             status_code=404,
             detail=f"Business process '{business_process_id}' not found",
-        )
+    )
     return rows[0]
+
+
+@router.post("/processes", status_code=201)
+async def create_business_process(
+    body: Optional[dict[str, Any]] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    process_cols = await _table_columns(db, "core", "business_processes")
+    canonical = _normalize_process_dropdown_values(_canonical_payload(body, _PROCESS_ALIAS_MAP))
+
+    process_id = (
+        _text_or_none(canonical.get("business_process_id"))
+        or _text_or_none(canonical.get("process_number"))
+        or uuid4().hex
+    )
+    existing = await _fetch_processes(db, process_id=process_id)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Business process '{process_id}' already exists",
+        )
+
+    parent_process_id = _text_or_none(canonical.get("parent_process_id"))
+    if parent_process_id:
+        if parent_process_id == process_id:
+            raise HTTPException(status_code=400, detail="parent_process_id cannot reference itself")
+        if not await _process_exists(db, parent_process_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Parent process '{parent_process_id}' does not exist",
+            )
+        canonical["parent_process_id"] = parent_process_id
+
+    insert_values: dict[str, Any] = {"business_process_id": process_id}
+    insert_values.update(
+        _pick_text_columns(
+            canonical,
+            allowed_columns=_PROCESS_EDITABLE_COLUMNS,
+            existing_columns=process_cols,
+        )
+    )
+
+    for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
+        if col in process_cols:
+            insert_values[col] = default_value
+
+    if "created_ts" in process_cols:
+        insert_values["created_ts"] = None
+    if "updated_ts" in process_cols:
+        insert_values["updated_ts"] = None
+
+    insert_columns = [col for col in insert_values.keys() if col in process_cols]
+    param_columns = [col for col in insert_columns if col not in {"created_ts", "updated_ts"}]
+    params = {col: insert_values[col] for col in param_columns}
+
+    columns_sql = ", ".join(insert_columns)
+    values_sql = ", ".join(
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        for col in insert_columns
+    )
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO core.business_processes ({columns_sql})
+            VALUES ({values_sql})
+            """
+        ),
+        params,
+    )
+    await db.commit()
+    rows = await _fetch_processes(db, process_id=process_id)
+    return rows[0]
+
+
+@router.patch("/processes/{business_process_id}")
+async def update_business_process(
+    business_process_id: str,
+    body: Optional[dict[str, Any]] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    process_cols = await _table_columns(db, "core", "business_processes")
+    existing = await _fetch_processes(db, process_id=business_process_id)
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Business process '{business_process_id}' not found",
+        )
+
+    canonical = _normalize_process_dropdown_values(_canonical_payload(body, _PROCESS_ALIAS_MAP))
+    updates = _pick_text_columns(
+        canonical,
+        allowed_columns=_PROCESS_EDITABLE_COLUMNS,
+        existing_columns=process_cols,
+    )
+    if not updates:
+        raise HTTPException(status_code=400, detail="No editable fields provided for update")
+
+    if "parent_process_id" in updates:
+        parent_process_id = _text_or_none(updates.get("parent_process_id"))
+        updates["parent_process_id"] = parent_process_id
+        if parent_process_id:
+            if parent_process_id == business_process_id:
+                raise HTTPException(status_code=400, detail="parent_process_id cannot reference itself")
+            if not await _process_exists(db, parent_process_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Parent process '{parent_process_id}' does not exist",
+                )
+
+    updates["business_process_id"] = business_process_id
+    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_process_id")
+    if "updated_ts" in process_cols:
+        set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
+
+    await db.execute(
+        text(
+            f"""
+            UPDATE core.business_processes
+            SET {set_clause}
+            WHERE business_process_id = :business_process_id
+            """
+        ),
+        updates,
+    )
+    await db.commit()
+    rows = await _fetch_processes(db, process_id=business_process_id)
+    return rows[0]
+
+
+@router.delete("/processes/{business_process_id}")
+async def delete_business_process(
+    business_process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    if await _table_exists(db, "core", "agent_business_processes"):
+        abp_cols = await _table_columns(db, "core", "agent_business_processes")
+        if "business_process_id" in abp_cols:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM core.agent_business_processes
+                    WHERE business_process_id = :business_process_id
+                    """
+                ),
+                {"business_process_id": business_process_id},
+            )
+
+    if await _table_exists(db, "core", "business_process_relationships"):
+        bpr_cols = await _table_columns(db, "core", "business_process_relationships")
+        where_parts: list[str] = []
+        if "business_process_id" in bpr_cols:
+            where_parts.append("business_process_id = :business_process_id")
+        if "related_business_process_id" in bpr_cols:
+            where_parts.append("related_business_process_id = :business_process_id")
+        if where_parts:
+            await db.execute(
+                text(
+                    f"""
+                    DELETE FROM core.business_process_relationships
+                    WHERE {" OR ".join(where_parts)}
+                    """
+                ),
+                {"business_process_id": business_process_id},
+            )
+
+    process_cols = await _table_columns(db, "core", "business_processes")
+    if "parent_process_id" in process_cols:
+        await db.execute(
+            text(
+                """
+                UPDATE core.business_processes
+                SET parent_process_id = NULL
+                WHERE parent_process_id = :business_process_id
+                """
+            ),
+            {"business_process_id": business_process_id},
+        )
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Business process '{business_process_id}' not found",
+        )
+    await db.commit()
+    return {"status": "deleted", "business_process_id": business_process_id}
 
 
 @router.get("/agents/{agent_id}")
