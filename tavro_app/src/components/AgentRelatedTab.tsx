@@ -73,6 +73,12 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
   const [actingKey, setActingKey] = useState<string | null>(null);
   const [applicationSearch, setApplicationSearch] = useState('');
   const [processSearch, setProcessSearch] = useState('');
+  const createApplicationHref = agentId
+    ? `/applications/new?linkAgentId=${encodeURIComponent(agentId)}`
+    : '/applications/new';
+  const createProcessHref = agentId
+    ? `/processes/new?linkAgentId=${encodeURIComponent(agentId)}`
+    : '/processes/new';
 
   const refreshRelations = async () => {
     if (!agentId) return;
@@ -245,9 +251,20 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
 
         {showApplications && (
           <div className="flex flex-col gap-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <LayoutGrid size={13} /> Applications ({displayedApplications.length})
-            </h3>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <LayoutGrid size={13} /> Applications ({displayedApplications.length})
+              </h3>
+              {agentId && (
+                <Link
+                  to={createApplicationHref}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <PlusCircle size={11} />
+                  Create New Application
+                </Link>
+              )}
+            </div>
             <div className="flex flex-col gap-3">
               {displayedApplications.map((app: any, idx) => {
                 const applicationId = app.business_application_id || app.identifier || app.name || `app-${idx}`;
@@ -344,9 +361,20 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
 
         {showProcesses && (
           <div className="flex flex-col gap-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Briefcase size={13} /> Processes ({displayedProcesses.length})
-            </h3>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Briefcase size={13} /> Processes ({displayedProcesses.length})
+              </h3>
+              {agentId && (
+                <Link
+                  to={createProcessHref}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  <PlusCircle size={11} />
+                  Create New Process
+                </Link>
+              )}
+            </div>
             <div className="flex flex-col gap-3">
               {displayedProcesses.map((proc: any, idx) => {
                 const processId = proc.business_process_id || proc.identifier || proc.name || `process-${idx}`;

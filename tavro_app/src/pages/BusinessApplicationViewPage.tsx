@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
@@ -224,9 +224,11 @@ const ReadValue: React.FC<{ label: string; value: string; hint?: string }> = ({ 
 
 const BusinessApplicationViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
   const isCreateMode = !id || id === 'new';
+  const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
 
   const [application, setApplication] = useState<BusinessApplicationRecord | null>(null);
   const [form, setForm] = useState<ApplicationFormState>(emptyForm);
@@ -313,6 +315,13 @@ const BusinessApplicationViewPage: React.FC = () => {
       const payload = buildApplicationPayload(form);
       if (isCreateMode) {
         const created = await businessRelationsApi.createApplication(payload);
+        if (linkAgentId) {
+          try {
+            await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id);
+          } catch (linkErr) {
+            console.warn('Application created but auto-link to agent failed.', linkErr);
+          }
+        }
         navigate(`/applications/${encodeURIComponent(created.business_application_id)}`, { replace: true });
         return;
       }

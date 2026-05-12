@@ -139,7 +139,36 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
-    row["related_processes"] = _json_list(row.get("related_processes"))
+    related_processes_raw = _json_list(row.get("related_processes"))
+    normalized_related_processes: list[dict[str, Any]] = []
+    seen_process_ids: set[str] = set()
+
+    for rel in related_processes_raw:
+        if not isinstance(rel, dict):
+            continue
+        process_id = _text_or_none(rel.get("business_process_id"))
+        if not process_id or process_id in seen_process_ids:
+            continue
+        seen_process_ids.add(process_id)
+        normalized_related_processes.append(
+            {
+                "business_process_id": process_id,
+                "process_name": _text_or_none(rel.get("process_name")),
+                "relationship_type": _text_or_none(rel.get("relationship_type")),
+            }
+        )
+
+    parent_process_id = _text_or_none(row.get("parent_process_id"))
+    if parent_process_id and parent_process_id not in seen_process_ids:
+        normalized_related_processes.append(
+            {
+                "business_process_id": parent_process_id,
+                "process_name": _text_or_none(row.get("parent_process_name")),
+                "relationship_type": "PARENT",
+            }
+        )
+
+    row["related_processes"] = normalized_related_processes
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 

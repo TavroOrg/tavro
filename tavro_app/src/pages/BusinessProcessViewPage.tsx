@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
@@ -11,7 +11,6 @@ import {
   Search,
   Trash2,
   Unlink2,
-  Workflow,
   XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
@@ -21,7 +20,7 @@ import type {
 } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 
-type Tab = 'overview' | 'related';
+type Tab = 'overview' | 'related_agents' | 'related_processes';
 type Option = { label: string; value: string };
 
 const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
@@ -208,9 +207,11 @@ const ReadValue: React.FC<{ label: string; value: string; hint?: string }> = ({ 
 
 const BusinessProcessViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
   const isCreateMode = !id || id === 'new';
+  const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
@@ -240,6 +241,14 @@ const BusinessProcessViewPage: React.FC = () => {
     const map = new Map<string, string>();
     for (const p of allProcesses) {
       map.set(p.business_process_id, p.process_name || p.business_process_id);
+    }
+    return map;
+  }, [allProcesses]);
+
+  const processById = useMemo(() => {
+    const map = new Map<string, BusinessProcessRecord>();
+    for (const p of allProcesses) {
+      map.set(p.business_process_id, p);
     }
     return map;
   }, [allProcesses]);
@@ -309,6 +318,30 @@ const BusinessProcessViewPage: React.FC = () => {
     });
   }, [agents, linkedAgentIds, searchAgents]);
 
+  const relatedProcessRows = useMemo(() => {
+    if (!process) return [];
+    const seen = new Set<string>();
+    const rows: Array<{
+      business_process_id: string;
+      process_name: string | null;
+      relationship_type: string | null;
+      full: BusinessProcessRecord | null;
+    }> = [];
+
+    for (const rel of process.related_processes ?? []) {
+      const relId = rel.business_process_id;
+      if (!relId || seen.has(relId)) continue;
+      seen.add(relId);
+      rows.push({
+        business_process_id: relId,
+        process_name: rel.process_name,
+        relationship_type: rel.relationship_type,
+        full: processById.get(relId) ?? null,
+      });
+    }
+    return rows;
+  }, [process, processById]);
+
   const setField = (key: keyof ProcessFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
   };
@@ -320,6 +353,13 @@ const BusinessProcessViewPage: React.FC = () => {
       const payload = buildProcessPayload(form);
       if (isCreateMode) {
         const created = await businessRelationsApi.createProcess(payload);
+        if (linkAgentId) {
+          try {
+            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id);
+          } catch (linkErr) {
+            console.warn('Process created but auto-link to agent failed.', linkErr);
+          }
+        }
         navigate(`/processes/${encodeURIComponent(created.business_process_id)}`, { replace: true });
         return;
       }
@@ -506,16 +546,28 @@ const BusinessProcessViewPage: React.FC = () => {
           Details
         </button>
         {!isCreateMode && !editing && (
-          <button
-            onClick={() => setTab('related')}
-            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
-              tab === 'related'
-                ? 'border-emerald-600 text-emerald-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Related Agents
-          </button>
+          <>
+            <button
+              onClick={() => setTab('related_agents')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_agents'
+                  ? 'border-emerald-600 text-emerald-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Agents
+            </button>
+            <button
+              onClick={() => setTab('related_processes')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_processes'
+                  ? 'border-emerald-600 text-emerald-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Processes
+            </button>
+          </>
         )}
       </div>
 
@@ -755,7 +807,7 @@ const BusinessProcessViewPage: React.FC = () => {
         </div>
       )}
 
-      {tab === 'related' && process && (
+      {tab === 'related_agents' && process && (
         <div className="flex flex-col gap-4">
           {relationError && (
             <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
@@ -841,24 +893,67 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
+      )}
 
+      {tab === 'related_processes' && process && (
+        <div className="flex flex-col gap-4">
           <Section title="Related Processes">
-            {process.related_processes.length === 0 && (
+            {relatedProcessRows.length === 0 && (
               <p className="text-sm text-slate-500">No process relationships recorded.</p>
             )}
-            {process.related_processes.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {process.related_processes.map(rel => (
-                  <Link
-                    key={`${rel.business_process_id}-${rel.relationship_type ?? 'RELATED'}`}
-                    to={`/processes/${encodeURIComponent(rel.business_process_id)}`}
-                    className="text-xs bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full px-2.5 py-1 inline-flex items-center gap-1 hover:bg-cyan-100"
-                  >
-                    <Workflow size={11} />
-                    {rel.process_name || rel.business_process_id}
-                    <span className="font-semibold">({rel.relationship_type || 'RELATED'})</span>
-                  </Link>
-                ))}
+            {relatedProcessRows.length > 0 && (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                <div className="min-w-[980px]">
+                  <div className="grid grid-cols-[2.1fr_1.2fr_1.2fr_1.1fr_1.1fr_1.2fr_1fr] items-center bg-slate-50 border-b border-slate-200 px-5 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    <div>Name</div>
+                    <div>Owner</div>
+                    <div>Business Criticality</div>
+                    <div>Process Health State</div>
+                    <div># Of Associated Agents</div>
+                    <div>Agent Risk Exposure (ARE)</div>
+                    <div>Agent Risk Tier (ART)</div>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {relatedProcessRows.map((row) => {
+                      const processId = row.business_process_id;
+                      const full = row.full;
+                      const processName = full?.process_name || row.process_name || processId;
+                      const owner = full?.owner || 'N/A';
+                      const businessCriticality = labelFromOptions(
+                        toText(full?.business_criticality),
+                        BUSINESS_CRITICALITY_OPTIONS,
+                      );
+                      const processHealthState = full?.process_health_state || 'N/A';
+                      const associatedAgents = toText(full?.num_of_associated_agents, 'N/A');
+                      const are = toText(full?.agent_risk_exposure, 'N/A');
+                      const art = full?.agent_risk_tier || 'N/A';
+
+                      return (
+                        <div
+                          key={`${processId}-${row.relationship_type ?? 'RELATED'}`}
+                          className="grid grid-cols-[2.1fr_1.2fr_1.2fr_1.1fr_1.1fr_1.2fr_1fr] items-center px-5 py-3.5 text-sm text-slate-700"
+                        >
+                          <div className="min-w-0">
+                            <Link
+                              to={`/processes/${encodeURIComponent(processId)}`}
+                              className="font-semibold text-emerald-700 hover:underline truncate block"
+                            >
+                              {processName}
+                            </Link>
+                            <div className="text-[11px] font-mono text-slate-400 truncate">{processId}</div>
+                          </div>
+                          <div className="truncate">{owner}</div>
+                          <div className="truncate">{businessCriticality}</div>
+                          <div className="truncate">{processHealthState}</div>
+                          <div>{associatedAgents}</div>
+                          <div>{are}</div>
+                          <div>{art}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </Section>
