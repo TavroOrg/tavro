@@ -13,27 +13,44 @@ import type {
   Page,
   DimCategory,
 } from '../types/blueprint';
+import { getValidToken, refreshAccessToken } from './auth';
 
-const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
+const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
-// ── Auth header helper ────────────────────────────────────────────────────────
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('tavro_access_token');
+function buildHeaders(token: string | null): Record<string, string> {
   return token
     ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     : { 'Content-Type': 'application/json' };
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = await getValidToken();
   const res = await fetch(`${V1}${path}`, {
     ...init,
-    headers: { ...authHeaders(), ...(init.headers ?? {}) },
+    headers: { ...buildHeaders(token), ...(init.headers ?? {}) },
   });
+
   if (res.status === 401) {
-    window.dispatchEvent(new CustomEvent('tavro:unauthorized', { detail: { body: await res.text() } }));
-    throw new Error('Unauthorized');
+    // Token was valid at call time but the server still rejected it.
+    // Attempt one silent refresh and retry before giving up.
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      const newToken = localStorage.getItem('tavro_access_token');
+      const retry = await fetch(`${V1}${path}`, {
+        ...init,
+        headers: { ...buildHeaders(newToken), ...(init.headers ?? {}) },
+      });
+      if (retry.status === 401) {
+        throw new Error('Request unauthorized. Please check your credentials.');
+      }
+      if (!retry.ok) throw new Error(`API ${retry.status}: ${await retry.text()}`);
+      if (retry.status === 204) return undefined as T;
+      return retry.json();
+    }
+    throw new Error('Request unauthorized. Please check your credentials.');
   }
+
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API ${res.status}: ${body}`);

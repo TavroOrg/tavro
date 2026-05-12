@@ -2,6 +2,7 @@ import { AgentData } from '../types/agent';
 import { UseCaseSummary, UseCaseDetail } from '../types/useCase';
 import { appLogger } from './logger';
 import { streamChat, getLLMConfig, ChatMessage } from './llmService';
+import { isAccessTokenExpired, refreshAccessToken } from './auth';
 
 type ChatViewContext = {
     viewType?: string;
@@ -168,10 +169,22 @@ class McpClientService {
         return localStorage.getItem('tavro_id_token') || localStorage.getItem('tavro_access_token') || '';
     }
 
+    private async ensureValidToken(): Promise<string> {
+        if (isAccessTokenExpired()) {
+            const ok = await refreshAccessToken();
+            if (!ok) {
+                throw new Error('Token refresh failed. Please log in again.');
+            }
+        }
+        const token = this.getToken();
+        if (!token) throw new Error('No auth token. Please log in again.');
+        return token;
+    }
+
     private handleUnauthorized(bodyText?: string) {
-        appLogger.warn('401 Unauthorized - token rejected by MCP server (preserving app login session)', { body: bodyText });
+        appLogger.warn('401 Unauthorized from MCP server', { body: bodyText });
         this.disconnect();
-        throw new Error('MCP rejected authentication (401). Check MCP URL/provider alignment in Settings.');
+        throw new Error('MCP request unauthorized. Please check your credentials.');
     }
 
     /** Manual connect via fetch to capture mcp-session-id and tenant_id */
@@ -186,8 +199,7 @@ class McpClientService {
             return;
         }
 
-        const token = this.getToken();
-        if (!token) throw new Error('No auth token. Please log in again.');
+        const token = await this.ensureValidToken();
 
         try {
             const initBody = {
@@ -243,11 +255,21 @@ class McpClientService {
         }
     }
 
-    private async callTool(name: string, args: any = {}): Promise<any> {
-        if (localStorage.getItem('tavro_cache_mode') === 'true') return await this._getCachedToolResult(name, args);
+    // Write tools always execute live — cache mode only applies to reads.
+    private static readonly WRITE_TOOLS = new Set([
+        'create_agent',
+        'create_ai_use_case',
+        'create_ai_use_case_agent_relationship',
+        'create_risk_assessment',
+    ]);
 
-        const token = this.getToken();
-        if (!token) throw new Error('No auth token');
+    private async callTool(name: string, args: any = {}): Promise<any> {
+        const isCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
+        if (isCacheMode && !McpClientService.WRITE_TOOLS.has(name)) {
+            return await this._getCachedToolResult(name, args);
+        }
+
+        const token = await this.ensureValidToken();
 
         if (!this.initialized) await this.connect();
 
@@ -751,7 +773,7 @@ class McpClientService {
 
     async createAiUseCase(fields: any): Promise<any> {
         const data = await this.callTool('create_ai_use_case', fields);
-        this._useCaseCache = null;
+        this.invalidateCache();
         return data;
     }
 
@@ -760,7 +782,9 @@ class McpClientService {
     }
 
     async createAgent(args: any): Promise<any> {
-        return await this.callTool('create_agent', args);
+        const data = await this.callTool('create_agent', args);
+        this.invalidateCache();
+        return data;
     }
 
     async createRiskAssessment(agent_id: string): Promise<any> {

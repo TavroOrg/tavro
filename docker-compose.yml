@@ -376,7 +376,7 @@ services:
     container_name: risk-mcp-server
     restart: unless-stopped
     ports:
-      - "9001:9000"   # 9000 is taken by tavro-app; host port is 9001
+      - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
       PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       POSTGRES_HOST:     tavro-postgres
@@ -385,8 +385,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB:       tavro
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
-      mcp_host:          0.0.0.0
-      mcp_port:          "9000"
+      mcp_host:          localhost
+      mcp_port:          "9001"
     volumes:
       - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
       - ./tavro-python-stack/agent_cards:/app/agent_cards
