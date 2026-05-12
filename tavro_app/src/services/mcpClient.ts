@@ -282,6 +282,12 @@ class McpClientService {
 
         const token = await this.ensureValidToken();
 
+        // If there's no real session (e.g. connect() ran in cache-mode and
+        // only set initialized without talking to the server), force a real
+        // connect before making a live request.
+        if (!this.sessionId) {
+            this.initialized = false;
+        }
         if (!this.initialized) await this.connect();
 
         const mcpUrl = this.getMcpUrl();
@@ -795,7 +801,20 @@ class McpClientService {
     }
 
     async createAgent(args: any): Promise<any> {
-        const data = await this.callTool('create_agent', args);
+        // Server-side create_agent has a strict signature; drop unsupported
+        // UI-only fields (owner/role/environment) to avoid tool validation errors.
+        const agentName = (args?.agent_name ?? '').trim();
+        const description = (args?.description ?? '').trim() || agentName;
+        const instruction = (args?.instruction ?? '').trim() || description;
+        const payload = {
+            agent_name: agentName,
+            description,
+            instruction,
+            ...(args?.tools ? { tools: args.tools } : {}),
+            ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
+        };
+        const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
         return data;
     }

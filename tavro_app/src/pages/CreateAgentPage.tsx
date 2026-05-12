@@ -5,11 +5,10 @@ import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
-const STATUSES = ['Active', 'Inactive', 'Deprecated'];
 
 type AgentForm = {
   name: string; description: string; instruction: string;
-  owner: string; role: string; environment: string; version: string; status: string;
+  owner: string; role: string; environment: string;
 };
 
 const CreateAgentPage: React.FC = () => {
@@ -18,7 +17,7 @@ const CreateAgentPage: React.FC = () => {
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
-    owner: '', role: '', environment: '', version: '1.0', status: 'Active',
+    owner: '', role: '', environment: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +31,10 @@ const CreateAgentPage: React.FC = () => {
     if (!form.name.trim()) return;
     setSaving(true);
     setError(null);
+    // Switch to live mode before calling the MCP server so that connect()
+    // establishes a real session (cache mode stubs it out without a session ID).
+    localStorage.setItem('tavro_cache_mode', 'false');
+    window.dispatchEvent(new Event('tavro_settings_change'));
     try {
       await mcpClient.createAgent({
         agent_name: form.name.trim(),
@@ -41,13 +44,7 @@ const CreateAgentPage: React.FC = () => {
         ...(form.owner.trim() && { owner: form.owner.trim() }),
         ...(form.role.trim() && { role: form.role.trim() }),
         ...(form.environment.trim() && { environment: form.environment.trim() }),
-        ...(form.version.trim() && { version: form.version.trim() }),
-        ...(form.status.trim() && { status: form.status.trim() }),
       });
-      // Switch to live mode so the catalog reads go to the MCP server and show
-      // the newly created agent (cache mode serves stale pre-generated data).
-      localStorage.setItem('tavro_cache_mode', 'false');
-      window.dispatchEvent(new Event('tavro_settings_change'));
       setSuccess(true);
       refresh();
       setTimeout(() => navigate('/catalog'), 1000);
@@ -154,41 +151,18 @@ const CreateAgentPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <label className={labelCls}>Environment</label>
-                <select
-                  value={form.environment}
-                  onChange={e => set('environment', e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="">Select…</option>
-                  {ENVIRONMENTS.map(env => (
-                    <option key={env} value={env}>{env}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Version</label>
-                <input
-                  value={form.version}
-                  onChange={e => set('version', e.target.value)}
-                  placeholder="1.0"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Status</label>
-                <select
-                  value={form.status}
-                  onChange={e => set('status', e.target.value)}
-                  className={inputCls}
-                >
-                  {STATUSES.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
+            <div>
+              <label className={labelCls}>Environment</label>
+              <select
+                value={form.environment}
+                onChange={e => set('environment', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">Select…</option>
+                {ENVIRONMENTS.map(env => (
+                  <option key={env} value={env}>{env}</option>
+                ))}
+              </select>
             </div>
 
             {error && (
