@@ -166,10 +166,20 @@ class McpClientService {
     }
 
     private getToken(): string {
-        return localStorage.getItem('tavro_id_token') || localStorage.getItem('tavro_access_token') || '';
+        // MCP OAuth token takes priority over Zitadel tokens
+        return localStorage.getItem('tavro_mcp_access_token')
+            || localStorage.getItem('tavro_access_token')
+            || localStorage.getItem('tavro_id_token')
+            || '';
     }
 
     private async ensureValidToken(): Promise<string> {
+        // If a dedicated MCP OAuth token exists, use it directly —
+        // its lifecycle is managed by the MCP OAuth flow, not Zitadel.
+        const mcpToken = localStorage.getItem('tavro_mcp_access_token');
+        if (mcpToken) return mcpToken;
+
+        // Fall back to Zitadel token with silent refresh
         if (isAccessTokenExpired()) {
             const ok = await refreshAccessToken();
             if (!ok) {
@@ -218,6 +228,7 @@ class McpClientService {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json, text/event-stream',
+                'ngrok-skip-browser-warning': 'true',
                 ...(savedTenantId ? { 'tenant_id': savedTenantId } : {})
             };
 
@@ -297,6 +308,7 @@ class McpClientService {
             'Content-Type': 'application/json',
             'mcp-session-id': this.sessionId || '',
             'Accept': 'application/json, text/event-stream',
+            'ngrok-skip-browser-warning': 'true',
             ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
         };
 
@@ -375,6 +387,7 @@ class McpClientService {
                 'Content-Type': 'application/json',
                 'mcp-session-id': this.sessionId || '',
                 'Accept': 'application/json, text/event-stream',
+                'ngrok-skip-browser-warning': 'true',
                 ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
             },
             body: JSON.stringify({
