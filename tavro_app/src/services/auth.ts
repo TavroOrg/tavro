@@ -12,6 +12,7 @@ const AUTH_KEYS = [
     'tavro_auth',
     'tavro_access_token',
     'tavro_id_token',
+    'tavro_mcp_access_token',
     'tavro_raw_access_token',
     'tavro_mcp_refresh_token',
     'tavro_pkce_verifier',

@@ -172,6 +172,8 @@ const AuthCallback: React.FC = () => {
                     const primaryToken = data.access_token;
 
                     if (primaryToken) {
+                        // Store as the dedicated MCP token — mcpClient reads this first
+                        localStorage.setItem('tavro_mcp_access_token', primaryToken);
                         localStorage.setItem('tavro_access_token', primaryToken);
                         if (data.id_token) localStorage.setItem('tavro_id_token', data.id_token);
                         if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
