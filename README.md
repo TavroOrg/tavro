@@ -16,10 +16,10 @@
     &nbsp;·&nbsp;
     <a href="https://www.youtube.com/@Tavro-AI"><strong> YouTube</strong></a>
   </p>
+  <sub>Built with ♥ by <a href="https://tavro.ai">Tavro</a></sub>
 
   <hr />
 
-  <sub>Built with ♥ by <a href="https://tavro.ai">Tavro</a></sub>
 
 </div>
 
