@@ -1,4 +1,29 @@
-# Tavro Agent Catalog
+<div align="center">
+
+  <!-- LOGO: upload travo_logo.png to your repo and update the src below -->
+  <img src="assets\images\travo_logo.png" alt="Tavro Logo" width="80" />
+
+  <h1>Tavro Agent Catalog</h1>
+
+  <p><em>Unify, govern, and observe your AI agent ecosystem with enterprise metadata with open source system.</em></p>
+
+  <p>
+    <a href="https://www.tavro.ai/tavro/"><strong> Free Cloud Trial</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://www.tavro.ai/contact-us/"><strong> Live Demo</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://tavrocommunity.slack.com/join/shared_invite/zt-3xowwir93-_QZV_jMAtFDkAAfrwY9RWQ#/shared-invite/email"><strong> Slack Community</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://www.youtube.com/@Tavro-AI"><strong> YouTube</strong></a>
+  </p>
+  <sub>Built with ♥ by <a href="https://tavro.ai">Tavro</a></sub>
+
+  <hr />
+
+
+</div>
+
+<!-- Your existing README content continues below -->
 
 Run the full Tavro platform on your own machine using Docker. No coding knowledge is required — just follow each step in order.
 
