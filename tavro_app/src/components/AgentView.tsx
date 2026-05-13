@@ -8,6 +8,7 @@ import AgentRelatedTab from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
+import { businessRelationsApi } from '../services/businessRelationsApi';
 
 interface AgentViewProps {
     agent: AgentData;
@@ -23,7 +24,7 @@ type TabType =
     | 'RISK'
     | 'CONTEXT';
 
-const TABS: { id: TabType; label: string }[] = [
+const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
     { id: 'CONFIG', label: 'Technical Configuration' },
     { id: 'IMPACT', label: 'Business Impact' },
@@ -37,9 +38,59 @@ const TABS: { id: TabType; label: string }[] = [
 const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
     const [activeTab, setActiveTab] = useState<TabType>('IDENTIFICATION');
     const agentId = agent.identification?.agent_id;
+    const fallbackApplicationCount = (agent.application ?? []).length;
+    const fallbackProcessCount = (agent.business_process ?? []).length;
+    const [relatedCounts, setRelatedCounts] = useState({
+        applications: fallbackApplicationCount,
+        processes: fallbackProcessCount,
+    });
 
     // Reset tab when viewing a new agent
     useEffect(() => setActiveTab('IDENTIFICATION'), [agentId]);
+
+    useEffect(() => {
+        setRelatedCounts({
+            applications: fallbackApplicationCount,
+            processes: fallbackProcessCount,
+        });
+    }, [fallbackApplicationCount, fallbackProcessCount]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadCounts = async () => {
+            if (!agentId) return;
+            try {
+                const payload = await businessRelationsApi.getAgentRelations(agentId);
+                if (cancelled) return;
+                setRelatedCounts({
+                    applications: payload.applications.length,
+                    processes: payload.business_processes.length,
+                });
+            } catch {
+                if (cancelled) return;
+                setRelatedCounts({
+                    applications: fallbackApplicationCount,
+                    processes: fallbackProcessCount,
+                });
+            }
+        };
+
+        loadCounts();
+        return () => {
+            cancelled = true;
+        };
+    }, [agentId, fallbackApplicationCount, fallbackProcessCount]);
+
+    const tabs: { id: TabType; label: string }[] = BASE_TABS.map(tab => {
+        if (tab.id === 'RELATED_APPLICATIONS') {
+            return { ...tab, label: `Applications(${relatedCounts.applications})` };
+        }
+        if (tab.id === 'RELATED_PROCESSES') {
+            return { ...tab, label: `Processes(${relatedCounts.processes})` };
+        }
+        return tab;
+    });
 
     return (
         <div className="flex flex-col gap-6 animate-fade-in w-full max-w-[1400px] mx-auto">
@@ -53,7 +104,7 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
 
             {/* Tab Navigation */}
             <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide border-b border-slate-200">
-                {TABS.map(tab => (
+                {tabs.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
@@ -78,11 +129,23 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
                 )}
 
                 {activeTab === 'RELATED_APPLICATIONS' && (
-                    <div className="mt-4"><AgentRelatedTab agent={agent} mode="applications" /></div>
+                    <div className="mt-4">
+                        <AgentRelatedTab
+                            agent={agent}
+                            mode="applications"
+                            onCountsChange={setRelatedCounts}
+                        />
+                    </div>
                 )}
 
                 {activeTab === 'RELATED_PROCESSES' && (
-                    <div className="mt-4"><AgentRelatedTab agent={agent} mode="processes" /></div>
+                    <div className="mt-4">
+                        <AgentRelatedTab
+                            agent={agent}
+                            mode="processes"
+                            onCountsChange={setRelatedCounts}
+                        />
+                    </div>
                 )}
 
                 {activeTab === 'LINEAGE' && (

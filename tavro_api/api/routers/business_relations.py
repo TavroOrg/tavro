@@ -5,6 +5,7 @@ from uuid import uuid4
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,6 +109,58 @@ _PROCESS_LABEL_TO_VALUE_MAP: dict[str, dict[str, str]] = {
         "Unregulated": "0.1",
     },
 }
+
+
+class BusinessApplicationUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    application_name: Optional[str] = None
+    emergency_tier: Optional[str] = None
+    business_owner: Optional[str] = None
+    application_portfolio_manager: Optional[str] = None
+    vendor_name: Optional[str] = None
+    business_criticality: Optional[str] = None
+    it_application_owner: Optional[str] = None
+    application_description: Optional[str] = None
+    embedded_ai: Optional[str] = None
+    opt_out_option: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
+    data_excluded_from_ai_training: Optional[str] = None
+    vendor_description: Optional[str] = None
+    current_installed_version: Optional[str] = None
+    is_current_version_supported: Optional[str] = None
+    latest_released_version: Optional[str] = None
+    latest_release_date: Optional[str] = None
+    latest_release_documentation_link: Optional[str] = None
+    # Backward-compatible aliases accepted by canonical mapping:
+    are: Optional[str] = None
+    associated_agents: Optional[str] = None
+    embededd_ai: Optional[str] = None
+    data_specifically_excluded_from_ai_training: Optional[str] = None
+    is_current_installed_version_supported: Optional[str] = None
+
+
+class BusinessProcessUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    process_number: Optional[str] = None
+    process_name: Optional[str] = None
+    process_description: Optional[str] = None
+    parent_process_id: Optional[str] = None
+    stakeholders: Optional[str] = None
+    owner: Optional[str] = None
+    operators: Optional[str] = None
+    business_criticality: Optional[str] = None
+    reputational_impact: Optional[str] = None
+    financial_impact: Optional[str] = None
+    regulatory_impact: Optional[str] = None
+    sla: Optional[str] = None
+    process_health_state: Optional[str] = None
+    # Backward-compatible aliases accepted by canonical mapping:
+    number: Optional[str] = None
+    name: Optional[str] = None
+    associated_agents: Optional[str] = None
+    are: Optional[str] = None
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -680,47 +733,57 @@ async def _fetch_processes(
     return [_normalize_process_row(dict(r._mapping)) for r in rows]
 
 
-@router.get("/applications")
-async def list_business_applications(
+@router.get("/applications", tags=["Applications"], summary="List Applications")
+async def list_applications(
     q: Optional[str] = Query(default=None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await _fetch_applications(db, search=q)
+        all_items = await _fetch_applications(db, search=q)
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": items,
+        }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to list business applications: {exc}")
 
 
-@router.get("/applications/{business_application_id}")
-async def get_business_application(
-    business_application_id: str,
+@router.get("/applications/{application_id}", tags=["Applications"], summary="Get Application")
+async def get_application(
+    application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_applications(db, application_id=business_application_id)
+    rows = await _fetch_applications(db, application_id=application_id)
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"Business application '{business_application_id}' not found",
+            detail=f"Application '{application_id}' not found",
     )
     return rows[0]
 
 
-@router.post("/applications", status_code=201)
-async def create_business_application(
-    body: Optional[dict[str, Any]] = Body(default=None),
+@router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
+async def create_application(
+    body: BusinessApplicationUpsertRequest = Body(default_factory=BusinessApplicationUpsertRequest),
     db: AsyncSession = Depends(get_db),
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
-    canonical = _canonical_payload(body, _APPLICATION_ALIAS_MAP)
+    canonical = _canonical_payload(body.model_dump(exclude_unset=True), _APPLICATION_ALIAS_MAP)
 
-    app_id = _text_or_none(canonical.get("business_application_id")) or uuid4().hex
+    app_id = uuid4().hex
     existing = await _fetch_applications(db, application_id=app_id)
     if existing:
         raise HTTPException(
             status_code=409,
-            detail=f"Business application '{app_id}' already exists",
+            detail=f"Application '{app_id}' already exists",
         )
 
     insert_values: dict[str, Any] = {"business_application_id": app_id}
@@ -764,21 +827,21 @@ async def create_business_application(
     return rows[0]
 
 
-@router.patch("/applications/{business_application_id}")
-async def update_business_application(
-    business_application_id: str,
-    body: Optional[dict[str, Any]] = Body(default=None),
+@router.patch("/applications/{application_id}", tags=["Applications"], summary="Update Application")
+async def update_application(
+    application_id: str,
+    body: BusinessApplicationUpsertRequest = Body(default_factory=BusinessApplicationUpsertRequest),
     db: AsyncSession = Depends(get_db),
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
-    existing = await _fetch_applications(db, application_id=business_application_id)
+    existing = await _fetch_applications(db, application_id=application_id)
     if not existing:
         raise HTTPException(
             status_code=404,
-            detail=f"Business application '{business_application_id}' not found",
+            detail=f"Application '{application_id}' not found",
         )
 
-    canonical = _canonical_payload(body, _APPLICATION_ALIAS_MAP)
+    canonical = _canonical_payload(body.model_dump(exclude_unset=True), _APPLICATION_ALIAS_MAP)
     updates = _pick_text_columns(
         canonical,
         allowed_columns=_APPLICATION_EDITABLE_COLUMNS,
@@ -787,7 +850,7 @@ async def update_business_application(
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
-    updates["business_application_id"] = business_application_id
+    updates["business_application_id"] = application_id
     set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_application_id")
     if "updated_ts" in app_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
@@ -803,13 +866,13 @@ async def update_business_application(
         updates,
     )
     await db.commit()
-    rows = await _fetch_applications(db, application_id=business_application_id)
+    rows = await _fetch_applications(db, application_id=application_id)
     return rows[0]
 
 
-@router.delete("/applications/{business_application_id}")
-async def delete_business_application(
-    business_application_id: str,
+@router.delete("/applications/{application_id}", tags=["Applications"], summary="Delete Application")
+async def delete_application(
+    application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     if await _table_exists(db, "core", "agent_business_applications"):
@@ -822,7 +885,7 @@ async def delete_business_application(
                     WHERE business_application_id = :business_application_id
                     """
                 ),
-                {"business_application_id": business_application_id},
+                {"business_application_id": application_id},
             )
 
     result = await db.execute(
@@ -832,62 +895,70 @@ async def delete_business_application(
             WHERE business_application_id = :business_application_id
             """
         ),
-        {"business_application_id": business_application_id},
+        {"business_application_id": application_id},
     )
     if (result.rowcount or 0) == 0:
         raise HTTPException(
             status_code=404,
-            detail=f"Business application '{business_application_id}' not found",
+            detail=f"Application '{application_id}' not found",
         )
     await db.commit()
-    return {"status": "deleted", "business_application_id": business_application_id}
+    return {"status": "deleted", "application_id": application_id}
 
 
-@router.get("/processes")
-async def list_business_processes(
+@router.get("/processes", tags=["Processes"], summary="List Processes")
+async def list_processes(
     q: Optional[str] = Query(default=None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await _fetch_processes(db, search=q)
+        all_items = await _fetch_processes(db, search=q)
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": items,
+        }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to list business processes: {exc}")
 
 
-@router.get("/processes/{business_process_id}")
-async def get_business_process(
-    business_process_id: str,
+@router.get("/processes/{process_id}", tags=["Processes"], summary="Get Process")
+async def get_process(
+    process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_processes(db, process_id=business_process_id)
+    rows = await _fetch_processes(db, process_id=process_id)
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"Business process '{business_process_id}' not found",
+            detail=f"Process '{process_id}' not found",
     )
     return rows[0]
 
 
-@router.post("/processes", status_code=201)
-async def create_business_process(
-    body: Optional[dict[str, Any]] = Body(default=None),
+@router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
+async def create_process(
+    body: BusinessProcessUpsertRequest = Body(default_factory=BusinessProcessUpsertRequest),
     db: AsyncSession = Depends(get_db),
 ):
     process_cols = await _table_columns(db, "core", "business_processes")
-    canonical = _normalize_process_dropdown_values(_canonical_payload(body, _PROCESS_ALIAS_MAP))
-
-    process_id = (
-        _text_or_none(canonical.get("business_process_id"))
-        or _text_or_none(canonical.get("process_number"))
-        or uuid4().hex
+    canonical = _normalize_process_dropdown_values(
+        _canonical_payload(body.model_dump(exclude_unset=True), _PROCESS_ALIAS_MAP)
     )
+
+    process_id = uuid4().hex
     existing = await _fetch_processes(db, process_id=process_id)
     if existing:
         raise HTTPException(
             status_code=409,
-            detail=f"Business process '{process_id}' already exists",
+            detail=f"Process '{process_id}' already exists",
         )
 
     parent_process_id = _text_or_none(canonical.get("parent_process_id"))
@@ -942,21 +1013,23 @@ async def create_business_process(
     return rows[0]
 
 
-@router.patch("/processes/{business_process_id}")
-async def update_business_process(
-    business_process_id: str,
-    body: Optional[dict[str, Any]] = Body(default=None),
+@router.patch("/processes/{process_id}", tags=["Processes"], summary="Update Process")
+async def update_process(
+    process_id: str,
+    body: BusinessProcessUpsertRequest = Body(default_factory=BusinessProcessUpsertRequest),
     db: AsyncSession = Depends(get_db),
 ):
     process_cols = await _table_columns(db, "core", "business_processes")
-    existing = await _fetch_processes(db, process_id=business_process_id)
+    existing = await _fetch_processes(db, process_id=process_id)
     if not existing:
         raise HTTPException(
             status_code=404,
-            detail=f"Business process '{business_process_id}' not found",
+            detail=f"Process '{process_id}' not found",
         )
 
-    canonical = _normalize_process_dropdown_values(_canonical_payload(body, _PROCESS_ALIAS_MAP))
+    canonical = _normalize_process_dropdown_values(
+        _canonical_payload(body.model_dump(exclude_unset=True), _PROCESS_ALIAS_MAP)
+    )
     updates = _pick_text_columns(
         canonical,
         allowed_columns=_PROCESS_EDITABLE_COLUMNS,
@@ -969,7 +1042,7 @@ async def update_business_process(
         parent_process_id = _text_or_none(updates.get("parent_process_id"))
         updates["parent_process_id"] = parent_process_id
         if parent_process_id:
-            if parent_process_id == business_process_id:
+            if parent_process_id == process_id:
                 raise HTTPException(status_code=400, detail="parent_process_id cannot reference itself")
             if not await _process_exists(db, parent_process_id):
                 raise HTTPException(
@@ -977,7 +1050,7 @@ async def update_business_process(
                     detail=f"Parent process '{parent_process_id}' does not exist",
                 )
 
-    updates["business_process_id"] = business_process_id
+    updates["business_process_id"] = process_id
     set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_process_id")
     if "updated_ts" in process_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
@@ -993,13 +1066,13 @@ async def update_business_process(
         updates,
     )
     await db.commit()
-    rows = await _fetch_processes(db, process_id=business_process_id)
+    rows = await _fetch_processes(db, process_id=process_id)
     return rows[0]
 
 
-@router.delete("/processes/{business_process_id}")
-async def delete_business_process(
-    business_process_id: str,
+@router.delete("/processes/{process_id}", tags=["Processes"], summary="Delete Process")
+async def delete_process(
+    process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     if await _table_exists(db, "core", "agent_business_processes"):
@@ -1012,7 +1085,7 @@ async def delete_business_process(
                     WHERE business_process_id = :business_process_id
                     """
                 ),
-                {"business_process_id": business_process_id},
+                {"business_process_id": process_id},
             )
 
     if await _table_exists(db, "core", "business_process_relationships"):
@@ -1030,7 +1103,7 @@ async def delete_business_process(
                     WHERE {" OR ".join(where_parts)}
                     """
                 ),
-                {"business_process_id": business_process_id},
+                {"business_process_id": process_id},
             )
 
     process_cols = await _table_columns(db, "core", "business_processes")
@@ -1043,7 +1116,7 @@ async def delete_business_process(
                 WHERE parent_process_id = :business_process_id
                 """
             ),
-            {"business_process_id": business_process_id},
+            {"business_process_id": process_id},
         )
 
     result = await db.execute(
@@ -1053,18 +1126,22 @@ async def delete_business_process(
             WHERE business_process_id = :business_process_id
             """
         ),
-        {"business_process_id": business_process_id},
+        {"business_process_id": process_id},
     )
     if (result.rowcount or 0) == 0:
         raise HTTPException(
             status_code=404,
-            detail=f"Business process '{business_process_id}' not found",
+            detail=f"Process '{process_id}' not found",
         )
     await db.commit()
-    return {"status": "deleted", "business_process_id": business_process_id}
+    return {"status": "deleted", "process_id": process_id}
 
 
-@router.get("/agents/{agent_id}")
+@router.get(
+    "/agents/{agent_id}",
+    tags=["Applications", "Processes"],
+    summary="Get Agent Applications and Processes",
+)
 async def get_agent_relations(
     agent_id: str,
     db: AsyncSession = Depends(get_db),
@@ -1174,10 +1251,14 @@ async def get_agent_relations(
     }
 
 
-@router.put("/agents/{agent_id}/applications/{business_application_id}")
+@router.put(
+    "/agents/{agent_id}/applications/{application_id}",
+    tags=["Applications"],
+    summary="Link Agent to Application",
+)
 async def add_agent_application_relation(
     agent_id: str,
-    business_application_id: str,
+    application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
@@ -1196,7 +1277,7 @@ async def add_agent_application_relation(
             LIMIT 1
             """
         ),
-        {"business_application_id": business_application_id},
+        {"business_application_id": application_id},
     )
     app = app_row.mappings().first()
 
@@ -1218,14 +1299,14 @@ async def add_agent_application_relation(
             ),
             {
                 "tenant_id": agent.get("tenant_id"),
-                "business_application_id": business_application_id,
+                "business_application_id": application_id,
                 "agent_id": agent.get("agent_id"),
                 "agent_internal_id": agent.get("agent_internal_id"),
-                "application_name": business_application_id,
+                "application_name": application_id,
             },
         )
         app = {
-            "application_name": business_application_id,
+            "application_name": application_id,
             "business_criticality": None,
         }
 
@@ -1250,28 +1331,32 @@ async def add_agent_application_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
-            "business_application_id": business_application_id,
+            "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
-            "application_name": app.get("application_name") or business_application_id,
+            "application_name": app.get("application_name") or application_id,
             "criticality": app.get("business_criticality"),
             "agent_internal_id": agent.get("agent_internal_id"),
         },
     )
 
-    await _refresh_application_rollup(db, business_application_id)
+    await _refresh_application_rollup(db, application_id)
     await db.commit()
 
     return {
         "status": "linked",
         "agent_id": agent_id,
-        "business_application_id": business_application_id,
+        "application_id": application_id,
     }
 
 
-@router.delete("/agents/{agent_id}/applications/{business_application_id}")
+@router.delete(
+    "/agents/{agent_id}/applications/{application_id}",
+    tags=["Applications"],
+    summary="Unlink Agent from Application",
+)
 async def remove_agent_application_relation(
     agent_id: str,
-    business_application_id: str,
+    application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
@@ -1288,27 +1373,31 @@ async def remove_agent_application_relation(
             """
         ),
         {
-            "business_application_id": business_application_id,
+            "business_application_id": application_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
         },
     )
 
-    await _refresh_application_rollup(db, business_application_id)
+    await _refresh_application_rollup(db, application_id)
     await db.commit()
 
     return {
         "status": "unlinked",
         "agent_id": agent_id,
-        "business_application_id": business_application_id,
+        "application_id": application_id,
         "rows_deleted": result.rowcount or 0,
     }
 
 
-@router.put("/agents/{agent_id}/processes/{business_process_id}")
+@router.put(
+    "/agents/{agent_id}/processes/{process_id}",
+    tags=["Processes"],
+    summary="Link Agent to Process",
+)
 async def add_agent_process_relation(
     agent_id: str,
-    business_process_id: str,
+    process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
@@ -1325,7 +1414,7 @@ async def add_agent_process_relation(
             LIMIT 1
             """
         ),
-        {"business_process_id": business_process_id},
+        {"business_process_id": process_id},
     )
     process = process_row.mappings().first()
 
@@ -1347,15 +1436,15 @@ async def add_agent_process_relation(
             ),
             {
                 "tenant_id": agent.get("tenant_id"),
-                "business_process_id": business_process_id,
+                "business_process_id": process_id,
                 "agent_id": agent.get("agent_id"),
                 "agent_internal_id": agent.get("agent_internal_id"),
-                "process_number": business_process_id,
-                "process_name": business_process_id,
+                "process_number": process_id,
+                "process_name": process_id,
             },
         )
         process = {
-            "process_name": business_process_id,
+            "process_name": process_id,
             "business_criticality": None,
         }
 
@@ -1380,28 +1469,32 @@ async def add_agent_process_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
-            "business_process_id": business_process_id,
+            "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
-            "process_name": process.get("process_name") or business_process_id,
+            "process_name": process.get("process_name") or process_id,
             "criticality": process.get("business_criticality"),
             "agent_internal_id": agent.get("agent_internal_id"),
         },
     )
 
-    await _refresh_process_rollup(db, business_process_id)
+    await _refresh_process_rollup(db, process_id)
     await db.commit()
 
     return {
         "status": "linked",
         "agent_id": agent_id,
-        "business_process_id": business_process_id,
+        "process_id": process_id,
     }
 
 
-@router.delete("/agents/{agent_id}/processes/{business_process_id}")
+@router.delete(
+    "/agents/{agent_id}/processes/{process_id}",
+    tags=["Processes"],
+    summary="Unlink Agent from Process",
+)
 async def remove_agent_process_relation(
     agent_id: str,
-    business_process_id: str,
+    process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
@@ -1418,18 +1511,18 @@ async def remove_agent_process_relation(
             """
         ),
         {
-            "business_process_id": business_process_id,
+            "business_process_id": process_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
         },
     )
 
-    await _refresh_process_rollup(db, business_process_id)
+    await _refresh_process_rollup(db, process_id)
     await db.commit()
 
     return {
         "status": "unlinked",
         "agent_id": agent_id,
-        "business_process_id": business_process_id,
+        "process_id": process_id,
         "rows_deleted": result.rowcount or 0,
     }

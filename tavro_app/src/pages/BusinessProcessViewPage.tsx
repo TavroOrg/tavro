@@ -460,6 +460,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const processTitle = form.process_name || process?.process_name || 'New Process';
   const processId = process?.business_process_id || 'Will be generated on create';
   const currentProcessId = process?.business_process_id || '';
+  const relatedAgentCount = process?.related_agents?.length ?? 0;
+  const relatedProcessCount = relatedProcessRows.length;
 
   const selectableParents = allProcesses.filter(
     p => p.business_process_id !== currentProcessId,
@@ -555,7 +557,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              Related Agents
+              Related Agents({relatedAgentCount})
             </button>
             <button
               onClick={() => setTab('related_processes')}
@@ -565,7 +567,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              Related Processes
+              Related Processes({relatedProcessCount})
             </button>
           </>
         )}
@@ -818,7 +820,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-700">Currently Related Agents</p>
+              <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
             </div>
             <div className="divide-y divide-slate-100">
               {process.related_agents.length === 0 && (
@@ -898,7 +900,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
       {tab === 'related_processes' && process && (
         <div className="flex flex-col gap-4">
-          <Section title="Related Processes">
+          <Section title={`Related Processes (${relatedProcessCount})`}>
             {relatedProcessRows.length === 0 && (
               <p className="text-sm text-slate-500">No process relationships recorded.</p>
             )}

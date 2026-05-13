@@ -7,7 +7,7 @@ import type {
 } from '../types/businessRelations';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
-const V1 = `${BASE}/api/v1/business-relations`;
+const V1 = `${BASE}/api/v1`;
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('tavro_access_token');
@@ -33,8 +33,12 @@ class BusinessRelationsApi {
   async listApplications(search?: string): Promise<BusinessApplicationRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
+    params.set('offset', '0');
+    params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    return req(`/applications${suffix}`);
+    const data = await req<any>(`/applications${suffix}`);
+    if (Array.isArray(data)) return data as BusinessApplicationRecord[];
+    return (data?.items ?? []) as BusinessApplicationRecord[];
   }
 
   async getApplication(applicationId: string): Promise<BusinessApplicationRecord> {
@@ -67,8 +71,12 @@ class BusinessRelationsApi {
   async listProcesses(search?: string): Promise<BusinessProcessRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
+    params.set('offset', '0');
+    params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    return req(`/processes${suffix}`);
+    const data = await req<any>(`/processes${suffix}`);
+    if (Array.isArray(data)) return data as BusinessProcessRecord[];
+    return (data?.items ?? []) as BusinessProcessRecord[];
   }
 
   async getProcess(processId: string): Promise<BusinessProcessRecord> {

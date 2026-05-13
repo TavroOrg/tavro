@@ -23,6 +23,7 @@ import type {
 interface AgentRelatedTabProps {
   agent: AgentData;
   mode?: 'applications' | 'processes' | 'all';
+  onCountsChange?: (counts: { applications: number; processes: number }) => void;
 }
 
 const getRiskBadge = (level: string | null | undefined) => {
@@ -48,7 +49,11 @@ const getRiskBadge = (level: string | null | undefined) => {
   );
 };
 
-const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }) => {
+const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
+  agent,
+  mode = 'all',
+  onCountsChange,
+}) => {
   const agentId = agent.identification?.agent_id;
   const showApplications = mode !== 'processes';
   const showProcesses = mode !== 'applications';
@@ -73,6 +78,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
   const [actingKey, setActingKey] = useState<string | null>(null);
   const [applicationSearch, setApplicationSearch] = useState('');
   const [processSearch, setProcessSearch] = useState('');
+  const fallbackApplicationCount = (agent.application ?? []).length;
+  const fallbackProcessCount = (agent.business_process ?? []).length;
   const createApplicationHref = agentId
     ? `/applications/new?linkAgentId=${encodeURIComponent(agentId)}`
     : '/applications/new';
@@ -81,7 +88,13 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
     : '/processes/new';
 
   const refreshRelations = async () => {
-    if (!agentId) return;
+    if (!agentId) {
+      onCountsChange?.({
+        applications: fallbackApplicationCount,
+        processes: fallbackProcessCount,
+      });
+      return;
+    }
     setLoadingRelations(true);
     setRelationError(null);
     try {
@@ -93,8 +106,16 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({ agent, mode = 'all' }
       setRelations(agentRelations);
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
+      onCountsChange?.({
+        applications: agentRelations.applications.length,
+        processes: agentRelations.business_processes.length,
+      });
     } catch (err: any) {
       setRelationError(err.message || 'Could not load live relationship data.');
+      onCountsChange?.({
+        applications: fallbackApplicationCount,
+        processes: fallbackProcessCount,
+      });
     } finally {
       setLoadingRelations(false);
     }

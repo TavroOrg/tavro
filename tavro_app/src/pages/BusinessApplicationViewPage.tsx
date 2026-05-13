@@ -421,6 +421,7 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const appTitle = form.application_name || application?.application_name || 'New Application';
   const appId = application?.business_application_id || 'Will be generated on create';
+  const relatedAgentCount = application?.related_agents?.length ?? 0;
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
@@ -511,7 +512,7 @@ const BusinessApplicationViewPage: React.FC = () => {
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            Related Agents
+            Related Agents({relatedAgentCount})
           </button>
         )}
       </div>
@@ -768,7 +769,7 @@ const BusinessApplicationViewPage: React.FC = () => {
 
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-700">Currently Related Agents</p>
+              <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
             </div>
             <div className="divide-y divide-slate-100">
               {application.related_agents.length === 0 && (
