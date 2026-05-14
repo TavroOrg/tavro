@@ -1,95 +1,33 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { AgentData } from '../types/agent';
-import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
 import AgentCatalog from '../components/AgentCatalog';
 import TimedInfoToast from '../components/TimedInfoToast';
-
-/** Server-enforced page size (max_records). */
-const PAGE_SIZE = 10;
-
 import { useChatSync } from '../hooks/useChatSync';
+
+const PAGE_SIZE = 10;
 
 const Dashboard: React.FC = () => {
     useChatSync('agent_catalog', null);
-    // ── Paged fetch state (used when no search term is active) ──────────────
-    const [pagedAgents, setPagedAgents] = useState<AgentData[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [page, setPage] = useState(1);
-    const [totalRecords, setTotalRecords] = useState<number | null>(null);
 
-    // ── Search across the full cached catalog ───────────────────────────────
+    const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
-    const { agents: allAgents } = useCatalog();
+    const { agents: allAgents, loading, error, refresh } = useCatalog();
 
     const navigate = useNavigate();
 
-    /** True when there is at least one more page after the current one. */
-    const hasMore = totalRecords !== null
-        ? page * PAGE_SIZE < totalRecords
-        : false;
+    const totalPages = Math.max(1, Math.ceil(allAgents.length / PAGE_SIZE));
+    const hasMore = page < totalPages;
 
-    const extractRiskClassificationFromSummary = (summary: any): string | null => {
-        if (!summary) return null;
-        const text = String(summary?.risk_summary ?? summary?.summary ?? '');
-        if (!text) return null;
-        const clean = text.replace(/<[^>]*>/g, ' ');
-        const match = clean.match(/Risk Classification\s*:\s*(Prohibited|High Risk|Other)/i);
-        return match?.[1] ?? null;
-    };
-
-    const fetchPage = useCallback(async (pageNum: number) => {
-        setLoading(true);
-        setError(null);
-        try {
-            const startRecord = (pageNum - 1) * PAGE_SIZE + 1;
-            console.log(`[Dashboard] Fetching page ${pageNum} (start_record=${startRecord})...`);
-            const { agents: agentsData, totalRecords: total } = await mcpClient.getCatalogPage(startRecord);
-            const enriched = await Promise.all(
-                agentsData.map(async (agent) => {
-                    const agentId = agent.identification?.agent_id || agent.name;
-                    if (!agentId) return agent;
-                    const [details, riskSummary] = await Promise.all([
-                        mcpClient.getAgentDetails(agentId),
-                        mcpClient.getAgentRiskSummary(agentId),
-                    ]);
-                    if (!details && !riskSummary) return agent;
-                    const summaryRiskClass = extractRiskClassificationFromSummary(riskSummary);
-                    const mergedDetails = details ?? agent;
-                    return {
-                        ...agent,
-                        ...mergedDetails,
-                        identification: { ...agent.identification, ...(mergedDetails as AgentData).identification },
-                        risk_assessment: {
-                            ...agent.risk_assessment,
-                            ...(mergedDetails as AgentData).risk_assessment,
-                            ...(summaryRiskClass ? { blended_risk_classification: summaryRiskClass } : {}),
-                        },
-                    } as AgentData;
-                })
-            );
-            setPagedAgents(enriched);
-            setTotalRecords(total);
-            console.log(`[Dashboard] Got ${agentsData.length} agents (total_records=${total})`);
-        } catch (err: any) {
-            console.error('[Dashboard] Error:', err);
-            setError(err.message || 'Failed to load agent catalog');
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        fetchPage(page);
-    }, [page, fetchPage]);
-
-    // When the user clears the search, reset to page 1
     useEffect(() => {
         if (!searchTerm) setPage(1);
     }, [searchTerm]);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
 
     const handleSelectAgent = (agent: AgentData) => {
         const id = agent.identification?.agent_id || agent.name;
@@ -100,6 +38,12 @@ const Dashboard: React.FC = () => {
     const handleNext = () => { if (hasMore) setPage(p => p + 1); };
 
     const isSearching = searchTerm.trim().length > 0;
+
+    const pagedAgents = useMemo(() => {
+        const start = (page - 1) * PAGE_SIZE;
+        return allAgents.slice(start, start + PAGE_SIZE);
+    }, [allAgents, page]);
+
     const optimisticPending = !isSearching && page === 1
         ? (() => {
             const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
@@ -125,6 +69,7 @@ const Dashboard: React.FC = () => {
                 } as AgentData));
         })()
         : [];
+
     const displayedAgents = isSearching
         ? allAgents.filter(a =>
             a.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -137,7 +82,6 @@ const Dashboard: React.FC = () => {
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
             <TimedInfoToast storageKey="tavro_catalog_notice" />
 
-            {/* Header row: title + pagination (hidden during search) */}
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-slate-800">Agent Catalog</h2>
@@ -145,13 +89,12 @@ const Dashboard: React.FC = () => {
                         {isSearching
                             ? `${displayedAgents.length} result${displayedAgents.length !== 1 ? 's' : ''} for "${searchTerm}" across all ${allAgents.length} agents`
                             : loading && pagedAgents.length === 0
-                                ? 'Loading…'
-                                : `Page ${page}${totalRecords !== null ? ` of ${Math.ceil(totalRecords / PAGE_SIZE)}` : ''} · ${pagedAgents.length} agents${totalRecords !== null ? ` of ${totalRecords} total` : ''}`
+                                ? 'Loading...'
+                                : `Page ${page} of ${totalPages} - ${pagedAgents.length} agents${allAgents.length ? ` of ${allAgents.length} total` : ''}`
                         }
                     </p>
                 </div>
 
-                {/* Pagination controls — only shown when NOT searching */}
                 {!isSearching && (
                     <div className="flex items-center gap-2">
                         <button
@@ -181,7 +124,6 @@ const Dashboard: React.FC = () => {
                 )}
             </div>
 
-            {/* Error State */}
             {!loading && error && (
                 <div className="flex flex-col justify-center items-center min-h-[40vh] gap-4">
                     <div className="flex items-start gap-3 text-red-500 bg-red-50 border border-red-200 rounded-xl px-6 py-4 max-w-lg">
@@ -192,7 +134,7 @@ const Dashboard: React.FC = () => {
                         </div>
                     </div>
                     <button
-                        onClick={() => fetchPage(page)}
+                        onClick={refresh}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-all"
                     >
                         <RefreshCw size={14} /> Retry
@@ -200,7 +142,6 @@ const Dashboard: React.FC = () => {
                 </div>
             )}
 
-            {/* Catalog (search or paged) */}
             {!error && (
                 <AgentCatalog
                     agents={displayedAgents}
@@ -210,7 +151,6 @@ const Dashboard: React.FC = () => {
                 />
             )}
 
-            {/* Bottom Pagination — hidden during search */}
             {!isSearching && !loading && !error && pagedAgents.length > 0 && (
                 <div className="flex justify-center items-center gap-2 pb-4">
                     <button onClick={handlePrev} disabled={page === 1}

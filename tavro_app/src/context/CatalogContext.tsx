@@ -2,6 +2,36 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 
+const AGENT_CACHE_KEY = 'tavro_catalog_agents_cache';
+const AGENT_CACHE_TS_KEY = 'tavro_catalog_agents_cache_ts';
+const AGENT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
+const extractRiskClassificationFromSummary = (summary: any): string | null => {
+    if (!summary) return null;
+    const text = String(summary?.risk_summary ?? summary?.summary ?? '');
+    if (!text) return null;
+    const clean = text.replace(/<[^>]*>/g, ' ');
+    const match = clean.match(/Risk Classification\s*:\s*(Prohibited|High Risk|Other)/i);
+    return match?.[1] ?? null;
+};
+
+const mergeAgentData = (base: AgentData, details?: AgentData, riskSummary?: any): AgentData => {
+    const summaryRiskClass = extractRiskClassificationFromSummary(riskSummary);
+    if (!details && !summaryRiskClass) return base;
+    const mergedDetails = details ?? base;
+    return {
+        ...base,
+        ...mergedDetails,
+        description: mergedDetails.description || base.description,
+        identification: { ...base.identification, ...(mergedDetails as AgentData).identification },
+        risk_assessment: {
+            ...base.risk_assessment,
+            ...(mergedDetails as AgentData).risk_assessment,
+            ...(summaryRiskClass ? { blended_risk_classification: summaryRiskClass } : {}),
+        },
+    } as AgentData;
+};
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface CatalogState {
@@ -31,10 +61,22 @@ const CatalogContext = createContext<CatalogState>({
 // ── Provider ─────────────────────────────────────────────────────────────────
 
 export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [agents, setAgents] = useState<AgentData[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [agents, setAgents] = useState<AgentData[]>(() => {
+        try {
+            const raw = sessionStorage.getItem(AGENT_CACHE_KEY);
+            return raw ? JSON.parse(raw) as AgentData[] : [];
+        } catch {
+            return [];
+        }
+    });
+    const [loading, setLoading] = useState(agents.length === 0);
     const [error, setError] = useState<string | null>(null);
-    const [lastFetched, setLastFetched] = useState<Date | null>(null);
+    const [lastFetched, setLastFetched] = useState<Date | null>(() => {
+        const ts = sessionStorage.getItem(AGENT_CACHE_TS_KEY);
+        if (!ts) return null;
+        const num = Number(ts);
+        return Number.isFinite(num) ? new Date(num) : null;
+    });
 
     // Prevent a concurrent refresh from spawning a second fetch.
     const fetchingRef = useRef(false);
@@ -49,8 +91,26 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         try {
             const data = await mcpClient.getAllAgents();
-            setAgents(data);
-            setLastFetched(new Date());
+            const enriched = await Promise.all(
+                data.map(async (agent) => {
+                    const agentId = agent.identification?.agent_id || agent.name;
+                    if (!agentId) return agent;
+                    try {
+                        const [details, riskSummary] = await Promise.all([
+                            mcpClient.getAgentDetails(agentId),
+                            mcpClient.getAgentRiskSummary(agentId),
+                        ]);
+                        return mergeAgentData(agent, details, riskSummary);
+                    } catch {
+                        return agent;
+                    }
+                })
+            );
+            setAgents(enriched);
+            const now = Date.now();
+            setLastFetched(new Date(now));
+            sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(enriched));
+            sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
         } catch (err: any) {
             setError(err.message ?? 'Failed to load agent catalog');
         } finally {
@@ -61,7 +121,10 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Initial load — runs once after the component mounts.
     useEffect(() => {
-        fetchAgents(false);
+        const ts = sessionStorage.getItem(AGENT_CACHE_TS_KEY);
+        const ageMs = ts ? Date.now() - Number(ts) : Number.POSITIVE_INFINITY;
+        const shouldInvalidate = ageMs > AGENT_CACHE_MAX_AGE_MS;
+        fetchAgents(shouldInvalidate);
     }, [fetchAgents]);
 
     useEffect(() => {
@@ -135,6 +198,10 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
             if (idx >= 0) next[idx] = { ...next[idx], ...agent };
             else next.unshift(agent);
+            const now = Date.now();
+            sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+            sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            setLastFetched(new Date(now));
             return next;
         });
     }, []);
