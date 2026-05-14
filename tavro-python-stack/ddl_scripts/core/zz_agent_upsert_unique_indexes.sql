@@ -61,79 +61,6 @@ ON core.business_applications (business_application_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
 ON core.business_processes (business_process_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_process_relationships
-ON core.business_process_relationships (business_process_id, related_business_process_id, relationship_type);
-
-INSERT INTO core.business_applications (
-    business_application_id, agent_id, agent_internal_id, application_name, business_criticality, created_ts, updated_ts
-)
-SELECT
-    business_application_id,
-    MAX(agent_id) AS agent_id,
-    MAX(agent_internal_id) AS agent_internal_id,
-    MAX(application_name) AS application_name,
-    MAX(criticality) AS business_criticality,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-FROM core.agent_business_applications
-WHERE business_application_id IS NOT NULL
-GROUP BY business_application_id
-ON CONFLICT (business_application_id)
-DO UPDATE SET
-    agent_id = COALESCE(EXCLUDED.agent_id, core.business_applications.agent_id),
-    agent_internal_id = COALESCE(EXCLUDED.agent_internal_id, core.business_applications.agent_internal_id),
-    application_name = COALESCE(EXCLUDED.application_name, core.business_applications.application_name),
-    business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
-    updated_ts = CURRENT_TIMESTAMP;
-
-INSERT INTO core.business_processes (
-    business_process_id, agent_id, agent_internal_id, process_number, process_name, business_criticality, created_ts, updated_ts
-)
-SELECT
-    business_process_id,
-    MAX(agent_id) AS agent_id,
-    MAX(agent_internal_id) AS agent_internal_id,
-    business_process_id AS process_number,
-    MAX(process_name) AS process_name,
-    MAX(criticality) AS business_criticality,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-FROM core.agent_business_processes
-WHERE business_process_id IS NOT NULL
-GROUP BY business_process_id
-ON CONFLICT (business_process_id)
-DO UPDATE SET
-    agent_id = COALESCE(EXCLUDED.agent_id, core.business_processes.agent_id),
-    agent_internal_id = COALESCE(EXCLUDED.agent_internal_id, core.business_processes.agent_internal_id),
-    process_name = COALESCE(EXCLUDED.process_name, core.business_processes.process_name),
-    business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_processes.business_criticality),
-    updated_ts = CURRENT_TIMESTAMP;
-
-INSERT INTO core.business_processes (
-    business_process_id, agent_id, agent_internal_id, process_number, created_ts, updated_ts
-)
-SELECT
-    rel.process_id,
-    (SELECT MAX(abp.agent_id) FROM core.agent_business_processes abp WHERE abp.business_process_id = rel.process_id) AS agent_id,
-    (SELECT MAX(abp.agent_internal_id) FROM core.agent_business_processes abp WHERE abp.business_process_id = rel.process_id) AS agent_internal_id,
-    rel.process_id,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-FROM (
-    SELECT business_process_id AS process_id
-    FROM core.business_process_relationships
-    WHERE business_process_id IS NOT NULL
-    UNION
-    SELECT related_business_process_id AS process_id
-    FROM core.business_process_relationships
-    WHERE related_business_process_id IS NOT NULL
-) rel
-ON CONFLICT (business_process_id)
-DO UPDATE SET
-    agent_id = COALESCE(core.business_processes.agent_id, EXCLUDED.agent_id),
-    agent_internal_id = COALESCE(core.business_processes.agent_internal_id, EXCLUDED.agent_internal_id),
-    updated_ts = CURRENT_TIMESTAMP;
-
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -172,27 +99,4 @@ BEGIN
         ON DELETE SET NULL;
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_core_business_process_relationships_process'
-    ) THEN
-        ALTER TABLE core.business_process_relationships
-        ADD CONSTRAINT fk_core_business_process_relationships_process
-        FOREIGN KEY (business_process_id)
-        REFERENCES core.business_processes (business_process_id)
-        ON DELETE CASCADE;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_core_business_process_relationships_related_process'
-    ) THEN
-        ALTER TABLE core.business_process_relationships
-        ADD CONSTRAINT fk_core_business_process_relationships_related_process
-        FOREIGN KEY (related_business_process_id)
-        REFERENCES core.business_processes (business_process_id)
-        ON DELETE CASCADE;
-    END IF;
 END $$;

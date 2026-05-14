@@ -639,67 +639,33 @@ def _canonical_entity_id(raw_identifier, raw_name):
     return _clean_text(raw_identifier) or _clean_text(raw_name)
 
 
-def _extract_process_links(proc: dict):
-    links = []
-
-    parent_process_id = _canonical_entity_id(
-        proc.get("parent_process_id"),
-        proc.get("parent_process_name"),
-    )
-    if parent_process_id:
-        links.append((parent_process_id, "PARENT"))
-
-    for key in ("related_process_ids", "related_processes"):
-        raw_items = proc.get(key)
-        if not raw_items:
-            continue
-        if not isinstance(raw_items, list):
-            raw_items = [raw_items]
-
-        for item in raw_items:
-            relationship_type = "RELATED"
-            if isinstance(item, dict):
-                related_id = _canonical_entity_id(
-                    item.get("business_process_id") or item.get("identifier") or item.get("id"),
-                    item.get("process_name") or item.get("name"),
-                )
-                relationship_type = _clean_text(item.get("relationship_type")) or relationship_type
-            else:
-                related_id = _clean_text(item)
-
-            if related_id:
-                links.append((related_id, relationship_type))
-
-    return links
-
-
 def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
     processes = card.get("business_process", []) or []
     if not has_meaningful_data(processes):
         print("Skipping core.business_processes: all values are null/empty.")
         return
 
-    ident = card.get("identification", {})
-    agent_id = ident.get("agent_id")
     select_rows = []
     inserted_ids = set()
+    referenced_ids = set()
 
     for proc in processes:
         business_process_id = _canonical_entity_id(proc.get("identifier"), proc.get("name"))
         if not business_process_id or business_process_id in inserted_ids:
             continue
         inserted_ids.add(business_process_id)
+        referenced_ids.add(business_process_id)
 
         process_number = _clean_text(proc.get("process_number")) or business_process_id
         parent_process_id = _canonical_entity_id(
             proc.get("parent_process_id"),
             proc.get("parent_process_name"),
         )
+        if parent_process_id:
+            referenced_ids.add(parent_process_id)
         select_rows.append(f"""
             SELECT
                 {_sq(business_process_id)}              AS business_process_id,
-                {_sq(agent_id)}                         AS agent_id,
-                {_sq(agent_internal_id)}                AS agent_internal_id,
                 {_sq(process_number)}                   AS process_number,
                 {_sq(proc.get('name'))}                 AS process_name,
                 {_sq(proc.get('description'))}          AS process_description,
@@ -712,21 +678,35 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
         print("Skipping core.business_processes: no process identifiers found.")
         return
 
+    process_seed_rows = "\nUNION ALL\n".join(
+        f"SELECT {_sq(pid)} AS business_process_id, TIMESTAMP '{now_str}' AS now_ts"
+        for pid in sorted(referenced_ids)
+    )
+    process_seed_sql = f"""
+        INSERT INTO core.business_processes (
+            business_process_id, process_number, created_ts, updated_ts
+        )
+        SELECT business_process_id, business_process_id, now_ts, now_ts
+        FROM ({process_seed_rows}) AS seed
+        ON CONFLICT (business_process_id)
+        DO UPDATE SET
+            updated_ts = EXCLUDED.updated_ts
+    """
+    execute_dml(process_seed_sql, label="business_processes SEED FOR HIERARCHY")
+
     union_all = "\nUNION ALL\n".join(select_rows)
 
     sql = f"""
         INSERT INTO core.business_processes (
-            business_process_id, agent_id, agent_internal_id, process_number, process_name, process_description,
+            business_process_id, process_number, process_name, process_description,
             parent_process_id, business_criticality, created_ts, updated_ts
         )
         SELECT
-            business_process_id, agent_id, agent_internal_id, process_number, process_name, process_description,
+            business_process_id, process_number, process_name, process_description,
             parent_process_id, business_criticality, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (business_process_id)
         DO UPDATE SET
-            agent_id             = COALESCE(EXCLUDED.agent_id, core.business_processes.agent_id),
-            agent_internal_id    = COALESCE(EXCLUDED.agent_internal_id, core.business_processes.agent_internal_id),
             process_number       = COALESCE(EXCLUDED.process_number, core.business_processes.process_number),
             process_name         = COALESCE(EXCLUDED.process_name, core.business_processes.process_name),
             process_description  = COALESCE(EXCLUDED.process_description, core.business_processes.process_description),
@@ -738,97 +718,12 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
     execute_dml(sql, label="business_processes BULK INSERT ON CONFLICT")
 
 
-def upsert_business_process_relationships(card: dict, agent_internal_id: str, now_str: str):
-    processes = card.get("business_process", []) or []
-    if not has_meaningful_data(processes):
-        print("Skipping core.business_process_relationships: all values are null/empty.")
-        return
-
-    ident = card.get("identification", {})
-    agent_id = ident.get("agent_id")
-    select_rows = []
-    known_process_ids = set()
-    seen = set()
-
-    for proc in processes:
-        source_id = _canonical_entity_id(proc.get("identifier"), proc.get("name"))
-        if not source_id:
-            continue
-        known_process_ids.add(source_id)
-
-        for related_id, relationship_type in _extract_process_links(proc):
-            rel_type = (_clean_text(relationship_type) or "RELATED").upper()
-            related_id = _clean_text(related_id)
-            if not related_id or related_id == source_id:
-                continue
-            known_process_ids.add(related_id)
-
-            source_key, related_key = source_id, related_id
-            if rel_type == "RELATED":
-                source_key, related_key = sorted([source_id, related_id])
-
-            dedupe_key = (source_key, related_key, rel_type)
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-
-            select_rows.append(f"""
-                SELECT
-                    {_sq(source_key)}     AS business_process_id,
-                    {_sq(related_key)}    AS related_business_process_id,
-                    {_sq(rel_type)}       AS relationship_type,
-                    TIMESTAMP '{now_str}' AS now_ts
-            """.strip())
-
-    if not select_rows:
-        print("Skipping core.business_process_relationships: no process links found.")
-        return
-
-    process_seed_rows = "\nUNION ALL\n".join(
-        f"SELECT {_sq(pid)} AS business_process_id, TIMESTAMP '{now_str}' AS now_ts"
-        for pid in sorted(known_process_ids)
-    )
-    process_seed_sql = f"""
-        INSERT INTO core.business_processes (
-            business_process_id, agent_id, agent_internal_id, process_number, created_ts, updated_ts
-        )
-        SELECT business_process_id, {_sq(agent_id)}, {_sq(agent_internal_id)}, business_process_id, now_ts, now_ts
-        FROM ({process_seed_rows}) AS seed
-        ON CONFLICT (business_process_id)
-        DO UPDATE SET
-            agent_id = COALESCE(core.business_processes.agent_id, EXCLUDED.agent_id),
-            agent_internal_id = COALESCE(core.business_processes.agent_internal_id, EXCLUDED.agent_internal_id),
-            updated_ts = EXCLUDED.updated_ts
-    """
-    execute_dml(process_seed_sql, label="business_processes SEED FOR RELATIONSHIPS")
-
-    union_all = "\nUNION ALL\n".join(select_rows)
-
-    sql = f"""
-        INSERT INTO core.business_process_relationships (
-            business_process_id, related_business_process_id, relationship_type,
-            created_ts, updated_ts
-        )
-        SELECT
-            business_process_id, related_business_process_id, relationship_type,
-            now_ts, now_ts
-        FROM ({union_all}) AS s
-        ON CONFLICT (business_process_id, related_business_process_id, relationship_type)
-        DO UPDATE SET
-            updated_ts = EXCLUDED.updated_ts
-    """
-    print(f"  Upserting {len(select_rows)} business process relationships ...")
-    execute_dml(sql, label="business_process_relationships BULK INSERT ON CONFLICT")
-
-
 def upsert_business_applications(card: dict, agent_internal_id: str, now_str: str):
     applications = card.get("application", []) or []
     if not has_meaningful_data(applications):
         print("Skipping core.business_applications: all values are null/empty.")
         return
 
-    ident = card.get("identification", {})
-    agent_id = ident.get("agent_id")
     select_rows = []
     inserted_ids = set()
 
@@ -841,8 +736,6 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
         select_rows.append(f"""
             SELECT
                 {_sq(business_application_id)}           AS business_application_id,
-                {_sq(agent_id)}                          AS agent_id,
-                {_sq(agent_internal_id)}                 AS agent_internal_id,
                 {_sq(app.get('name'))}                   AS application_name,
                 {_sq(app.get('business_criticality'))}   AS business_criticality,
                 {_sq(app.get('emergency_tier'))}         AS emergency_tier,
@@ -858,17 +751,15 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
 
     sql = f"""
         INSERT INTO core.business_applications (
-            business_application_id, agent_id, agent_internal_id, application_name, business_criticality,
+            business_application_id, application_name, business_criticality,
             emergency_tier, application_description, created_ts, updated_ts
         )
         SELECT
-            business_application_id, agent_id, agent_internal_id, application_name, business_criticality,
+            business_application_id, application_name, business_criticality,
             emergency_tier, application_description, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (business_application_id)
         DO UPDATE SET
-            agent_id                = COALESCE(EXCLUDED.agent_id, core.business_applications.agent_id),
-            agent_internal_id       = COALESCE(EXCLUDED.agent_internal_id, core.business_applications.agent_internal_id),
             application_name        = COALESCE(EXCLUDED.application_name, core.business_applications.application_name),
             business_criticality    = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
             emergency_tier          = COALESCE(EXCLUDED.emergency_tier, core.business_applications.emergency_tier),
@@ -1522,33 +1413,32 @@ def process_card(card_dict: dict):
         print(f"[WARN] source_hash check failed, continuing: {e}")
 
     try:
-        print("[INFO] Step  1/22 - agents")
+        print("[INFO] Step  1/21 - agents")
         agent_internal_id = upsert_agent(card_dict, now_str, incoming_source_hash)
     except Exception as e:
         print(f"[ERROR] upsert_agent failed: {e}")
         return
 
     steps = [
-        ("[INFO] Step  2/22 - agent_configurations",              upsert_agent_configuration),
-        ("[INFO] Step  3/22 - agent_identifications",             upsert_agent_identification),
-        ("[INFO] Step  4/22 - agent_tools",                       upsert_agent_tools),
-        ("[INFO] Step  5/22 - agent_controls",                    upsert_agent_controls),
-        ("[INFO] Step  6/22 - agent_knowledge_sources",           upsert_agent_knowledge_source),
-        ("[INFO] Step  7/22 - agent_llm_models",                  upsert_agent_llm_models),
-        ("[INFO] Step  8/22 - agent_ai_use_cases",                upsert_agent_ai_use_cases),
-        ("[INFO] Step  9/22 - business_processes",                upsert_business_processes),
-        ("[INFO] Step 10/22 - business_process_relationships",    upsert_business_process_relationships),
-        ("[INFO] Step 11/22 - business_applications",             upsert_business_applications),
-        ("[INFO] Step 12/22 - agent_business_processes",          upsert_agent_business_processes),
-        ("[INFO] Step 13/22 - agent_business_applications",       upsert_agent_business_applications),
-        ("[INFO] Step 14/22 - agent_guardrails",                  upsert_agent_guardrail),
-        ("[INFO] Step 15/22 - agent_mcp_servers",                 upsert_agent_mcp_server),
-        ("[INFO] Step 16/22 - agent_memories",                    upsert_agent_memory),
-        ("[INFO] Step 17/22 - agent_physical_ai",                 upsert_agent_physical_ai),
-        ("[INFO] Step 18/22 - agent_prompt_templates",            upsert_agent_prompt_template),
-        ("[INFO] Step 19/22 - agent_regulations_or_frameworks",   upsert_agent_regulation_or_framework),
-        ("[INFO] Step 20/22 - agent_ai_models",                   upsert_agent_ai_models),
-        ("[INFO] Step 21/22 - agent_data_sources",                upsert_agent_data_sources),
+        ("[INFO] Step  2/21 - agent_configurations",              upsert_agent_configuration),
+        ("[INFO] Step  3/21 - agent_identifications",             upsert_agent_identification),
+        ("[INFO] Step  4/21 - agent_tools",                       upsert_agent_tools),
+        ("[INFO] Step  5/21 - agent_controls",                    upsert_agent_controls),
+        ("[INFO] Step  6/21 - agent_knowledge_sources",           upsert_agent_knowledge_source),
+        ("[INFO] Step  7/21 - agent_llm_models",                  upsert_agent_llm_models),
+        ("[INFO] Step  8/21 - agent_ai_use_cases",                upsert_agent_ai_use_cases),
+        ("[INFO] Step  9/21 - business_processes",                upsert_business_processes),
+        ("[INFO] Step 10/21 - business_applications",             upsert_business_applications),
+        ("[INFO] Step 11/21 - agent_business_processes",          upsert_agent_business_processes),
+        ("[INFO] Step 12/21 - agent_business_applications",       upsert_agent_business_applications),
+        ("[INFO] Step 13/21 - agent_guardrails",                  upsert_agent_guardrail),
+        ("[INFO] Step 14/21 - agent_mcp_servers",                 upsert_agent_mcp_server),
+        ("[INFO] Step 15/21 - agent_memories",                    upsert_agent_memory),
+        ("[INFO] Step 16/21 - agent_physical_ai",                 upsert_agent_physical_ai),
+        ("[INFO] Step 17/21 - agent_prompt_templates",            upsert_agent_prompt_template),
+        ("[INFO] Step 18/21 - agent_regulations_or_frameworks",   upsert_agent_regulation_or_framework),
+        ("[INFO] Step 19/21 - agent_ai_models",                   upsert_agent_ai_models),
+        ("[INFO] Step 20/21 - agent_data_sources",                upsert_agent_data_sources),
     ]
 
     for label, fn in steps:
@@ -1559,7 +1449,7 @@ def process_card(card_dict: dict):
             print(f"[ERROR] {fn.__name__} failed: {e}")
 
     try:
-        print("[INFO] Step 22/22 - dispatching to classify-risk API")
+        print("[INFO] Step 21/21 - dispatching to classify-risk API")
         if dispatch_to_api_async(agent_internal_id, card_dict):
             print("  ✓ API dispatch queued")
         else:

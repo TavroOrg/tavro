@@ -111,7 +111,7 @@ _PROCESS_LABEL_TO_VALUE_MAP: dict[str, dict[str, str]] = {
 }
 
 
-class BusinessApplicationUpsertRequest(BaseModel):
+class Application(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     application_name: Optional[str] = None
@@ -140,7 +140,15 @@ class BusinessApplicationUpsertRequest(BaseModel):
     is_current_installed_version_supported: Optional[str] = None
 
 
-class BusinessProcessUpsertRequest(BaseModel):
+class ApplicationCreate(Application):
+    pass
+
+
+class ApplicationUpdate(Application):
+    pass
+
+
+class Process(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     process_number: Optional[str] = None
@@ -161,6 +169,14 @@ class BusinessProcessUpsertRequest(BaseModel):
     name: Optional[str] = None
     associated_agents: Optional[str] = None
     are: Optional[str] = None
+
+
+class ProcessCreate(Process):
+    pass
+
+
+class ProcessUpdate(Process):
+    pass
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -388,14 +404,10 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
             UPDATE core.business_applications ba
             SET
                 num_of_associated_agents = stats.link_count,
-                agent_id = stats.sample_agent_id,
-                agent_internal_id = stats.sample_agent_internal_id,
                 updated_ts = CURRENT_TIMESTAMP
             FROM (
                 SELECT
-                    COUNT(*)::int AS link_count,
-                    MAX(agent_id) AS sample_agent_id,
-                    MAX(agent_internal_id) AS sample_agent_internal_id
+                    COUNT(*)::int AS link_count
                 FROM core.agent_business_applications
                 WHERE business_application_id = :business_application_id
             ) AS stats
@@ -413,14 +425,10 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
             UPDATE core.business_processes bp
             SET
                 num_of_associated_agents = stats.link_count,
-                agent_id = stats.sample_agent_id,
-                agent_internal_id = stats.sample_agent_internal_id,
                 updated_ts = CURRENT_TIMESTAMP
             FROM (
                 SELECT
-                    COUNT(*)::int AS link_count,
-                    MAX(agent_id) AS sample_agent_id,
-                    MAX(agent_internal_id) AS sample_agent_internal_id
+                    COUNT(*)::int AS link_count
                 FROM core.agent_business_processes
                 WHERE business_process_id = :business_process_id
             ) AS stats
@@ -650,45 +658,31 @@ async def _fetch_processes(
             ) rel ON TRUE
         """
 
-    has_bpr = await _table_exists(db, "core", "business_process_relationships")
-    if has_bpr:
-        bpr_cols = await _table_columns(db, "core", "business_process_relationships")
-        has_source = "business_process_id" in bpr_cols
-        has_related = "related_business_process_id" in bpr_cols
-        has_rel_type = "relationship_type" in bpr_cols
-        proc_rel_sql = f"""
-            LEFT JOIN LATERAL (
-                SELECT
-                    json_agg(
-                        json_build_object(
-                            'business_process_id', linked.other_process_id,
-                            'process_name', bp2.process_name,
-                            'relationship_type', linked.relationship_type
-                        )
-                        ORDER BY LOWER(COALESCE(bp2.process_name, linked.other_process_id))
-                    ) AS related_processes
-                FROM (
-                    SELECT DISTINCT
-                        CASE
-                            WHEN bpr.business_process_id = bp.business_process_id THEN bpr.related_business_process_id
-                            ELSE bpr.business_process_id
-                        END AS other_process_id,
-                        {"bpr.relationship_type" if has_rel_type else "'RELATED'"} AS relationship_type
-                    FROM core.business_process_relationships bpr
-                    WHERE {"(bpr.business_process_id = bp.business_process_id OR bpr.related_business_process_id = bp.business_process_id)" if has_source and has_related else "FALSE"}
-                ) linked
-                LEFT JOIN core.business_processes bp2
-                    ON bp2.business_process_id = linked.other_process_id
-                WHERE linked.other_process_id IS NOT NULL
-                  AND linked.other_process_id <> bp.business_process_id
-            ) proc_rel ON TRUE
-        """
-    else:
-        proc_rel_sql = """
-            LEFT JOIN LATERAL (
-                SELECT NULL::json AS related_processes
-            ) proc_rel ON TRUE
-        """
+    proc_rel_sql = """
+        LEFT JOIN LATERAL (
+            SELECT
+                json_agg(
+                    json_build_object(
+                        'business_process_id', linked.other_process_id,
+                        'process_name', bp2.process_name,
+                        'relationship_type', linked.relationship_type
+                    )
+                    ORDER BY LOWER(COALESCE(bp2.process_name, linked.other_process_id))
+                ) AS related_processes
+            FROM (
+                SELECT bp.parent_process_id AS other_process_id, 'PARENT'::text AS relationship_type
+                WHERE bp.parent_process_id IS NOT NULL
+                UNION
+                SELECT child.business_process_id AS other_process_id, 'CHILD'::text AS relationship_type
+                FROM core.business_processes child
+                WHERE child.parent_process_id = bp.business_process_id
+            ) linked
+            LEFT JOIN core.business_processes bp2
+                ON bp2.business_process_id = linked.other_process_id
+            WHERE linked.other_process_id IS NOT NULL
+              AND linked.other_process_id <> bp.business_process_id
+        ) proc_rel ON TRUE
+    """
 
     search_clean = _clean(search)
     order_sql = (
@@ -772,7 +766,7 @@ async def get_application(
 
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
 async def create_application(
-    body: BusinessApplicationUpsertRequest = Body(default_factory=BusinessApplicationUpsertRequest),
+    body: ApplicationCreate = Body(default_factory=ApplicationCreate),
     db: AsyncSession = Depends(get_db),
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
@@ -830,7 +824,7 @@ async def create_application(
 @router.patch("/applications/{application_id}", tags=["Applications"], summary="Update Application")
 async def update_application(
     application_id: str,
-    body: BusinessApplicationUpsertRequest = Body(default_factory=BusinessApplicationUpsertRequest),
+    body: ApplicationUpdate = Body(default_factory=ApplicationUpdate),
     db: AsyncSession = Depends(get_db),
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
@@ -945,7 +939,7 @@ async def get_process(
 
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
 async def create_process(
-    body: BusinessProcessUpsertRequest = Body(default_factory=BusinessProcessUpsertRequest),
+    body: ProcessCreate = Body(default_factory=ProcessCreate),
     db: AsyncSession = Depends(get_db),
 ):
     process_cols = await _table_columns(db, "core", "business_processes")
@@ -1016,7 +1010,7 @@ async def create_process(
 @router.patch("/processes/{process_id}", tags=["Processes"], summary="Update Process")
 async def update_process(
     process_id: str,
-    body: BusinessProcessUpsertRequest = Body(default_factory=BusinessProcessUpsertRequest),
+    body: ProcessUpdate = Body(default_factory=ProcessUpdate),
     db: AsyncSession = Depends(get_db),
 ):
     process_cols = await _table_columns(db, "core", "business_processes")
@@ -1083,24 +1077,6 @@ async def delete_process(
                     """
                     DELETE FROM core.agent_business_processes
                     WHERE business_process_id = :business_process_id
-                    """
-                ),
-                {"business_process_id": process_id},
-            )
-
-    if await _table_exists(db, "core", "business_process_relationships"):
-        bpr_cols = await _table_columns(db, "core", "business_process_relationships")
-        where_parts: list[str] = []
-        if "business_process_id" in bpr_cols:
-            where_parts.append("business_process_id = :business_process_id")
-        if "related_business_process_id" in bpr_cols:
-            where_parts.append("related_business_process_id = :business_process_id")
-        if where_parts:
-            await db.execute(
-                text(
-                    f"""
-                    DELETE FROM core.business_process_relationships
-                    WHERE {" OR ".join(where_parts)}
                     """
                 ),
                 {"business_process_id": process_id},
@@ -1212,15 +1188,12 @@ async def get_agent_relations(
                         ORDER BY LOWER(COALESCE(bp2.process_name, linked.other_process_id))
                     ) AS related_processes
                 FROM (
-                    SELECT DISTINCT
-                        CASE
-                            WHEN bpr.business_process_id = abp.business_process_id THEN bpr.related_business_process_id
-                            ELSE bpr.business_process_id
-                        END AS other_process_id,
-                        bpr.relationship_type
-                    FROM core.business_process_relationships bpr
-                    WHERE bpr.business_process_id = abp.business_process_id
-                       OR bpr.related_business_process_id = abp.business_process_id
+                    SELECT bp.parent_process_id AS other_process_id, 'PARENT'::text AS relationship_type
+                    WHERE bp.parent_process_id IS NOT NULL
+                    UNION
+                    SELECT child.business_process_id AS other_process_id, 'CHILD'::text AS relationship_type
+                    FROM core.business_processes child
+                    WHERE child.parent_process_id = abp.business_process_id
                 ) linked
                 LEFT JOIN core.business_processes bp2
                     ON bp2.business_process_id = linked.other_process_id
@@ -1286,11 +1259,11 @@ async def add_agent_application_relation(
             text(
                 """
                 INSERT INTO core.business_applications (
-                    tenant_id, business_application_id, agent_id, agent_internal_id,
+                    tenant_id, business_application_id,
                     application_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tenant_id, :business_application_id, :agent_id, :agent_internal_id,
+                    :tenant_id, :business_application_id,
                     :application_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (business_application_id)
@@ -1300,8 +1273,6 @@ async def add_agent_application_relation(
             {
                 "tenant_id": agent.get("tenant_id"),
                 "business_application_id": application_id,
-                "agent_id": agent.get("agent_id"),
-                "agent_internal_id": agent.get("agent_internal_id"),
                 "application_name": application_id,
             },
         )
@@ -1423,11 +1394,11 @@ async def add_agent_process_relation(
             text(
                 """
                 INSERT INTO core.business_processes (
-                    tenant_id, business_process_id, agent_id, agent_internal_id,
+                    tenant_id, business_process_id,
                     process_number, process_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tenant_id, :business_process_id, :agent_id, :agent_internal_id,
+                    :tenant_id, :business_process_id,
                     :process_number, :process_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (business_process_id)
@@ -1437,8 +1408,6 @@ async def add_agent_process_relation(
             {
                 "tenant_id": agent.get("tenant_id"),
                 "business_process_id": process_id,
-                "agent_id": agent.get("agent_id"),
-                "agent_internal_id": agent.get("agent_internal_id"),
                 "process_number": process_id,
                 "process_name": process_id,
             },

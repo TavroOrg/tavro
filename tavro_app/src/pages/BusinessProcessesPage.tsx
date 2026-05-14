@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
+import { useCatalog } from '../context/CatalogContext';
 
 const PAGE_SIZE = 10;
 const PROCESS_CRITICALITY_LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ const PROCESS_CRITICALITY_LABELS: Record<string, string> = {
 
 const BusinessProcessesPage: React.FC = () => {
   const navigate = useNavigate();
+  const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
   const [processes, setProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,22 @@ const BusinessProcessesPage: React.FC = () => {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
+    if (catalogLoading) {
+      setLoading(true);
+      return;
+    }
+
+    if (catalogError || !lastFetched) {
+      setProcesses([]);
+      setLoading(false);
+      setError(
+        catalogError
+          ? `MCP connection required before loading processes. ${catalogError}`
+          : 'MCP connection required before loading processes. Connect from Settings and refresh catalog.',
+      );
+      return;
+    }
+
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -45,7 +63,7 @@ const BusinessProcessesPage: React.FC = () => {
       }
     };
     load();
-  }, []);
+  }, [catalogLoading, catalogError, lastFetched]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

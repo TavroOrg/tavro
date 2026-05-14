@@ -1636,13 +1636,12 @@ def _query_agent_process_rows(cursor, agent_internal_id: str):
         LEFT JOIN LATERAL (
             SELECT ARRAY_AGG(rel_id ORDER BY rel_id) AS related_process_ids
             FROM (
-                SELECT CASE
-                    WHEN bpr.business_process_id = abp.business_process_id THEN bpr.related_business_process_id
-                    ELSE bpr.business_process_id
-                END AS rel_id
-                FROM {} bpr
-                WHERE bpr.business_process_id = abp.business_process_id
-                   OR (bpr.relationship_type = 'RELATED' AND bpr.related_business_process_id = abp.business_process_id)
+                SELECT bp.parent_process_id AS rel_id
+                WHERE bp.parent_process_id IS NOT NULL
+                UNION
+                SELECT child.business_process_id AS rel_id
+                FROM {} child
+                WHERE child.parent_process_id = abp.business_process_id
             ) rel
         ) rel ON TRUE
         WHERE abp.agent_internal_id = %s
@@ -1650,7 +1649,7 @@ def _query_agent_process_rows(cursor, agent_internal_id: str):
     ).format(
         _table(CORE_SCHEMA, "agent_business_processes"),
         _table(CORE_SCHEMA, "business_processes"),
-        _table(CORE_SCHEMA, "business_process_relationships"),
+        _table(CORE_SCHEMA, "business_processes"),
     )
     cursor.execute(query, (agent_internal_id,))
     rows = cursor.fetchall()

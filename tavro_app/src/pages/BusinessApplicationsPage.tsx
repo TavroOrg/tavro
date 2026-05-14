@@ -13,11 +13,13 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
+import { useCatalog } from '../context/CatalogContext';
 
 const PAGE_SIZE = 10;
 
 const BusinessApplicationsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
   const [applications, setApplications] = useState<BusinessApplicationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,22 @@ const BusinessApplicationsPage: React.FC = () => {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
+    if (catalogLoading) {
+      setLoading(true);
+      return;
+    }
+
+    if (catalogError || !lastFetched) {
+      setApplications([]);
+      setLoading(false);
+      setError(
+        catalogError
+          ? `MCP connection required before loading applications. ${catalogError}`
+          : 'MCP connection required before loading applications. Connect from Settings and refresh catalog.',
+      );
+      return;
+    }
+
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -39,7 +57,7 @@ const BusinessApplicationsPage: React.FC = () => {
       }
     };
     load();
-  }, []);
+  }, [catalogLoading, catalogError, lastFetched]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
