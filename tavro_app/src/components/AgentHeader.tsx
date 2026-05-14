@@ -1,6 +1,7 @@
-import React from 'react';
+﻿import React from 'react';
 import { AgentData } from '../types/agent';
 import { BrainCircuit, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { getAgentRiskLevel } from '../utils/agentRisk';
 
 interface AgentHeaderProps { agent: AgentData; }
 
@@ -26,25 +27,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
         if (k !== 'streaming' && v === true) capBadges.push(k);
     });
 
-    const labels = [
-        agent.risk_assessment?.blended_risk_classification,
-        agent.risk_assessment?.regulatory_risk_classification,
-        (agent as any).latest_risk_class,
-        (agent as any).blended_risk_classification,
-        (agent as any).risk_classification,
-    ].filter(Boolean).map(v => String(v).toLowerCase().trim());
-
-    const riskLevel: 'prohibited' | 'high' | 'medium' | 'low' = labels.some(v => v.includes('prohibited'))
-        ? 'prohibited'
-        : labels.some(v => v.includes('high risk') || v === 'high')
-            ? 'high'
-            : labels.some(v => v.includes('other'))
-            ? 'low'
-            : agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'))
-                ? 'high'
-                : agent.application?.some(a => a.business_criticality?.includes('Medium'))
-                    ? 'medium'
-                    : 'low';
+    const riskLevel: 'prohibited' | 'high' | 'medium' | 'low' = getAgentRiskLevel(agent);
 
     return (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col">
@@ -140,3 +123,4 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
 };
 
 export default AgentHeader;
+

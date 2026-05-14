@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
+import { getAgentRiskLevel, hasResolvedAgentRisk } from '../utils/agentRisk';
 import { Search, BrainCircuit, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
 interface AgentCatalogProps {
@@ -11,34 +12,10 @@ interface AgentCatalogProps {
 
 const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearchChange, onSelectAgent }) => {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-    const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => {
-        const textBlobs = [
-            (agent as any).summary,
-            (agent as any).risk_summary,
-            (agent.risk_assessment as any)?.summary,
-        ].filter(Boolean).map(v => String(v).toLowerCase());
-        const rawClassifications = [
-            agent.risk_assessment?.blended_risk_classification,
-            agent.risk_assessment?.regulatory_risk_classification,
-            (agent as any).latest_risk_class,
-            (agent as any).blended_risk_classification,
-            (agent as any).risk_classification,
-        ].filter(Boolean).map(v => String(v).toLowerCase().trim());
-        if (rawClassifications.some(v => v.includes('prohibited'))) return 'prohibited';
-        if (rawClassifications.some(v => v.includes('high risk') || v === 'high' || v.includes('critical'))) return 'high';
-        if (rawClassifications.some(v => v.includes('other') || v.includes('low'))) return 'low';
-        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('prohibited'))) return 'prohibited';
-        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('high risk'))) return 'high';
-        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('other'))) return 'low';
-        if (textBlobs.some(t => t.includes('designated as') && t.includes('prohibited'))) return 'prohibited';
-        if (textBlobs.some(t => t.includes('designated as') && t.includes('high risk'))) return 'high';
-        if (textBlobs.some(t => t.includes('designated as') && t.includes('other'))) return 'low';
-        const isHighByApp = agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'));
-        const isMedByApp = agent.application?.some(a => a.business_criticality?.includes('Medium'));
-        if (isHighByApp) return 'high';
-        if (isMedByApp) return 'medium';
-        return 'low';
-    };
+    const isPendingAssessment = (agent: AgentData): boolean =>
+        agent.identification?.governance_status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+
+    const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => getAgentRiskLevel(agent);
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in">
@@ -84,14 +61,14 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                     className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
                 >
                     {agents.map(agent => {
-                        const isPendingAssessment = agent.identification?.governance_status === 'Risk Assessment is running';
+                        const pending = isPendingAssessment(agent);
                         const risk = getRiskLevel(agent);
-                        const isHigh = !isPendingAssessment && (risk === 'high' || risk === 'prohibited');
-                        const isMed = !isPendingAssessment && risk === 'medium';
+                        const isHigh = !pending && (risk === 'high' || risk === 'prohibited');
+                        const isMed = !pending && risk === 'medium';
                         
                         return (
                             <div
-                                key={agent.id || agent.name}
+                                key={agent.identification?.agent_id || agent.id || agent.name}
                                 onClick={() => onSelectAgent(agent)}
                                 className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-700 transition-all cursor-pointer overflow-hidden flex flex-col h-full"
                             >
@@ -103,16 +80,9 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                             <Bot size={24} />
                                         </div>
                                         <div className="flex flex-col items-end gap-1.5">
-                                            {isPendingAssessment ? (
-                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-100 dark:border-amber-800">
-                                                    <Loader2 size={10} className="animate-spin" />
-                                                    Risk Assessment is running
-                                                </span>
-                                            ) : (
-                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
-                                                    Active
-                                                </span>
-                                            )}
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
+                                                Active
+                                            </span>
                                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-slate-700">
                                                 v{agent.version || '1.0'}
                                             </span>
@@ -127,15 +97,21 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                     </p>
 
                                     <div className="flex flex-wrap gap-1.5 mt-auto">
+                                        {pending && (
+                                            <div className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-100 dark:border-amber-800">
+                                                <Loader2 size={10} className="animate-spin" />
+                                                Running Risk Assessment
+                                            </div>
+                                        )}
                                         <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${
-                                            isPendingAssessment
+                                            pending
                                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
                                                 : isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
                                                 : isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50'
                                                 : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
                                         }`}>
-                                            {isPendingAssessment ? <Loader2 size={10} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
-                                            RISK: {isPendingAssessment ? 'ASSESSING' : risk === 'prohibited' ? 'PROHIBITED' : isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
+                                            {pending ? <Loader2 size={10} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
+                                            RISK: {pending ? 'ASSESSING' : risk === 'prohibited' ? 'PROHIBITED' : isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
                                         </div>
                                     </div>
                                 </div>
@@ -160,14 +136,14 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                     </div>
                     <div className="divide-y divide-slate-100 dark:divide-slate-800">
                         {agents.map(agent => {
-                            const isPendingAssessment = agent.identification?.governance_status === 'Risk Assessment is running';
+                            const pending = isPendingAssessment(agent);
                             const risk = getRiskLevel(agent);
-                            const isHigh = !isPendingAssessment && (risk === 'high' || risk === 'prohibited');
-                            const isMed = !isPendingAssessment && risk === 'medium';
+                            const isHigh = !pending && (risk === 'high' || risk === 'prohibited');
+                            const isMed = !pending && risk === 'medium';
 
                             return (
                                 <div
-                                    key={agent.id || agent.name}
+                                    key={agent.identification?.agent_id || agent.id || agent.name}
                                     onClick={() => onSelectAgent(agent)}
                                     className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
@@ -186,27 +162,20 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                         v{agent.version || '1.0'}
                                     </div>
                                     <div>
-                                        {isPendingAssessment ? (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-100 dark:border-amber-800">
-                                                <Loader2 size={10} className="animate-spin" />
-                                                Risk Assessment is running
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
-                                                Active
-                                            </span>
-                                        )}
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
+                                            Active
+                                        </span>
                                     </div>
                                     <div>
                                         <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded border ${
-                                            isPendingAssessment
-                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                            pending
+                                                ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-100 dark:border-amber-800'
                                                 : isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
                                                 : isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50'
                                                 : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
                                         }`}>
-                                            {isPendingAssessment ? <Loader2 size={12} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={12} /> : <CheckCircle2 size={12} />}
-                                            {isPendingAssessment ? 'Assessing' : risk === 'prohibited' ? 'Prohibited' : isHigh ? 'High' : isMed ? 'Medium' : 'Low'}
+                                            {pending ? <Loader2 size={12} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={12} /> : <CheckCircle2 size={12} />}
+                                            {pending ? 'Running Risk Assessment' : risk === 'prohibited' ? 'Prohibited' : isHigh ? 'High' : isMed ? 'Medium' : 'Low'}
                                         </span>
                                     </div>
                                     <div className="flex justify-end pr-2 text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
@@ -232,3 +201,4 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
 };
 
 export default AgentCatalog;
+
