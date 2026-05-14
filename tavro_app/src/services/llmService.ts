@@ -120,6 +120,20 @@ export function clearLLMConfig(): void {
     if (active) clearProviderConfig(active);
 }
 
+// ── Tool-calling types ─────────────────────────────────────────────────────────
+
+export interface ToolCall {
+    id: string;
+    name: string;
+    arguments: Record<string, any>;
+}
+
+export interface CompletionResult {
+    type: 'text' | 'tool_calls';
+    content?: string;
+    toolCalls?: ToolCall[];
+}
+
 // ── Streaming helpers ──────────────────────────────────────────────────────────
 
 /** Parse SSE data lines and yield text deltas */
@@ -242,6 +256,137 @@ async function* streamAnthropic(cfg: LLMConfig, messages: ChatMessage[]): AsyncG
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+// ── Non-streaming completion with tool-calling ────────────────────────────────
+
+async function completeChatOpenAI(cfg: LLMConfig, messages: ChatMessage[], tools: any[]): Promise<CompletionResult> {
+    const tokenLimitKey = /^(o\d|gpt-5)/i.test(cfg.model) ? 'max_completion_tokens' : 'max_tokens';
+    const body: any = {
+        model: cfg.model,
+        messages,
+        stream: false,
+        [tokenLimitKey]: 2048,
+    };
+    if (tools.length > 0) {
+        body.tools = tools;
+        body.tool_choice = 'auto';
+    }
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message ?? `OpenAI error ${res.status}`);
+    }
+    const data = await res.json();
+    const choice = data.choices?.[0];
+    const message = choice?.message;
+    if (choice?.finish_reason === 'tool_calls' && message?.tool_calls?.length > 0) {
+        return {
+            type: 'tool_calls',
+            toolCalls: message.tool_calls.map((tc: any) => ({
+                id: tc.id,
+                name: tc.function.name,
+                arguments: (() => { try { return JSON.parse(tc.function.arguments || '{}'); } catch { return {}; } })(),
+            })),
+        };
+    }
+    return { type: 'text', content: message?.content || '' };
+}
+
+async function completeChatAnthropic(cfg: LLMConfig, messages: ChatMessage[], tools: any[]): Promise<CompletionResult> {
+    const systemMsg = messages.find(m => m.role === 'system')?.content ?? '';
+    const chatMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
+    const modelsToTry = Array.from(new Set([
+        cfg.model, 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022',
+    ].filter(Boolean)));
+    const errors: string[] = [];
+    for (const model of modelsToTry) {
+        const body: any = { model, max_tokens: 2048, system: systemMsg, messages: chatMsgs };
+        if (tools.length > 0) {
+            body.tools = tools;
+            body.tool_choice = { type: 'auto' };
+        }
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': cfg.apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true',
+            },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            errors.push(`${model}: HTTP ${res.status} ${err?.error?.message ?? ''}`);
+            continue;
+        }
+        const data = await res.json();
+        if (data.stop_reason === 'tool_use') {
+            const toolUseBlocks = (data.content || []).filter((c: any) => c.type === 'tool_use');
+            return {
+                type: 'tool_calls',
+                toolCalls: toolUseBlocks.map((b: any) => ({ id: b.id, name: b.name, arguments: b.input || {} })),
+            };
+        }
+        const textBlock = (data.content || []).find((c: any) => c.type === 'text');
+        return { type: 'text', content: textBlock?.text || '' };
+    }
+    throw new Error(`Anthropic completion failed. Tried: ${errors.join(' | ')}`);
+}
+
+async function completeChatGemini(cfg: LLMConfig, messages: ChatMessage[], tools: any[]): Promise<CompletionResult> {
+    const systemParts = messages.filter(m => m.role === 'system').map(m => ({ text: m.content }));
+    const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cfg.model}:generateContent?key=${cfg.apiKey}`;
+    const body: any = { contents, generationConfig: { temperature: 0.4, maxOutputTokens: 2048 } };
+    if (systemParts.length > 0) body.systemInstruction = { parts: systemParts };
+    if (tools.length > 0) body.tools = tools;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message ?? `Gemini error ${res.status}`);
+    }
+    const data = await res.json();
+    const content = data.candidates?.[0]?.content;
+    const functionCallParts = (content?.parts || []).filter((p: any) => p.functionCall);
+    if (functionCallParts.length > 0) {
+        return {
+            type: 'tool_calls',
+            toolCalls: functionCallParts.map((p: any, idx: number) => ({
+                id: `call_${p.functionCall.name}_${Date.now()}_${idx}`,
+                name: p.functionCall.name,
+                arguments: p.functionCall.args || {},
+            })),
+        };
+    }
+    const textPart = (content?.parts || []).find((p: any) => p.text);
+    return { type: 'text', content: textPart?.text || '' };
+}
+
+/**
+ * Non-streaming completion with optional tool-calling support.
+ * Returns either a text response or a list of tool calls to execute.
+ */
+export async function completeChat(messages: ChatMessage[], tools: any[] = []): Promise<CompletionResult> {
+    const cfg = getLLMConfig();
+    if (!cfg) throw new Error('NO_LLM_CONFIGURED');
+    switch (cfg.provider) {
+        case 'openai': return completeChatOpenAI(cfg, messages, tools);
+        case 'anthropic': return completeChatAnthropic(cfg, messages, tools);
+        case 'gemini': return completeChatGemini(cfg, messages, tools);
+        default: throw new Error(`Unknown LLM provider: ${cfg.provider}`);
+    }
+}
 
 /**
  * Stream a chat completion.
