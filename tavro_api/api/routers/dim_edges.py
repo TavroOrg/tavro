@@ -98,7 +98,7 @@ async def create_dim_edge(body: DimEdgeCreate, db: AsyncSession = Depends(get_db
             INSERT INTO twin.dim_edge
                 (source_id, target_id, rel_type, weight, meta)
             VALUES
-                (:source_id, :target_id, :rel_type, :weight, :meta::jsonb)
+                (:source_id, :target_id, :rel_type, :weight, cast(:meta as jsonb))
             RETURNING *
         """),
         {

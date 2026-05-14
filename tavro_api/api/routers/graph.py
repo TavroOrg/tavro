@@ -91,21 +91,18 @@ async def get_node_neighbourhood(
                 FROM twin.dim_node
                 WHERE id = :node_id AND valid_to IS NULL
 
-                UNION
+                UNION ALL
 
-                -- Expand outbound edges
-                SELECT e.target_id, n.depth + 1
+                -- Expand both inbound and outbound edges from the current frontier
+                SELECT CASE
+                         WHEN e.source_id = n.id THEN e.target_id
+                         ELSE e.source_id
+                       END AS id,
+                       n.depth + 1
                 FROM neighbourhood n
-                JOIN twin.dim_edge e ON e.source_id = n.id
-                WHERE e.valid_to IS NULL AND n.depth < :hops
-
-                UNION
-
-                -- Expand inbound edges
-                SELECT e.source_id, n.depth + 1
-                FROM neighbourhood n
-                JOIN twin.dim_edge e ON e.target_id = n.id
-                WHERE e.valid_to IS NULL AND n.depth < :hops
+                JOIN twin.dim_edge e ON (e.source_id = n.id OR e.target_id = n.id)
+                WHERE e.valid_to IS NULL
+                  AND n.depth < :hops
             )
             SELECT DISTINCT
                 dn.id, dn.label, t.category AS type
