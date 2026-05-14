@@ -384,15 +384,22 @@ class AgentMetadataExporter:
     
     @staticmethod
     def send_payload_async(payload: Dict[str, Any]) -> None:
+        primary_url = os.getenv("RISK_CLASSIFY_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
+        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+
         def _send():
             try:
-                requests.post(
-                    "http://tavro-api:8000/api/v1/risk/classify-risk",
-                    json=payload,
-                    timeout=2
-                )
-            except Exception:
-                pass
+                resp = requests.post(primary_url, json=payload, timeout=(2, 30))
+                if resp.status_code >= 400:
+                    print(f"[risk-trigger] Primary endpoint returned {resp.status_code}: {resp.text[:300]}")
+            except Exception as e:
+                print(f"[risk-trigger] Primary endpoint failed ({primary_url}): {e}")
+                try:
+                    resp = requests.post(fallback_url, json=payload, timeout=(2, 30))
+                    if resp.status_code >= 400:
+                        print(f"[risk-trigger] Fallback endpoint returned {resp.status_code}: {resp.text[:300]}")
+                except Exception as ex:
+                    print(f"[risk-trigger] Fallback endpoint failed ({fallback_url}): {ex}")
 
         threading.Thread(target=_send, daemon=True).start()
 
@@ -534,6 +541,14 @@ class AgentMetadataExporter:
         if not agent_name or not description or not instruction:
             raise ValueError("agent_name, description, instruction are required")
 
+        raw_agent_name = str(agent_name).strip()
+        raw_description = str(description).strip()
+        raw_instruction = str(instruction).strip()
+        agent_name = cls.sanitize(raw_agent_name)
+        description = cls.sanitize(raw_description)
+        instruction = cls.sanitize(raw_instruction)
+        tenant_id = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+
         agent_id = str(uuid.uuid4())
         agent_internal_id = str(uuid.uuid4())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -542,7 +557,7 @@ class AgentMetadataExporter:
         data_source_values = []
 
         # 1. agents table
-        tenant_id_value = f"'{cls.sanitize(tenant_id)}'," if tenant_id else ""
+        tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
         tenant_id_column = "tenant_id," if tenant_id else ""
         queries.append(f"""
         INSERT INTO {cls.CORE_GLUE_DB_NAME}.agents (
@@ -694,9 +709,9 @@ class AgentMetadataExporter:
         payload = {
             "agent_internal_id": agent_internal_id,
             "agent_id": agent_id,
-            "agent_name": agent_name,
-            "agent_description": description,
-            "agent_instructions": instruction,
+            "agent_name": raw_agent_name,
+            "agent_description": raw_description,
+            "agent_instructions": raw_instruction,
             "agent_role": "",
             "provider": "MCP Server",
             "agent_platform": "",
@@ -719,7 +734,7 @@ class AgentMetadataExporter:
 
         return {
             "agent_id": agent_id,
-            "agent_name": agent_name,
+            "agent_name": raw_agent_name,
             "message": "Agent created successfully and risk assessment triggered."
         }
     

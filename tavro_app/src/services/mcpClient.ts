@@ -25,10 +25,15 @@ type UseCaseActionFields = {
 };
 
 function getRiskLevel(agent: AgentData): 'high' | 'medium' | 'low' {
-    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim();
-    if (brc === 'critical' || brc === 'high') return 'high';
-    if (brc === 'medium') return 'medium';
-    if (brc === 'low') return 'low';
+    const labels = [
+        agent.risk_assessment?.blended_risk_classification,
+        agent.risk_assessment?.regulatory_risk_classification,
+        (agent as any).latest_risk_class,
+        (agent as any).blended_risk_classification,
+        (agent as any).risk_classification,
+    ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+    if (labels.some(v => v.includes('prohibited') || v.includes('high risk') || v === 'high' || v.includes('critical'))) return 'high';
+    if (labels.some(v => v.includes('other') || v.includes('low'))) return 'low';
 
     const apps = agent.application ?? [];
     if (apps.some(a =>
@@ -64,6 +69,61 @@ function unwrapToolResponse(data: any, keys: string[]): any {
     }
     if (Array.isArray(current)) current = current[0];
     return current;
+}
+
+function extractRiskFromSummaryText(summary: any): string | undefined {
+    const text = String(summary ?? '').toLowerCase();
+    if (!text) return undefined;
+    if (text.includes('risk classification:') && text.includes('prohibited')) return 'Prohibited';
+    if (text.includes('risk classification:') && text.includes('high risk')) return 'High Risk';
+    if (text.includes('risk classification:') && (text.includes('medium risk') || text.includes('moderate'))) return 'Medium';
+    if (text.includes('risk classification:') && (text.includes('other') || text.includes('low risk'))) return 'Other';
+    if (text.includes('designated as') && text.includes('prohibited')) return 'Prohibited';
+    if (text.includes('designated as') && text.includes('high risk')) return 'High Risk';
+    if (text.includes('designated as') && (text.includes('medium risk') || text.includes('moderate'))) return 'Medium';
+    if (text.includes('designated as') && (text.includes('other') || text.includes('low risk'))) return 'Other';
+    return undefined;
+}
+
+function normalizeRiskAssessment(item: any): any {
+    const summary =
+        item.risk_assessment?.summary ??
+        item.risk_assessment?.risk_summary ??
+        item.risk_summary ??
+        item.summary ??
+        item.risk_assessment_summary ??
+        item.ai_risk_summary;
+
+    const parsedFromSummary = extractRiskFromSummaryText(summary);
+
+    return {
+        ...(item.risk_assessment ?? {}),
+        blended_risk_classification:
+            item.risk_assessment?.blended_risk_classification ??
+            item.blended_risk_classification ??
+            item.overall_risk_classification ??
+            item.eu_ai_act_risk_classification ??
+            item.latest_risk_class ??
+            item.risk_classification ??
+            parsedFromSummary,
+        blended_risk_score:
+            item.risk_assessment?.blended_risk_score ??
+            item.blended_risk_score ??
+            item.risk_score ??
+            item.overall_risk_score,
+        regulatory_risk_classification:
+            item.risk_assessment?.regulatory_risk_classification ??
+            item.regulatory_risk_classification ??
+            item.regulatory_risk_class ??
+            item.eu_ai_act_risk_classification,
+        regulatory_risk_score:
+            item.risk_assessment?.regulatory_risk_score ??
+            item.regulatory_risk_score,
+        aivss_score:
+            item.risk_assessment?.aivss_score ??
+            item.aivss_score,
+        summary,
+    };
 }
 
 function normaliseUseCase(raw: any): any {
@@ -395,7 +455,6 @@ class McpClientService {
             return [
                 { name: 'get_agent_catalog', description: 'Get agent catalog' },
                 { name: 'get_agent_card', description: 'Get agent details' },
-                { name: 'get_agent_risk_summary', description: 'Get agent risk summary' },
                 { name: 'get_ai_use_case', description: 'Get AI use cases or details' }
             ];
         }
@@ -781,7 +840,15 @@ ${toolSummary}`;
             const agents = rawList.map(item => ({
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
-                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' }
+                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' },
+                risk_assessment: normalizeRiskAssessment(item),
+                risk_summary:
+                    item.risk_summary ??
+                    item.summary ??
+                    item.risk_assessment?.summary ??
+                    item.risk_assessment_summary ??
+                    item.ai_risk_summary ??
+                    '',
             }));
             return { agents, totalRecords: data?.total_records ?? agents.length };
         } catch (err) { throw err; }
@@ -797,7 +864,9 @@ ${toolSummary}`;
         try {
             const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
             const data = await this.callTool('get_agent_card', isId ? { agent_id: id } : { agent_name: id });
+            if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
+            if (!agent || agent?.error) return undefined;
             if (agent) this._agentDetailCache.set(id, agent);
             return agent;
         } catch { return undefined; }
@@ -806,10 +875,24 @@ ${toolSummary}`;
     async getAgentRiskSummary(agentId: string): Promise<any> {
         if (this._riskSummaryCache.has(agentId)) return this._riskSummaryCache.get(agentId);
         try {
-            const data = await this.callTool('get_agent_risk_summary', { agent_id: agentId });
-            if (data) this._riskSummaryCache.set(agentId, data);
-            return data;
-        } catch { return undefined; }
+            const details = await this.getAgentDetails(agentId);
+            const summary =
+                (details as any)?.risk_summary ??
+                (details as any)?.summary ??
+                (details as any)?.risk_assessment?.summary ??
+                '';
+            if (!summary) return undefined;
+
+            const payload = {
+                agent_id: details?.identification?.agent_id || agentId,
+                agent_name: details?.name || agentId,
+                risk_summary: String(summary),
+            };
+            this._riskSummaryCache.set(agentId, payload);
+            return payload;
+        } catch {
+            return undefined;
+        }
     }
 
     async getAllAgents(): Promise<AgentData[]> {
@@ -899,10 +982,14 @@ ${toolSummary}`;
             },
             capabilities: raw.capabilities ?? {},
             application: raw.application ?? [],
-            risk_assessment: raw.risk_assessment ?? {
-                blended_risk_classification: raw.latest_risk_class,
-                summary: raw.summary,
-            },
+            risk_assessment: normalizeRiskAssessment(raw),
+            risk_summary:
+                raw.risk_summary ??
+                raw.summary ??
+                raw.risk_assessment?.summary ??
+                raw.risk_assessment_summary ??
+                raw.ai_risk_summary ??
+                '',
         } as AgentData;
     }
 
