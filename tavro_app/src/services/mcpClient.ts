@@ -562,7 +562,7 @@ ${toolSummary}`;
 
                 if (completion.type === 'tool_calls' && completion.toolCalls?.length) {
                     // Execute each tool via MCP — retry up to 3 times on error
-                    const toolResults: string[] = [];
+                    const executedResults: Array<{ name: string; result: any }> = [];
                     for (const toolCall of completion.toolCalls) {
                         appLogger.tool(`AI called MCP tool: ${toolCall.name}`, { args: toolCall.arguments });
                         let result: any;
@@ -579,7 +579,6 @@ ${toolSummary}`;
                             const isMcpError = result && typeof result === 'object' && result.error;
                             if (!isMcpError || attempt === MAX_ATTEMPTS) break;
 
-                            // Tool returned an error — ask LLM to fix the arguments before retrying
                             appLogger.warn(`MCP tool ${toolCall.name} error (attempt ${attempt}), retrying with corrected args`, { error: result });
                             const fixMessages: ChatMessage[] = [
                                 { role: 'system', content: baseSystemPrompt },
@@ -599,25 +598,15 @@ ${toolSummary}`;
                             if (fixedCall) {
                                 currentArgs = { ...fixedCall.arguments, original_prompt: userMessage };
                             } else {
-                                break; // LLM couldn't fix it
+                                break;
                             }
                         }
 
-                        const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-                        toolResults.push(`**${toolCall.name}**\n\`\`\`json\n${resultStr}\n\`\`\``);
+                        executedResults.push({ name: toolCall.name, result });
                     }
 
-                    // Final streaming call: inject tool results into the system prompt
-                    const toolContext = toolResults.join('\n\n');
-                    const finalMessages: ChatMessage[] = [
-                        {
-                            role: 'system',
-                            content: `${baseSystemPrompt}\n\n## MCP Tool Results\n${toolContext}\n\nUse this data to answer the user's question accurately and concisely. If a tool returned an error, explain it clearly to the user.`,
-                        },
-                        ...history.slice(-10),
-                        { role: 'user', content: userMessage },
-                    ];
-                    for await (const chunk of streamChat(finalMessages)) yield chunk;
+                    // Stream the actual MCP responses directly to the user
+                    yield executedResults.map(({ name, result }) => this._formatToolResultForDisplay(name, result)).join('\n\n');
                     return;
                 }
 
@@ -644,6 +633,37 @@ ${toolSummary}`;
             appLogger.error('LLM chat failed', { error: err?.message ?? String(err) });
             yield `I could not reach the configured LLM (${llmCfg.provider} · ${llmCfg.model}): ${err?.message ?? 'unknown error'}\n\n${this._buildContextFallbackResponse(userMessage, context)}`;
         }
+    }
+
+    private _formatToolResultForDisplay(toolName: string, result: any): string {
+        if (!result) return `**${toolName}** completed with no data returned.`;
+
+        if (typeof result === 'object' && result.error) {
+            const detail = result.details || result.message || '';
+            return `**${toolName}** returned an error:\n\n${result.error}${detail ? `\n\n${detail}` : ''}`;
+        }
+
+        if (typeof result === 'string') return result;
+
+        // Flatten a single-key wrapper (e.g. { agent_card: {...} } → the inner object)
+        const keys = Object.keys(result);
+        const unwrapped = keys.length === 1 && typeof result[keys[0]] === 'object' ? result[keys[0]] : result;
+        const target = Array.isArray(unwrapped) ? unwrapped : [unwrapped];
+
+        const lines: string[] = [];
+        for (const item of target) {
+            if (!item || typeof item !== 'object') { lines.push(String(item)); continue; }
+            const fields = Object.entries(item)
+                .filter(([, v]) => v !== null && v !== undefined && v !== '')
+                .map(([k, v]) => {
+                    const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    const value = typeof v === 'object' ? JSON.stringify(v) : String(v);
+                    return `**${label}:** ${value}`;
+                });
+            lines.push(fields.join('\n'));
+        }
+
+        return lines.join('\n\n---\n\n');
     }
 
     private async _handleAssistantAction(userMessage: string, context: ChatViewContext): Promise<string | null> {
