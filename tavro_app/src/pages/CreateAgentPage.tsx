@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
+import { AgentData } from '../types/agent';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
 
@@ -13,7 +14,7 @@ type AgentForm = {
 
 const CreateAgentPage: React.FC = () => {
   const navigate = useNavigate();
-  const { refresh } = useCatalog();
+  const { refresh, upsertAgent } = useCatalog();
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
@@ -27,6 +28,23 @@ const CreateAgentPage: React.FC = () => {
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
 
+  const extractAgentId = (result: any, fallbackName: string): string => {
+    const candidates = [
+      result?.agent_id,
+      result?.agent_internal_id,
+      result?.id,
+      result?.identifier,
+      result?.agent?.agent_id,
+      result?.data?.agent_id,
+      result?.agent_card?.identification?.agent_id,
+      result?.agent_card?.agent_id,
+    ];
+    for (const value of candidates) {
+      if (value && String(value).trim()) return String(value).trim();
+    }
+    return fallbackName;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return;
@@ -37,7 +55,7 @@ const CreateAgentPage: React.FC = () => {
     localStorage.setItem('tavro_cache_mode', 'false');
     window.dispatchEvent(new Event('tavro_settings_change'));
     try {
-      await mcpClient.createAgent({
+      const createResult = await mcpClient.createAgent({
         agent_name: form.name.trim(),
         description: form.description.trim(),
         // instruction is required by the MCP tool; fall back to description if blank
@@ -46,10 +64,47 @@ const CreateAgentPage: React.FC = () => {
         ...(form.role.trim() && { role: form.role.trim() }),
         ...(form.environment.trim() && { environment: form.environment.trim() }),
       });
+      const createdAgentId = extractAgentId(createResult, form.name.trim());
+      const optimisticAgent: AgentData = {
+        name: form.name.trim(),
+        description: form.description.trim() || form.name.trim(),
+        version: '1.0',
+        identification: {
+          agent_id: createdAgentId,
+          role: form.role.trim() || null,
+          instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
+          environment: form.environment.trim() || null,
+          owner: form.owner.trim() || null,
+          governance_status: 'Risk Assessment is running',
+        },
+        configuration: { autonomy_level: null },
+        tool: [],
+        data_source: [],
+        application: [],
+        business_process: [],
+        risk_assessment: null,
+      };
+      upsertAgent(optimisticAgent);
+
+      const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+      const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+      const nextPending = Array.from(new Set([...pending, createdAgentId]));
+      localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(nextPending));
+      const pendingMetaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+      const pendingMeta = pendingMetaRaw ? JSON.parse(pendingMetaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
+      const withoutCurrent = pendingMeta.filter(item => item.agent_id !== createdAgentId);
+      withoutCurrent.unshift({
+        agent_id: createdAgentId,
+        name: form.name.trim(),
+        description: form.description.trim() || form.name.trim(),
+        created_at: new Date().toISOString(),
+      });
+      localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(withoutCurrent));
+
       setSuccess(true);
       sessionStorage.setItem(
         'tavro_catalog_notice',
-        'Agent created successfully. Risk assessment has been triggered and is processing in the background. The agent will appear in the catalog shortly.'
+        'Agent created successfully. Risk assessment is running in the background.'
       );
       refresh();
       redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);

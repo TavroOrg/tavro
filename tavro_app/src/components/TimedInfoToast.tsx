@@ -21,6 +21,18 @@ const TimedInfoToast: React.FC<TimedInfoToastProps> = ({ storageKey, durationMs 
     }, [storageKey, durationMs]);
 
     useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ key?: string; message?: string }>).detail;
+            if (!detail?.message) return;
+            if (detail.key && detail.key !== storageKey) return;
+            setNotice(detail.message);
+            setRemainingMs(durationMs);
+        };
+        window.addEventListener('tavro_notice', handler);
+        return () => window.removeEventListener('tavro_notice', handler);
+    }, [storageKey, durationMs]);
+
+    useEffect(() => {
         if (!notice) return;
         if (!isHovered && remainingMs <= 0) {
             setNotice(null);

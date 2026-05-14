@@ -25,10 +25,15 @@ type UseCaseActionFields = {
 };
 
 function getRiskLevel(agent: AgentData): 'high' | 'medium' | 'low' {
-    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim();
-    if (brc === 'critical' || brc === 'high') return 'high';
-    if (brc === 'medium') return 'medium';
-    if (brc === 'low') return 'low';
+    const labels = [
+        agent.risk_assessment?.blended_risk_classification,
+        agent.risk_assessment?.regulatory_risk_classification,
+        (agent as any).latest_risk_class,
+        (agent as any).blended_risk_classification,
+        (agent as any).risk_classification,
+    ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+    if (labels.some(v => v.includes('prohibited') || v.includes('high risk') || v === 'high' || v.includes('critical'))) return 'high';
+    if (labels.some(v => v.includes('other') || v.includes('low'))) return 'low';
 
     const apps = agent.application ?? [];
     if (apps.some(a =>
@@ -581,7 +586,14 @@ class McpClientService {
             const agents = rawList.map(item => ({
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
-                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' }
+                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' },
+                risk_assessment: item.risk_assessment ?? {
+                    blended_risk_classification: item.blended_risk_classification ?? item.latest_risk_class ?? item.risk_classification,
+                    blended_risk_score: item.blended_risk_score ?? item.risk_score,
+                    regulatory_risk_classification: item.regulatory_risk_classification,
+                    regulatory_risk_score: item.regulatory_risk_score,
+                    aivss_score: item.aivss_score,
+                }
             }));
             return { agents, totalRecords: data?.total_records ?? agents.length };
         } catch (err) { throw err; }
@@ -597,7 +609,9 @@ class McpClientService {
         try {
             const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
             const data = await this.callTool('get_agent_card', isId ? { agent_id: id } : { agent_name: id });
+            if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
+            if (!agent || agent?.error) return undefined;
             if (agent) this._agentDetailCache.set(id, agent);
             return agent;
         } catch { return undefined; }

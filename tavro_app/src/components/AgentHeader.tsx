@@ -4,7 +4,6 @@ import { BrainCircuit, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2 
 
 interface AgentHeaderProps { agent: AgentData; }
 
-/** Coloured badge pill */
 const Badge: React.FC<{ text: string; color?: 'blue' | 'emerald' | 'amber' | 'rose' | 'slate' }> = ({ text, color = 'slate' }) => {
     const cls = {
         blue: 'bg-blue-50 text-blue-700 border-blue-100',
@@ -20,7 +19,6 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
     const id = agent.identification;
     const caps = agent.capabilities;
 
-    // Streaming capability display
     const capBadges: string[] = [];
     if (caps?.streaming === true) capBadges.push('Streaming');
     if (caps?.streaming === false) capBadges.push('Non-streaming');
@@ -28,28 +26,41 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
         if (k !== 'streaming' && v === true) capBadges.push(k);
     });
 
+    const labels = [
+        agent.risk_assessment?.blended_risk_classification,
+        agent.risk_assessment?.regulatory_risk_classification,
+        (agent as any).latest_risk_class,
+        (agent as any).blended_risk_classification,
+        (agent as any).risk_classification,
+    ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+
+    const riskLevel: 'prohibited' | 'high' | 'medium' | 'low' = labels.some(v => v.includes('prohibited'))
+        ? 'prohibited'
+        : labels.some(v => v.includes('high risk') || v === 'high')
+            ? 'high'
+            : labels.some(v => v.includes('other'))
+            ? 'low'
+            : agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'))
+                ? 'high'
+                : agent.application?.some(a => a.business_criticality?.includes('Medium'))
+                    ? 'medium'
+                    : 'low';
+
     return (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col">
             <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
-                {/* Left Side: Icon, Name, ID, I/O Modes */}
                 <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[40%]">
                     <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
                         <BrainCircuit size={28} />
                     </div>
                     <div className="flex flex-col gap-1.5 min-w-0">
                         <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{agent.name}</h2>
-
-                        {/* Metdata Row 1 */}
                         <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600 truncate max-w-[150px] sm:max-w-xs">
                                 {id?.agent_id || 'N/A'}
                             </span>
-                            {id?.environment && (
-                                <Badge text={id.environment} color="blue" />
-                            )}
+                            {id?.environment && <Badge text={id.environment} color="blue" />}
                         </div>
-
-                        {/* I/O Modes & Capabilities */}
                         {((agent.defaultInputModes?.length ?? 0) > 0 || (agent.defaultOutputModes?.length ?? 0) > 0 || capBadges.length > 0) && (
                             <div className="flex flex-wrap gap-2 mt-1">
                                 {(agent.defaultInputModes?.length ?? 0) > 0 && (
@@ -74,7 +85,6 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
                     </div>
                 </div>
 
-                {/* Middle Side: Status, Version, Risk */}
                 <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
                     <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Status</span>
@@ -92,18 +102,18 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
                     </div>
                     <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Risk</span>
-                        <span className={`inline-flex items-center gap-1 text-xs font-bold ${agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical')) ? 'text-red-600' :
-                            agent.application?.some(a => a.business_criticality?.includes('Medium')) ? 'text-amber-600' : 'text-emerald-600'
-                            }`}>
-                            {
-                                agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical')) ? <><ShieldAlert size={14} /> High</> :
-                                    agent.application?.some(a => a.business_criticality?.includes('Medium')) ? <><ShieldAlert size={14} /> Medium</> : <><CheckCircle2 size={14} /> Low</>
-                            }
+                        <span className={`inline-flex items-center gap-1 text-xs font-bold ${riskLevel === 'prohibited' || riskLevel === 'high' ? 'text-red-600' : riskLevel === 'medium' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {riskLevel === 'prohibited'
+                                ? <><ShieldAlert size={14} /> Prohibited</>
+                                : riskLevel === 'high'
+                                    ? <><ShieldAlert size={14} /> High</>
+                                    : riskLevel === 'medium'
+                                        ? <><ShieldAlert size={14} /> Medium</>
+                                        : <><CheckCircle2 size={14} /> Low</>}
                         </span>
                     </div>
                 </div>
 
-                {/* Right Side: Provider + links */}
                 <div className="flex flex-col items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
                     <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-end min-w-[140px]">
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>

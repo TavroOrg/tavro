@@ -32,6 +32,15 @@ const Dashboard: React.FC = () => {
         ? page * PAGE_SIZE < totalRecords
         : false;
 
+    const extractRiskClassificationFromSummary = (summary: any): string | null => {
+        if (!summary) return null;
+        const text = String(summary?.risk_summary ?? summary?.summary ?? '');
+        if (!text) return null;
+        const clean = text.replace(/<[^>]*>/g, ' ');
+        const match = clean.match(/Risk Classification\s*:\s*(Prohibited|High Risk|Other)/i);
+        return match?.[1] ?? null;
+    };
+
     const fetchPage = useCallback(async (pageNum: number) => {
         setLoading(true);
         setError(null);
@@ -39,7 +48,30 @@ const Dashboard: React.FC = () => {
             const startRecord = (pageNum - 1) * PAGE_SIZE + 1;
             console.log(`[Dashboard] Fetching page ${pageNum} (start_record=${startRecord})...`);
             const { agents: agentsData, totalRecords: total } = await mcpClient.getCatalogPage(startRecord);
-            setPagedAgents(agentsData);
+            const enriched = await Promise.all(
+                agentsData.map(async (agent) => {
+                    const agentId = agent.identification?.agent_id || agent.name;
+                    if (!agentId) return agent;
+                    const [details, riskSummary] = await Promise.all([
+                        mcpClient.getAgentDetails(agentId),
+                        mcpClient.getAgentRiskSummary(agentId),
+                    ]);
+                    if (!details && !riskSummary) return agent;
+                    const summaryRiskClass = extractRiskClassificationFromSummary(riskSummary);
+                    const mergedDetails = details ?? agent;
+                    return {
+                        ...agent,
+                        ...mergedDetails,
+                        identification: { ...agent.identification, ...(mergedDetails as AgentData).identification },
+                        risk_assessment: {
+                            ...agent.risk_assessment,
+                            ...(mergedDetails as AgentData).risk_assessment,
+                            ...(summaryRiskClass ? { blended_risk_classification: summaryRiskClass } : {}),
+                        },
+                    } as AgentData;
+                })
+            );
+            setPagedAgents(enriched);
             setTotalRecords(total);
             console.log(`[Dashboard] Got ${agentsData.length} agents (total_records=${total})`);
         } catch (err: any) {
@@ -68,13 +100,38 @@ const Dashboard: React.FC = () => {
     const handleNext = () => { if (hasMore) setPage(p => p + 1); };
 
     const isSearching = searchTerm.trim().length > 0;
+    const optimisticPending = !isSearching && page === 1
+        ? (() => {
+            const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+            const pendingMeta = raw ? JSON.parse(raw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
+            return pendingMeta
+                .filter(item => !pagedAgents.some(p => (p.identification?.agent_id || p.name) === (item.agent_id || item.name)))
+                .map(item => ({
+                    name: item.name,
+                    description: item.description,
+                    version: '1.0',
+                    identification: {
+                        agent_id: item.agent_id,
+                        role: null,
+                        instruction: null,
+                        governance_status: 'Risk Assessment is running',
+                    },
+                    configuration: { autonomy_level: null },
+                    tool: [],
+                    data_source: [],
+                    application: [],
+                    business_process: [],
+                    risk_assessment: null,
+                } as AgentData));
+        })()
+        : [];
     const displayedAgents = isSearching
         ? allAgents.filter(a =>
             a.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.identification?.agent_id?.toLowerCase().includes(searchTerm.toLowerCase())
         )
-        : pagedAgents;
+        : [...optimisticPending, ...pagedAgents];
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">

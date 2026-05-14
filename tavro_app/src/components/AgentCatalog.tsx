@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
-import { Search, BrainCircuit, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot } from 'lucide-react';
+import { Search, BrainCircuit, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
 interface AgentCatalogProps {
     agents: AgentData[];
@@ -11,6 +11,34 @@ interface AgentCatalogProps {
 
 const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearchChange, onSelectAgent }) => {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => {
+        const textBlobs = [
+            (agent as any).summary,
+            (agent as any).risk_summary,
+            (agent.risk_assessment as any)?.summary,
+        ].filter(Boolean).map(v => String(v).toLowerCase());
+        const rawClassifications = [
+            agent.risk_assessment?.blended_risk_classification,
+            agent.risk_assessment?.regulatory_risk_classification,
+            (agent as any).latest_risk_class,
+            (agent as any).blended_risk_classification,
+            (agent as any).risk_classification,
+        ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+        if (rawClassifications.some(v => v.includes('prohibited'))) return 'prohibited';
+        if (rawClassifications.some(v => v.includes('high risk') || v === 'high' || v.includes('critical'))) return 'high';
+        if (rawClassifications.some(v => v.includes('other') || v.includes('low'))) return 'low';
+        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('prohibited'))) return 'prohibited';
+        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('high risk'))) return 'high';
+        if (textBlobs.some(t => t.includes('risk classification:') && t.includes('other'))) return 'low';
+        if (textBlobs.some(t => t.includes('designated as') && t.includes('prohibited'))) return 'prohibited';
+        if (textBlobs.some(t => t.includes('designated as') && t.includes('high risk'))) return 'high';
+        if (textBlobs.some(t => t.includes('designated as') && t.includes('other'))) return 'low';
+        const isHighByApp = agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'));
+        const isMedByApp = agent.application?.some(a => a.business_criticality?.includes('Medium'));
+        if (isHighByApp) return 'high';
+        if (isMedByApp) return 'medium';
+        return 'low';
+    };
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in">
@@ -56,8 +84,10 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                     className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
                 >
                     {agents.map(agent => {
-                        const isHigh = agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'));
-                        const isMed = agent.application?.some(a => a.business_criticality?.includes('Medium'));
+                        const isPendingAssessment = agent.identification?.governance_status === 'Risk Assessment is running';
+                        const risk = getRiskLevel(agent);
+                        const isHigh = !isPendingAssessment && (risk === 'high' || risk === 'prohibited');
+                        const isMed = !isPendingAssessment && risk === 'medium';
                         
                         return (
                             <div
@@ -73,9 +103,16 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                             <Bot size={24} />
                                         </div>
                                         <div className="flex flex-col items-end gap-1.5">
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
-                                                Active
-                                            </span>
+                                            {isPendingAssessment ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-100 dark:border-amber-800">
+                                                    <Loader2 size={10} className="animate-spin" />
+                                                    Risk Assessment is running
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
+                                                    Active
+                                                </span>
+                                            )}
                                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-slate-700">
                                                 v{agent.version || '1.0'}
                                             </span>
@@ -91,18 +128,20 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
 
                                     <div className="flex flex-wrap gap-1.5 mt-auto">
                                         <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${
-                                            isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50' :
-                                            isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50' :
-                                            'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
+                                            isPendingAssessment
+                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                                : isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
+                                                : isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50'
+                                                : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
                                         }`}>
-                                            {isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
-                                            RISK: {isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
+                                            {isPendingAssessment ? <Loader2 size={10} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
+                                            RISK: {isPendingAssessment ? 'ASSESSING' : risk === 'prohibited' ? 'PROHIBITED' : isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                                    <span>ID: {(agent.id || 'N/A').slice(0, 8)}</span>
+                                    <span>ID: {(agent.identification?.agent_id || agent.id || 'N/A').slice(0, 8)}</span>
                                     <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
                                 </div>
                             </div>
@@ -121,8 +160,10 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                     </div>
                     <div className="divide-y divide-slate-100 dark:divide-slate-800">
                         {agents.map(agent => {
-                            const isHigh = agent.application?.some(a => a.business_criticality?.includes('High') || a.emergency_tier?.includes('Critical'));
-                            const isMed = agent.application?.some(a => a.business_criticality?.includes('Medium'));
+                            const isPendingAssessment = agent.identification?.governance_status === 'Risk Assessment is running';
+                            const risk = getRiskLevel(agent);
+                            const isHigh = !isPendingAssessment && (risk === 'high' || risk === 'prohibited');
+                            const isMed = !isPendingAssessment && risk === 'medium';
 
                             return (
                                 <div
@@ -135,7 +176,7 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                             {agent.name}
                                         </div>
                                         <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
-                                            {(agent.id || 'N/A').slice(0, 8)}
+                                            {(agent.identification?.agent_id || agent.id || 'N/A').slice(0, 8)}
                                         </div>
                                     </div>
                                     <div className="text-sm text-slate-500 dark:text-slate-400 truncate pr-8">
@@ -145,18 +186,27 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                         v{agent.version || '1.0'}
                                     </div>
                                     <div>
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
-                                            Active
-                                        </span>
+                                        {isPendingAssessment ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-100 dark:border-amber-800">
+                                                <Loader2 size={10} className="animate-spin" />
+                                                Risk Assessment is running
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
+                                                Active
+                                            </span>
+                                        )}
                                     </div>
                                     <div>
                                         <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded border ${
-                                            isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50' :
-                                            isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50' :
-                                            'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
+                                            isPendingAssessment
+                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                                : isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
+                                                : isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50'
+                                                : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
                                         }`}>
-                                            {isHigh || isMed ? <ShieldAlert size={12} /> : <CheckCircle2 size={12} />}
-                                            {isHigh ? 'High' : isMed ? 'Medium' : 'Low'}
+                                            {isPendingAssessment ? <Loader2 size={12} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={12} /> : <CheckCircle2 size={12} />}
+                                            {isPendingAssessment ? 'Assessing' : risk === 'prohibited' ? 'Prohibited' : isHigh ? 'High' : isMed ? 'Medium' : 'Low'}
                                         </span>
                                     </div>
                                     <div className="flex justify-end pr-2 text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
