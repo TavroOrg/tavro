@@ -1595,6 +1595,67 @@ def _query_core_rows(cursor, table_name: str, agent_internal_id: str):
     columns = [d[0] for d in cursor.description]
     return [dict(zip(columns, row)) for row in rows]
 
+
+def _query_agent_application_rows(cursor, agent_internal_id: str):
+    query = sql.SQL(
+        """
+        SELECT
+            aba.business_application_id,
+            COALESCE(ba.application_name, aba.application_name) AS application_name,
+            ba.application_description                           AS description,
+            COALESCE(ba.business_criticality, aba.criticality)  AS criticality,
+            ba.emergency_tier                                    AS emergency_tier
+        FROM {} aba
+        LEFT JOIN {} ba
+            ON ba.business_application_id = aba.business_application_id
+        WHERE aba.agent_internal_id = %s
+        """
+    ).format(
+        _table(CORE_SCHEMA, "agent_business_applications"),
+        _table(CORE_SCHEMA, "business_applications"),
+    )
+    cursor.execute(query, (agent_internal_id,))
+    rows = cursor.fetchall()
+    columns = [d[0] for d in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _query_agent_process_rows(cursor, agent_internal_id: str):
+    query = sql.SQL(
+        """
+        SELECT
+            abp.business_process_id,
+            COALESCE(bp.process_name, abp.process_name)          AS process_name,
+            bp.process_description                               AS description,
+            COALESCE(bp.business_criticality, abp.criticality)   AS criticality,
+            bp.parent_process_id                                 AS parent_process_id,
+            rel.related_process_ids                              AS related_process_ids
+        FROM {} abp
+        LEFT JOIN {} bp
+            ON bp.business_process_id = abp.business_process_id
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(rel_id ORDER BY rel_id) AS related_process_ids
+            FROM (
+                SELECT bp.parent_process_id AS rel_id
+                WHERE bp.parent_process_id IS NOT NULL
+                UNION
+                SELECT child.business_process_id AS rel_id
+                FROM {} child
+                WHERE child.parent_process_id = abp.business_process_id
+            ) rel
+        ) rel ON TRUE
+        WHERE abp.agent_internal_id = %s
+        """
+    ).format(
+        _table(CORE_SCHEMA, "agent_business_processes"),
+        _table(CORE_SCHEMA, "business_processes"),
+        _table(CORE_SCHEMA, "business_processes"),
+    )
+    cursor.execute(query, (agent_internal_id,))
+    rows = cursor.fetchall()
+    columns = [d[0] for d in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
 def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
     # Mirrors index.py card shape, but sources data from Postgres core schema.
     table_names = [
@@ -1622,6 +1683,8 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
     with _db_connection() as connection:
         with connection.cursor() as cursor:
             data = {name: _query_core_rows(cursor, name, agent_internal_id) for name in table_names}
+            application_rows = _query_agent_application_rows(cursor, agent_internal_id)
+            process_rows = _query_agent_process_rows(cursor, agent_internal_id)
 
     def first(name: str) -> dict:
         rows = data.get(name, [])
@@ -1641,9 +1704,9 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
     arf = first("agent_regulations_or_frameworks")
     
     use_cases = data["agent_ai_use_cases"]
-    apps = data["agent_business_applications"]
+    apps = application_rows
     ai_models = data["agent_ai_models"]
-    biz_procs = data["agent_business_processes"]
+    biz_procs = process_rows
     phys_ai = data["agent_physical_ai"]
     llm_models = data["agent_llm_models"]
     tools = data["agent_tools"]
