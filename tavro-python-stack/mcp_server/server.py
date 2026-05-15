@@ -9,7 +9,8 @@ from starlette.responses import JSONResponse
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from fastmcp.server.auth.providers.google import GoogleProvider
-from fastmcp.server.auth.providers.aws import AWSCognitoProvider, AWSCognitoTokenVerifier
+# from fastmcp.server.auth.providers.aws import AWSCognitoProvider, AWSCognitoTokenVerifier
+from mcp_server.zitadel_provider import ZitadelProvider
 from fastmcp.server.auth.auth import AccessToken    
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.auth.providers.jwt import JWTVerifier  
@@ -33,17 +34,19 @@ set_environment("fastapi")
 # ---------------------------
 # Priority: mcp_root_url from config.yaml → fallback to http://localhost:<port>
 _root_url_override = os.getenv("mcp_root_url", "").strip()
-ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9001')}"
+ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9000')}"
 
 GOOGLE_PREFIX = "/google"
-COGNITO_PREFIX = "/cognito"
+# COGNITO_PREFIX = "/cognito"
+ZITADEL_PREFIX = "/zitadel"
 # GITHUB_PREFIX = "/github"
 # AZURE_PREFIX  = "/azure"
 
 # GITHUB_BASE_URL = f"{ROOT_URL}{GITHUB_PREFIX}"
 # AZURE_BASE_URL  = f"{ROOT_URL}{AZURE_PREFIX}"
 GOOGLE_BASE_URL = f"{ROOT_URL}{GOOGLE_PREFIX}"
-COGNITO_BASE_URL = f"{ROOT_URL}{COGNITO_PREFIX}"
+# COGNITO_BASE_URL = f"{ROOT_URL}{COGNITO_PREFIX}"
+ZITADEL_BASE_URL = f"{ROOT_URL}{ZITADEL_PREFIX}"
 
 
 MCP_PATH = "/mcp"
@@ -64,90 +67,90 @@ middleware = [
     )
 ]
 
-# -----------------------------------------------------------------------
-#  NEW: Custom Cognito token verifier — preserves email from JWT claims
-# -----------------------------------------------------------------------
-class TavroCognitoTokenVerifier(AWSCognitoTokenVerifier):    
-    async def verify_token(self, token: str) -> AccessToken | None:
-        import httpx
+# # -----------------------------------------------------------------------
+# #  NEW: Custom Cognito token verifier — preserves email from JWT claims
+# # -----------------------------------------------------------------------
+# class TavroCognitoTokenVerifier(AWSCognitoTokenVerifier):    
+#     async def verify_token(self, token: str) -> AccessToken | None:
+#         import httpx
 
-        access_token = await super().verify_token(token)
-        if access_token is None:
-            return None
+#         access_token = await super().verify_token(token)
+#         if access_token is None:
+#             return None
     
-        email = None
-        email_verified = None
-        try:
-            userinfo_url = f"{os.getenv('COGNITO_HOSTED_UI')}/oauth2/userInfo"
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    userinfo_url,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=5.0,
-                )                
-                if resp.status_code == 200:
-                    userinfo = resp.json()
-                    email = userinfo.get("email")
-                    email_verified = userinfo.get("email_verified")
-                else:
-                    print(f"[DEBUG] UserInfo returned {resp.status_code}: {resp.text}")
-        except Exception as e:
-            print(f"[DEBUG] UserInfo fetch failed: {e}")
+#         email = None
+#         email_verified = None
+#         try:
+#             userinfo_url = f"{os.getenv('COGNITO_HOSTED_UI')}/oauth2/userInfo"
+#             async with httpx.AsyncClient() as client:
+#                 resp = await client.get(
+#                     userinfo_url,
+#                     headers={"Authorization": f"Bearer {token}"},
+#                     timeout=5.0,
+#                 )                
+#                 if resp.status_code == 200:
+#                     userinfo = resp.json()
+#                     email = userinfo.get("email")
+#                     email_verified = userinfo.get("email_verified")
+#                 else:
+#                     print(f"[DEBUG] UserInfo returned {resp.status_code}: {resp.text}")
+#         except Exception as e:
+#             print(f"[DEBUG] UserInfo fetch failed: {e}")
 
-        # Resolve tenant and enrich claims.
-        approved_user = await get_approved_user(email)       
+#         # Resolve tenant and enrich claims.
+#         approved_user = await get_approved_user(email)       
         
-        if approved_user is None:
-            return None
+#         if approved_user is None:
+#             return None
         
-        enriched_claims = {
-            **(access_token.claims or {}),
-            "email": email,
-            "email_verified": email_verified,
-            "tenant_id": approved_user.tenant_id,
-        }
-        print(f"[DEBUG] ===== AUTH SUCCESS =====")
-        print(f"  sub     : {enriched_claims.get('sub')}")
-        print(f"  username: {enriched_claims.get('username')}")
-        print(f"  email   : {enriched_claims.get('email')}")
-        print(f"  tenant_id: {enriched_claims.get('tenant_id')}")
-        return AccessToken(
-            token=access_token.token,
-            client_id=access_token.client_id,
-            scopes=access_token.scopes,
-            expires_at=access_token.expires_at,
-            claims=enriched_claims,            
-        )
+#         enriched_claims = {
+#             **(access_token.claims or {}),
+#             "email": email,
+#             "email_verified": email_verified,
+#             "tenant_id": approved_user.tenant_id,
+#         }
+#         print(f"[DEBUG] ===== AUTH SUCCESS =====")
+#         print(f"  sub     : {enriched_claims.get('sub')}")
+#         print(f"  username: {enriched_claims.get('username')}")
+#         print(f"  email   : {enriched_claims.get('email')}")
+#         print(f"  tenant_id: {enriched_claims.get('tenant_id')}")
+#         return AccessToken(
+#             token=access_token.token,
+#             client_id=access_token.client_id,
+#             scopes=access_token.scopes,
+#             expires_at=access_token.expires_at,
+#             claims=enriched_claims,            
+#         )
 
 
-# -----------------------------------------------------------------------
-# Custom Cognito provider — fixes audience + wires in our verifier
-# -----------------------------------------------------------------------
-class TavroCognitoProvider(AWSCognitoProvider):
-    def debug_oidc_config(self):
-        """Call this once to inspect what endpoints Cognito OIDC exposes."""
-        cfg = self.oidc_config
-        print("[OIDC CONFIG]")
-        print(f"  issuer        : {cfg.issuer}")
-        print(f"  userinfo_url  : {cfg.userinfo_endpoint}")
-        print(f"  jwks_uri      : {cfg.jwks_uri}")
-        print(f"  token_endpoint: {cfg.token_endpoint}")
+# # -----------------------------------------------------------------------
+# # Custom Cognito provider — fixes audience + wires in our verifier
+# # -----------------------------------------------------------------------
+# class TavroCognitoProvider(AWSCognitoProvider):
+#     def debug_oidc_config(self):
+#         """Call this once to inspect what endpoints Cognito OIDC exposes."""
+#         cfg = self.oidc_config
+#         print("[OIDC CONFIG]")
+#         print(f"  issuer        : {cfg.issuer}")
+#         print(f"  userinfo_url  : {cfg.userinfo_endpoint}")
+#         print(f"  jwks_uri      : {cfg.jwks_uri}")
+#         print(f"  token_endpoint: {cfg.token_endpoint}")
 
-    def get_token_verifier(
-        self,
-        *,
-        algorithm=None,
-        audience=None,
-        required_scopes=None,
-        timeout_seconds=None,
-    ) -> TavroCognitoTokenVerifier:
-        return TavroCognitoTokenVerifier(
-            issuer=str(self.oidc_config.issuer),            
-            audience=audience or self.client_id,
-            algorithm=algorithm,
-            jwks_uri=str(self.oidc_config.jwks_uri),
-            required_scopes=required_scopes,
-        )
+#     def get_token_verifier(
+#         self,
+#         *,
+#         algorithm=None,
+#         audience=None,
+#         required_scopes=None,
+#         timeout_seconds=None,
+#     ) -> TavroCognitoTokenVerifier:
+#         return TavroCognitoTokenVerifier(
+#             issuer=str(self.oidc_config.issuer),            
+#             audience=audience or self.client_id,
+#             algorithm=algorithm,
+#             jwks_uri=str(self.oidc_config.jwks_uri),
+#             required_scopes=required_scopes,
+#         )
 
 # ---------------------------
 # Shared tools (define once)
@@ -657,33 +660,61 @@ google_app = google_mcp.http_app(path=MCP_PATH)
 
 # azure_app = azure_mcp.http_app(path=MCP_PATH)
 
+# # ---------------------------
+# # AWS Cognito Auth + MCP — now uses TavroCognitoProvider
+# # ---------------------------
+# cognito_auth = TavroCognitoProvider(
+#     user_pool_id=os.getenv("COGNITO_USER_POOL_ID"),
+#     client_id=os.getenv("COGNITO_CLIENT_ID"),
+#     client_secret=os.getenv("COGNITO_CLIENT_SECRET"),
+#     base_url=COGNITO_BASE_URL,
+#     aws_region=os.getenv("COGNITO_AWS_REGION", "us-east-2"),
+#     jwt_signing_key=os.getenv("JWT_SIGNING_KEY"),
+# )
+
+# cognito_auth_wrapped = MultiAuth(
+#     server=cognito_auth,
+#     verifiers=[jwt_verifier],
+# )
+
+# cognito_mcp = FastMCP("Tavro MCP Server (AWS Cognito)", auth=cognito_auth_wrapped)
+# cognito_mcp.mount(core)
+# cognito_app = cognito_mcp.http_app(path=MCP_PATH)
+
 # ---------------------------
-# AWS Cognito Auth + MCP — now uses TavroCognitoProvider
+# Zitadel Auth + MCP — now uses ZitadelProvider
 # ---------------------------
-cognito_auth = TavroCognitoProvider(
-    user_pool_id=os.getenv("COGNITO_USER_POOL_ID"),
-    client_id=os.getenv("COGNITO_CLIENT_ID"),
-    client_secret=os.getenv("COGNITO_CLIENT_SECRET"),
-    base_url=COGNITO_BASE_URL,
-    aws_region=os.getenv("COGNITO_AWS_REGION", "us-east-2"),
+zitadel_auth = ZitadelProvider(
+    issuer=os.getenv("ZITADEL_ISSUER", ""),
+    client_id=os.getenv("ZITADEL_CLIENT_ID", ""),
+    client_secret=os.getenv("ZITADEL_CLIENT_SECRET") or None,
+    base_url=ZITADEL_BASE_URL,
     jwt_signing_key=os.getenv("JWT_SIGNING_KEY"),
+    required_scopes=os.getenv("ZITADEL_SCOPES", "openid profile email"),
+    prompt=os.getenv("ZITADEL_PROMPT") or None,
+    require_authorization_consent="external",
 )
 
-cognito_auth_wrapped = MultiAuth(
-    server=cognito_auth,
+zitadel_auth_wrapped = MultiAuth(
+    server=zitadel_auth,
     verifiers=[jwt_verifier],
 )
 
-cognito_mcp = FastMCP("Tavro MCP Server (AWS Cognito)", auth=cognito_auth_wrapped)
-cognito_mcp.mount(core)
-cognito_app = cognito_mcp.http_app(path=MCP_PATH)
+zitadel_mcp = FastMCP(
+    "Tavro MCP Server (ZITADEL)",
+    auth=zitadel_auth_wrapped,
+)
+
+zitadel_mcp.mount(core)
+
+zitadel_app = zitadel_mcp.http_app(path=MCP_PATH)
 
 # ---------------------------
 # Parent lifespan
 # ---------------------------
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    async with (google_app.lifespan(app), cognito_app.lifespan(app)):
+    async with (google_app.lifespan(app), zitadel_app.lifespan(app)):
         yield
 
 # ---------------------------
@@ -694,10 +725,11 @@ async def root_health(request):
 
 routes = [
     Route("/health", root_health, methods=["GET"]),
-    Mount(COGNITO_PREFIX, app=cognito_app),
+    # Mount(COGNITO_PREFIX, app=cognito_app),
     # Mount(GITHUB_PREFIX, app=github_app),
     Mount(GOOGLE_PREFIX, app=google_app),
     # Mount(AZURE_PREFIX, app=azure_app),
+    Mount(ZITADEL_PREFIX, app=zitadel_app),
 ]
 
 app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
@@ -711,7 +743,10 @@ for r in google_auth.get_well_known_routes(mcp_path=MCP_PATH):
 # for r in azure_auth.get_well_known_routes(mcp_path=MCP_PATH):
 #     app.router.routes.append(r)
 
-for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
+# for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
+#     app.router.routes.append(r)
+
+for r in zitadel_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
     app.router.routes.append(r)
 
 # ---------------------------

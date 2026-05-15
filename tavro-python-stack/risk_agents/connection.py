@@ -10,10 +10,25 @@ from psycopg2 import pool
 from utils.set_environment import set_environment
 
 set_environment("db")
+set_environment("postgres")
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 _connection_pool: pool.SimpleConnectionPool | None = None
 _pool_lock = threading.Lock()
+
+
+def _env_first(*names: str, default: str | None = None) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
+def _default_sslmode(host: str | None) -> str:
+    if not host or host in {"localhost", "127.0.0.1", "::1", "tavro-postgres"}:
+        return "disable"
+    return "require"
 
 
 def _get_connection_pool() -> pool.SimpleConnectionPool:
@@ -27,15 +42,16 @@ def _get_connection_pool() -> pool.SimpleConnectionPool:
         with _pool_lock:
             if _connection_pool is None:  # double-checked locking
                 try:
+                    host = _env_first("DB_HOST", "POSTGRES_HOST", "PGHOST", default="localhost")
                     _connection_pool = pool.SimpleConnectionPool(
                         minconn=2,
                         maxconn=10,   # small — this is auth only, not a data API
-                        dbname=os.getenv("DB_NAME"),
-                        user=os.getenv("DB_USER",),
-                        password=os.getenv("DB_PASSWORD"),
-                        host=os.getenv("DB_HOST"),
-                        port=int(os.getenv("DB_PORT")),
-                        sslmode="require",         # always enforce SSL on RDS
+                        dbname=_env_first("DB_NAME", "DB_Name", "POSTGRES_DB", "PGDATABASE"),
+                        user=_env_first("DB_USER", "POSTGRES_USER", "PGUSER"),
+                        password=_env_first("DB_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD"),
+                        host=host,
+                        port=int(_env_first("DB_PORT", "POSTGRES_PORT", "PGPORT", default="5432")),
+                        sslmode=os.getenv("DB_SSLMODE") or _default_sslmode(host),
                         options="-c default_transaction_read_only=on",  # read-only session
                         connect_timeout=5,
                     )

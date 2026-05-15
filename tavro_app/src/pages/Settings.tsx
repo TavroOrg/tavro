@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { generatePKCE } from '../services/pkce';
+import { loadAuthConfig } from '../services/authConfig';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCacheMode } from '../hooks/useCacheMode';
@@ -19,6 +20,22 @@ import {
 import { useTheme } from '../context/ThemeContext';
 
 const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+const DEFAULT_MCP_URL = 'http://localhost:9001/zitadel/mcp';
+
+const normalizeMcpUrl = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    try {
+        const url = new URL(trimmed);
+        if (url.pathname === '/mcp') {
+            url.pathname = '/zitadel/mcp';
+            return url.toString().replace(/\/$/, '');
+        }
+    } catch {
+        return trimmed;
+    }
+    return trimmed;
+};
 
 const PROVIDER_ICONS: Record<LLMProvider, string> = {
     openai: '🤖',
@@ -74,7 +91,7 @@ const Settings: React.FC = () => {
 
     useEffect(() => {
         // Theme is handled by context
-        setMcpUrl(localStorage.getItem('tavro_mcp_url') || '');
+        setMcpUrl(localStorage.getItem('tavro_mcp_url') || DEFAULT_MCP_URL);
 
 
         // Load cached data settings
@@ -126,21 +143,20 @@ const Settings: React.FC = () => {
     };
 
     const handleSaveSettings = async () => {
-        const url = mcpUrl.trim();
+        const url = normalizeMcpUrl(mcpUrl);
         if (!url) return;
 
         localStorage.setItem('tavro_mcp_url', url);
+        await mcpClient.disconnect();
         mcpClient.invalidateCache();
         setConnectionStatus('connecting');
         setConnectionError(null);
         setSaved(false);
 
         try {
-            // Derive base path: https://host/cognito/mcp → https://host/cognito
             const mcpBase = url.substring(0, url.lastIndexOf('/'));
             const redirectUri = `${window.location.origin}/auth/callback`;
 
-            // Step 1: Dynamic Client Registration
             let regRes: Response;
             try {
                 regRes = await fetch(`${mcpBase}/register`, {
@@ -163,7 +179,6 @@ const Settings: React.FC = () => {
             const dcrClientId = regData.client_id;
             if (!dcrClientId) throw new Error('No client_id returned from registration.');
 
-            // Step 2: Discover authorization endpoint
             let authorizationEndpoint = `${mcpBase}/authorize`;
             try {
                 const metaRes = await fetch(`${mcpBase}/.well-known/oauth-authorization-server`, {
@@ -175,23 +190,30 @@ const Settings: React.FC = () => {
                 }
             } catch { /* fall back to {mcpBase}/authorize */ }
 
-            // Step 3: Generate PKCE
             const { verifier, challenge } = await generatePKCE();
+            const authConfig = await loadAuthConfig();
+            const requestedScope = authConfig.zitadelScope || 'openid profile email';
 
-            // Step 4: Persist OAuth session state for the callback
+            localStorage.removeItem('tavro_mcp_access_token');
+            localStorage.setItem('tavro_cache_mode', 'false');
             localStorage.setItem('tavro_dcr_client_id', dcrClientId);
             localStorage.setItem('tavro_pkce_verifier', verifier);
             localStorage.setItem('tavro_auth_redirect_uri', redirectUri);
             localStorage.setItem('tavro_auth_flow_origin', 'settings');
-            localStorage.removeItem('tavro_oidc_provider'); // must NOT be 'zitadel'
+            localStorage.removeItem('tavro_oidc_provider');
+            sessionStorage.removeItem('tavro_catalog_agents_cache');
+            sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
+            sessionStorage.removeItem('tavro_catalog_usecases_cache');
+            sessionStorage.removeItem('tavro_catalog_usecases_cache_ts');
+            window.dispatchEvent(new CustomEvent('tavro_settings_change'));
 
-            // Step 5: Redirect — user authenticates with the OAuth provider
             const authUrl = new URL(authorizationEndpoint);
             authUrl.searchParams.set('response_type', 'code');
             authUrl.searchParams.set('client_id', dcrClientId);
             authUrl.searchParams.set('redirect_uri', redirectUri);
             authUrl.searchParams.set('code_challenge', challenge);
             authUrl.searchParams.set('code_challenge_method', 'S256');
+            authUrl.searchParams.set('scope', requestedScope);
 
             window.location.href = authUrl.toString();
 
@@ -401,7 +423,7 @@ const Settings: React.FC = () => {
                                 type="text"
                                 value={mcpUrl}
                                 onChange={(e) => setMcpUrl(e.target.value)}
-                                placeholder="http://localhost:9001/mcp"
+                                placeholder={DEFAULT_MCP_URL}
                                 className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all font-mono"
                             />
                         </div>

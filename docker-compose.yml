@@ -387,12 +387,22 @@ services:
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
+      ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      ZITADEL_CONFIG_URL: http://zitadel-api:8080
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
+      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
     volumes:
       - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
       - ./tavro-python-stack/agent_cards:/app/agent_cards
+      - tavro_runtime_config:/app/runtime:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      zitadel-configure-app:
+        condition: service_started
 
   # ── Risk Worker — idle container for manual commands ─────────────────────────
   risk-worker:
