@@ -484,7 +484,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       )}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-blue-600 to-cyan-500" />
+        <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
         <div className="p-6">
           <h2 className="text-xl font-bold text-slate-800">{appTitle}</h2>
           <p className="text-xs font-mono text-slate-400 mt-1">{appId}</p>

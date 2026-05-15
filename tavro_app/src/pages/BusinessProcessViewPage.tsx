@@ -97,7 +97,7 @@ const HINTS: Record<string, string> = {
 };
 
 const inputCls =
-  'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
+  'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
 const textAreaCls = `${inputCls} resize-none`;
 
 const toText = (value: unknown, fallback = ''): string => {
@@ -490,7 +490,7 @@ const BusinessProcessViewPage: React.FC = () => {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
                 {isCreateMode ? 'Create Process' : 'Save Changes'}
@@ -528,7 +528,7 @@ const BusinessProcessViewPage: React.FC = () => {
       )}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-emerald-600 to-teal-500" />
+        <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
         <div className="p-6">
           <h2 className="text-xl font-bold text-slate-800">{processTitle}</h2>
           <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
@@ -541,7 +541,7 @@ const BusinessProcessViewPage: React.FC = () => {
           onClick={() => setTab('overview')}
           className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
             tab === 'overview'
-              ? 'border-emerald-600 text-emerald-700'
+              ? 'border-blue-600 text-blue-700'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -553,7 +553,7 @@ const BusinessProcessViewPage: React.FC = () => {
               onClick={() => setTab('related_agents')}
               className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
                 tab === 'related_agents'
-                  ? 'border-emerald-600 text-emerald-700'
+                  ? 'border-blue-600 text-blue-700'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -563,7 +563,7 @@ const BusinessProcessViewPage: React.FC = () => {
               onClick={() => setTab('related_processes')}
               className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
                 tab === 'related_processes'
-                  ? 'border-emerald-600 text-emerald-700'
+                  ? 'border-blue-600 text-blue-700'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -835,7 +835,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   <div key={`${relId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       {rel.agent_id ? (
-                        <Link to={`/agent/${encodeURIComponent(rel.agent_id)}`} className="text-sm font-semibold text-emerald-700 hover:underline">
+                        <Link to={`/agent/${encodeURIComponent(rel.agent_id)}`} className="text-sm font-semibold text-blue-600 hover:underline">
                           {displayName}
                         </Link>
                       ) : (
@@ -865,7 +865,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   value={searchAgents}
                   onChange={(e) => setSearchAgents(e.target.value)}
                   placeholder="Filter agents..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
             </div>
@@ -885,7 +885,7 @@ const BusinessProcessViewPage: React.FC = () => {
                     <button
                       onClick={() => addAgent(agentId)}
                       disabled={!agentId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
                       Link
@@ -939,7 +939,7 @@ const BusinessProcessViewPage: React.FC = () => {
                           <div className="min-w-0">
                             <Link
                               to={`/processes/${encodeURIComponent(processId)}`}
-                              className="font-semibold text-emerald-700 hover:underline truncate block"
+                              className="font-semibold text-blue-600 hover:underline truncate block"
                             >
                               {processName}
                             </Link>
