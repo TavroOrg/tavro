@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
-import { getLLMConfig, LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider } from '../services/llmService';
+import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
@@ -9,6 +9,8 @@ import { useChatContext } from '../context/ChatContext';
 import type { BlueprintContext } from '../context/ChatContext';
 import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../services/buildSystemPrompt';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useChatSessions } from '../context/ChatSessionContext';
+import type { StoredMessage } from '../store/chatSessionStore';
 
 interface Message {
     id: string;
@@ -27,14 +29,22 @@ function getWelcomeText(model: string | null): string {
     return `Hi! I'm your Tavro AI Assistant. Ask me anything about your agents — risk levels, catalog details, configurations, and more.`;
 }
 
-function buildTranscript(messages: Message[]): string {
-    return messages
+function buildTranscript(messages: Message[], sessionTitle?: string, modelLabel?: string | null): string {
+    const header = [
+        sessionTitle ? `Session: ${sessionTitle}` : '',
+        modelLabel ? `Model: ${modelLabel}` : '',
+        `Exported: ${new Date().toLocaleString()}`,
+    ].filter(Boolean).join('\n');
+
+    const body = messages
         .filter(m => m.id !== 'welcome' && !m.streaming)
         .map(m => {
             const speaker = m.role === 'user' ? 'User' : 'Tavro AI Assistant';
             return `${speaker} (${m.timestamp.toLocaleString()}):\n${m.text}`;
         })
         .join('\n\n');
+
+    return header ? `${header}\n\n---\n\n${body}` : body;
 }
 
 function saveTextAsPdf(title: string, text: string, filename: string): void {
@@ -122,7 +132,7 @@ const TypingIndicator: React.FC = () => (
     </div>
 );
 
-const ChatBubble: React.FC<{ message: Message }> = ({ message }) => {
+const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => void }> = ({ message, onDownloadPDF }) => {
     const isUser = message.role === 'user';
     const [copied, setCopied] = useState(false);
 
@@ -130,10 +140,6 @@ const ChatBubble: React.FC<{ message: Message }> = ({ message }) => {
         navigator.clipboard.writeText(message.text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-    };
-
-    const handleDownloadPDF = () => {
-        saveTextAsPdf('Tavro AI Assistant Response', message.text, `tavro-assistant-response-${Date.now()}.pdf`);
     };
 
     return (
@@ -148,11 +154,11 @@ const ChatBubble: React.FC<{ message: Message }> = ({ message }) => {
                     {message.streaming && (
                         <span className="inline-block w-0.5 h-3.5 bg-blue-500 ml-0.5 animate-pulse align-middle rounded" />
                     )}
-                    
+
                     {/* Floating Actions */}
                     {!message.streaming && (
                         <div className={`absolute top-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 ${isUser ? 'right-full mr-2' : 'left-full ml-2'}`}>
-                            <button 
+                            <button
                                 onClick={handleCopy}
                                 className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm"
                                 title="Copy to clipboard"
@@ -160,8 +166,8 @@ const ChatBubble: React.FC<{ message: Message }> = ({ message }) => {
                                 {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
                             </button>
                             {!isUser && (
-                                <button 
-                                    onClick={handleDownloadPDF}
+                                <button
+                                    onClick={() => onDownloadPDF(message)}
                                     className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm"
                                     title="Download as PDF"
                                 >
@@ -179,65 +185,114 @@ const ChatBubble: React.FC<{ message: Message }> = ({ message }) => {
     );
 };
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function toStoredMessages(msgs: Message[]): StoredMessage[] {
+    return msgs
+        .filter(m => m.id !== 'welcome' && !m.streaming)
+        .map(m => ({ id: m.id, role: m.role, text: m.text, timestamp: m.timestamp.toISOString() }));
+}
+
+function makeWelcome(model: string | null): Message {
+    return { id: 'welcome', role: 'assistant', text: getWelcomeText(model), timestamp: new Date() };
+}
+
+function restoreMessages(stored: StoredMessage[], welcomeMsg: Message): Message[] {
+    if (stored.length === 0) return [welcomeMsg];
+    return [
+        welcomeMsg,
+        ...stored.map(m => ({ id: m.id, role: m.role, text: m.text, timestamp: new Date(m.timestamp) })),
+    ];
+}
+
 /** Inline Chat panel — renders as h-full flex column, no fixed positioning. */
 const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const navigate = useNavigate();
     const { viewType, viewData } = useChatContext();
-  const { activeCompany, nodes } = useBlueprint();
-  const blueprintCtx: BlueprintContext | null = activeCompany ? {
-    companyId:   activeCompany.id,
-    companyName: activeCompany.name,
-    industry:    activeCompany.industry,
-    region:      activeCompany.region,
-    dimensions:  nodes.slice(0, 30).map(n => ({
-      label:    n.label,
-      category: n.category ?? 'custom',
-      summary:  n.summary?.slice(0, 120),
-    })),
-  } : null;
+    const { activeCompany, nodes } = useBlueprint();
+    const { sessions, activeSession, activeSessionId, createSession, switchSession, deleteSession, updateSessionMessages, updateSessionProvider } = useChatSessions();
+    const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-    const [activeProviderState, setActiveProviderState] = useState<LLMProvider | null>(getActiveProvider());
-    const [configuredProviders, setConfiguredProviders] = useState<{provider: LLMProvider, label: string}[]>([]);
+    const blueprintCtx: BlueprintContext | null = activeCompany ? {
+        companyId: activeCompany.id,
+        companyName: activeCompany.name,
+        industry: activeCompany.industry,
+        region: activeCompany.region,
+        dimensions: nodes.slice(0, 30).map(n => ({
+            label: n.label,
+            category: n.category ?? 'custom',
+            summary: n.summary?.slice(0, 120),
+        })),
+    } : null;
+
+    // ── Provider state (per-session) ───────────────────────────────────────────
+    const [activeProviderState, setActiveProviderState] = useState<LLMProvider | null>(
+        activeSession?.selectedProvider ?? getActiveProvider()
+    );
+    const [configuredProviders, setConfiguredProviders] = useState<{ provider: LLMProvider; label: string }[]>([]);
 
     useEffect(() => {
         const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
-        const configured = providers.map(p => ({ provider: p, cfg: getProviderConfig(p) }))
-                                    .filter(x => x.cfg !== null)
-                                    .map(x => ({
-                                        provider: x.provider,
-                                        label: `${x.provider === 'openai' ? 'OpenAI' : x.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${x.cfg!.model}`
-                                    }));
+        const configured = providers
+            .map(p => ({ provider: p, cfg: getProviderConfig(p) }))
+            .filter(x => x.cfg !== null)
+            .map(x => ({
+                provider: x.provider,
+                label: `${x.provider === 'openai' ? 'OpenAI' : x.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${x.cfg!.model}`,
+            }));
         setConfiguredProviders(configured);
     }, []);
 
     const llmCfg = activeProviderState ? getProviderConfig(activeProviderState) : null;
-    const modelLabel = llmCfg ? `${llmCfg.provider === 'openai' ? 'OpenAI' : llmCfg.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${llmCfg.model}` : null;
+    const modelLabel = llmCfg
+        ? `${llmCfg.provider === 'openai' ? 'OpenAI' : llmCfg.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${llmCfg.model}`
+        : null;
 
-    const WELCOME: Message = {
-        id: 'welcome', role: 'assistant',
-        text: getWelcomeText(llmCfg?.model ?? null),
-        timestamp: new Date(),
-    };
+    // ── Messages state (per-session) ───────────────────────────────────────────
+    const welcome = makeWelcome(llmCfg?.model ?? null);
 
-    const [messages, setMessages] = useState<Message[]>([WELCOME]);
+    const [messages, setMessages] = useState<Message[]>(() =>
+        restoreMessages(activeSession?.messages ?? [], welcome)
+    );
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [chatCopied, setChatCopied] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+    // Track latest messages synchronously (avoids stale closure in async sendMessage)
+    const latestMessages = useRef<Message[]>(messages);
+    latestMessages.current = messages;
+
+    // ── Reset when active session switches ─────────────────────────────────────
+    useEffect(() => {
+        const sessionProvider = activeSession?.selectedProvider ?? getActiveProvider();
+        setActiveProviderState(sessionProvider);
+
+        const sessionLlmCfg = sessionProvider ? getProviderConfig(sessionProvider) : null;
+        const sessionWelcome = makeWelcome(sessionLlmCfg?.model ?? null);
+        setMessages(restoreMessages(activeSession?.messages ?? [], sessionWelcome));
+        setInput('');
+        setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSessionId]);
+
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, loading]);
 
     useEffect(() => {
-        // Focus input when this tab becomes active
         setTimeout(() => textareaRef.current?.focus(), 100);
     }, []);
 
+    // ── Persist helpers ────────────────────────────────────────────────────────
+    const persist = useCallback((msgs: Message[]) => {
+        updateSessionMessages(toStoredMessages(msgs));
+    }, [updateSessionMessages]);
+
+    // ── Handlers ───────────────────────────────────────────────────────────────
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
-        // Auto-grow textarea
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
             const newHeight = Math.min(textareaRef.current.scrollHeight, 240);
@@ -245,21 +300,30 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         }
     };
 
-    const buildHistory = (): ChatMessage[] => {
-        return messages
+    const buildHistory = (msgs: Message[]): ChatMessage[] => {
+        return msgs
             .filter(m => m.id !== 'welcome' && !m.streaming)
             .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
 
     const copyConversation = () => {
-        const transcript = buildTranscript(messages);
-        navigator.clipboard.writeText(transcript || WELCOME.text);
+        const transcript = buildTranscript(messages, activeSession?.title, modelLabel);
+        navigator.clipboard.writeText(transcript || welcome.text);
         setChatCopied(true);
         setTimeout(() => setChatCopied(false), 2000);
     };
 
     const downloadConversationPdf = () => {
-        saveTextAsPdf('Tavro AI Assistant Chat', buildTranscript(messages), `tavro-assistant-chat-${Date.now()}.pdf`);
+        const title = activeSession?.title ?? 'Tavro AI Assistant Chat';
+        saveTextAsPdf(
+            title,
+            buildTranscript(messages, activeSession?.title, modelLabel),
+            `tavro-chat-${Date.now()}.pdf`
+        );
+    };
+
+    const handleDownloadMessagePDF = (msg: Message) => {
+        saveTextAsPdf('Tavro AI Assistant Response', msg.text, `tavro-assistant-response-${Date.now()}.pdf`);
     };
 
     const sendMessage = async () => {
@@ -271,27 +335,35 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         }
 
         const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text, timestamp: new Date() };
-        setMessages(prev => [...prev, userMsg]);
+        const withUser = [...latestMessages.current, userMsg];
+        setMessages(withUser);
         setInput('');
         setLoading(true);
+
+        // Persist after adding user message
+        persist(withUser);
 
         const assistantId = `assistant-${Date.now()}`;
 
         try {
             if (isPdfRequest(text)) {
-                const transcript = buildTranscript([...messages, userMsg]);
-                saveTextAsPdf('Tavro AI Assistant Chat', transcript, `tavro-assistant-chat-${Date.now()}.pdf`);
-                setLoading(false);
-                setMessages(prev => [...prev, {
+                const transcript = buildTranscript(withUser, activeSession?.title, modelLabel);
+                saveTextAsPdf(activeSession?.title ?? 'Tavro AI Assistant Chat', transcript, `tavro-chat-${Date.now()}.pdf`);
+                const confirmMsg: Message = {
                     id: assistantId,
                     role: 'assistant',
                     text: 'I generated a PDF from the current chat and started the download.',
                     timestamp: new Date(),
-                }]);
+                };
+                const withConfirm = [...withUser, confirmMsg];
+                setMessages(withConfirm);
+                setLoading(false);
+                persist(withConfirm);
                 return;
             }
+
             const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            const stream = mcpClient.chat(text, buildHistory(), { viewType, viewData, systemPrompt });
+            const stream = mcpClient.chat(text, buildHistory(withUser), { viewType, viewData, systemPrompt });
             let firstToken = true;
             let accumulated = '';
 
@@ -300,27 +372,37 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 if (firstToken) {
                     firstToken = false;
                     setLoading(false);
-                    setMessages(prev => [...prev, {
-                        id: assistantId, role: 'assistant',
-                        text: accumulated, timestamp: new Date(), streaming: true,
-                    }]);
+                    setMessages(prev => {
+                        const next = [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: true }];
+                        latestMessages.current = next;
+                        return next;
+                    });
                 } else {
-                    setMessages(prev => prev.map(m =>
-                        m.id === assistantId ? { ...m, text: accumulated } : m
-                    ));
+                    setMessages(prev => {
+                        const next = prev.map(m => m.id === assistantId ? { ...m, text: accumulated } : m);
+                        latestMessages.current = next;
+                        return next;
+                    });
                 }
             }
 
-            setMessages(prev => prev.map(m =>
-                m.id === assistantId ? { ...m, streaming: false } : m
-            ));
+            // Streaming complete — finalize and persist
+            const finalMsgs = latestMessages.current.map(m =>
+                m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
+            );
+            setMessages(finalMsgs);
+            persist(finalMsgs);
 
         } catch (err: any) {
-            setMessages(prev => [...prev, {
-                id: `err-${Date.now()}`, role: 'assistant',
+            const errMsg: Message = {
+                id: `err-${Date.now()}`,
+                role: 'assistant',
                 text: `Something went wrong: ${err?.message ?? 'unknown error'}. Please try again.`,
                 timestamp: new Date(),
-            }]);
+            };
+            const withErr = [...latestMessages.current, errMsg];
+            setMessages(withErr);
+            persist(withErr);
         } finally {
             setLoading(false);
         }
@@ -330,28 +412,93 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     };
 
+    const sortedSessions = [...sessions].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+
+    const handleDeleteTab = (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        if (confirmDelete === id) {
+            deleteSession(id);
+            setConfirmDelete(null);
+        } else {
+            setConfirmDelete(id);
+            setTimeout(() => setConfirmDelete(prev => (prev === id ? null : prev)), 2500);
+        }
+    };
+
     return (
-        <div className="flex flex-col h-full bg-slate-50">
+        <div className="flex flex-col h-full bg-slate-50 min-w-0 flex-1">
+
+            {/* ── Session Tabs ─────────────────────────────────────────────── */}
+            <div className="flex items-center bg-white border-b border-slate-200 flex-shrink-0 overflow-hidden">
+                <div className="flex items-center flex-1 overflow-x-auto scrollbar-none min-w-0">
+                    {sortedSessions.map(session => {
+                        const isActive = session.id === activeSessionId;
+                        const isConfirming = confirmDelete === session.id;
+                        return (
+                            <button
+                                key={session.id}
+                                onClick={() => { switchSession(session.id); setConfirmDelete(null); }}
+                                className={`group flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium whitespace-nowrap border-r border-slate-100 flex-shrink-0 transition-colors ${
+                                    isActive
+                                        ? 'bg-blue-50 text-blue-700 border-b-2 border-b-blue-500'
+                                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                                }`}
+                                style={{ maxWidth: '140px' }}
+                                title={session.title}
+                            >
+                                <span className="truncate max-w-[90px]">{session.title}</span>
+                                <span
+                                    onClick={(e) => handleDeleteTab(e, session.id)}
+                                    className={`flex-shrink-0 rounded p-0.5 transition-colors ${
+                                        isConfirming
+                                            ? 'text-red-500 bg-red-50'
+                                            : isActive
+                                                ? 'text-blue-400 hover:text-red-500 hover:bg-red-50'
+                                                : 'text-slate-300 group-hover:text-slate-400 hover:text-red-500 hover:bg-red-50'
+                                    }`}
+                                    title={isConfirming ? 'Click again to delete' : 'Delete session'}
+                                    role="button"
+                                >
+                                    <X size={10} />
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+                {/* New session button */}
+                <button
+                    onClick={createSession}
+                    className="flex-shrink-0 flex items-center gap-1 px-3 py-2 text-[11px] font-semibold text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors border-l border-slate-100"
+                    title="New session"
+                >
+                    <Plus size={12} />
+                    <span className="hidden sm:inline">New</span>
+                </button>
+            </div>
+
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
-                <div className="flex items-center gap-2.5">
-                    <div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm">
+                <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm flex-shrink-0">
                         <MessageCircle size={14} />
                     </div>
-                    <div>
-                        <h2 className="font-semibold text-slate-800 text-sm leading-tight">Tavro AI Assistant</h2>
+                    <div className="min-w-0">
+                        <h2 className="font-semibold text-slate-800 text-sm leading-tight truncate">Tavro AI Assistant</h2>
                         {getContextBadge(viewType, viewData) && (
-                        <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full leading-tight mt-0.5">
-                          {getContextBadge(viewType, viewData)}
-                        </span>
-                    )}
-                    {configuredProviders.length > 0 ? (
-                            <select 
-                                value={activeProviderState || ''} 
+                            <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full leading-tight mt-0.5">
+                                {getContextBadge(viewType, viewData)}
+                            </span>
+                        )}
+                        {configuredProviders.length > 0 ? (
+                            <select
+                                value={activeProviderState || ''}
                                 onChange={(e) => {
                                     const p = e.target.value as LLMProvider;
                                     setActiveProvider(p);
                                     setActiveProviderState(p);
+                                    updateSessionProvider(p);
                                 }}
                                 className="text-[10px] text-slate-500 bg-transparent outline-none cursor-pointer hover:text-slate-700 leading-tight -ml-0.5 mt-0.5"
                                 title="Select active model"
@@ -367,7 +514,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
                         onClick={copyConversation}
                         className="p-2 rounded-lg border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-all"
@@ -378,7 +525,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     <button
                         onClick={downloadConversationPdf}
                         className="p-2 rounded-lg border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-all"
-                        title="Download chat as PDF"
+                        title="Download session as PDF"
                     >
                         <FileText size={14} />
                     </button>
@@ -401,7 +548,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-                {messages.map(msg => <ChatBubble key={msg.id} message={msg} />)}
+                {messages.map(msg => (
+                    <ChatBubble key={msg.id} message={msg} onDownloadPDF={handleDownloadMessagePDF} />
+                ))}
                 {loading && <TypingIndicator />}
                 <div ref={messagesEndRef} />
             </div>
@@ -430,12 +579,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     placeholder={
-                      viewType === 'blueprint' ? 'Ask about your company blueprint…' :
-                      viewType === 'agent_detail' ? 'Ask about this agent…' :
-                      viewType === 'use_case_detail' ? 'Ask about this use case…' :
-                      viewType === 'agent_catalog' ? 'Ask about your agents…' :
-                      viewType === 'use_case_catalog' ? 'Ask about your use cases…' :
-                      'Ask Tavro AI anything…'
+                        viewType === 'blueprint' ? 'Ask about your company blueprint…' :
+                            viewType === 'agent_detail' ? 'Ask about this agent…' :
+                                viewType === 'use_case_detail' ? 'Ask about this use case…' :
+                                    viewType === 'agent_catalog' ? 'Ask about your agents…' :
+                                        viewType === 'use_case_catalog' ? 'Ask about your use cases…' :
+                                            'Ask Tavro AI anything…'
                     }
                     disabled={loading}
                     className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder:text-slate-400 disabled:opacity-60 resize-none overflow-y-auto"
