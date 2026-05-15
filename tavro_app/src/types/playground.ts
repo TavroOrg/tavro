@@ -41,7 +41,7 @@ export const INFRA_PROVIDERS: InfraProviderMeta[] = [
     label:       'Azure AI Foundry',
     shortLabel:  'Azure',
     description: 'Azure AI Agent Service with GPT-4o, Phi-4, and custom tool calling. Ideal for M365 environments.',
-    available:   false,
+    available:   true,
     icon:        '☁️',
     configKeys:  ['AZURE_AI_FOUNDRY_ENDPOINT', 'AZURE_AI_FOUNDRY_KEY'],
   },
