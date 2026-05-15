@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
-import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck } from 'lucide-react';
-import { useInspectJson } from '../hooks/useInspectJson';
+import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
+import EditAgentModal from '../components/EditAgentModal';
+import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 
 const AgentViewPage: React.FC = () => {
@@ -15,11 +16,49 @@ const AgentViewPage: React.FC = () => {
     const [agent, setAgent] = useState<AgentData | null>(null);
     const [loading, setLoading] = useState(true);
     const [assessing, setAssessing] = useState(false);
-    const [inspectJson] = useInspectJson();
+    const [editOpen, setEditOpen] = useState(false);
+    const [deleteConfirm, setDeleteConfirm] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [jsonOpen, setJsonOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const [auditModalOpen, setAuditModalOpen] = useState(false);
-    const { agents: catalogAgents } = useCatalog();
+    const { agents: catalogAgents, refresh: refreshCatalog, upsertAgent } = useCatalog();
+    const recentEditRef = useRef<{
+        name: string;
+        description: string;
+        instruction: string;
+        until: number;
+    } | null>(null);
+
+    const applyRecentEditOverlay = (base: AgentData): AgentData => {
+        const recent = recentEditRef.current;
+        if (!recent) return base;
+
+        const serverCaughtUp =
+            (base.name ?? '') === recent.name &&
+            (base.description ?? '') === recent.description &&
+            (base.identification?.instruction ?? '') === recent.instruction;
+
+        if (serverCaughtUp) {
+            recentEditRef.current = null;
+            return base;
+        }
+
+        if (Date.now() > recent.until) {
+            recentEditRef.current = null;
+            return base;
+        }
+
+        return {
+            ...base,
+            name: recent.name || base.name,
+            description: recent.description,
+            identification: {
+                ...base.identification,
+                instruction: recent.instruction,
+            },
+        };
+    };
 
     const getPendingFallbackAgent = (targetId: string): AgentData | null => {
         const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
@@ -51,7 +90,9 @@ const AgentViewPage: React.FC = () => {
         try {
             const data = await mcpClient.getAgentDetails(id);
             if (data) {
-                setAgent(data);
+                const overlaid = applyRecentEditOverlay(data);
+                setAgent(overlaid);
+                upsertAgent(overlaid); // keep catalog in sync immediately
             } else {
                 const fromCatalog = catalogAgents.find(a =>
                     (a.identification?.agent_id && a.identification.agent_id === id) || a.name === id
@@ -100,6 +141,21 @@ const AgentViewPage: React.FC = () => {
         setTimeout(() => setCopied(false), 2000);
     };
 
+    const handleDelete = async () => {
+        if (!agent || !id) return;
+        setDeleting(true);
+        try {
+            await agentApi.deleteAgent(agent.identification?.agent_id ?? id);
+            refreshCatalog();
+            navigate('/catalog');
+        } catch (err: any) {
+            alert(err.message || 'Failed to delete agent.');
+        } finally {
+            setDeleting(false);
+            setDeleteConfirm(false);
+        }
+    };
+
     const handleRequestRiskAssessment = async () => {
         if (!agent || !id) return;
         setAssessing(true);
@@ -113,6 +169,35 @@ const AgentViewPage: React.FC = () => {
         } finally {
             setAssessing(false);
         }
+    };
+
+    const handleAgentSaved = (updated: { name: string; description: string; instruction: string }) => {
+        recentEditRef.current = {
+            name: updated.name,
+            description: updated.description,
+            instruction: updated.instruction,
+            until: Date.now() + 30000,
+        };
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = {
+                ...prev,
+                name: updated.name || prev.name,
+                description: updated.description,
+                identification: {
+                    ...prev.identification,
+                    instruction: updated.instruction,
+                },
+            };
+            upsertAgent(next);
+            return next;
+        });
+        // Avoid immediately overwriting optimistic UI with stale cached details.
+        window.setTimeout(() => {
+            mcpClient.invalidateCache();
+            fetchAgent();
+            refreshCatalog();
+        }, 500);
     };
 
     if (loading && !agent) {
@@ -149,6 +234,18 @@ const AgentViewPage: React.FC = () => {
 
                 <div className="flex items-center gap-3">
                     <button
+                        onClick={() => setDeleteConfirm(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+                    >
+                        <Trash2 size={15} /> Delete
+                    </button>
+                    <button
+                        onClick={() => setEditOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                    >
+                        <Pencil size={15} /> Edit
+                    </button>
+                    <button
                         onClick={() => navigate(
                             `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}`
                         )}
@@ -171,17 +268,14 @@ const AgentViewPage: React.FC = () => {
                         {assessing ? 'Assessing...' : 'Request Risk Assessment'}
                     </button>
 
-                    {/* JSON Inspector button — only shown if enabled */}
-                    {inspectJson && (
-                        <button
-                            onClick={() => setJsonOpen(true)}
-                            title="Inspect raw JSON"
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
-                        >
-                            <Code2 size={14} />
-                            Inspect JSON
-                        </button>
-                    )}
+                    <button
+                        onClick={() => setJsonOpen(true)}
+                        title="Agent Card"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
+                    >
+                        <Code2 size={14} />
+                        Agent Card
+                    </button>
                 </div>
             </div>
 
@@ -241,6 +335,48 @@ const AgentViewPage: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Delete confirmation modal */}
+            {deleteConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 overflow-hidden">
+                        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                            <Trash2 size={16} className="text-red-500" />
+                            <span className="font-bold text-slate-800 text-sm">Delete Agent</span>
+                        </div>
+                        <div className="px-5 py-4">
+                            <p className="text-sm text-slate-700">
+                                Permanently delete <span className="font-semibold">{agent.name}</span> and all associated records (tools, risk assessments, use case links)?
+                            </p>
+                            <p className="text-xs text-red-500 mt-2">This action cannot be undone.</p>
+                        </div>
+                        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-100 bg-slate-50">
+                            <button
+                                onClick={() => setDeleteConfirm(false)}
+                                disabled={deleting}
+                                className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {deleting ? <><Loader2 size={14} className="animate-spin" /> Deleting…</> : <><Trash2 size={14} /> Delete</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit modal */}
+            <EditAgentModal
+                agent={agent}
+                open={editOpen}
+                onClose={() => setEditOpen(false)}
+                onSaved={handleAgentSaved}
+            />
 
             {/* Audit modal */}
             <AuditInitModal

@@ -4,11 +4,13 @@ import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
+import EditUseCaseModal from '../components/EditUseCaseModal';
+import { useCaseApi } from '../services/useCaseApi';
 
 interface AgentsSectionProps {
   useCase: UseCaseDetail;
@@ -260,7 +262,26 @@ const UseCaseViewPage: React.FC = () => {
   const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { agents } = useCatalog();
+  const { refresh: refreshUseCases } = useUseCases();
+
+  const handleDelete = async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await useCaseApi.deleteUseCase(id);
+      refreshUseCases();
+      navigate('/use-cases');
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete use case.');
+      setDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   async function fetchUseCase() {
     if (!id) return;
@@ -290,6 +311,36 @@ const UseCaseViewPage: React.FC = () => {
   useEffect(() => {
     fetchUseCase();
   }, [id]);
+
+  const handleUseCaseSaved = (updated: {
+    title: string;
+    description: string;
+    problemStatement: string;
+    expectedBenefits: string;
+    priority: string;
+    solutionApproach: string;
+    owner: string;
+  }) => {
+    setUseCase(prev => {
+      if (!prev) return prev;
+      const next: UseCaseDetail = {
+        ...prev,
+        description: updated.description,
+        priority: updated.priority,
+      } as UseCaseDetail;
+      (next as any).name = updated.title || (next as any).name;
+      (next as any).title = updated.title || (next as any).title;
+      (next as any).problem_statement = updated.problemStatement;
+      (next as any).business_problem_statement = updated.problemStatement;
+      (next as any).expected_benefits = updated.expectedBenefits;
+      (next as any).solution_approach = updated.solutionApproach;
+      (next as any).owner = updated.owner;
+      (next as any).use_case_owner = updated.owner;
+      return next;
+    });
+    fetchUseCase();
+    refreshUseCases();
+  };
 
   useChatSync('use_case_detail', useCase ? {
     useCaseId: useCase.identifier ?? (useCase as any).id ?? '',
@@ -321,12 +372,26 @@ const UseCaseViewPage: React.FC = () => {
           <ArrowLeft size={16} /> Back to Use Cases
         </button>
         {useCase && (
-          <button
-            onClick={() => setAuditModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
-          >
-            <ShieldCheck size={15} /> Run Compliance Audit
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setDeleteConfirm(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+            >
+              <Trash2 size={15} /> Delete
+            </button>
+            <button
+              onClick={() => setEditOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+            >
+              <Pencil size={15} /> Edit
+            </button>
+            <button
+              onClick={() => setAuditModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
+            >
+              <ShieldCheck size={15} /> Run Compliance Audit
+            </button>
+          </div>
         )}
       </div>
 
@@ -359,6 +424,15 @@ const UseCaseViewPage: React.FC = () => {
         />
       )}
 
+      {useCase && (
+        <EditUseCaseModal
+          useCase={useCase}
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          onSaved={handleUseCaseSaved}
+        />
+      )}
+
       <AuditInitModal
         open={auditModalOpen}
         onClose={() => setAuditModalOpen(false)}
@@ -367,6 +441,38 @@ const UseCaseViewPage: React.FC = () => {
         prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
         mode="use_case"
       />
+
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden border border-slate-200 p-6 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-base font-bold text-slate-800">Delete AI Use Case?</span>
+              <span className="text-sm text-slate-500">
+                This will permanently delete <span className="font-semibold text-slate-700">{(useCase as any)?.name ?? (useCase as any)?.title ?? id}</span> and all linked agent relationships. This action cannot be undone.
+              </span>
+            </div>
+            {error && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</div>
+            )}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {deleting ? <><Loader2 size={14} className="animate-spin" /> Deleting…</> : <><Trash2 size={14} /> Delete</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

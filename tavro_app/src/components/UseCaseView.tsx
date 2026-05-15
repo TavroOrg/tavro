@@ -2,8 +2,8 @@ import React from 'react';
 import { UseCaseDetail } from '../types/useCase';
 import {
     Lightbulb, Building2, GitBranch, ShieldCheck,
-    AlertTriangle, CheckCircle2, Clock, Archive, Target,
-    FileText, Users, Cpu, Tag
+    ShieldAlert, CheckCircle2, Clock, Archive, AlertTriangle, Target,
+    FileText, Users, Bot, Tag
 } from 'lucide-react';
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
@@ -41,7 +41,7 @@ function RiskBadge({ classification }: { classification?: string | null }) {
             : 'bg-emerald-50 text-emerald-700 border-emerald-200';
     return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${cls}`}>
-            <AlertTriangle size={11} /> {classification}
+            <ShieldAlert size={11} /> {classification}
         </span>
     );
 }
@@ -131,8 +131,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
     const tabs = [
         { id: 'business_case', label: 'Business Case', icon: FileText },
         { id: 'business_impact', label: 'Business Impact', icon: Building2 },
-        { id: 'ai_agents', label: 'AI Agents', icon: Cpu },
-        { id: 'risk_assessments', label: 'Risk Assessments', icon: AlertTriangle },
+        { id: 'ai_agents', label: 'AI Agents', icon: Bot },
+        { id: 'risk_assessments', label: 'Risk Assessments', icon: ShieldAlert },
         { id: 'controls', label: 'Controls', icon: ShieldCheck }
     ];
 
@@ -313,7 +313,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                 {activeTab === 'risk_assessments' && (
                     <div className="animate-fade-in">
                         {riskAssessments.length > 0 ? (
-                            <SectionCard icon={<AlertTriangle size={16} />} title="Risk Assessments" count={riskAssessments.length}>
+                            <SectionCard icon={<ShieldAlert size={16} />} title="Risk Assessments" count={riskAssessments.length}>
                                 <div className="flex flex-col gap-4">
                                     {riskAssessments.map((ra: any, i: number) => (
                                         <div key={getId(ra) ?? i} className="p-4 bg-slate-50 rounded-xl border border-slate-100">

@@ -334,6 +334,7 @@ class McpClientService {
         'create_ai_use_case_agent_relationship',
         'remove_ai_use_case_agent_relationship',
         'create_risk_assessment',
+
     ]);
 
     private async callTool(name: string, args: any = {}): Promise<any> {

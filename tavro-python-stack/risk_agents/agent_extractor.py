@@ -1372,3 +1372,139 @@ class AgentMetadataExporter:
         cls.execute_dml(sync_q)
 
         return {"message": "Relationship removed", "associated_count": associated_count}
+
+    @classmethod
+    def update_agent(
+        cls,
+        agent_id: str,
+        agent_name: Optional[str] = None,
+        description: Optional[str] = None,
+        instruction: Optional[str] = None,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not agent_id or not str(agent_id).strip():
+            raise ValueError("agent_id is required")
+
+        agent_id = cls.sanitize(str(agent_id).strip())
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        agent_updates = [f"updated_ts = TIMESTAMP '{now}'"]
+        if agent_name and str(agent_name).strip():
+            agent_updates.append(f"agent_name = '{cls.sanitize(str(agent_name).strip())}'")
+        if description and str(description).strip():
+            agent_updates.append(f"agent_description = '{cls.sanitize(str(description).strip())}'")
+
+        if len(agent_updates) > 1:
+            cls.execute_dml(f"""
+                UPDATE {cls.CORE_GLUE_DB_NAME}.agents
+                SET {', '.join(agent_updates)}
+                WHERE agent_id = '{agent_id}'
+            """)
+
+        if instruction and str(instruction).strip():
+            cls.execute_dml(f"""
+                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_identifications
+                SET instruction = '{cls.sanitize(str(instruction).strip())}',
+                    updated_ts = TIMESTAMP '{now}'
+                WHERE agent_id = '{agent_id}'
+            """)
+
+        return {"message": "Agent updated successfully.", "agent_id": agent_id}
+
+    @classmethod
+    def delete_agent(
+        cls,
+        agent_id: str,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not agent_id or not str(agent_id).strip():
+            raise ValueError("agent_id is required")
+
+        agent_id = cls.sanitize(str(agent_id).strip())
+
+        # Resolve the internal ID — needed for curated/risk tables
+        rows = cls.execute_select(
+            f"SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
+        )
+        if not rows:
+            raise ValueError(f"Agent {agent_id} not found.")
+        agent_internal_id = cls.sanitize(str(rows[0]["agent_internal_id"]))
+
+        # 1. Clear agent references on linked use cases (don't delete the use case itself)
+        cls.execute_dml(f"""
+            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            SET agent_id = NULL, agent_internal_id = NULL,
+                no_of_associated_agents = GREATEST(COALESCE(no_of_associated_agents, 1) - 1, 0)
+            WHERE agent_id = '{agent_id}'
+        """)
+
+        # 2. Core tables — all keyed on agent_id or agent_internal_id
+        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
+            )
+
+        cls.execute_dml(
+            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments WHERE agent_internal_id = '{agent_internal_id}'"
+        )
+        cls.execute_dml(
+            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}'"
+        )
+
+        # 3. Curated snapshot
+        if cls.CURATED_GLUE_DB_NAME:
+            cls.execute_dml(
+                f"DELETE FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_internal_id = '{agent_internal_id}'"
+            )
+
+        # 4. Risk management schema
+        if cls.RISK_MANAGEMENT_DB_NAME:
+            cls.execute_dml(
+                f"DELETE FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment WHERE agent_internal_id = '{agent_internal_id}'"
+            )
+
+        return {"message": "Agent deleted successfully.", "agent_id": agent_id}
+
+    @classmethod
+    def update_ai_use_case(
+        cls,
+        use_case_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        business_problem_statement: Optional[str] = None,
+        expected_benefits: Optional[str] = None,
+        priority: Optional[str] = None,
+        solution_approach: Optional[str] = None,
+        use_case_owner: Optional[str] = None,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not use_case_id or not str(use_case_id).strip():
+            raise ValueError("use_case_id is required")
+
+        use_case_id = cls.sanitize(str(use_case_id).strip())
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        updates = [f"updated_ts = TIMESTAMP '{now}'"]
+        if title and str(title).strip():
+            updates.append(f"name = '{cls.sanitize(str(title).strip())}'")
+        if description and str(description).strip():
+            updates.append(f"description = '{cls.sanitize(str(description).strip())}'")
+        if business_problem_statement and str(business_problem_statement).strip():
+            updates.append(f"problem_statement = '{cls.sanitize(str(business_problem_statement).strip())}'")
+        if expected_benefits and str(expected_benefits).strip():
+            updates.append(f"expected_benefits = '{cls.sanitize(str(expected_benefits).strip())}'")
+        if priority and str(priority).strip():
+            normalized = cls._normalize_use_case_priority(priority)
+            updates.append(f"priority = '{cls.sanitize(normalized)}'")
+        if solution_approach is not None:
+            updates.append(f"solution_approach = '{cls.sanitize(str(solution_approach).strip())}'")
+        if use_case_owner is not None and str(use_case_owner).strip():
+            updates.append(f"owner = '{cls.sanitize(str(use_case_owner).strip())}'")
+
+        cls.execute_dml(f"""
+            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            SET {', '.join(updates)}
+            WHERE identifier = '{use_case_id}'
+        """)
+
+        return {"message": "AI Use Case updated successfully.", "use_case_id": use_case_id}

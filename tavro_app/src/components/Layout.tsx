@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-    ActivitySquare, Library, Layers, Settings,
-    LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
+    Home, Bot, Workflow, BarChart2, Settings,
+    LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness
+    AppWindow, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -12,7 +12,7 @@ import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
-import { Network } from 'lucide-react';
+
 import travoLogo from '../assets/travo_logo.png';
 
 type ActivePanel = 'chat' | 'devlog' | null;
@@ -192,7 +192,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Home" : undefined}
                             >
-                                <ActivitySquare size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Home size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Home</span>
                             </button>
 
@@ -214,7 +214,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Agents" : undefined}
                             >
-                                <Library size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Bot size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
                             </button>
 
@@ -236,7 +236,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Processes" : undefined}
                             >
-                                <BriefcaseBusiness size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
                             </button>
 
@@ -247,7 +247,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Insights" : undefined}
                             >
-                                <Zap size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <BarChart2 size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Insights</span>
                             </button>
                             <button
@@ -460,21 +460,23 @@ const Layout: React.FC = () => {
                 style={{ width: isPanelOpen ? `${panelWidth}px` : '72px' }}
             >
                 {!isPanelOpen ? (
-                    <div className="flex flex-col items-center py-6 gap-4 w-full h-full">
+                    <div className="flex flex-col items-center py-6 gap-3 w-full h-full">
                         <button
                             onClick={() => setActivePanel('chat')}
-                            className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                            className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                             title="AI Assistant"
                         >
-                            <MessageCircle size={22} />
+                            <MessageCircle size={26} />
+                            <span className="text-[9px] font-semibold leading-none">Chat</span>
                         </button>
                         {showLogs && (
                             <button
                                 onClick={() => setActivePanel('devlog')}
-                                className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                                className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                                 title="Dev Logs"
                             >
-                                <Terminal size={22} />
+                                <Terminal size={26} />
+                                <span className="text-[9px] font-semibold leading-none">Logs</span>
                             </button>
                         )}
                     </div>
