@@ -332,6 +332,7 @@ class McpClientService {
         'create_agent',
         'create_ai_use_case',
         'create_ai_use_case_agent_relationship',
+        'remove_ai_use_case_agent_relationship',
         'create_risk_assessment',
     ]);
 
@@ -1069,8 +1070,17 @@ ${toolSummary}`;
             all.push(...useCases);
             start += 10;
         }
-        this._useCaseCache = all;
-        return all;
+        // Deduplicate by identifier in case the server returns the same item on multiple pages
+        const seen = new Set<string>();
+        const deduped = all.filter(uc => {
+            const id = uc.identifier || (uc as any).id;
+            if (!id) return true;
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        });
+        this._useCaseCache = deduped;
+        return deduped;
     }
 
     async getUseCaseDetails(id: string): Promise<UseCaseDetail | undefined> {
@@ -1133,7 +1143,15 @@ ${toolSummary}`;
     }
 
     async createAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
-        return await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        const data = await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        this.invalidateCache();
+        return data;
+    }
+
+    async removeAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
+        const data = await this.callTool('remove_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        this.invalidateCache();
+        return data;
     }
 
     async createAgent(args: any): Promise<any> {

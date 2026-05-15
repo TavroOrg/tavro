@@ -15,12 +15,14 @@ interface UseCaseCatalogProps {
     useCases: any[];
     searchTerm: string;
     onSearchChange: (term: string) => void;
+    currentPage?: number;
 }
 
 const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
     useCases,
     searchTerm,
-    onSearchChange
+    onSearchChange,
+    currentPage = 1,
 }) => {
     const navigate = useNavigate();
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -96,7 +98,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         return (
                             <div
                                 key={uc.id}
-                                onClick={() => navigate(`/use-case/${uc.id}`)}
+                                onClick={() => navigate(`/use-case/${uc.id}`, { state: { fromUseCasePage: true, page: currentPage } })}
                                 className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-700 transition-all cursor-pointer overflow-hidden flex flex-col h-full"
                             >
                                 <div className="p-5 flex-1 flex flex-col">
@@ -160,7 +162,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                             return (
                                 <div
                                     key={uc.id}
-                                    onClick={() => navigate(`/use-case/${uc.id}`)}
+                                    onClick={() => navigate(`/use-case/${uc.id}`, { state: { fromUseCasePage: true, page: currentPage } })}
                                     className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">

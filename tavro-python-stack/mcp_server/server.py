@@ -593,6 +593,49 @@ async def create_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="remove_ai_use_case_agent_relationship")
+async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_catalog_id: str, ai_use_case_id: str) -> Dict[str, Any]:
+    """
+    Remove an existing relationship between an AI Use Case and an Agent.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        agent_catalog_id (str): Agent Catalog ID.
+        ai_use_case_id (str): AI Use Case ID.
+
+    Returns:
+        Dict[str, Any]: Relationship removal response.
+    """
+    print(f"Remove AI Use Case-Agent relationship requested for agent_catalog_id={agent_catalog_id} ai_use_case_id={ai_use_case_id}")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "remove_ai_use_case_agent_relationship",
+            original_prompt,
+            {
+                "agent_catalog_id": agent_catalog_id,
+                "ai_use_case_id": ai_use_case_id,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.remove_ai_use_case_agent_relationship(
+            agent_catalog_id=agent_catalog_id,
+            ai_use_case_id=ai_use_case_id,
+            tenant_id=str(tenant_id),
+        )
+        return result
+
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
     
 # ---------------------------
 # Shared JWT verifier

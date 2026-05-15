@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import UseCaseCatalog from '../components/UseCaseCatalog';
@@ -16,6 +16,15 @@ const UseCasePage: React.FC = () => {
     const { useCases: allUseCases, loading, error, refresh } = useUseCases();
 
     const navigate = useNavigate();
+    const location = useLocation();
+
+    useEffect(() => {
+        const incomingPage = Number((location.state as any)?.page);
+        if (Number.isFinite(incomingPage) && incomingPage > 0) {
+            setPage(incomingPage);
+            navigate(location.pathname, { replace: true, state: null });
+        }
+    }, [location.pathname, location.state, navigate]);
 
     const totalPages = Math.max(1, Math.ceil(allUseCases.length / PAGE_SIZE));
     const hasMore = page < totalPages;
@@ -117,6 +126,7 @@ const UseCasePage: React.FC = () => {
                     useCases={displayedUseCases}
                     searchTerm={searchTerm}
                     onSearchChange={setSearchTerm}
+                    currentPage={page}
                 />
             )}
 
