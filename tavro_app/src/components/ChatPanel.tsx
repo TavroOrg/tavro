@@ -224,7 +224,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const [loading, setLoading] = useState(false);
     const [chatCopied, setChatCopied] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -232,8 +232,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
     useEffect(() => {
         // Focus input when this tab becomes active
-        setTimeout(() => inputRef.current?.focus(), 100);
+        setTimeout(() => textareaRef.current?.focus(), 100);
     }, []);
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInput(e.target.value);
+        // Auto-grow textarea
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+            const newHeight = Math.min(textareaRef.current.scrollHeight, 240);
+            textareaRef.current.style.height = `${newHeight}px`;
+        }
+    };
 
     const buildHistory = (): ChatMessage[] => {
         return messages
@@ -255,6 +265,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const sendMessage = async () => {
         const text = input.trim();
         if (!text || loading) return;
+
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+        }
 
         const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text, timestamp: new Date() };
         setMessages(prev => [...prev, userMsg]);
@@ -312,7 +326,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     };
 
@@ -399,7 +413,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     {getSuggestedPrompts(viewType, viewData).map(prompt => (
                         <button
                             key={prompt}
-                            onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
+                            onClick={() => { setInput(prompt); textareaRef.current?.focus(); }}
                             className="text-left text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl px-3 py-2 transition-colors"
                         >
                             {prompt}
@@ -409,12 +423,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             )}
 
             {/* Input Row */}
-            <div className="flex items-center gap-2 px-3 py-3 bg-white border-t border-slate-200 flex-shrink-0">
-                <input
-                    ref={inputRef}
-                    type="text"
+            <div className="flex items-end gap-2 px-3 py-3 bg-white border-t border-slate-200 flex-shrink-0">
+                <textarea
+                    ref={textareaRef}
                     value={input}
-                    onChange={e => setInput(e.target.value)}
+                    onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     placeholder={
                       viewType === 'blueprint' ? 'Ask about your company blueprint…' :
@@ -425,7 +438,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                       'Ask Tavro AI anything…'
                     }
                     disabled={loading}
-                    className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder:text-slate-400 disabled:opacity-60"
+                    className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder:text-slate-400 disabled:opacity-60 resize-none overflow-y-auto"
+                    style={{ minHeight: '60px', maxHeight: '240px' }}
                 />
                 <button
                     onClick={sendMessage}
