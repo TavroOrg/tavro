@@ -7,10 +7,12 @@
 import json
 import os
 import re
-from typing import Any
+import uuid
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -18,6 +20,16 @@ from sqlalchemy import text
 from api.database import get_db
 
 router = APIRouter()
+
+# ── In-memory job store ───────────────────────────────────────────────────────
+
+@dataclass
+class _Job:
+    status: str = "pending"   # pending | done | error
+    result: Optional[dict] = None
+    error:  Optional[str]  = None
+
+_jobs: dict[str, _Job] = {}
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL   = "claude-sonnet-4-6"
@@ -138,18 +150,21 @@ async def _run_research(
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "",        raw).strip()
+    # Strip invalid JSON control characters (keep tab, newline, carriage return)
+    raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", raw)
 
     # Truncation recovery
     if data.get("stop_reason") == "max_tokens":
-        try: json.loads(_extract_json(raw))
+        try: json.loads(_extract_json(raw), strict=False)
         except json.JSONDecodeError:
             messages.append({"role": "assistant", "content": raw})
             messages.append({"role": "user", "content": "Continue and complete the JSON from where you left off."})
             cont = await _call_anthropic(api_key, messages, system, tools=None)
-            raw  = raw + _collect_text(cont).strip()
+            cont_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", _collect_text(cont).strip())
+            raw  = raw + cont_text
 
     try:
-        parsed = json.loads(_extract_json(raw))
+        parsed = json.loads(_extract_json(raw), strict=False)
     except json.JSONDecodeError as e:
         raise HTTPException(502, f"JSON parse error: {str(e)[:200]}")
 
@@ -226,18 +241,26 @@ Return ONLY the JSON. No other text."""
 
 
 # =============================================================
-# POST /research/regulation
+# GET /research/job/{job_id}
 # =============================================================
 
-@router.post("/research/regulation", response_model=ResearchResponse)
-async def research_regulation(body: RegResearchRequest):
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key: raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+@router.get("/research/job/{job_id}")
+async def get_research_job(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return {"status": job.status, "result": job.result, "error": job.error}
 
-    jur_text = ", ".join(body.jurisdiction) or "US"
-    ind_text = ", ".join(body.industry_tags) or "financial services"
 
-    prompt = f"""Research this regulation and return the compliance dimension JSON:
+# =============================================================
+# POST /research/regulation  — returns job_id immediately
+# =============================================================
+
+async def _bg_regulation_research(job_id: str, api_key: str, body: RegResearchRequest) -> None:
+    try:
+        jur_text = ", ".join(body.jurisdiction) or "US"
+        ind_text = ", ".join(body.industry_tags) or "financial services"
+        prompt = f"""Research this regulation and return the compliance dimension JSON:
 
 Regulation: {body.name}
 {f'Short name: {body.short_name}' if body.short_name else ''}
@@ -247,21 +270,52 @@ Industry: {ind_text}
 
 Use web search to find the official regulation text, recent enforcement actions,
 and compliance requirements. Return ONLY the JSON object."""
+        dims, sources, notice, turns = await _run_research(api_key, REG_RESEARCH_SYSTEM, prompt)
+        _jobs[job_id].result = ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns).model_dump()
+        _jobs[job_id].status = "done"
+    except Exception as exc:
+        _jobs[job_id].status = "error"
+        _jobs[job_id].error  = str(exc)
 
-    dims, sources, notice, turns = await _run_research(api_key, REG_RESEARCH_SYSTEM, prompt)
-    return ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns)
+
+@router.post("/research/regulation")
+async def research_regulation(body: RegResearchRequest, background_tasks: BackgroundTasks):
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key: raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = _Job()
+    background_tasks.add_task(_bg_regulation_research, job_id, api_key, body)
+    return {"job_id": job_id}
 
 
 # =============================================================
-# POST /research/policy
+# POST /research/policy  — returns job_id immediately
 # =============================================================
 
-@router.post("/research/policy", response_model=ResearchResponse)
-async def research_policy(body: PolicyResearchRequest, db: AsyncSession = Depends(get_db)):
+async def _bg_policy_research(job_id: str, api_key: str, body: PolicyResearchRequest, co_ctx: str) -> None:
+    try:
+        doc_ctx  = f"\n\nPolicy document extract:\n{body.doc_text[:4000]}" if body.doc_text else ""
+        desc_ctx = f"\nDescription: {body.description}" if body.description else ""
+        prompt = f"""Analyse this internal policy and return the compliance dimension JSON:
+
+Policy name: {body.name}{desc_ctx}
+{co_ctx}{doc_ctx}
+
+Identify the key requirements, controls, audit obligations, and business impact
+of this policy. The impact dimension is MANDATORY. Return ONLY the JSON object."""
+        dims, sources, notice, turns = await _run_research(api_key, POLICY_RESEARCH_SYSTEM, prompt)
+        _jobs[job_id].result = ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns).model_dump()
+        _jobs[job_id].status = "done"
+    except Exception as exc:
+        _jobs[job_id].status = "error"
+        _jobs[job_id].error  = str(exc)
+
+
+@router.post("/research/policy")
+async def research_policy(body: PolicyResearchRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key: raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
 
-    # Fetch company info for context
     company_row = await db.execute(
         text("SELECT name, industry, region FROM twin.company WHERE id = :id"),
         {"id": body.company_id}
@@ -269,19 +323,10 @@ async def research_policy(body: PolicyResearchRequest, db: AsyncSession = Depend
     company = company_row.mappings().first()
     co_ctx  = f"Company: {company['name']} | Industry: {company['industry']}" if company else ""
 
-    doc_ctx = f"\n\nPolicy document extract:\n{body.doc_text[:4000]}" if body.doc_text else ""
-    desc_ctx = f"\nDescription: {body.description}" if body.description else ""
-
-    prompt = f"""Analyse this internal policy and return the compliance dimension JSON:
-
-Policy name: {body.name}{desc_ctx}
-{co_ctx}{doc_ctx}
-
-Identify the key requirements, controls, audit obligations, and business impact
-of this policy. The impact dimension is MANDATORY. Return ONLY the JSON object."""
-
-    dims, sources, notice, turns = await _run_research(api_key, POLICY_RESEARCH_SYSTEM, prompt)
-    return ResearchResponse(dimensions=dims, sources=sources, notice=notice, turns_used=turns)
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = _Job()
+    background_tasks.add_task(_bg_policy_research, job_id, api_key, body, co_ctx)
+    return {"job_id": job_id}
 
 
 # =============================================================
