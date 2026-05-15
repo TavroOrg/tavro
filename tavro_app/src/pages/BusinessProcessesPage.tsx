@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   BriefcaseBusiness,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
   List,
   Plus,
   Search,
+  ShieldAlert,
   Workflow,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
@@ -22,6 +24,57 @@ const PROCESS_CRITICALITY_LABELS: Record<string, string> = {
   '0.7': 'Tier 2 (Core)',
   '0.4': 'Tier 3 (Operational)',
   '0.1': 'Tier 4 (Experimental)',
+};
+
+const getCriticalityMeta = (value: string | null | undefined) => {
+  const label = value ? (PROCESS_CRITICALITY_LABELS[value] || value) : 'N/A';
+  const numeric = value ? Number(value) : Number.NaN;
+
+  if (!Number.isNaN(numeric)) {
+    if (numeric >= 0.95) {
+      return {
+        label,
+        className: 'bg-red-50 text-red-700 border-red-100',
+        Icon: ShieldAlert,
+      };
+    }
+
+    if (numeric >= 0.65) {
+      return {
+        label,
+        className: 'bg-amber-50 text-amber-700 border-amber-100',
+        Icon: ShieldAlert,
+      };
+    }
+
+    return {
+      label,
+      className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+      Icon: CheckCircle2,
+    };
+  }
+
+  const normalized = label.toLowerCase();
+  if (normalized.includes('systemic')) {
+    return {
+      label,
+      className: 'bg-red-50 text-red-700 border-red-100',
+      Icon: ShieldAlert,
+    };
+  }
+  if (normalized.includes('core')) {
+    return {
+      label,
+      className: 'bg-amber-50 text-amber-700 border-amber-100',
+      Icon: ShieldAlert,
+    };
+  }
+
+  return {
+    label,
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    Icon: CheckCircle2,
+  };
 };
 
 const BusinessProcessesPage: React.FC = () => {
@@ -197,45 +250,52 @@ const BusinessProcessesPage: React.FC = () => {
         >
           {paged.map(proc => {
             const relatedProcessCount = proc.related_processes?.length ?? 0;
+            const criticalityMeta = getCriticalityMeta(proc.business_criticality);
             return (
               <button
                 key={proc.business_process_id}
                 onClick={() => navigate(`/processes/${encodeURIComponent(proc.business_process_id)}`)}
-                className="text-left bg-white rounded-2xl border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all overflow-hidden"
+                className="group text-left bg-white rounded-2xl border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all overflow-hidden flex flex-col h-full"
               >
                 <div className="h-2 bg-gradient-to-r from-blue-500 to-indigo-600" />
 
-                <div className="p-5 flex flex-col gap-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800 truncate">
-                        {proc.process_name || proc.business_process_id}
-                      </p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">
-                        {proc.business_process_id}
-                      </p>
+                <div className="p-5 flex-1 flex flex-col">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
+                      <BriefcaseBusiness size={20} />
                     </div>
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
                       <BriefcaseBusiness size={10} /> {proc.related_agent_count}
                     </span>
                   </div>
 
-                  <p className="text-xs text-slate-600 line-clamp-3 min-h-[3.25rem]">
+                  <h3 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors line-clamp-1 mb-1">
+                    {proc.process_name || proc.business_process_id}
+                  </h3>
+                  <p className="text-[11px] font-mono text-slate-400 truncate mb-2">
+                    {proc.business_process_id}
+                  </p>
+
+                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-4 flex-1">
                     {proc.process_description || 'No description available.'}
                   </p>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {proc.business_criticality && (
-                      <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                        {displayCriticality(proc.business_criticality)}
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2 flex-wrap mt-auto">
+                    <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${criticalityMeta.className}`}>
+                      <criticalityMeta.Icon size={10} />
+                      {criticalityMeta.label}
+                    </span>
                     {relatedProcessCount > 0 && (
                       <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                         <Workflow size={10} /> {relatedProcessCount} linked
                       </span>
                     )}
                   </div>
+                </div>
+
+                <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  <span>ID: {(proc.business_process_id || 'N/A').slice(0, 8)}</span>
+                  <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
                 </div>
               </button>
             );

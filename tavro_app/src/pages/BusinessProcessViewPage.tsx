@@ -3,12 +3,15 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
+  BriefcaseBusiness,
+  CheckCircle2,
   Info,
   Loader2,
   Pencil,
   PlusCircle,
   Save,
   Search,
+  ShieldAlert,
   Trash2,
   Unlink2,
   XCircle,
@@ -180,9 +183,43 @@ const labelFromOptions = (value: string, options: Option[]): string => {
   return found ? found.label : value;
 };
 
-const HintLabel: React.FC<{ label: string; hint?: string }> = ({ label, hint }) => (
+type HeaderMetricMeta = {
+  label: string;
+  tone: 'high' | 'medium' | 'low' | 'neutral';
+};
+
+const getImpactMeta = (value: string, options: Option[]): HeaderMetricMeta => {
+  const label = labelFromOptions(value, options);
+  if (label === 'N/A') return { label, tone: 'neutral' };
+
+  const numeric = Number(value);
+  if (!Number.isNaN(numeric)) {
+    if (numeric >= 0.95) return { label, tone: 'high' };
+    if (numeric >= 0.65) return { label, tone: 'medium' };
+    return { label, tone: 'low' };
+  }
+
+  const normalized = label.toLowerCase();
+  if (normalized.includes('restricted') || normalized.includes('toxic') || normalized.includes('systemic')) {
+    return { label, tone: 'high' };
+  }
+  if (normalized.includes('statutory') || normalized.includes('adverse') || normalized.includes('material')) {
+    return { label, tone: 'medium' };
+  }
+  return { label, tone: 'low' };
+};
+
+const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+
+const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
+    {required && <span className="text-red-500">*</span>}
     {hint && (
       <span title={hint}>
         <Info size={12} className="text-slate-400" />
@@ -219,6 +256,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [attemptedSave, setAttemptedSave] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
@@ -274,6 +312,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(proc);
       setForm(formFromProcess(proc));
       setAllProcesses(processes);
+      setAttemptedSave(false);
     } catch (err: any) {
       setError(err.message || 'Failed to load business process');
     } finally {
@@ -286,6 +325,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(null);
       setForm(emptyForm());
       setEditing(true);
+      setAttemptedSave(false);
       setLoading(false);
       setTab('overview');
       setError(null);
@@ -346,7 +386,15 @@ const BusinessProcessViewPage: React.FC = () => {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
+  const isProcessNameMissing = !form.process_name.trim();
+
   const handleSave = async () => {
+    setAttemptedSave(true);
+    if (isProcessNameMissing) {
+      setActionError('Process Name is required.');
+      return;
+    }
+
     setSaving(true);
     setActionError(null);
     try {
@@ -367,6 +415,7 @@ const BusinessProcessViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateProcess(process.business_process_id, payload);
       setProcess(updated);
       setForm(formFromProcess(updated));
+      setAttemptedSave(false);
       setEditing(false);
     } catch (err: any) {
       setActionError(err.message || 'Failed to save process');
@@ -377,6 +426,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const handleCancelEdit = () => {
     setActionError(null);
+    setAttemptedSave(false);
     if (isCreateMode) {
       navigate('/processes');
       return;
@@ -462,6 +512,10 @@ const BusinessProcessViewPage: React.FC = () => {
   const currentProcessId = process?.business_process_id || '';
   const relatedAgentCount = process?.related_agents?.length ?? 0;
   const relatedProcessCount = relatedProcessRows.length;
+  const businessCriticalityMeta = getImpactMeta(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS);
+  const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
+  const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
+  const regulatoryImpactMeta = getImpactMeta(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS);
 
   const selectableParents = allProcesses.filter(
     p => p.business_process_id !== currentProcessId,
@@ -501,6 +555,7 @@ const BusinessProcessViewPage: React.FC = () => {
               <button
                 onClick={() => {
                   setTab('overview');
+                  setAttemptedSave(false);
                   setEditing(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -529,10 +584,62 @@ const BusinessProcessViewPage: React.FC = () => {
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
-        <div className="p-6">
-          <h2 className="text-xl font-bold text-slate-800">{processTitle}</h2>
-          <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
-          <p className="text-sm text-slate-600 mt-3">{form.process_description || 'No description available.'}</p>
+        <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+            <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+              <BriefcaseBusiness size={24} />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Process</span>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{processTitle}</h2>
+              <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
+              <p className="text-sm text-slate-600 line-clamp-2">
+                {form.process_description || 'No description available.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Business Criticality
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
+                {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {businessCriticalityMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Financial Impact
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
+                {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {financialImpactMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Reputational Impact
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
+                {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {reputationalImpactMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Regulatory Impact
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
+                {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {regulatoryImpactMeta.label}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -593,13 +700,23 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Name" />
+                <HintLabel label="Name" required />
                 {editing ? (
-                  <input
-                    value={form.process_name}
-                    onChange={(e) => setField('process_name', e.target.value)}
-                    className={inputCls}
-                  />
+                  <>
+                    <input
+                      value={form.process_name}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setField('process_name', value);
+                        if (attemptedSave && value.trim()) setActionError(null);
+                      }}
+                      className={`${inputCls} ${attemptedSave && isProcessNameMissing ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20' : ''}`}
+                      aria-invalid={attemptedSave && isProcessNameMissing}
+                    />
+                    {attemptedSave && isProcessNameMissing && (
+                      <p className="text-xs text-red-600">Process Name is required.</p>
+                    )}
+                  </>
                 ) : (
                   <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
                     {form.process_name || 'N/A'}

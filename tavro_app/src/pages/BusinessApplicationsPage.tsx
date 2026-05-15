@@ -1,21 +1,54 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  AppWindow,
   AlertCircle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Grid2X2,
   LayoutGrid,
-  Layers,
   List,
   Plus,
   Search,
+  ShieldAlert,
+  Library,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 
 const PAGE_SIZE = 10;
+
+const getCriticalityMeta = (criticality: string | null | undefined) => {
+  const raw = (criticality ?? '').trim();
+  const normalized = raw.toLowerCase();
+  const isNonCritical = normalized.includes('non-critical');
+  const isHigh = normalized.includes('high') || (normalized.includes('critical') && !isNonCritical);
+  const isMedium = normalized.includes('medium');
+
+  if (isHigh) {
+    return {
+      label: 'HIGH',
+      className: 'bg-red-50 text-red-700 border-red-100',
+      Icon: ShieldAlert,
+    };
+  }
+
+  if (isMedium) {
+    return {
+      label: 'MEDIUM',
+      className: 'bg-amber-50 text-amber-700 border-amber-100',
+      Icon: ShieldAlert,
+    };
+  }
+
+  return {
+    label: 'LOW',
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    Icon: CheckCircle2,
+  };
+};
 
 const BusinessApplicationsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -187,41 +220,49 @@ const BusinessApplicationsPage: React.FC = () => {
             <button
               key={app.business_application_id}
               onClick={() => navigate(`/applications/${encodeURIComponent(app.business_application_id)}`)}
-              className="text-left bg-white rounded-2xl border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all overflow-hidden"
+              className="group text-left bg-white rounded-2xl border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all overflow-hidden flex flex-col h-full"
             >
               <div className="h-2 bg-gradient-to-r from-blue-500 to-indigo-600" />
 
-              <div className="p-5 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-800 truncate">
-                      {app.application_name || app.business_application_id}
-                    </p>
-                    <p className="text-[11px] font-mono text-slate-400 truncate">
-                      {app.business_application_id}
-                    </p>
+              <div className="p-5 flex-1 flex flex-col">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
+                    <AppWindow size={20} />
                   </div>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                    <Layers size={10} /> {app.related_agent_count}
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5">                    
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      <Library size={10} /> {app.related_agent_count}
+                    </span>
+                  </div>
                 </div>
 
-                <p className="text-xs text-slate-600 line-clamp-3 min-h-[3.25rem]">
+                <h3 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors line-clamp-1 mb-1">
+                  {app.application_name || app.business_application_id}
+                </h3>
+                <p className="text-[11px] font-mono text-slate-400 truncate mb-2">
+                  {app.business_application_id}
+                </p>
+
+                <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-4 flex-1">
                   {app.application_description || 'No description available.'}
                 </p>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {app.business_criticality && (
-                    <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                      Criticality: {app.business_criticality}
-                    </span>
-                  )}
-                  {app.emergency_tier && (
-                    <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">
-                      Emergency Tier: {app.emergency_tier}
-                    </span>
-                  )}
+                <div className="flex items-center gap-2 flex-wrap mt-auto">
+                  {app.business_criticality && (() => {
+                    const { label, className, Icon } = getCriticalityMeta(app.business_criticality);
+                    return (
+                      <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${className}`}>
+                        <Icon size={10} />
+                        CRITICALITY: {label}
+                      </span>
+                    );
+                  })()}
                 </div>
+              </div>
+
+              <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <span>ID: {(app.business_application_id || 'N/A').slice(0, 8)}</span>
+                <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
               </div>
             </button>
           ))}
