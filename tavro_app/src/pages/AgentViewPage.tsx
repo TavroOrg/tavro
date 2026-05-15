@@ -7,6 +7,7 @@ import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, S
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
+import { useCatalog } from '../context/CatalogContext';
 
 const AgentViewPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -18,13 +19,50 @@ const AgentViewPage: React.FC = () => {
     const [jsonOpen, setJsonOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const [auditModalOpen, setAuditModalOpen] = useState(false);
+    const { agents: catalogAgents } = useCatalog();
+
+    const getPendingFallbackAgent = (targetId: string): AgentData | null => {
+        const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+        const pendingMeta = raw ? JSON.parse(raw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
+        const found = pendingMeta.find(item => item.agent_id === targetId || item.name === targetId);
+        if (!found) return null;
+        return {
+            name: found.name,
+            description: found.description,
+            version: '1.0',
+            identification: {
+                agent_id: found.agent_id,
+                role: null,
+                instruction: null,
+                governance_status: 'Risk Assessment is running',
+            },
+            configuration: { autonomy_level: null },
+            tool: [],
+            data_source: [],
+            application: [],
+            business_process: [],
+            risk_assessment: null,
+        };
+    };
 
     const fetchAgent = async () => {
         if (!id) return;
         setLoading(true);
         try {
             const data = await mcpClient.getAgentDetails(id);
-            if (data) setAgent(data);
+            if (data) {
+                setAgent(data);
+            } else {
+                const fromCatalog = catalogAgents.find(a =>
+                    (a.identification?.agent_id && a.identification.agent_id === id) || a.name === id
+                );
+                if (fromCatalog) {
+                    setAgent(fromCatalog);
+                } else {
+                    const fallback = getPendingFallbackAgent(id);
+                    if (fallback) setAgent(fallback);
+                }
+            }
         } catch (error) {
             console.error("Error fetching agent details", error);
         } finally {
@@ -34,7 +72,16 @@ const AgentViewPage: React.FC = () => {
 
     useEffect(() => {
         fetchAgent();
-    }, [id]);
+    }, [id, catalogAgents.length]);
+
+    useEffect(() => {
+        if (!agent?.identification?.agent_id) return;
+        if (agent.identification.governance_status !== 'Risk Assessment is running') return;
+        const timer = window.setInterval(() => {
+            fetchAgent();
+        }, 10000);
+        return () => window.clearInterval(timer);
+    }, [agent?.identification?.agent_id, agent?.identification?.governance_status, id, catalogAgents.length]);
 
     // ── Chat sync — passes agent data to chat as context ────────────────────
     useChatSync('agent_detail', agent ? {

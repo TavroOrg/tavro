@@ -11,10 +11,15 @@ import {
 
 function getRisk(agent: AgentData): 'high' | 'medium' | 'low' {
     // 1. Formal risk assessment is authoritative
-    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim();
-    if (brc === 'critical' || brc === 'high') return 'high';
-    if (brc === 'medium') return 'medium';
-    if (brc === 'low') return 'low';
+    const labels = [
+        agent.risk_assessment?.blended_risk_classification,
+        agent.risk_assessment?.regulatory_risk_classification,
+        (agent as any).latest_risk_class,
+        (agent as any).blended_risk_classification,
+        (agent as any).risk_classification,
+    ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+    if (labels.some(v => v.includes('prohibited') || v.includes('high risk') || v === 'high' || v.includes('critical'))) return 'high';
+    if (labels.some(v => v.includes('other') || v.includes('low'))) return 'low';
 
     // 2. Fall back to application-level fields (case-insensitive)
     const apps = agent.application ?? [];
@@ -32,8 +37,8 @@ function getRisk(agent: AgentData): 'high' | 'medium' | 'low' {
 
 function hasCriticalApp(agent: AgentData): boolean {
     // Check formal assessment first
-    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim();
-    if (brc === 'critical') return true;
+    const brc = agent.risk_assessment?.blended_risk_classification?.toLowerCase().trim() ?? '';
+    if (brc.includes('critical')) return true;
     // Then application emergency tier (case-insensitive)
     return (agent.application ?? []).some(a =>
         a.emergency_tier?.toLowerCase().includes('mission critical') ||
