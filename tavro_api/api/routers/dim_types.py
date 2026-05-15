@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+import json
 
 from api.database import get_db
 from api.schemas import DimType, DimTypeCreate
@@ -35,6 +36,13 @@ async def get_dim_type(dim_type_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=DimType, status_code=201)
 async def create_dim_type(body: DimTypeCreate, db: AsyncSession = Depends(get_db)):
+    # Validate category against allowed ENUM values
+    valid_categories = ['profile', 'strategy', 'process', 'application', 'organisation', 'technology', 'risk', 'custom']
+    if body.category not in valid_categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid category '{body.category}'. Allowed categories: {', '.join(valid_categories)}"
+        )
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_type
@@ -45,7 +53,7 @@ async def create_dim_type(body: DimTypeCreate, db: AsyncSession = Depends(get_db
         """),
         {
             **body.model_dump(),
-            "value_schema": str(body.value_schema) if body.value_schema else None,
+            "value_schema": json.dumps(body.value_schema) if body.value_schema else None,
         },
     )
     await db.commit()
