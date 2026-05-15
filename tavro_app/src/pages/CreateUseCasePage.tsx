@@ -4,7 +4,13 @@ import { mcpClient } from '../services/mcpClient';
 import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 
-const PRIORITIES = ['High', 'Medium', 'Low'];
+const PRIORITIES = [
+    '1 - Critical',
+    '2 - High',
+    '3 - Moderate',
+    '4 - Low',
+    '5 - Planning',
+];
 const STATUSES = ['Proposed', 'In Review', 'Active', 'Deprecated'];
 
 const CreateUseCasePage: React.FC = () => {
@@ -19,7 +25,7 @@ const CreateUseCasePage: React.FC = () => {
         function: '',
         problem_statement: '',
         expected_benefits: '',
-        priority: 'Medium',
+        priority: '3 - Moderate',
         status: 'Proposed',
     });
     const [saving, setSaving] = useState(false);
@@ -34,6 +40,9 @@ const CreateUseCasePage: React.FC = () => {
         if (!form.name.trim()) return;
         setSaving(true);
         setError(null);
+        // Ensure live mode before write call so connect() establishes a real MCP session.
+        localStorage.setItem('tavro_cache_mode', 'false');
+        window.dispatchEvent(new Event('tavro_settings_change'));
         try {
             await mcpClient.createAiUseCase({
                 title: form.name.trim(),
@@ -42,15 +51,12 @@ const CreateUseCasePage: React.FC = () => {
                 expected_benefits: form.expected_benefits.trim(),
                 priority: form.priority,
                 ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
-                ...(form.proposed_by.trim() && { proposed_by: form.proposed_by.trim() }),
-                ...(form.function.trim() && { business_function: form.function.trim() }),
-                ...(form.status && { status: form.status }),
             });
-            // Switch to live mode so the catalog reads go to the MCP server and show
-            // the newly created use case (cache mode serves stale pre-generated data).
-            localStorage.setItem('tavro_cache_mode', 'false');
-            window.dispatchEvent(new Event('tavro_settings_change'));
             setSuccess(true);
+            sessionStorage.setItem(
+                'tavro_use_case_notice',
+                'AI Use Case created successfully. It will appear in the catalog shortly.'
+            );
             refresh();
             setTimeout(() => navigate('/use-cases'), 1200);
         } catch (err: any) {
@@ -108,9 +114,10 @@ const CreateUseCasePage: React.FC = () => {
 
                         {/* Description */}
                         <div>
-                            <label className={labelCls}>Description</label>
+                            <label className={labelCls}>Description <span className="text-red-500">*</span></label>
                             <textarea
                                 rows={3}
+                                required
                                 value={form.description}
                                 onChange={e => set('description', e.target.value)}
                                 placeholder="Brief overview of what this AI use case does…"
@@ -208,7 +215,7 @@ const CreateUseCasePage: React.FC = () => {
                         </button>
                         <button
                             type="submit"
-                            disabled={saving || !form.name.trim() || success}
+                            disabled={saving || !form.name.trim() || !form.description.trim() || success}
                             className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'
                                 }`}
                         >
@@ -223,3 +230,6 @@ const CreateUseCasePage: React.FC = () => {
 };
 
 export default CreateUseCasePage;
+
+
+

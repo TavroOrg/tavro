@@ -1,39 +1,61 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { useCatalog } from '../context/CatalogContext';
+import { AgentData } from '../types/agent';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
-const STATUSES = ['Active', 'Inactive', 'Deprecated'];
 
 type AgentForm = {
   name: string; description: string; instruction: string;
-  owner: string; role: string; environment: string; version: string; status: string;
+  owner: string; role: string; environment: string;
 };
 
 const CreateAgentPage: React.FC = () => {
   const navigate = useNavigate();
-  const { refresh } = useCatalog();
+  const { refresh, upsertAgent } = useCatalog();
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
-    owner: '', role: '', environment: '', version: '1.0', status: 'Active',
+    owner: '', role: '', environment: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const redirectTimerRef = useRef<number | null>(null);
 
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  const extractAgentId = (result: any, fallbackName: string): string => {
+    const candidates = [
+      result?.agent_id,
+      result?.agent_internal_id,
+      result?.id,
+      result?.identifier,
+      result?.agent?.agent_id,
+      result?.data?.agent_id,
+      result?.agent_card?.identification?.agent_id,
+      result?.agent_card?.agent_id,
+    ];
+    for (const value of candidates) {
+      if (value && String(value).trim()) return String(value).trim();
+    }
+    return fallbackName;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSaving(true);
     setError(null);
+    // Switch to live mode before calling the MCP server so that connect()
+    // establishes a real session (cache mode stubs it out without a session ID).
+    localStorage.setItem('tavro_cache_mode', 'false');
+    window.dispatchEvent(new Event('tavro_settings_change'));
     try {
-      await mcpClient.createAgent({
+      const createResult = await mcpClient.createAgent({
         agent_name: form.name.trim(),
         description: form.description.trim(),
         // instruction is required by the MCP tool; fall back to description if blank
@@ -41,22 +63,63 @@ const CreateAgentPage: React.FC = () => {
         ...(form.owner.trim() && { owner: form.owner.trim() }),
         ...(form.role.trim() && { role: form.role.trim() }),
         ...(form.environment.trim() && { environment: form.environment.trim() }),
-        ...(form.version.trim() && { version: form.version.trim() }),
-        ...(form.status.trim() && { status: form.status.trim() }),
       });
-      // Switch to live mode so the catalog reads go to the MCP server and show
-      // the newly created agent (cache mode serves stale pre-generated data).
-      localStorage.setItem('tavro_cache_mode', 'false');
-      window.dispatchEvent(new Event('tavro_settings_change'));
+      const createdAgentId = extractAgentId(createResult, form.name.trim());
+      const optimisticAgent: AgentData = {
+        name: form.name.trim(),
+        description: form.description.trim() || form.name.trim(),
+        version: '1.0',
+        identification: {
+          agent_id: createdAgentId,
+          role: form.role.trim() || null,
+          instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
+          environment: form.environment.trim() || null,
+          owner: form.owner.trim() || null,
+          governance_status: 'Risk Assessment is running',
+        },
+        configuration: { autonomy_level: null },
+        tool: [],
+        data_source: [],
+        application: [],
+        business_process: [],
+        risk_assessment: null,
+      };
+      upsertAgent(optimisticAgent);
+
+      const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+      const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+      const nextPending = Array.from(new Set([...pending, createdAgentId]));
+      localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(nextPending));
+      const pendingMetaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+      const pendingMeta = pendingMetaRaw ? JSON.parse(pendingMetaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
+      const withoutCurrent = pendingMeta.filter(item => item.agent_id !== createdAgentId);
+      withoutCurrent.unshift({
+        agent_id: createdAgentId,
+        name: form.name.trim(),
+        description: form.description.trim() || form.name.trim(),
+        created_at: new Date().toISOString(),
+      });
+      localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(withoutCurrent));
+
       setSuccess(true);
+      sessionStorage.setItem(
+        'tavro_catalog_notice',
+        'Agent created successfully. Risk assessment is running in the background.'
+      );
       refresh();
-      setTimeout(() => navigate('/catalog'), 1000);
+      redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);
     } catch (err: any) {
       setError(err.message || 'Failed to create agent.');
     } finally {
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const inputCls =
     'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500';
@@ -154,41 +217,18 @@ const CreateAgentPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <label className={labelCls}>Environment</label>
-                <select
-                  value={form.environment}
-                  onChange={e => set('environment', e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="">Select…</option>
-                  {ENVIRONMENTS.map(env => (
-                    <option key={env} value={env}>{env}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Version</label>
-                <input
-                  value={form.version}
-                  onChange={e => set('version', e.target.value)}
-                  placeholder="1.0"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Status</label>
-                <select
-                  value={form.status}
-                  onChange={e => set('status', e.target.value)}
-                  className={inputCls}
-                >
-                  {STATUSES.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
+            <div>
+              <label className={labelCls}>Environment</label>
+              <select
+                value={form.environment}
+                onChange={e => set('environment', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">Select…</option>
+                {ENVIRONMENTS.map(env => (
+                  <option key={env} value={env}>{env}</option>
+                ))}
+              </select>
             </div>
 
             {error && (

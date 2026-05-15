@@ -54,3 +54,49 @@ ON core.agent_ai_models (agent_internal_id, model_name);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
+ON core.business_applications (business_application_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
+ON core.business_processes (business_process_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_core_agent_business_applications_business_application'
+    ) THEN
+        ALTER TABLE core.agent_business_applications
+        ADD CONSTRAINT fk_core_agent_business_applications_business_application
+        FOREIGN KEY (business_application_id)
+        REFERENCES core.business_applications (business_application_id)
+        ON DELETE CASCADE;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_core_agent_business_processes_business_process'
+    ) THEN
+        ALTER TABLE core.agent_business_processes
+        ADD CONSTRAINT fk_core_agent_business_processes_business_process
+        FOREIGN KEY (business_process_id)
+        REFERENCES core.business_processes (business_process_id)
+        ON DELETE CASCADE;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_core_business_processes_parent'
+    ) THEN
+        ALTER TABLE core.business_processes
+        ADD CONSTRAINT fk_core_business_processes_parent
+        FOREIGN KEY (parent_process_id)
+        REFERENCES core.business_processes (business_process_id)
+        ON DELETE SET NULL;
+    END IF;
+
+END $$;

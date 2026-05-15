@@ -13,6 +13,7 @@ from api.routers import playground
 from api.routers import compliance, compliance_research
 from api.routers import audit
 from api.routers import risk
+from api.routers import business_relations
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -96,6 +97,7 @@ app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Play
 app.include_router(compliance.router,          prefix="/api/v1/compliance", tags=["Compliance"])
 app.include_router(compliance_research.router, prefix="/api/v1/compliance", tags=["Compliance Research"])
 app.include_router(audit.router,       prefix="/api/v1/audit",       tags=["Audit"])
+app.include_router(business_relations.router, prefix="/api/v1")
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
