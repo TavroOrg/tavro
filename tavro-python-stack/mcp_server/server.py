@@ -593,7 +593,366 @@ async def create_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
-    
+
+@core.tool(name="update_agent")
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Update an existing AI agent’s configuration.
+
+    Allows modification of agent metadata such as name, description,
+    behavior instructions, tools, and knowledge sources.
+
+    Args:
+        original_prompt (str): REQUIRED. Exact user message verbatim.
+        agent_id (Optional[str]): Unique identifier of the agent to update.
+        agent_name (Optional[str]): New agent name.
+        description (Optional[str]): Updated description.
+        instruction (Optional[str]): Updated behavior instructions.
+        tools (Optional[List[Dict[str, str]]]): Updated tool list.
+        knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
+
+    Returns:
+        Dict[str, Any]: Updated agent metadata or error response.
+    """
+    print("Update agent requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "update_agent",
+            original_prompt,
+            {
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "description": description,
+                "instruction": instruction,
+                "tools": tools,
+                "knowledge_source": knowledge_source,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.update_agent(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            description=description,
+            instruction=instruction,
+            tools=tools,
+            knowledge_source=knowledge_source,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="update_ai_use_case")
+async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Update an existing AI use case definition.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        use_case_id (Optional[str]): ID of the AI use case.
+        title (str): Updated title.
+        description (str): Updated description.
+        business_problem_statement (str): Updated business problem statement.
+        expected_benefits (str): Updated expected benefits.
+        priority (str): Updated priority.
+        regulatory_impact (Optional[List[str]]): Updated regulatory impact.
+        solution_approach (Optional[str]): Updated solution approach.
+        use_case_owner (Optional[str]): Updated use case owner.
+        impacted_business_applications (Optional[List[str]]): Updated impacted business applications.
+        impacted_business_processes (Optional[List[str]]): Updated impacted business processes.
+
+    Returns:
+        Dict[str, Any]
+    """
+    print("Update AI use case requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "update_ai_use_case",
+            original_prompt,
+            {
+                "use_case_id": use_case_id,
+                "name": title,
+                "description": description,
+                "business_problem_statement": business_problem_statement,
+                "expected_benefits": expected_benefits,
+                "priority": priority,
+                "regulatory_impact": regulatory_impact,
+                "solution_approach": solution_approach,
+                "use_case_owner": use_case_owner,
+                "impacted_business_applications": impacted_business_applications,
+                "impacted_business_processes": impacted_business_processes,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.update_ai_use_case(
+            use_case_id=use_case_id,
+            name=title,
+            description=description,
+            business_problem_statement=business_problem_statement,
+            expected_benefits=expected_benefits,
+            priority=priority,
+            regulatory_impact=regulatory_impact,
+            solution_approach=solution_approach,
+            use_case_owner=use_case_owner,
+            impacted_business_applications=impacted_business_applications,
+            impacted_business_processes=impacted_business_processes,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="get_application_catalog")
+async def get_application_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+    """
+    Retrieve paginated application catalog.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        start_record (int): Starting index.
+        record_range (str): Range like "1-10".
+
+    Returns:
+        Dict[str, Any]
+    """
+    print("Application catalog requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_application_catalog",
+            original_prompt,
+            {
+                "start_record": start_record,
+                "record_range": record_range,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.get_application_catalog(
+            start_record=start_record,
+            record_range=record_range,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="get_process_catalog")
+async def get_process_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+    """
+    Retrieve paginated process catalog.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        start_record (int): Start index.
+        record_range (str): Range like "1-10".
+
+    Returns:
+        Dict[str, Any]
+    """
+    print("Process catalog requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_process_catalog",
+            original_prompt,
+            {
+                "start_record": start_record,
+                "record_range": record_range,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.get_process_catalog(
+            start_record=start_record,
+            record_range=record_range,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="create_company")
+async def create_company(original_prompt: str, *, name: str, industry: str, region: str, legal_entity: str) -> Dict[str, Any]:
+    """
+    Create a new company entity.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        name (str): Company name.
+        industry (str): Company industry.
+        region (str): Company region.
+        legal_entity (str): Legal entity information.
+
+    Returns:
+        Dict[str, Any]
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "create_company",
+            original_prompt,
+            {
+                "name": name,
+                "industry": industry,
+                "region": region,
+                "legal_entity": legal_entity,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.create_company(
+            name=name,
+            industry=industry,
+            region=region,
+            legal_entity=legal_entity,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="get_company")
+async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a company by ID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): Company identifier.
+
+    Returns:
+        Dict[str, Any]
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_company",
+            original_prompt,
+            {"company_id": company_id},
+            tenant_id,
+        )
+
+        return AgentMetadataExporter.get_company(
+            company_id=company_id,
+            tenant_id=str(tenant_id),
+        )
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+@core.tool(name="update_company")
+async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Update an existing company entity.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): Company identifier.
+        name (Optional[str]): Updated name.
+        industry (Optional[str]): Updated industry.
+        region (Optional[str]): Updated region.
+        legal_entity (Optional[str]): Updated legal entity information.
+
+    Returns:
+        Dict[str, Any]
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "update_company",
+            original_prompt,
+            {
+                "company_id": company_id,
+                "name": name,
+                "industry": industry,
+                "region": region,
+                "legal_entity": legal_entity,
+            },
+            tenant_id,
+        )
+
+        # ---------------------------------------
+        # 1. Fetch existing company
+        # ---------------------------------------
+        existing = AgentMetadataExporter.get_company(
+            company_id=company_id,
+            tenant_id=str(tenant_id),
+        )
+
+        # ---------------------------------------
+        # 2. Merge (ONLY overwrite provided fields)
+        # ---------------------------------------
+        payload = {
+            "name": name if name is not None else existing.get("name"),
+            "industry": industry if industry is not None else existing.get("industry"),
+            "region": region if region is not None else existing.get("region"),
+            "legal_entity": legal_entity if legal_entity is not None else existing.get("legal_entity"),
+        }
+
+        # ---------------------------------------
+        # 3. Call update API
+        # ---------------------------------------
+        result = AgentMetadataExporter.update_company(
+            company_id=company_id,
+            name=payload["name"],
+            industry=payload["industry"],
+            region=payload["region"],
+            legal_entity=payload["legal_entity"],
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 # ---------------------------
 # Shared JWT verifier
 # ---------------------------
