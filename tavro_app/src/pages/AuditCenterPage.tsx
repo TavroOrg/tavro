@@ -152,7 +152,7 @@ const AuditCenterPage: React.FC = () => {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-sm">
+          <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-sm">
             <ShieldCheck size={20} />
           </div>
           <div>
@@ -168,7 +168,7 @@ const AuditCenterPage: React.FC = () => {
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
           <button onClick={() => setModalOpen(true)}
-            className="flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl shadow-sm transition-colors">
+            className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors">
             <ShieldCheck size={14} /> New Audit
           </button>
         </div>
@@ -209,15 +209,15 @@ const AuditCenterPage: React.FC = () => {
           </div>
         ) : runs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-slate-400 dark:text-slate-500">
-            <div className="p-5 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800">
-              <ShieldCheck size={32} className="text-indigo-400 dark:text-indigo-500" />
+            <div className="p-5 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800">
+              <ShieldCheck size={32} className="text-blue-400 dark:text-blue-500" />
             </div>
             <div className="text-center">
               <p className="font-bold text-slate-600 dark:text-slate-300 text-base">No audit runs yet</p>
               <p className="text-sm mt-1">Click "New Audit" or launch from a use case or agent detail page.</p>
             </div>
             <button onClick={() => setModalOpen(true)}
-              className="flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-5 py-2.5 rounded-xl shadow-sm transition-colors mt-2">
+              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors">
               <ShieldCheck size={14} /> Start first audit
             </button>
           </div>

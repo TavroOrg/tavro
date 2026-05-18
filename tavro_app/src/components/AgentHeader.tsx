@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import { AgentData } from '../types/agent';
-import { BrainCircuit, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
 
 interface AgentHeaderProps { agent: AgentData; }
@@ -34,7 +34,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
             <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
                 <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[40%]">
                     <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
-                        <BrainCircuit size={28} />
+                        <Bot size={28} />
                     </div>
                     <div className="flex flex-col gap-1.5 min-w-0">
                         <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{agent.name}</h2>
