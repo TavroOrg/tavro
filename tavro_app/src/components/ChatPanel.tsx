@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
-import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider } from '../services/llmService';
+import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
@@ -232,20 +232,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const [configuredProviders, setConfiguredProviders] = useState<{ provider: LLMProvider; label: string }[]>([]);
 
     useEffect(() => {
-        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
         const configured = providers
             .map(p => ({ provider: p, cfg: getProviderConfig(p) }))
             .filter(x => x.cfg !== null)
             .map(x => ({
                 provider: x.provider,
-                label: `${x.provider === 'openai' ? 'OpenAI' : x.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${x.cfg!.model}`,
+                label: `${PROVIDER_LABELS[x.provider]} · ${x.cfg!.model}`,
             }));
         setConfiguredProviders(configured);
     }, []);
 
     const llmCfg = activeProviderState ? getProviderConfig(activeProviderState) : null;
     const modelLabel = llmCfg
-        ? `${llmCfg.provider === 'openai' ? 'OpenAI' : llmCfg.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${llmCfg.model}`
+        ? `${PROVIDER_LABELS[llmCfg.provider]} · ${llmCfg.model}`
         : null;
 
     // ── Messages state (per-session) ───────────────────────────────────────────
@@ -387,9 +387,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             }
 
             // Streaming complete — finalize and persist
-            const finalMsgs = latestMessages.current.map(m =>
-                m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
-            );
+            const finalMsgs = accumulated.trim()
+                ? latestMessages.current.map(m =>
+                    m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
+                )
+                : [...latestMessages.current, {
+                    id: `err-${Date.now()}`,
+                    role: 'assistant' as const,
+                    text: 'I did not receive a response from the configured LLM. Please check the Copilot SDK proxy logs and token configuration.',
+                    timestamp: new Date(),
+                }];
             setMessages(finalMsgs);
             persist(finalMsgs);
 

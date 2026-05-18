@@ -2,7 +2,7 @@ import { AgentData } from '../types/agent';
 import { UseCaseSummary, UseCaseDetail } from '../types/useCase';
 import { appLogger } from './logger';
 import { getLLMConfig, ChatMessage, LLMConfig } from './llmService';
-import { agentRuntime } from './llm/runtime';
+import { copilotOrchestrator } from './llm/copilotOrchestrator';
 import type { ToolDefinition } from './llm/types';
 import { isAccessTokenExpired, refreshAccessToken } from './auth';
 
@@ -600,7 +600,7 @@ ${toolSummary}`;
                 const agentRows = agents.map(a => `- [AGENT:${a.identification?.agent_id || 'N/A'}] ${a.name} | risk:${getRiskLevel(a)}`).join('\n');
                 const useCaseRows = useCases.map(u => `- [USECASE:${u.identifier || 'N/A'}] ${u.name} | status:${u.status}`).join('\n');
                 const catalogBlock = `\n\n## Live Catalog Data\nAGENTS:\n${agentRows}\n\nUSE CASES:\n${useCaseRows}`;
-                yield* agentRuntime.run(
+                yield* copilotOrchestrator.run(
                     baseSystemPrompt + catalogBlock,
                     history.slice(-10),
                     userMessage,
@@ -611,9 +611,7 @@ ${toolSummary}`;
                 return;
             }
 
-            // Agent loop: complete() detects tool calls → execute → inject results → repeat
-            // until the LLM produces text, then stream() synthesizes the final answer.
-            yield* agentRuntime.run(
+            yield* copilotOrchestrator.run(
                 baseSystemPrompt,
                 history.slice(-10),
                 userMessage,

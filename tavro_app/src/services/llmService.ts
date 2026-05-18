@@ -1,7 +1,7 @@
 /**
  * llmService.ts
  *
- * Thin streaming wrapper for three LLM providers.
+ * Thin streaming wrapper for configured LLM providers.
  * Configuration is read from localStorage at call time so it always reflects
  * the latest Settings page values — no module-level caching.
  *
@@ -11,7 +11,7 @@
  *   anthropic → https://api.anthropic.com/v1/messages
  */
 
-export type LLMProvider = 'openai' | 'gemini' | 'anthropic';
+export type LLMProvider = 'openai' | 'gemini' | 'anthropic' | 'copilot';
 
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -28,18 +28,21 @@ export const DEFAULT_MODELS: Record<LLMProvider, string> = {
     openai: 'gpt-4o',
     gemini: 'gemini-1.5-flash',
     anthropic: 'claude-sonnet-4-5',
+    copilot: 'gpt-4.1',
 };
 
 export const PROVIDER_HINTS: Record<LLMProvider, string> = {
     openai: 'api.openai.com',
     gemini: 'generativelanguage.googleapis.com',
     anthropic: 'api.anthropic.com',
+    copilot: 'local Copilot SDK proxy',
 };
 
 export const PROVIDER_LABELS: Record<LLMProvider, string> = {
     openai: 'OpenAI',
     gemini: 'Google Gemini',
     anthropic: 'Anthropic Claude',
+    copilot: 'GitHub Copilot SDK',
 };
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
@@ -72,7 +75,11 @@ export function getProviderConfig(provider: LLMProvider): LLMConfig | null {
     migrateLegacy();
     const apiKey = localStorage.getItem(lsKey(provider)) ?? '';
     if (!apiKey) return null;
-    const model = localStorage.getItem(lsModel(provider)) || DEFAULT_MODELS[provider];
+    let model = localStorage.getItem(lsModel(provider)) || DEFAULT_MODELS[provider];
+    if (provider === 'copilot' && model === 'gpt-5') {
+        model = DEFAULT_MODELS.copilot;
+        localStorage.setItem(lsModel(provider), model);
+    }
     return { provider, model, apiKey };
 }
 
@@ -255,6 +262,24 @@ async function* streamAnthropic(cfg: LLMConfig, messages: ChatMessage[]): AsyncG
     throw new Error(`Anthropic model access failed. Tried: ${errors.join(' | ')}`);
 }
 
+async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGenerator<string> {
+    const res = await fetch('/copilot-api/chat/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: cfg.model, apiKey: cfg.apiKey, messages }),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Copilot SDK proxy error ${res.status}: ${text}`);
+    }
+    const data = await res.json().catch(() => ({}));
+    const content = typeof data.content === 'string' ? data.content : '';
+    if (!content.trim()) {
+        throw new Error('Copilot SDK proxy returned empty content for streaming.');
+    }
+    yield content;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // ── Non-streaming completion with tool-calling ────────────────────────────────
@@ -373,6 +398,24 @@ async function completeChatGemini(cfg: LLMConfig, messages: ChatMessage[], tools
     return { type: 'text', content: textPart?.text || '' };
 }
 
+async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tools: any[]): Promise<CompletionResult> {
+    const res = await fetch('/copilot-api/chat/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: cfg.model, apiKey: cfg.apiKey, messages }),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Copilot SDK proxy error ${res.status}: ${text}`);
+    }
+    const data = await res.json().catch(() => ({}));
+    const content = typeof data.content === 'string' ? data.content : '';
+    if (!content.trim()) {
+        throw new Error('Copilot SDK proxy returned empty content.');
+    }
+    return { type: 'text', content };
+}
+
 /**
  * Non-streaming completion with optional tool-calling support.
  * Returns either a text response or a list of tool calls to execute.
@@ -384,6 +427,7 @@ export async function completeChat(messages: ChatMessage[], tools: any[] = []): 
         case 'openai': return completeChatOpenAI(cfg, messages, tools);
         case 'anthropic': return completeChatAnthropic(cfg, messages, tools);
         case 'gemini': return completeChatGemini(cfg, messages, tools);
+        case 'copilot': return completeChatCopilot(cfg, messages, tools);
         default: throw new Error(`Unknown LLM provider: ${cfg.provider}`);
     }
 }
@@ -401,6 +445,7 @@ export async function* streamChat(messages: ChatMessage[]): AsyncGenerator<strin
         case 'openai': yield* streamOpenAI(cfg, messages); break;
         case 'gemini': yield* streamGemini(cfg, messages); break;
         case 'anthropic': yield* streamAnthropic(cfg, messages); break;
+        case 'copilot': yield* streamCopilot(cfg, messages); break;
         default:
             throw new Error(`Unknown LLM provider: ${cfg.provider}`);
     }

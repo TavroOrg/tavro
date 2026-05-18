@@ -18,12 +18,13 @@ import {
 
 import { useTheme } from '../context/ThemeContext';
 
-const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
 
 const PROVIDER_ICONS: Record<LLMProvider, string> = {
     openai: '🤖',
     gemini: '✨',
     anthropic: '🧠',
+    copilot: '🪄',
 };
 
 import { useChatContext } from '../context/ChatContext';
@@ -56,6 +57,7 @@ const Settings: React.FC = () => {
         openai: initProviderState('openai'),
         gemini: initProviderState('gemini'),
         anthropic: initProviderState('anthropic'),
+        copilot: initProviderState('copilot'),
     }));
     const [activeProvider, setActiveProviderState] = useState<LLMProvider | null>(getActiveProvider);
 
