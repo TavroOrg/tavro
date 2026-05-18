@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import {
-  Briefcase,
+  AppWindow,
+  BriefcaseBusiness,
   CheckCircle2,
-  LayoutGrid,
   Link2,
   Loader2,
+  Plus,
   PlusCircle,
   Search,
   ShieldAlert,
@@ -24,6 +25,7 @@ interface AgentRelatedTabProps {
   agent: AgentData;
   mode?: 'applications' | 'processes' | 'all';
   onCountsChange?: (counts: { applications: number; processes: number }) => void;
+  embedded?: boolean;
 }
 
 const getRiskBadge = (level: string | null | undefined) => {
@@ -53,6 +55,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   agent,
   mode = 'all',
   onCountsChange,
+  embedded = false,
 }) => {
   const agentId = agent.identification?.agent_id;
   const showApplications = mode !== 'processes';
@@ -243,22 +246,14 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     }
   };
 
-  return (
-    <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col h-full">
-      <div className="p-5 border-b border-slate-100 flex items-center gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-slate-800 tracking-tight">{title}</h2>
-          <p className="text-xs text-slate-500 font-medium">{subtitle}</p>
-        </div>
-        {loadingRelations && (
-          <div className="ml-auto inline-flex items-center gap-2 text-xs text-blue-600">
+  const content = (
+      <div className={`${embedded ? '' : 'p-5'} flex flex-col gap-6 ${embedded ? '' : 'flex-1 overflow-y-auto'}`}>
+        {embedded && loadingRelations && (
+          <div className="inline-flex items-center gap-2 text-xs text-blue-600">
             <Loader2 size={13} className="animate-spin" />
             Syncing...
           </div>
         )}
-      </div>
-
-      <div className="p-5 flex flex-col gap-6 flex-1 overflow-y-auto">
         {relationError && (
           <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             Live relation data is unavailable: {relationError}. Showing card snapshot values.
@@ -274,15 +269,15 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <LayoutGrid size={13} /> Applications ({displayedApplications.length})
+                <AppWindow size={13} /> Applications ({displayedApplications.length})
               </h3>
               {agentId && (
                 <Link
                   to={createApplicationHref}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
                 >
-                  <PlusCircle size={11} />
-                  Create New Application
+                  <Plus size={11} />
+                  New Application
                 </Link>
               )}
             </div>
@@ -384,15 +379,15 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Briefcase size={13} /> Processes ({displayedProcesses.length})
+                <BriefcaseBusiness size={13} /> Processes ({displayedProcesses.length})
               </h3>
               {agentId && (
                 <Link
                   to={createProcessHref}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
                 >
-                  <PlusCircle size={11} />
-                  Create New Process
+                  <Plus size={11} />
+                  New Process
                 </Link>
               )}
             </div>
@@ -401,12 +396,12 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 const processId = proc.business_process_id || proc.identifier || proc.name || `process-${idx}`;
                 const removeKey = `remove-proc:${processId}`;
                 return (
-                  <div key={`${processId}-${idx}`} className="flex flex-col p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+                  <div key={`${processId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <Link
                           to={`/processes/${encodeURIComponent(processId)}`}
-                          className="font-semibold text-sm text-emerald-700 hover:underline"
+                          className="font-bold text-sm text-blue-700 hover:underline"
                         >
                           {proc.process_name || proc.name || processId}
                         </Link>
@@ -441,7 +436,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                           <Link
                             key={`${processId}-${related.business_process_id}-${related.relationship_type || 'RELATED'}`}
                             to={`/processes/${encodeURIComponent(related.business_process_id)}`}
-                            className="text-[10px] bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1"
+                            className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1"
                           >
                             <Workflow size={10} />
                             {related.process_name || related.business_process_id}
@@ -472,7 +467,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                       value={processSearch}
                       onChange={(e) => setProcessSearch(e.target.value)}
                       placeholder="Filter processes..."
-                      className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
                   </div>
                 </div>
@@ -493,7 +488,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                         <button
                           onClick={() => handleAddProcess(proc.business_process_id)}
                           disabled={actingKey === addKey}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
                           Link
@@ -507,6 +502,27 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
           </div>
         )}
       </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col h-full">
+      <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800 tracking-tight">{title}</h2>
+          <p className="text-xs text-slate-500 font-medium">{subtitle}</p>
+        </div>
+        {loadingRelations && (
+          <div className="ml-auto inline-flex items-center gap-2 text-xs text-blue-600">
+            <Loader2 size={13} className="animate-spin" />
+            Syncing...
+          </div>
+        )}
+      </div>
+      {content}
     </div>
   );
 };
