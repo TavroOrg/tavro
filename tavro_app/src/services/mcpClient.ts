@@ -1,7 +1,9 @@
 import { AgentData } from '../types/agent';
 import { UseCaseSummary, UseCaseDetail } from '../types/useCase';
 import { appLogger } from './logger';
-import { streamChat, getLLMConfig, ChatMessage, completeChat } from './llmService';
+import { getLLMConfig, ChatMessage, LLMConfig } from './llmService';
+import { agentRuntime } from './llm/runtime';
+import type { ToolDefinition } from './llm/types';
 import { isAccessTokenExpired, refreshAccessToken } from './auth';
 
 type ChatViewContext = {
@@ -518,34 +520,13 @@ class McpClientService {
         return this._mcpTools;
     }
 
-    /** Convert MCP tool definitions to the format expected by each LLM provider. */
-    private _convertToolsForLLM(tools: { name: string; description?: string; inputSchema?: any }[], provider: string): any[] {
-        if (tools.length === 0) return [];
-        const schema = (t: any) => t.inputSchema || { type: 'object', properties: {} };
-
-        if (provider === 'openai') {
-            return tools.map(t => ({
-                type: 'function',
-                function: { name: t.name, description: t.description || t.name, parameters: schema(t) },
-            }));
-        }
-        if (provider === 'anthropic') {
-            return tools.map(t => ({
-                name: t.name,
-                description: t.description || t.name,
-                input_schema: schema(t),
-            }));
-        }
-        if (provider === 'gemini') {
-            return [{
-                functionDeclarations: tools.map(t => ({
-                    name: t.name,
-                    description: t.description || t.name,
-                    parameters: schema(t),
-                })),
-            }];
-        }
-        return [];
+    /** Convert MCP tool definitions to the canonical ToolDefinition format for AgentRuntime. */
+    private _buildToolDefs(tools: { name: string; description?: string; inputSchema?: any }[]): ToolDefinition[] {
+        return tools.map(t => ({
+            name: t.name,
+            description: t.description || t.name,
+            inputSchema: t.inputSchema || { type: 'object', properties: {} },
+        }));
     }
 
     async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}): AsyncGenerator<string> {
@@ -569,13 +550,14 @@ class McpClientService {
         userMessage: string,
         history: ChatMessage[],
         context: ChatViewContext,
-        llmCfg: { provider: string; model: string }
+        llmCfg: LLMConfig,
     ): AsyncGenerator<string> {
         try {
-            // Fetch all tools available on the connected MCP server
             const mcpTools = await this.fetchMcpTools();
-            const llmTools = this._convertToolsForLLM(mcpTools, llmCfg.provider);
+            const toolDefs = this._buildToolDefs(mcpTools);
 
+            // Build tool guidance — injected into the system prompt so the LLM knows
+            // which tools are available and how to call them without asking for confirmation.
             const toolGuidance = mcpTools.length > 0 ? (() => {
                 const toolSummary = mcpTools.map(t => {
                     const props = t.inputSchema?.properties || {};
@@ -609,90 +591,69 @@ Only ask the user for clarification if they have given you no context at all (no
 ${toolSummary}`;
             })() : '';
 
-            const baseSystemPrompt = (context.systemPrompt || `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) + toolGuidance;
+            const baseSystemPrompt =
+                (context.systemPrompt ||
+                    `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
+                toolGuidance;
 
-            const messages: ChatMessage[] = [
-                { role: 'system', content: baseSystemPrompt },
-                ...history.slice(-10),
-                { role: 'user', content: userMessage },
-            ];
-
-            if (llmTools.length > 0) {
-                // Ask the LLM (non-streaming) whether it wants to call any tools
-                const completion = await completeChat(messages, llmTools);
-
-                if (completion.type === 'tool_calls' && completion.toolCalls?.length) {
-                    // Execute each tool via MCP — retry up to 3 times on error
-                    const executedResults: Array<{ name: string; result: any }> = [];
-                    for (const toolCall of completion.toolCalls) {
-                        appLogger.tool(`AI called MCP tool: ${toolCall.name}`, { args: toolCall.arguments });
-                        let result: any;
-                        let currentArgs = { ...toolCall.arguments, original_prompt: userMessage };
-                        const MAX_ATTEMPTS = 3;
-
-                        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-                            try {
-                                result = await this.callTool(toolCall.name, currentArgs);
-                            } catch (err: any) {
-                                result = { error: err.message };
-                            }
-
-                            const isMcpError = result && typeof result === 'object' && result.error;
-                            if (!isMcpError || attempt === MAX_ATTEMPTS) break;
-
-                            appLogger.warn(`MCP tool ${toolCall.name} error (attempt ${attempt}), retrying with corrected args`, { error: result });
-                            const fixMessages: ChatMessage[] = [
-                                { role: 'system', content: baseSystemPrompt },
-                                ...history.slice(-10),
-                                { role: 'user', content: userMessage },
-                                {
-                                    role: 'assistant',
-                                    content: `I called ${toolCall.name} with ${JSON.stringify(currentArgs)} but got error: ${result.error} — ${result.details || ''}. I need to fix the arguments and retry.`,
-                                },
-                                {
-                                    role: 'user',
-                                    content: `Fix the arguments for ${toolCall.name} and call it again. The previous error was: ${result.error}: ${result.details || ''}`,
-                                },
-                            ];
-                            const fixCompletion = await completeChat(fixMessages, llmTools);
-                            const fixedCall = fixCompletion.toolCalls?.find(tc => tc.name === toolCall.name);
-                            if (fixedCall) {
-                                currentArgs = { ...fixedCall.arguments, original_prompt: userMessage };
-                            } else {
-                                break;
-                            }
-                        }
-
-                        executedResults.push({ name: toolCall.name, result });
-                    }
-
-                    // Stream the actual MCP responses directly to the user
-                    yield executedResults.map(({ name, result }) => this._formatToolResultForDisplay(name, result)).join('\n\n');
-                    return;
-                }
-
-                // LLM answered directly without needing any tools
-                if (completion.content) {
-                    yield completion.content;
-                    return;
-                }
+            if (toolDefs.length === 0) {
+                // No MCP tools — enrich context with catalog snapshot and stream directly.
+                const [agents, useCases] = await Promise.all([this.getAllAgents(), this.getAllUseCases()]);
+                const agentRows = agents.map(a => `- [AGENT:${a.identification?.agent_id || 'N/A'}] ${a.name} | risk:${getRiskLevel(a)}`).join('\n');
+                const useCaseRows = useCases.map(u => `- [USECASE:${u.identifier || 'N/A'}] ${u.name} | status:${u.status}`).join('\n');
+                const catalogBlock = `\n\n## Live Catalog Data\nAGENTS:\n${agentRows}\n\nUSE CASES:\n${useCaseRows}`;
+                yield* agentRuntime.run(
+                    baseSystemPrompt + catalogBlock,
+                    history.slice(-10),
+                    userMessage,
+                    [],
+                    llmCfg,
+                    async () => null,
+                );
+                return;
             }
 
-            // No MCP tools available — fall back to catalog-based context (existing behavior)
-            const [agents, useCases] = await Promise.all([this.getAllAgents(), this.getAllUseCases()]);
-            const agentRows = agents.map(a => `- [AGENT:${a.identification?.agent_id || 'N/A'}] ${a.name} | risk:${getRiskLevel(a)}`).join('\n');
-            const useCaseRows = useCases.map(u => `- [USECASE:${u.identifier || 'N/A'}] ${u.name} | status:${u.status}`).join('\n');
-            const catalogBlock = `\n\n## Live Catalog Data\nAGENTS:\n${agentRows}\n\nUSE CASES:\n${useCaseRows}`;
-            const fallbackMessages: ChatMessage[] = [
-                { role: 'system', content: baseSystemPrompt + catalogBlock },
-                ...history.slice(-10),
-                { role: 'user', content: userMessage },
-            ];
-            for await (const chunk of streamChat(fallbackMessages)) yield chunk;
+            // Agent loop: complete() detects tool calls → execute → inject results → repeat
+            // until the LLM produces text, then stream() synthesizes the final answer.
+            yield* agentRuntime.run(
+                baseSystemPrompt,
+                history.slice(-10),
+                userMessage,
+                toolDefs,
+                llmCfg,
+                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt),
+            );
 
         } catch (err: any) {
             appLogger.error('LLM chat failed', { error: err?.message ?? String(err) });
             yield `I could not reach the configured LLM (${llmCfg.provider} · ${llmCfg.model}): ${err?.message ?? 'unknown error'}\n\n${this._buildContextFallbackResponse(userMessage, context)}`;
+        }
+    }
+
+    /**
+     * Tool executor passed to AgentRuntime.
+     *
+     * Ensures original_prompt is always present (required by the MCP server), then
+     * delegates to callTool() which owns the MCP session reconnect/retry logic.
+     * Errors are returned as { error, details } objects rather than thrown so that
+     * AgentRuntime injects them into context and the LLM can observe and adapt.
+     */
+    private async _executeToolForRuntime(
+        name: string,
+        args: Record<string, any>,
+        originalPrompt: string,
+    ): Promise<any> {
+        const toolArgs = {
+            ...args,
+            original_prompt: (args.original_prompt && String(args.original_prompt).trim())
+                ? args.original_prompt
+                : originalPrompt || `User requested ${name} via Dashboard UI`,
+        };
+        try {
+            return await this.callTool(name, toolArgs);
+        } catch (err: any) {
+            appLogger.error(`Tool execution failed: ${name}`, { error: err.message });
+            return { error: err.message, details: 'Tool execution failed. The agent may retry with corrected arguments.' };
         }
     }
 

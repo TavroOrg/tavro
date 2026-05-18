@@ -12,6 +12,7 @@ import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
+import { clearAllSessions } from '../store/chatSessionStore';
 
 import travoLogo from '../assets/travo_logo.png';
 
@@ -138,7 +139,8 @@ const Layout: React.FC = () => {
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
             'tavro_oidc_state'
         ].forEach(k => localStorage.removeItem(k));
-        // Reset the MCP client session so the next login starts fresh
+        // Clear persisted chat sessions and reset MCP client
+        clearAllSessions();
         mcpClient.disconnect();
 
         if (issuer && idToken) {
