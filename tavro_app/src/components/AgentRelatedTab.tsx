@@ -15,16 +15,19 @@ import {
   Workflow,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
+import { useUseCases } from '../context/UseCaseContext';
 import type {
   AgentRelationsPayload,
   BusinessApplicationRecord,
   BusinessProcessRecord,
 } from '../types/businessRelations';
+import type { UseCaseSummary } from '../types/useCase';
 
 interface AgentRelatedTabProps {
   agent: AgentData;
-  mode?: 'applications' | 'processes' | 'all';
-  onCountsChange?: (counts: { applications: number; processes: number }) => void;
+  mode?: 'applications' | 'processes' | 'use_cases' | 'all';
+  onCountsChange?: (counts: { applications: number; processes: number; useCases?: number }) => void;
   embedded?: boolean;
 }
 
@@ -58,8 +61,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   embedded = false,
 }) => {
   const agentId = agent.identification?.agent_id;
-  const showApplications = mode !== 'processes';
-  const showProcesses = mode !== 'applications';
+  const showApplications = mode !== 'processes' && mode !== 'use_cases';
+  const showProcesses = mode !== 'applications' && mode !== 'use_cases';
+  const showUseCases = mode !== 'applications' && mode !== 'processes';
   const title =
     mode === 'applications'
       ? 'Applications'
@@ -81,6 +85,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [actingKey, setActingKey] = useState<string | null>(null);
   const [applicationSearch, setApplicationSearch] = useState('');
   const [processSearch, setProcessSearch] = useState('');
+  const [useCaseSearch, setUseCaseSearch] = useState('');
+  const [linkedUseCases, setLinkedUseCases] = useState<UseCaseSummary[]>([]);
+  const { useCases: allUseCases } = useUseCases();
   const fallbackApplicationCount = (agent.application ?? []).length;
   const fallbackProcessCount = (agent.business_process ?? []).length;
   const createApplicationHref = agentId
@@ -89,12 +96,56 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const createProcessHref = agentId
     ? `/processes/new?linkAgentId=${encodeURIComponent(agentId)}`
     : '/processes/new';
+  const createUseCaseHref = agentId
+    ? `/use-cases/new?linkAgentId=${encodeURIComponent(agentId)}`
+    : '/use-cases/new';
+
+  useEffect(() => {
+    const rawLinked = (agent as any).ai_use_cases;
+    if (Array.isArray(rawLinked)) {
+      const normalized = rawLinked
+        .filter(Boolean)
+        .map((u: any) => ({
+          identifier: u.identifier ?? u.use_case_id ?? u.id ?? '',
+          name: u.name ?? u.title ?? 'Unnamed Use Case',
+          description: u.description ?? null,
+          owner: u.owner ?? u.use_case_owner ?? null,
+          priority: u.priority ?? null,
+          status: u.status ?? null,
+          function: u.function ?? null,
+          problem_statement: u.problem_statement ?? null,
+          expected_benefits: u.expected_benefits ?? null,
+          proposed_by: u.proposed_by ?? null,
+        }))
+        .filter((u: any) => !!u.identifier);
+      setLinkedUseCases(normalized);
+      return;
+    }
+    const fallback = (agent as any).ai_use_case;
+    if (fallback?.identifier) {
+      setLinkedUseCases([{
+        identifier: fallback.identifier,
+        name: fallback.name ?? 'Unnamed Use Case',
+        description: fallback.description ?? null,
+        owner: fallback.owner ?? null,
+        priority: fallback.priority ?? null,
+        status: fallback.status ?? null,
+        function: fallback.function ?? null,
+        problem_statement: fallback.problem_statement ?? null,
+        expected_benefits: fallback.expected_benefits ?? null,
+        proposed_by: fallback.proposed_by ?? null,
+      }]);
+      return;
+    }
+    setLinkedUseCases([]);
+  }, [agent]);
 
   const refreshRelations = async () => {
     if (!agentId) {
       onCountsChange?.({
         applications: fallbackApplicationCount,
         processes: fallbackProcessCount,
+        useCases: linkedUseCases.length,
       });
       return;
     }
@@ -112,12 +163,14 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       onCountsChange?.({
         applications: agentRelations.applications.length,
         processes: agentRelations.business_processes.length,
+        useCases: linkedUseCases.length,
       });
     } catch (err: any) {
       setRelationError(err.message || 'Could not load live relationship data.');
       onCountsChange?.({
         applications: fallbackApplicationCount,
         processes: fallbackProcessCount,
+        useCases: linkedUseCases.length,
       });
     } finally {
       setLoadingRelations(false);
@@ -126,7 +179,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   useEffect(() => {
     refreshRelations();
-  }, [agentId, showApplications, showProcesses]);
+  }, [agentId, showApplications, showProcesses, linkedUseCases.length]);
 
   const liveApplications = relations?.applications ?? [];
   const liveProcesses = relations?.business_processes ?? [];
@@ -186,6 +239,24 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     });
   }, [allProcesses, processSearch, linkedProcessIds]);
 
+  const linkedUseCaseIds = useMemo(() => {
+    return new Set(linkedUseCases.map(uc => uc.identifier).filter(Boolean));
+  }, [linkedUseCases]);
+
+  const availableUseCases = useMemo(() => {
+    const q = useCaseSearch.trim().toLowerCase();
+    return allUseCases.filter(uc => {
+      const id = uc.identifier ?? '';
+      if (!id || linkedUseCaseIds.has(id)) return false;
+      if (!q) return true;
+      return (
+        id.toLowerCase().includes(q) ||
+        (uc.name ?? '').toLowerCase().includes(q) ||
+        (uc.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allUseCases, useCaseSearch, linkedUseCaseIds]);
+
   const handleAddApplication = async (businessApplicationId: string) => {
     if (!agentId) return;
     const key = `add-app:${businessApplicationId}`;
@@ -241,6 +312,37 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await refreshRelations();
     } catch (err: any) {
       setActionError(err.message || 'Failed to unlink process.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleLinkUseCase = async (useCaseId: string) => {
+    if (!agentId) return;
+    const key = `add-uc:${useCaseId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await useCaseApi.linkAgent(useCaseId, agentId);
+      const linked = allUseCases.find(uc => uc.identifier === useCaseId);
+      if (linked) setLinkedUseCases(prev => [...prev, linked]);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to link AI use case.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleUnlinkUseCase = async (useCaseId: string) => {
+    if (!agentId) return;
+    const key = `remove-uc:${useCaseId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await useCaseApi.unlinkAgent(useCaseId, agentId);
+      setLinkedUseCases(prev => prev.filter(uc => uc.identifier !== useCaseId));
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to unlink AI use case.');
     } finally {
       setActingKey(null);
     }
@@ -499,6 +601,107 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {showUseCases && (
+          <div className={`flex flex-col gap-3 ${mode === 'all' ? 'order-first' : ''}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <BriefcaseBusiness size={13} /> AI Use Cases ({linkedUseCases.length})
+              </h3>
+              {agentId && (
+                <Link
+                  to={createUseCaseHref}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Plus size={11} />
+                  New Use Case
+                </Link>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {linkedUseCases.map((uc, idx) => {
+                const useCaseId = uc.identifier || `use-case-${idx}`;
+                const removeKey = `remove-uc:${useCaseId}`;
+                return (
+                  <div key={`${useCaseId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                    <div className="flex justify-between items-start gap-3 mb-2">
+                      <div>
+                        <Link
+                          to={`/use-case/${encodeURIComponent(useCaseId)}`}
+                          className="font-bold text-sm text-blue-700 hover:underline"
+                        >
+                          {uc.name || useCaseId}
+                        </Link>
+                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{useCaseId}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {uc.priority && getRiskBadge(uc.priority)}
+                        <button
+                          onClick={() => handleUnlinkUseCase(useCaseId)}
+                          disabled={actingKey === removeKey}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                    {uc.description && (
+                      <p className="text-xs text-slate-600 leading-relaxed">{uc.description}</p>
+                    )}
+                  </div>
+                );
+              })}
+              {linkedUseCases.length === 0 && (
+                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  No linked AI use cases.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                  <Link2 size={12} /> Add AI Use Case Relation
+                </p>
+                <div className="relative w-full max-w-sm">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={useCaseSearch}
+                    onChange={(e) => setUseCaseSearch(e.target.value)}
+                    placeholder="Filter use cases..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
+                {availableUseCases.length === 0 && (
+                  <div className="p-3 text-xs text-slate-500">No available AI use cases to link.</div>
+                )}
+                {availableUseCases.map(uc => {
+                  const addKey = `add-uc:${uc.identifier}`;
+                  return (
+                    <div key={uc.identifier} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-700 truncate">{uc.name || uc.identifier}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{uc.identifier}</p>
+                      </div>
+                      <button
+                        onClick={() => handleLinkUseCase(uc.identifier)}
+                        disabled={actingKey === addKey}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                        Link
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>

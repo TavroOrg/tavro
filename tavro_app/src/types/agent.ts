@@ -229,6 +229,7 @@ export interface AgentData {
 
   // Use case
   ai_use_case?: AiUseCase | null;
+  ai_use_cases?: AiUseCase[] | null;
 
   // Models
   ai_model?: AiModel[] | null;

@@ -314,6 +314,52 @@ class AgentMetadataExporter:
                 except Exception as overlay_err:
                     print(f"[get_agent_card] DB overlay failed (returning card as-is): {overlay_err}")
 
+                # Overlay linked AI use cases for this specific agent_id.
+                try:
+                    use_case_rows = cls.execute_select(
+                        f"""
+                        SELECT DISTINCT ON (u.identifier)
+                            u.identifier,
+                            u.name,
+                            u.description,
+                            u.proposed_by,
+                            u.owner,
+                            u.function,
+                            u.problem_statement,
+                            u.expected_benefits,
+                            u.priority,
+                            u.status,
+                            u.updated_ts,
+                            u.created_ts
+                        FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases u
+                        WHERE u.agent_id = %s
+                        ORDER BY u.identifier, u.updated_ts DESC NULLS LAST, u.created_ts DESC NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    ai_use_cases = [
+                        {
+                            "identifier": r.get("identifier"),
+                            "name": r.get("name"),
+                            "description": r.get("description"),
+                            "proposed_by": r.get("proposed_by"),
+                            "owner": r.get("owner"),
+                            "function": r.get("function"),
+                            "problem_statement": r.get("problem_statement"),
+                            "expected_benefits": r.get("expected_benefits"),
+                            "priority": r.get("priority"),
+                            "status": r.get("status"),
+                        }
+                        for r in use_case_rows
+                        if r.get("identifier")
+                    ]
+                    local_card["ai_use_cases"] = ai_use_cases
+                    if ai_use_cases:
+                        # Keep backward compatibility for UIs that still read singular ai_use_case.
+                        local_card["ai_use_case"] = ai_use_cases[0]
+                except Exception as use_case_overlay_err:
+                    print(f"[get_agent_card] AI use case overlay failed: {use_case_overlay_err}")
+
                 return local_card
 
             # ---------- 7. Not found ----------

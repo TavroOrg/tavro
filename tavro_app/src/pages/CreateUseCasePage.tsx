@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { mcpClient } from '../services/mcpClient';
 import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
+import { useCaseApi } from '../services/useCaseApi';
 
 const PRIORITIES = [
     '1 - Critical',
@@ -15,7 +16,9 @@ const STATUSES = ['Proposed', 'In Review', 'Active', 'Deprecated'];
 
 const CreateUseCasePage: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { refresh } = useUseCases();
+    const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
 
     const [form, setForm] = useState({
         name: '',
@@ -44,7 +47,7 @@ const CreateUseCasePage: React.FC = () => {
         localStorage.setItem('tavro_cache_mode', 'false');
         window.dispatchEvent(new Event('tavro_settings_change'));
         try {
-            await mcpClient.createAiUseCase({
+            const created = await mcpClient.createAiUseCase({
                 title: form.name.trim(),
                 description: form.description.trim(),
                 business_problem_statement: form.problem_statement.trim(),
@@ -52,13 +55,24 @@ const CreateUseCasePage: React.FC = () => {
                 priority: form.priority,
                 ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
             });
+            if (linkAgentId && created?.use_case_id) {
+                await useCaseApi.linkAgent(created.use_case_id, linkAgentId);
+            }
             setSuccess(true);
             sessionStorage.setItem(
                 'tavro_use_case_notice',
-                'AI Use Case created successfully. It will appear in the catalog shortly.'
+                linkAgentId
+                    ? 'AI Use Case created and linked to agent successfully.'
+                    : 'AI Use Case created successfully. It will appear in the catalog shortly.'
             );
             refresh();
-            setTimeout(() => navigate('/use-cases'), 1200);
+            setTimeout(() => {
+                if (linkAgentId) {
+                    navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                    return;
+                }
+                navigate('/use-cases');
+            }, 1200);
         } catch (err: any) {
             setError(err.message || 'Failed to create use case. Please try again.');
         } finally {
@@ -76,10 +90,16 @@ const CreateUseCasePage: React.FC = () => {
             {/* Top bar */}
             <div className="flex items-center justify-between">
                 <button
-                    onClick={() => navigate('/use-cases')}
+                    onClick={() => {
+                        if (linkAgentId) {
+                            navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                            return;
+                        }
+                        navigate('/use-cases');
+                    }}
                     className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
                 >
-                    <ArrowLeft size={16} /> Back to Use Cases
+                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : 'Back to Use Cases'}
                 </button>
             </div>
 
@@ -91,7 +111,11 @@ const CreateUseCasePage: React.FC = () => {
                     </div>
                     <div>
                         <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Create AI Use Case</h2>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Register a new AI use case in the Agent Biz Ops catalog</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                            {linkAgentId
+                                ? 'Register a new AI use case and link it to this agent'
+                                : 'Register a new AI use case in the Agent Biz Ops catalog'}
+                        </p>
                     </div>
                 </div>
 
@@ -209,7 +233,13 @@ const CreateUseCasePage: React.FC = () => {
 
                     {/* Footer */}
                     <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                        <button type="button" onClick={() => navigate('/use-cases')}
+                        <button type="button" onClick={() => {
+                            if (linkAgentId) {
+                                navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                                return;
+                            }
+                            navigate('/use-cases');
+                        }}
                             className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">
                             Cancel
                         </button>
