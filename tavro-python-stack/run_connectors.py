@@ -8,11 +8,11 @@ from utils.config_loader import load_config
 config = load_config()
 
 # # 🔹 Run Copilot
-# print("Running Copilot...")
-# copilot = copilotConnector({
-#     **config["catalog_connector"]["azure"],
-# })
-# copilot.execute()
+print("Running Copilot...")
+copilot = copilotConnector({
+    **config["catalog_connector"]["azure"],
+})
+copilot.execute()
 
 # # 🔹 Run Bedrock
 # print("Running Bedrock...")
@@ -29,11 +29,11 @@ config = load_config()
 # servicenow.execute()
 
 # 🔹 Run Salesforce
-print("Running Salesforce...")
-salesforce = salesforceConnector({
-    **config["catalog_connector"]["salesforce"],
-})
-salesforce.execute()
+# print("Running Salesforce...")
+# salesforce = salesforceConnector({
+#     **config["catalog_connector"]["salesforce"],
+# })
+# salesforce.execute()
 
 # # 🔹 Run Databricks
 # print("Running Databricks...")

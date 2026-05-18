@@ -334,7 +334,9 @@ class McpClientService {
         'create_agent',
         'create_ai_use_case',
         'create_ai_use_case_agent_relationship',
+        'remove_ai_use_case_agent_relationship',
         'create_risk_assessment',
+
     ]);
 
     private async callTool(name: string, args: any = {}): Promise<any> {
@@ -1028,12 +1030,23 @@ ${toolSummary}`;
             all.push(...useCases);
             start += 10;
         }
-        this._useCaseCache = all;
-        return all;
+        // Deduplicate by identifier in case the server returns the same item on multiple pages
+        const seen = new Set<string>();
+        const deduped = all.filter(uc => {
+            const id = uc.identifier || (uc as any).id;
+            if (!id) return true;
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        });
+        this._useCaseCache = deduped;
+        return deduped;
     }
 
-    async getUseCaseDetails(id: string): Promise<UseCaseDetail | undefined> {
-        if (this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
+    async getUseCaseDetails(id: string, opts?: { forceRefresh?: boolean }): Promise<UseCaseDetail | undefined> {
+        const forceRefresh = opts?.forceRefresh === true;
+        if (!forceRefresh && this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
+        if (forceRefresh) this._useCaseDetailCache.delete(id);
         try {
             const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
             const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
@@ -1092,7 +1105,21 @@ ${toolSummary}`;
     }
 
     async createAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
-        return await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        const data = await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        if (data && typeof data === 'object' && data.error) {
+            throw new Error(data.details || data.error);
+        }
+        this.invalidateCache();
+        return data;
+    }
+
+    async removeAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
+        const data = await this.callTool('remove_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        if (data && typeof data === 'object' && data.error) {
+            throw new Error(data.details || data.error);
+        }
+        this.invalidateCache();
+        return data;
     }
 
     async createAgent(args: any): Promise<any> {

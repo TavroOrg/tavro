@@ -173,7 +173,10 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const startSession = useCallback(async () => {
     try {
       const systemPromptToUse = config.systemPrompt.trim() || buildFallbackSystemPrompt(config);
-      const result = await apiPost<{ session_id: string }>('/session', {
+      const result = await apiPost<{
+        session_id: string;
+        azure_foundry_agent?: { enabled?: boolean; agent_name?: string | null };
+      }>('/session', {
         agent_name:     config.agentName,
         system_prompt:  systemPromptToUse,
         provider:       config.provider,
@@ -190,10 +193,13 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setSessionId(result.session_id);
       setSessionActive(true);
       setSummary(null);
+      const azureAgentNote = result.azure_foundry_agent?.enabled && result.azure_foundry_agent.agent_name
+        ? ` · Foundry agent ${result.azure_foundry_agent.agent_name}`
+        : '';
       setMessages([{
         id:        'session-init',
         role:      'system',
-        content:   `Session started · ${config.provider} · ${config.model}`,
+        content:   `Session started · ${config.provider} · ${config.model}${azureAgentNote}`,
         timestamp: new Date(),
       }]);
     } catch (err: any) {
