@@ -155,10 +155,10 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agent_identifications
                     (tenant_id, agent_internal_id, agent_id, instruction,
-                     created_ts, updated_ts, is_current)
+                     governance_status, created_ts, updated_ts, is_current)
                 VALUES
                     (:tid, :iid, :aid, :instruction,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
+                     'Risk Assessment is running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
              "instruction": body.instruction},
@@ -225,10 +225,22 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     r.risk_classification, r.blended_risk_score, r.pii_flag,
                     r.phi_flag, r.pci_flag
                 FROM {CORE}.agents a
-                LEFT JOIN {CORE}.agent_identifications i
-                    ON i.agent_id = a.agent_id AND COALESCE(i.is_current, true) = true
-                LEFT JOIN {CORE}.agent_risk_assessments r
-                    ON r.agent_internal_id = a.agent_internal_id AND COALESCE(r.is_current, true) = true
+                LEFT JOIN LATERAL (
+                    SELECT instruction, role, environment, governance_status
+                    FROM {CORE}.agent_identifications
+                    WHERE agent_id = a.agent_id
+                      AND COALESCE(is_current, true) = true
+                    ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) i ON true
+                LEFT JOIN LATERAL (
+                    SELECT risk_classification, blended_risk_score, pii_flag, phi_flag, pci_flag
+                    FROM {CORE}.agent_risk_assessments
+                    WHERE agent_internal_id = a.agent_internal_id
+                      AND COALESCE(is_current, true) = true
+                    ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) r ON true
                 WHERE a.agent_id = :aid AND a.is_current = true
                 LIMIT 1
             """),
@@ -261,8 +273,14 @@ async def trigger_risk_assessment(
                 SELECT a.agent_internal_id, a.agent_id, a.agent_name, a.agent_description,
                        a.source_system, i.instruction
                 FROM {CORE}.agents a
-                LEFT JOIN {CORE}.agent_identifications i
-                    ON i.agent_id = a.agent_id AND COALESCE(i.is_current, true) = true
+                LEFT JOIN LATERAL (
+                    SELECT instruction
+                    FROM {CORE}.agent_identifications
+                    WHERE agent_id = a.agent_id
+                      AND COALESCE(is_current, true) = true
+                    ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) i ON true
                 WHERE a.agent_id = :aid AND a.is_current = true
                 LIMIT 1
             """),
@@ -323,9 +341,24 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession
                 text(f"""
                     UPDATE {CORE}.agent_identifications
                     SET instruction = :instr, updated_ts = CURRENT_TIMESTAMP
-                    WHERE agent_id = :aid
+                    WHERE agent_id = :aid AND COALESCE(is_current, true) = true
                 """),
                 {"instr": body.instruction.strip(), "aid": agent_id},
+            )
+
+        # Keep curated snapshot in sync so catalog refresh reflects changes immediately
+        curated_sets: List[str] = []
+        curated_params: Dict[str, Any] = {"aid": agent_id}
+        if body.agent_name and body.agent_name.strip():
+            curated_sets.append("agent_name = :c_name")
+            curated_params["c_name"] = body.agent_name.strip()
+        if body.description and body.description.strip():
+            curated_sets.append("agent_description = :c_desc")
+            curated_params["c_desc"] = body.description.strip()
+        if curated_sets:
+            await db.execute(
+                text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid"),
+                curated_params,
             )
 
         await db.commit()

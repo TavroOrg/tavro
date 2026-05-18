@@ -12,8 +12,10 @@ interface AgentCatalogProps {
 
 const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearchChange, onSelectAgent }) => {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-    const isPendingAssessment = (agent: AgentData): boolean =>
-        agent.identification?.governance_status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+    const isPendingAssessment = (agent: AgentData): boolean => {
+        const status = agent.identification?.governance_status ?? (agent as any).latest_event_status;
+        return status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+    };
 
     const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => getAgentRiskLevel(agent);
 

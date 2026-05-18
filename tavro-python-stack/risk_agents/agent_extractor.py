@@ -274,8 +274,46 @@ class AgentMetadataExporter:
             )
 
             if local_card:
+                # Overlay mutable fields from the DB so edits are reflected immediately
+                # without needing to regenerate the card file.
+                try:
+                    db_rows = cls.execute_select(
+                        f"""
+                        SELECT a.agent_name, a.agent_description,
+                               i.instruction, i.governance_status, i.role
+                        FROM {cls.CORE_GLUE_DB_NAME}.agents a
+                        LEFT JOIN LATERAL (
+                            SELECT instruction, governance_status, role
+                            FROM {cls.CORE_GLUE_DB_NAME}.agent_identifications
+                            WHERE agent_id = a.agent_id
+                              AND COALESCE(is_current, true) = true
+                            ORDER BY is_current DESC NULLS LAST,
+                                     updated_ts DESC NULLS LAST
+                            LIMIT 1
+                        ) i ON true
+                        WHERE a.agent_id = %s
+                        LIMIT 1
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if db_rows:
+                        row = db_rows[0]
+                        if row.get("agent_name"):
+                            local_card["name"] = row["agent_name"]
+                        if row.get("agent_description"):
+                            local_card["description"] = row["agent_description"]
+                        ident = local_card.get("identification") or {}
+                        if row.get("instruction") is not None:
+                            ident["instruction"] = row["instruction"]
+                        if row.get("governance_status") is not None:
+                            ident["governance_status"] = row["governance_status"]
+                        if row.get("role") is not None:
+                            ident["role"] = row["role"]
+                        local_card["identification"] = ident
+                except Exception as overlay_err:
+                    print(f"[get_agent_card] DB overlay failed (returning card as-is): {overlay_err}")
+
                 return local_card
-            card_dir = cls._agent_card_dir()
 
             # ---------- 7. Not found ----------
             return {

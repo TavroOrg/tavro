@@ -88,21 +88,69 @@ const AgentViewPage: React.FC = () => {
         if (!id) return;
         setLoading(true);
         try {
-            const data = await mcpClient.getAgentDetails(id);
-            if (data) {
-                const overlaid = applyRecentEditOverlay(data);
-                setAgent(overlaid);
-                upsertAgent(overlaid); // keep catalog in sync immediately
+            const [mcpResult, apiResult] = await Promise.allSettled([
+                mcpClient.getAgentDetails(id),
+                agentApi.getAgentCard(id),
+            ]);
+
+            const mcpData = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
+            const apiData = apiResult.status === 'fulfilled' ? apiResult.value : null;
+
+            let resolved: AgentData | null = null;
+
+            if (mcpData) {
+                // Overlay fresh DB values onto the richer MCP card structure
+                resolved = {
+                    ...mcpData,
+                    name: apiData?.agent_name ?? mcpData.name,
+                    description: apiData?.agent_description ?? mcpData.description,
+                    identification: {
+                        ...mcpData.identification,
+                        instruction: apiData?.instruction ?? mcpData.identification?.instruction,
+                        governance_status: apiData?.governance_status ?? mcpData.identification?.governance_status,
+                    },
+                };
+            } else if (apiData) {
+                // Preserve governance_status from existing catalog entry if REST API returns null
+                // (happens for agents created before governance_status was persisted to DB)
+                const existingCatalog = catalogAgents.find(a =>
+                    (a.identification?.agent_id && a.identification.agent_id === (apiData.agent_id ?? id)) ||
+                    a.name === (apiData.agent_name ?? id)
+                );
+                resolved = {
+                    name: apiData.agent_name ?? '',
+                    description: apiData.agent_description ?? '',
+                    version: '1.0',
+                    identification: {
+                        agent_id: apiData.agent_id ?? id,
+                        role: apiData.role ?? null,
+                        instruction: apiData.instruction ?? null,
+                        governance_status: apiData.governance_status ??
+                            existingCatalog?.identification?.governance_status ?? null,
+                    },
+                    configuration: { autonomy_level: null },
+                    tool: existingCatalog?.tool ?? [],
+                    data_source: existingCatalog?.data_source ?? [],
+                    application: existingCatalog?.application ?? [],
+                    business_process: existingCatalog?.business_process ?? [],
+                    risk_assessment: existingCatalog?.risk_assessment ?? null,
+                };
             } else {
                 const fromCatalog = catalogAgents.find(a =>
                     (a.identification?.agent_id && a.identification.agent_id === id) || a.name === id
                 );
                 if (fromCatalog) {
-                    setAgent(fromCatalog);
+                    resolved = fromCatalog;
                 } else {
                     const fallback = getPendingFallbackAgent(id);
-                    if (fallback) setAgent(fallback);
+                    if (fallback) resolved = fallback;
                 }
+            }
+
+            if (resolved) {
+                const overlaid = applyRecentEditOverlay(resolved);
+                setAgent(overlaid);
+                upsertAgent(overlaid);
             }
         } catch (error) {
             console.error("Error fetching agent details", error);
@@ -113,7 +161,11 @@ const AgentViewPage: React.FC = () => {
 
     useEffect(() => {
         fetchAgent();
-    }, [id, catalogAgents.length]);
+    // Only re-fetch when the agent ID changes (navigation).
+    // catalogAgents.length is intentionally omitted — catalog background
+    // refreshes should not trigger concurrent detail fetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
 
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
@@ -122,7 +174,8 @@ const AgentViewPage: React.FC = () => {
             fetchAgent();
         }, 10000);
         return () => window.clearInterval(timer);
-    }, [agent?.identification?.agent_id, agent?.identification?.governance_status, id, catalogAgents.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);
 
     // ── Chat sync — passes agent data to chat as context ────────────────────
     useChatSync('agent_detail', agent ? {
