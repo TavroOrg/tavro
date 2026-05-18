@@ -168,7 +168,7 @@ const AuditCenterPage: React.FC = () => {
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
           <button onClick={() => setModalOpen(true)}
-            className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
+            className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors">
             <ShieldCheck size={14} /> New Audit
           </button>
         </div>
@@ -217,7 +217,7 @@ const AuditCenterPage: React.FC = () => {
               <p className="text-sm mt-1">Click "New Audit" or launch from a use case or agent detail page.</p>
             </div>
             <button onClick={() => setModalOpen(true)}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
+              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors">
               <ShieldCheck size={14} /> Start first audit
             </button>
           </div>

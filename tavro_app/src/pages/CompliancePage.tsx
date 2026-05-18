@@ -197,7 +197,7 @@ const ComplianceCard: React.FC<{ item: ComplianceItem; onClick: () => void }> = 
         {item.short_name && (
           <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5">{item.short_name}</p>
         )}
-        <p className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors leading-snug">
+        <p className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-snug">
           {item.name}
         </p>
         {item.issuing_body && (
@@ -212,7 +212,7 @@ const ComplianceCard: React.FC<{ item: ComplianceItem; onClick: () => void }> = 
             <span className="text-rose-500 dark:text-rose-400 font-bold">{item.open_gaps} gaps</span>
           )}
         </div>
-        <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-indigo-500 transform group-hover:translate-x-0.5 transition-all" />
+        <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 transform group-hover:translate-x-0.5 transition-all" />
       </div>
     </div>
   );
