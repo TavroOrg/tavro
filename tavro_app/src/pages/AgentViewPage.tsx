@@ -287,30 +287,18 @@ const AgentViewPage: React.FC = () => {
 
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => setDeleteConfirm(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
-                    >
-                        <Trash2 size={15} /> Delete
-                    </button>
-                    <button
-                        onClick={() => setEditOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-                    >
-                        <Pencil size={15} /> Edit
-                    </button>
-                    <button
                         onClick={() => navigate(
                             `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}`
                         )}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-violet-600 text-white hover:bg-violet-700 dark:hover:bg-violet-500 transition-all shadow-sm"
                     >
-                        <FlaskConical size={15} /> Launch in Playground
+                        <FlaskConical size={15} /> Playground
                     </button>
                     <button
                         onClick={() => setAuditModalOpen(true)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
                     >
-                        <ShieldCheck size={15} /> Run Compliance Audit
+                        <ShieldCheck size={15} /> Compliance Audit
                     </button>
                     <button
                         onClick={handleRequestRiskAssessment}
@@ -318,7 +306,7 @@ const AgentViewPage: React.FC = () => {
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {assessing ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />}
-                        {assessing ? 'Assessing...' : 'Request Risk Assessment'}
+                        {assessing ? 'Assessing...' : 'Risk Assessment'}
                     </button>
 
                     <button
@@ -328,6 +316,18 @@ const AgentViewPage: React.FC = () => {
                     >
                         <Code2 size={14} />
                         Agent Card
+                    </button>
+                    <button
+                        onClick={() => setEditOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                    >
+                        <Pencil size={15} /> Edit
+                    </button>
+                    <button
+                        onClick={() => setDeleteConfirm(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+                    >
+                        <Trash2 size={15} /> Delete
                     </button>
                 </div>
             </div>
@@ -352,7 +352,7 @@ const AgentViewPage: React.FC = () => {
                         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
                             <div className="flex items-center gap-2">
                                 <Code2 size={16} className="text-blue-400" />
-                                <span className="font-bold text-slate-100 text-sm">Raw Agent JSON</span>
+                                <span className="font-bold text-slate-100 text-sm">Agent Card</span>
                                 <span className="text-xs text-slate-400 font-mono ml-2 bg-slate-800 px-2 py-0.5 rounded">
                                     {agent.name}
                                 </span>

@@ -398,7 +398,7 @@ const UseCaseViewPage: React.FC = () => {
               onClick={() => setAuditModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
             >
-              <ShieldCheck size={15} /> Run Compliance Audit
+              <ShieldCheck size={15} /> Compliance Audit
             </button>
             <button
               onClick={() => setEditOpen(true)}
