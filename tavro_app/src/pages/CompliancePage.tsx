@@ -88,7 +88,7 @@ const CompliancePage: React.FC = () => {
           </button>
           {activeCompany && (
             <button onClick={() => navigate('/compliance/new?type=policy')}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
+              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
               <FileText size={12} /> Add Policy
             </button>
           )}
@@ -120,7 +120,7 @@ const CompliancePage: React.FC = () => {
         {(typeFilter === 'all' || typeFilter === 'policy') && (
           <Section
             title="Policies & Guidelines"
-            icon={<FileText size={15} className="text-violet-600 dark:text-violet-400" />}
+            icon={<FileText size={15} className="text-blue-600 dark:text-blue-400" />}
             count={policies.length}
             loading={loading}
             items={policies}

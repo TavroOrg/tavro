@@ -396,7 +396,7 @@ const UseCaseViewPage: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setAuditModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
             >
               <ShieldCheck size={15} /> Run Compliance Audit
             </button>

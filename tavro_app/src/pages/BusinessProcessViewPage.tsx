@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
-  BriefcaseBusiness,
+  Workflow,
   CheckCircle2,
   Info,
   Loader2,
@@ -587,7 +587,7 @@ const BusinessProcessViewPage: React.FC = () => {
         <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
           <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
             <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
-              <BriefcaseBusiness size={24} />
+              <Workflow size={24} />
             </div>
             <div className="flex flex-col gap-1.5 min-w-0">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Process</span>

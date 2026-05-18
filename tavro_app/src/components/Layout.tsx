@@ -236,7 +236,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Processes" : undefined}
                             >
-                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
                             </button>
 
@@ -270,7 +270,7 @@ const Layout: React.FC = () => {
                                 onClick={() => navigate('/compliance')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/compliance')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                         : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Compliance" : undefined}
@@ -278,7 +278,7 @@ const Layout: React.FC = () => {
                                 <Scale
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
@@ -288,7 +288,7 @@ const Layout: React.FC = () => {
                                 onClick={() => navigate('/audit')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/audit')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                         : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Audit Center" : undefined}
@@ -296,7 +296,7 @@ const Layout: React.FC = () => {
                                 <ShieldCheck
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
@@ -305,7 +305,7 @@ const Layout: React.FC = () => {
                             <button
                                 onClick={() => navigate('/playground')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
-                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Agent Playground" : undefined}
@@ -313,7 +313,7 @@ const Layout: React.FC = () => {
                                 <FlaskConical
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/playground')
-                                        ? 'text-violet-600 dark:text-violet-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>

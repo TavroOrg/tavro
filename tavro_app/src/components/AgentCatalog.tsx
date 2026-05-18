@@ -1,7 +1,7 @@
 ﻿import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
 import { getAgentRiskLevel, hasResolvedAgentRisk } from '../utils/agentRisk';
-import { Search, BrainCircuit, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
+import { Search, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
 interface AgentCatalogProps {
     agents: AgentData[];
