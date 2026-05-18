@@ -1159,20 +1159,35 @@ class AgentMetadataExporter:
         # 1. Validation & Sanitization
         if not agent_catalog_id or not ai_use_case_id:
             raise ValueError("Both IDs are required.")
-            
+
+        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
         agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
         ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # 2. Check for existing relationship (Prevent duplicate rows)
-        tenant_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id else ""
+        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
         check_q = f"SELECT 1 FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}' AND agent_id = '{agent_catalog_id}' {tenant_where} LIMIT 1"
         is_duplicate = len(cls.execute_select(check_q)) > 0
 
         # 3. Fetch Target Agent Details
-        agent_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id else ""
-        agent_q = f"SELECT agent_id, agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_catalog_id}' AND is_current = true {agent_where} LIMIT 1"
+        # Use COALESCE(is_current, true) so imported agents with NULL is_current are included.
+        agent_q = f"""
+            SELECT agent_id, agent_internal_id
+            FROM {cls.CORE_GLUE_DB_NAME}.agents
+            WHERE agent_id = '{agent_catalog_id}'
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+        """
         agent_res = cls.execute_select(agent_q)
+        # Fall back to curated.agent_360 for externally-imported agents not in core.agents
+        if not agent_res:
+            agent_res = cls.execute_select(
+                f"SELECT agent_id, agent_internal_id FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
+            )
         if not agent_res:
             raise ValueError(f"Agent {agent_catalog_id} not found.")
         target_internal_id = agent_res[0].get("agent_internal_id")
@@ -1272,11 +1287,15 @@ class AgentMetadataExporter:
         if not agent_catalog_id or not ai_use_case_id:
             raise ValueError("Both IDs are required.")
 
+        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
         agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
         ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        tenant_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id else ""
+        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
 
         rows_q = f"""
             SELECT *

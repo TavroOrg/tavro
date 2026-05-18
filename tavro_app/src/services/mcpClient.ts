@@ -1145,12 +1145,18 @@ ${toolSummary}`;
 
     async createAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
         const data = await this.callTool('create_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        if (data && typeof data === 'object' && data.error) {
+            throw new Error(data.details || data.error);
+        }
         this.invalidateCache();
         return data;
     }
 
     async removeAiUseCaseAgentRelationship(use_case_id: string, agent_id: string): Promise<any> {
         const data = await this.callTool('remove_ai_use_case_agent_relationship', { ai_use_case_id: use_case_id, agent_catalog_id: agent_id });
+        if (data && typeof data === 'object' && data.error) {
+            throw new Error(data.details || data.error);
+        }
         this.invalidateCache();
         return data;
     }
