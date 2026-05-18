@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
-import { Link2, Loader2, CheckCircle2, AlertCircle, BrainCircuit, Search, X } from 'lucide-react';
+import { Link2, Loader2, CheckCircle2, AlertCircle, Bot, Search, X } from 'lucide-react';
 
 interface LinkAgentPanelProps {
     useCaseId: string;
@@ -100,7 +100,7 @@ const LinkAgentPanel: React.FC<LinkAgentPanelProps> = ({
                                 <div key={agentId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors gap-3">
                                     <div className="flex items-center gap-3 min-w-0">
                                         <div className={`p-1.5 rounded-lg shrink-0 ${isLinked ? 'bg-emerald-50' : 'bg-blue-50'}`}>
-                                            <BrainCircuit size={13} className={isLinked ? 'text-emerald-600' : 'text-blue-600'} />
+                                            <Bot size={13} className={isLinked ? 'text-emerald-600' : 'text-blue-600'} />
                                         </div>
                                         <div className="min-w-0">
                                             <p className="text-sm font-semibold text-slate-800 truncate">{agent.name}</p>

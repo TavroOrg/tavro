@@ -12,7 +12,7 @@ import {
   Plus,
   Search,
   ShieldAlert,
-  Library,
+  Bot,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
@@ -231,7 +231,7 @@ const BusinessApplicationsPage: React.FC = () => {
                   </div>
                   <div className="flex flex-col items-end gap-1.5">                    
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                      <Library size={10} /> {app.related_agent_count}
+                      <Bot size={20} /> {app.related_agent_count}
                     </span>
                   </div>
                 </div>

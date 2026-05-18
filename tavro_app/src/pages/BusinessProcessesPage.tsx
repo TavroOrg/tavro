@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
-  BriefcaseBusiness,
+  Bot,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -262,10 +262,10 @@ const BusinessProcessesPage: React.FC = () => {
                 <div className="p-5 flex-1 flex flex-col">
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                      <BriefcaseBusiness size={20} />
+                      <Workflow size={20} />
                     </div>
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                      <BriefcaseBusiness size={10} /> {proc.related_agent_count}
+                      <Bot size={20} /> {proc.related_agent_count}
                     </span>
                   </div>
 
