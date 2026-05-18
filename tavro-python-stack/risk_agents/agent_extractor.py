@@ -14,6 +14,7 @@ from utils.set_environment import set_environment
 
 set_environment('databases')
 set_environment('postgres')
+COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
     CORE_GLUE_DB_NAME=os.getenv("CORE_GLUE_DB_NAME")
     CURATED_GLUE_DB_NAME=os.getenv("CURATED_GLUE_DB_NAME")
@@ -1433,38 +1434,68 @@ class AgentMetadataExporter:
     @classmethod
     def update_agent(
         cls,
-        agent_id: str,
+        agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         description: Optional[str] = None,
         instruction: Optional[str] = None,
+        tools: Optional[List[Dict[str, str]]] = None,
+        knowledge_source: Optional[Dict[str, str]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        if not agent_id or not str(agent_id).strip():
-            raise ValueError("agent_id is required")
+        """
+        Update existing agent with minimal query overhead.
+        Only provided fields are updated.
+        """
+        if not agent_id and not agent_name:
+            raise ValueError("Either agent_id or agent_name is required.")
 
+        # Setup tenant context
+        is_tenant = tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+        tenant_clean = cls.sanitize(tenant_id) if is_tenant else None
+        tenant_where = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
+        tenant_col = "tenant_id," if is_tenant else ""
+        tenant_val = f"'{tenant_clean}'," if is_tenant else ""
+
+        # Resolve agent ID (1 query)
+        if not agent_id:
+            agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
+            if not agent_id:
+                raise ValueError(f"Agent '{agent_name}' not found.")
         agent_id = cls.sanitize(str(agent_id).strip())
+
+        # Fetch agent info (1 query)
+        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        if not rows:
+            raise ValueError(f"Agent '{agent_id}' not found.")
+        
+        agent_internal_id = rows[0].get("agent_internal_id")
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        agent_updates = [f"updated_ts = TIMESTAMP '{now}'"]
-        if agent_name and str(agent_name).strip():
-            agent_updates.append(f"agent_name = '{cls.sanitize(str(agent_name).strip())}'")
-        if description and str(description).strip():
-            agent_updates.append(f"agent_description = '{cls.sanitize(str(description).strip())}'")
+        # Batch updates into single transaction
+        if agent_name is not None and str(agent_name).strip():
+            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
-        if len(agent_updates) > 1:
-            cls.execute_dml(f"""
-                UPDATE {cls.CORE_GLUE_DB_NAME}.agents
-                SET {', '.join(agent_updates)}
-                WHERE agent_id = '{agent_id}'
-            """)
+        if description is not None and str(description).strip():
+            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
-        if instruction and str(instruction).strip():
-            cls.execute_dml(f"""
-                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_identifications
-                SET instruction = '{cls.sanitize(str(instruction).strip())}',
-                    updated_ts = TIMESTAMP '{now}'
-                WHERE agent_id = '{agent_id}'
-            """)
+        if instruction:
+            instr = cls.sanitize(instruction)
+            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
+
+        if tools:
+            cls.execute_dml(f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_tools WHERE agent_id = '{agent_id}' {tenant_where}")
+            vals = []
+            for t in tools:
+                vals.append(f"({tenant_val}'{agent_internal_id}', '{agent_id}', '{cls.sanitize(t.get('name', ''))}', '{cls.sanitize(t.get('description', ''))}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+            if vals:
+                cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_tools ({tenant_col}agent_internal_id, agent_id, tool_name, tool_description, created_ts, updated_ts) VALUES {','.join(vals)}")
+
+        if knowledge_source:
+            cls.execute_dml(f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
+            ks_name = cls.sanitize(knowledge_source.get("name", ""))
+            ks_desc = cls.sanitize(knowledge_source.get("description", ""))
+            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
 
@@ -1525,43 +1556,431 @@ class AgentMetadataExporter:
     @classmethod
     def update_ai_use_case(
         cls,
-        use_case_id: str,
-        title: Optional[str] = None,
+        use_case_id: Optional[str] = None,
+        name: Optional[str] = None,
         description: Optional[str] = None,
         business_problem_statement: Optional[str] = None,
         expected_benefits: Optional[str] = None,
         priority: Optional[str] = None,
+        regulatory_impact: Optional[List[str]] = None,
         solution_approach: Optional[str] = None,
         use_case_owner: Optional[str] = None,
+        impacted_business_applications: Optional[List[str]] = None,
+        impacted_business_processes: Optional[List[str]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        if not use_case_id or not str(use_case_id).strip():
-            raise ValueError("use_case_id is required")
+        """
+        Update an existing AI use case.
 
-        use_case_id = cls.sanitize(str(use_case_id).strip())
+        Rules:
+        - use_case_id is required.
+        - Only provided fields are updated.
+        - Existing values remain unchanged if field not provided.
+        """
+
+        # ---------- 1. Validation ----------
+        if not use_case_id or not str(use_case_id).strip():
+            raise ValueError("use_case_id is required for update.")
+
+        use_case_id_clean = cls.sanitize(str(use_case_id).strip())
+
+        # ---------- 2. Normalize tenant ----------
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_where = ""
+        else:
+            tenant_where = f"AND tenant_id = '{cls.sanitize(str(tenant_id).strip())}'"
+
+        # ---------- 3. Fetch Existing Record ----------
+        query = f"""
+            SELECT *
+            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            WHERE identifier = '{use_case_id_clean}'
+            {tenant_where}
+            LIMIT 1
+        """
+
+        rows = cls.execute_select(query)
+
+        if not rows:
+            raise ValueError(f"AI Use Case '{use_case_id_clean}' not found.")
+
+        current = rows[0]
+
+        existing_cols_rows = cls.execute_select(
+            f"""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = '{cls.sanitize(cls.CORE_GLUE_DB_NAME)}'
+              AND table_name = 'agent_ai_use_cases'
+            """
+        )
+        existing_cols = {str(r.get("column_name", "")).strip() for r in existing_cols_rows}
+
+        # ---------- 4. Helpers ----------
+        def clean_list(items):
+            if not items:
+                return None
+            return ", ".join([
+                str(item).strip()
+                for item in items
+                if str(item).strip()
+            ])
+
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        updates = [f"updated_ts = TIMESTAMP '{now}'"]
-        if title and str(title).strip():
-            updates.append(f"name = '{cls.sanitize(str(title).strip())}'")
-        if description and str(description).strip():
-            updates.append(f"description = '{cls.sanitize(str(description).strip())}'")
-        if business_problem_statement and str(business_problem_statement).strip():
-            updates.append(f"problem_statement = '{cls.sanitize(str(business_problem_statement).strip())}'")
-        if expected_benefits and str(expected_benefits).strip():
-            updates.append(f"expected_benefits = '{cls.sanitize(str(expected_benefits).strip())}'")
-        if priority and str(priority).strip():
-            normalized = cls._normalize_use_case_priority(priority)
-            updates.append(f"priority = '{cls.sanitize(normalized)}'")
+        updates = []
+
+        # ---------- 5. Dynamic Updates ----------
+        if name is not None:
+            updates.append(
+                f"name = '{cls.sanitize(name)}'"
+            )
+
+        if description is not None:
+            updates.append(
+                f"description = '{cls.sanitize(description)}'"
+            )
+
+        if business_problem_statement is not None:
+            updates.append(
+                f"problem_statement = '{cls.sanitize(business_problem_statement)}'"
+            )
+
+        if expected_benefits is not None:
+            updates.append(
+                f"expected_benefits = '{cls.sanitize(expected_benefits)}'"
+            )
+
+        if priority is not None:
+            normalized_priority = cls._normalize_use_case_priority(priority)
+
+            updates.append(
+                f"priority = '{cls.sanitize(normalized_priority)}'"
+            )
+
+        if regulatory_impact is not None and "regulatory_impact" in existing_cols:
+            regulatory_impact_str = clean_list(regulatory_impact)
+
+            updates.append(
+                f"regulatory_impact = '{cls.sanitize(regulatory_impact_str or '')}'"
+            )
+
         if solution_approach is not None:
-            updates.append(f"solution_approach = '{cls.sanitize(str(solution_approach).strip())}'")
-        if use_case_owner is not None and str(use_case_owner).strip():
-            updates.append(f"owner = '{cls.sanitize(str(use_case_owner).strip())}'")
+            updates.append(
+                f"solution_approach = '{cls.sanitize(solution_approach)}'"
+            )
 
-        cls.execute_dml(f"""
+        if use_case_owner is not None:
+            updates.append(
+                f"owner = '{cls.sanitize(use_case_owner)}'"
+            )
+
+        if impacted_business_applications is not None and "impacted_business_applications" in existing_cols:
+            applications_str = clean_list(impacted_business_applications)
+
+            updates.append(
+                f"impacted_business_applications = '{cls.sanitize(applications_str or '')}'"
+            )
+
+        if impacted_business_processes is not None and "impacted_business_processes" in existing_cols:
+            processes_str = clean_list(impacted_business_processes)
+
+            updates.append(
+                f"impacted_business_processes = '{cls.sanitize(processes_str or '')}'"
+            )
+
+        # ---------- 6. No-op Handling ----------
+        if not updates:
+            return {
+                "message": "No fields provided for update.",
+                "use_case_id": use_case_id_clean,
+            }
+
+        # ---------- 7. Timestamp ----------
+        updates.append(
+            f"updated_ts = TIMESTAMP '{now}'"
+        )
+
+        # ---------- 8. Execute Update ----------
+        update_query = f"""
             UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
-            SET {', '.join(updates)}
-            WHERE identifier = '{use_case_id}'
-        """)
+            SET
+                {", ".join(updates)}
+            WHERE identifier = '{use_case_id_clean}'
+            {tenant_where}
+        """
 
-        return {"message": "AI Use Case updated successfully.", "use_case_id": use_case_id}
+        cls.execute_dml(update_query)
+
+        # ---------- 9. Response ----------
+        return {
+            "message": "AI Use Case updated successfully.",
+            "use_case_id": use_case_id_clean,
+        }
+
+    @classmethod
+    def get_application_catalog(
+        cls,
+        start_record: int = 1,
+        max_records: int = 10,
+        record_range: str = "1-10",
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Retrieve paginated application catalog with single optimized query.
+        """
+        start, end = cls._resolve_record_window(
+            start_record=start_record,
+            max_records=max_records,
+            record_range=record_range
+        )
+
+        tenant_where = (
+            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
+            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+            else ""
+        )
+
+        query = f"""
+            SELECT *,
+                ROW_NUMBER() OVER () AS rn,
+                COUNT(*) OVER () AS total_records
+            FROM {cls.CORE_GLUE_DB_NAME}.business_applications
+            {tenant_where}
+        """
+
+        result_rows = cls.execute_select(query)
+
+        total = 0
+        rows = []
+        for row in result_rows:
+            if not total and row.get("total_records"):
+                total = int(row["total_records"])
+            rn = int(row.pop("rn", 0))
+            row.pop("total_records", None)
+            if start <= rn <= end:
+                rows.append(row)
+
+        return {
+            "start_record": start,
+            "end_record": end,
+            "record_count": len(rows),
+            "total_records": total,
+            "data": rows
+        }
+
+    @classmethod
+    def get_process_catalog(
+        cls,
+        start_record: int = 1,
+        max_records: int = 10,
+        record_range: str = "1-10",
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Retrieve paginated process catalog with single optimized query.
+        """
+        start, end = cls._resolve_record_window(
+            start_record=start_record,
+            max_records=max_records,
+            record_range=record_range
+        )
+
+        tenant_where = (
+            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
+            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+            else ""
+        )
+
+        query = f"""
+            SELECT *,
+                ROW_NUMBER() OVER () AS rn,
+                COUNT(*) OVER () AS total_records
+            FROM {cls.CORE_GLUE_DB_NAME}.business_processes
+            {tenant_where}
+        """
+
+        result_rows = cls.execute_select(query)
+
+        total = 0
+        rows = []
+        for row in result_rows:
+            if not total and row.get("total_records"):
+                total = int(row["total_records"])
+            rn = int(row.pop("rn", 0))
+            row.pop("total_records", None)
+            if start <= rn <= end:
+                rows.append(row)
+
+        return {
+            "start_record": start,
+            "end_record": end,
+            "record_count": len(rows),
+            "total_records": total,
+            "data": rows
+        }
+
+    @classmethod
+    def create_company(
+        cls,
+        name: str,
+        industry: str,
+        region: str,
+        legal_entity: str,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create company via external API.
+        """
+
+        if not name or not str(name).strip():
+            raise ValueError("name is required.")
+
+        payload = {
+            "name": name,
+            "industry": industry,
+            "region": region,
+            "legal_entity": legal_entity,
+        }
+
+        try:
+            response = requests.post(
+                COMPANY_API_BASE_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "accept": "application/json"
+                },
+                timeout=30
+            )
+
+            if response.status_code not in [200, 201]:
+                raise ValueError(
+                    f"Company create failed: {response.status_code} - {response.text}"
+                )
+
+            data = response.json()
+
+            return {
+                "message": "Company created successfully.",
+                "company_id": data.get("id"),
+                "name": data.get("name"),
+                "industry": data.get("industry"),
+                "region": data.get("region"),
+                "legal_entity": data.get("legal_entity"),
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+            }
+
+        except requests.RequestException as e:
+            raise ValueError(f"Company API request failed: {str(e)}")
+
+
+    # =========================================================
+    # GET COMPANY
+    # =========================================================
+
+    @classmethod
+    def get_company(
+        cls,
+        company_id: str,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get company by ID via external API.
+        """
+
+        if not company_id or not str(company_id).strip():
+            raise ValueError("company_id is required.")
+
+        url = f"{COMPANY_API_BASE_URL}/{company_id}"
+
+        try:
+            response = requests.get(
+                url,
+                headers={"accept": "application/json"},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Company fetch failed: {response.status_code} - {response.text}"
+                )
+
+            data = response.json()
+
+            return {
+                "company_id": data.get("id"),
+                "name": data.get("name"),
+                "industry": data.get("industry"),
+                "region": data.get("region"),
+                "legal_entity": data.get("legal_entity"),
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+            }
+
+        except requests.RequestException as e:
+            raise ValueError(f"Company API request failed: {str(e)}")
+
+
+    # =========================================================
+    # UPDATE COMPANY
+    # =========================================================
+
+    @classmethod
+    def update_company(
+        cls,
+        company_id: str,
+        name: str,
+        industry: str,
+        region: str,
+        legal_entity: str,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update company via PATCH API (expects full object).
+        """
+
+        if not company_id or not str(company_id).strip():
+            raise ValueError("company_id is required.")
+
+        payload = {
+            "name": name,
+            "industry": industry,
+            "region": region,
+            "legal_entity": legal_entity,
+        }
+
+        url = f"{COMPANY_API_BASE_URL}/{company_id}"
+
+        try:
+            response = requests.patch(
+                url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "accept": "application/json"
+                },
+                timeout=30
+            )
+
+            if response.status_code not in [200, 201]:
+                raise ValueError(
+                    f"Company update failed: {response.status_code} - {response.text}"
+                )
+
+            data = response.json()
+
+            return {
+                "message": "Company updated successfully.",
+                "company_id": data.get("id"),
+                "name": data.get("name"),
+                "industry": data.get("industry"),
+                "region": data.get("region"),
+                "legal_entity": data.get("legal_entity"),
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+            }
+
+        except requests.RequestException as e:
+            raise ValueError(f"Company API request failed: {str(e)}")
