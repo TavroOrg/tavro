@@ -1,17 +1,88 @@
 import React from 'react';
 import { UseCaseDetail } from '../types/useCase';
 import {
-    Lightbulb, Building2, GitBranch, ShieldCheck,
-    ShieldAlert, CheckCircle2, Clock, Archive, AlertTriangle, Target,
-    FileText, Users, Bot, Tag
+    Building2,
+    GitBranch,
+    ShieldCheck,
+    ClipboardList,
+    ShieldAlert,
+    CheckCircle2,
+    Clock,
+    Archive,
+    AlertTriangle,
+    Target,
+    FileText,
+    Users,
+    Bot,
+    Tag
 } from 'lucide-react';
+
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
+    const cls = {
+        blue: 'bg-blue-50 text-blue-700 border-blue-100',
+        emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        amber: 'bg-amber-50 text-amber-700 border-amber-100',
+        slate: 'bg-slate-100 text-slate-600 border-slate-200',
+    }[color];
+    return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wide ${cls}`}>
+            {text}
+        </span>
+    );
+}
 
+type PriorityTone = 'critical' | 'high' | 'moderate' | 'low' | 'planning' | 'unknown';
+
+function getPriorityTone(priority?: string | null): PriorityTone {
+    const p = String(priority ?? '').toLowerCase().trim();
+    if (!p) return 'unknown';
+    if (p.startsWith('1') || p.includes('critical')) return 'critical';
+    if (p.startsWith('2') || p.includes('high')) return 'high';
+    if (p.startsWith('3') || p.includes('moderate') || p.includes('medium')) return 'moderate';
+    if (p.startsWith('4') || p.includes('low')) return 'low';
+    if (p.startsWith('5') || p.includes('planning') || p.includes('plan')) return 'planning';
+    return 'unknown';
+}
+
+function getPriorityTheme(tone: PriorityTone) {
+    switch (tone) {
+        case 'critical':
+            return {
+                badge: 'bg-red-50 text-red-700 border-red-200',
+                text: 'text-red-600',
+            };
+        case 'high':
+            return {
+                badge: 'bg-orange-50 text-orange-700 border-orange-200',
+                text: 'text-orange-600',
+            };
+        case 'moderate':
+            return {
+                badge: 'bg-amber-50 text-amber-700 border-amber-200',
+                text: 'text-amber-600',
+            };
+        case 'low':
+            return {
+                badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                text: 'text-emerald-600',
+            };
+        case 'planning':
+            return {
+                badge: 'bg-slate-100 text-slate-600 border-slate-200',
+                text: 'text-slate-600',
+            };
+        default:
+            return {
+                badge: 'bg-slate-100 text-slate-600 border-slate-200',
+                text: 'text-slate-500',
+            };
+    }
+}
 
 function StatusBadge({ status }: { status?: string | null }) {
     if (!status) return null;
@@ -53,7 +124,7 @@ function SectionCard({ icon, title, count, children }: { icon: React.ReactNode; 
                 <span className="text-slate-500">{icon}</span>
                 <span className="font-bold text-slate-800 text-sm">{title}</span>
                 {count !== undefined && (
-                    <span className="ml-1 text-xs font-semibold text-slate-400">· {count}</span>
+                    <span className="ml-1 text-xs font-semibold text-slate-400">- {count}</span>
                 )}
             </div>
             <div className="p-5">{children}</div>
@@ -86,7 +157,7 @@ function TextBlock({ icon, title, text }: { icon: React.ReactNode; title: string
  *  - A ServiceNow reference object: { value: "GUIDsys_id", display_value: "Human Name" }
  *  - A ServiceNow nested reference: { link: "...", value: "...", display_value: "..." }
  */
-function getLabel(item: any, fallback = '—'): string {
+function getLabel(item: any, fallback = 'N/A'): string {
     if (typeof item === 'string') return item;
     if (!item || typeof item !== 'object') return fallback;
 
@@ -118,8 +189,6 @@ function getId(item: any): string | undefined {
     return item?.sys_id ?? item?.id ?? item?.identifier ?? item?.value ?? item?.agent_id;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
 const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent }) => {
     const [activeTab, setActiveTab] = React.useState('business_case');
 
@@ -127,6 +196,11 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
     const bizProcesses = uc.business_processes?.filter(Boolean) ?? [];
     const controls = uc.controls?.filter(Boolean) ?? [];
     const riskAssessments = uc.risk_assessments?.filter(Boolean) ?? [];
+
+    const statusLabel = uc.status || 'Proposed';
+    const priorityValue = uc.priority ?? null;
+    const priorityTone = getPriorityTone(priorityValue);
+    const priorityTheme = getPriorityTheme(priorityTone);
 
     const tabs = [
         { id: 'business_case', label: 'Business Case', icon: FileText },
@@ -137,96 +211,82 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
     ];
 
     return (
-        <div className="flex flex-col w-full animate-fade-in pb-6">
+        <div className="flex flex-col gap-6 w-full animate-fade-in pb-6 max-w-[1400px] mx-auto">
+            <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
 
-            {/* ── Hero Header ──────────────────────────────────────────────── */}
-            <div className="bg-white rounded-t-2xl border border-slate-200 shadow-sm overflow-hidden z-20 relative">
-                <div className="border-l-4 border-violet-500">
-                    <div className="p-6 flex flex-col gap-4">
-                        {/* Title row */}
-                        <div className="flex items-start justify-between gap-4 flex-wrap">
-                            <div className="flex items-center gap-3">
-                                <div className="p-3 bg-violet-50 text-violet-600 rounded-xl">
-                                    <Lightbulb size={24} />
-                                </div>
-                                <div>
-                                    <h1 className="text-2xl font-bold text-slate-800 tracking-tight">{uc.name || 'Unnamed Use Case'}</h1>
-                                    {uc.identifier && (
-                                        <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded mt-1 inline-block">
-                                            {uc.identifier}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
+            <div className="-mt-6 bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
+                <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+                    <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+                        <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+                            <ClipboardList size={24} />
                         </div>
-
-                        {/* Description */}
-                        {uc.description && (
-                            <p className="text-slate-600 text-sm leading-relaxed max-w-4xl">{uc.description}</p>
-                        )}
-
-                        {/* Metadata grid */}
-                        <dl className="grid grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-4 mt-1">
-                            <InfoRow label="Owner" value={uc.owner} />
-                            <InfoRow label="Proposed By" value={uc.proposed_by} />
-                            <InfoRow label="Priority / Risk Tier" value={uc.priority} />
-
-                            {/* Status moved here, next to priority */}
-                            {uc.status && (
-                                <div className="flex flex-col gap-1 items-start">
-                                    <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status</dt>
-                                    <dd><StatusBadge status={uc.status} /></dd>
-                                </div>
+                        <div className="flex flex-col gap-1.5 min-w-0">
+                            <h1 className="text-2xl font-bold text-slate-800 tracking-tight line-clamp-2">
+                                {uc.name || 'Unnamed Use Case'}
+                            </h1>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {uc.identifier && (
+                                    <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600">
+                                        {uc.identifier}
+                                    </span>
+                                )}
+                                {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
+                                {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
+                            </div>
+                            {uc.description && (
+                                <p className="text-sm text-slate-600 leading-relaxed line-clamp-2">{uc.description}</p>
                             )}
-
-                            <InfoRow label="Business Sponsors" value={(uc as any).business_sponsors} />
-
-                            {/* Overall risk */}
-                            {(uc as any).overall_risk && (
-                                <div className="flex flex-col gap-1 items-start">
-                                    <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Overall Risk</dt>
-                                    <dd><RiskBadge classification={(uc as any).overall_risk} /></dd>
-                                </div>
-                            )}
-
-                            {(uc as any).tag && (
-                                <div className="flex flex-col gap-0.5">
-                                    <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                                        <Tag size={10} /> Tags
-                                    </dt>
-                                    <dd className="text-sm text-slate-800">{(uc as any).tag}</dd>
-                                </div>
-                            )}
-                        </dl>
+                        </div>
                     </div>
-                </div>
 
-                {/* ── Tab Navigation ── */}
-                <div className="flex px-4 pt-2 border-t border-slate-100 bg-slate-50/50 overflow-x-auto no-scrollbar">
-                    {tabs.map(tab => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${isActive
-                                    ? 'border-violet-600 text-violet-700 bg-violet-50/50 rounded-t-lg'
-                                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-                                    }`}
-                            >
-                                <Icon size={16} className={isActive ? 'text-violet-600' : 'text-slate-400'} />
-                                {tab.label}
-                            </button>
-                        );
-                    })}
+                    <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+                        <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[110px]">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Status</span>
+                            <StatusBadge status={statusLabel} />
+                        </div>
+                        <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[110px]">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Priority</span>
+                            <span className={`inline-flex items-center gap-1 text-xs font-bold ${priorityTheme.text}`}>
+                                <ShieldAlert size={13} /> {priorityValue || 'N/A'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-3 shrink-0 w-full md:w-auto md:ml-auto mt-2 md:mt-0">
+                        <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-end min-w-[170px]">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Owner</span>
+                            <span>{uc.owner || 'Unassigned'}</span>
+                        </div>
+                        <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-end min-w-[170px]">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Proposed By</span>
+                            <span>{uc.proposed_by || 'N/A'}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            {/* ── Tab Content Container ── */}
-            <div className="bg-slate-50 border-x border-b border-slate-200 rounded-b-2xl p-6 shadow-sm min-h-[400px]">
+            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide border-b border-slate-200">
+                {tabs.map(tab => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-2 px-4 py-3 text-sm font-bold whitespace-nowrap transition-all border-b-2 ${isActive
+                                ? 'border-blue-600 text-blue-700'
+                                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                                }`}
+                        >
+                            <Icon size={15} className={isActive ? 'text-blue-600' : 'text-slate-400'} />
+                            {tab.label}
+                        </button>
+                    );
+                })}
+            </div>
 
-                {/* ── Tab: Business Case ── */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px]">
+
                 {activeTab === 'business_case' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
                         <TextBlock icon={<FileText size={16} />} title="Business Problem Statement" text={uc.problem_statement} />
@@ -237,9 +297,9 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                                 <p className="text-sm text-slate-700">{(uc as any).business_sponsors}</p>
                             </SectionCard>
                         )}
-                        {uc['function'] && (
+                        {uc.function && (
                             <SectionCard icon={<Building2 size={16} />} title="Business Function">
-                                <p className="text-sm text-slate-700">{uc['function'] as string}</p>
+                                <p className="text-sm text-slate-700">{String(uc.function)}</p>
                             </SectionCard>
                         )}
                         {(uc as any).use_case_type && (
@@ -250,7 +310,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                     </div>
                 )}
 
-                {/* ── Tab: Business Impact ── */}
                 {activeTab === 'business_impact' && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
                         {applications.length > 0 ? (
@@ -298,7 +357,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                     </div>
                 )}
 
-                {/* ── Tab: AI Agents ── */}
                 {activeTab === 'ai_agents' && (
                     <div className="animate-fade-in">
                         {agentsComponent ? agentsComponent : (
@@ -309,7 +367,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                     </div>
                 )}
 
-                {/* ── Tab: Risk Assessments ── */}
                 {activeTab === 'risk_assessments' && (
                     <div className="animate-fade-in">
                         {riskAssessments.length > 0 ? (
@@ -373,7 +430,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                     </div>
                 )}
 
-                {/* ── Tab: Controls ── */}
                 {activeTab === 'controls' && (
                     <div className="animate-fade-in">
                         {controls.length > 0 ? (

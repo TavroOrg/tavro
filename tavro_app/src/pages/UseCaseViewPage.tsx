@@ -12,6 +12,8 @@ import AuditInitModal from '../components/audit/AuditInitModal';
 import EditUseCaseModal from '../components/EditUseCaseModal';
 import { useCaseApi } from '../services/useCaseApi';
 
+const USE_CASE_AGENT_COUNT_CACHE_KEY = 'tavro_use_case_agent_count_cache';
+
 interface AgentsSectionProps {
   useCase: UseCaseDetail;
   agents: AgentData[];
@@ -312,6 +314,24 @@ const UseCaseViewPage: React.FC = () => {
     fetchUseCase();
   }, [id]);
 
+  useEffect(() => {
+    if (!useCase) return;
+    const useCaseKey = String(useCase.identifier ?? (useCase as any).id ?? '').trim();
+    if (!useCaseKey) return;
+
+    const rawLinked = ((useCase as any).agents ?? (useCase as any).of_associated_agents ?? []) as any[];
+    const linkedCount = Array.isArray(rawLinked) ? rawLinked.length : 0;
+
+    try {
+      const raw = sessionStorage.getItem(USE_CASE_AGENT_COUNT_CACHE_KEY);
+      const map = raw ? JSON.parse(raw) as Record<string, number> : {};
+      map[useCaseKey] = linkedCount;
+      sessionStorage.setItem(USE_CASE_AGENT_COUNT_CACHE_KEY, JSON.stringify(map));
+    } catch {
+      // Ignore storage write issues.
+    }
+  }, [useCase]);
+
   const handleUseCaseSaved = (updated: {
     title: string;
     description: string;
@@ -375,10 +395,10 @@ const UseCaseViewPage: React.FC = () => {
         {useCase && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setDeleteConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+              onClick={() => setAuditModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
             >
-              <Trash2 size={15} /> Delete
+              <ShieldCheck size={15} /> Run Compliance Audit
             </button>
             <button
               onClick={() => setEditOpen(true)}
@@ -387,10 +407,10 @@ const UseCaseViewPage: React.FC = () => {
               <Pencil size={15} /> Edit
             </button>
             <button
-              onClick={() => setAuditModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm"
+              onClick={() => setDeleteConfirm(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
             >
-              <ShieldCheck size={15} /> Run Compliance Audit
+              <Trash2 size={15} /> Delete
             </button>
           </div>
         )}

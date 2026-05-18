@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mcpClient } from '../services/mcpClient';
-import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 
 const PRIORITIES = [
@@ -219,7 +219,7 @@ const CreateUseCasePage: React.FC = () => {
                             className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'
                                 }`}
                         >
-                            {saving ? <Loader2 size={16} className="animate-spin" /> : success ? <CheckCircle2 size={16} /> : <Lightbulb size={16} />}
+                            {saving ? <Loader2 size={16} className="animate-spin" /> : success ? <CheckCircle2 size={16} /> : <ClipboardList size={16} />}
                             {saving ? 'Creating…' : success ? 'Created!' : 'Create Use Case'}
                         </button>
                     </div>

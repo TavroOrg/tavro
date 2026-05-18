@@ -94,7 +94,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
                     <div className="flex items-center gap-2">
-                        <ClipboardList size={16} className="text-violet-500" />
+                        <ClipboardList size={16} className="text-blue-600" />
                         <span className="font-bold text-slate-800 text-sm">Edit AI Use Case</span>
                         <span className="text-xs text-slate-400 font-mono ml-1">{useCaseId}</span>
                     </div>
@@ -115,7 +115,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             type="text"
                             value={title}
                             onChange={e => setTitle(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all"
                         />
                     </div>
 
@@ -125,7 +125,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             value={description}
                             onChange={e => setDescription(e.target.value)}
                             rows={3}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all resize-none"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all resize-none"
                         />
                     </div>
 
@@ -135,7 +135,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             <select
                                 value={priority}
                                 onChange={e => setPriority(e.target.value)}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all bg-white"
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
                             >
                                 {PRIORITY_OPTIONS.map(p => (
                                     <option key={p} value={p}>{p}</option>
@@ -148,7 +148,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                                 type="text"
                                 value={owner}
                                 onChange={e => setOwner(e.target.value)}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all"
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all"
                             />
                         </div>
                     </div>
@@ -159,7 +159,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             value={problemStatement}
                             onChange={e => setProblemStatement(e.target.value)}
                             rows={3}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all resize-none"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all resize-none"
                         />
                     </div>
 
@@ -169,7 +169,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             value={expectedBenefits}
                             onChange={e => setExpectedBenefits(e.target.value)}
                             rows={3}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all resize-none"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all resize-none"
                         />
                     </div>
 
@@ -179,7 +179,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                             value={solutionApproach}
                             onChange={e => setSolutionApproach(e.target.value)}
                             rows={3}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all resize-none"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all resize-none"
                         />
                     </div>
                 </div>
@@ -196,7 +196,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                     <button
                         onClick={handleSave}
                         disabled={saving || saved}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-violet-600 text-white hover:bg-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                         {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
                             : saved ? <><CheckCircle2 size={14} /> Saved</>
