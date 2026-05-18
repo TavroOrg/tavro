@@ -67,7 +67,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
                     <div className="flex items-center gap-2">
-                        <Bot size={16} className="text-violet-500" />
+                        <Bot size={16} className="text-blue-500" />
                         <span className="font-bold text-slate-800 text-sm">Edit Agent</span>
                         <span className="text-xs text-slate-400 font-mono ml-1">{agentId}</span>
                     </div>
@@ -125,7 +125,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
                     <button
                         onClick={handleSave}
                         disabled={saving || saved}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-violet-600 text-white hover:bg-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                         {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
                             : saved ? <><CheckCircle2 size={14} /> Saved</>

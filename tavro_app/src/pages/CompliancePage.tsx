@@ -39,7 +39,7 @@ const CompliancePage: React.FC = () => {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-sm">
+          <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-sm">
             <Scale size={20} />
           </div>
           <div>
@@ -59,7 +59,7 @@ const CompliancePage: React.FC = () => {
               <button key={t} onClick={() => setTypeFilter(t)}
                 className={`text-[11px] font-bold px-2.5 py-1.5 rounded-md transition-all capitalize ${
                   typeFilter === t
-                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 }`}>
                 {t === 'all' ? 'All' : ITEM_TYPE_META[t].label}
@@ -76,7 +76,7 @@ const CompliancePage: React.FC = () => {
           </div>
 
           <button onClick={refresh} disabled={loading}
-            className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50">
+            className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>

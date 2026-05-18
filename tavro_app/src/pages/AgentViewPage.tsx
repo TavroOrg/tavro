@@ -290,13 +290,13 @@ const AgentViewPage: React.FC = () => {
                         onClick={() => navigate(
                             `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}`
                         )}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-violet-600 text-white hover:bg-violet-700 dark:hover:bg-violet-500 transition-all shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
                     >
                         <FlaskConical size={15} /> Playground
                     </button>
                     <button
                         onClick={() => setAuditModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
                     >
                         <ShieldCheck size={15} /> Compliance Audit
                     </button>
@@ -312,7 +312,7 @@ const AgentViewPage: React.FC = () => {
                     <button
                         onClick={() => setJsonOpen(true)}
                         title="Agent Card"
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Code2 size={14} />
                         Agent Card
@@ -325,7 +325,7 @@ const AgentViewPage: React.FC = () => {
                     </button>
                     <button
                         onClick={() => setDeleteConfirm(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-all shadow-sm"
                     >
                         <Trash2 size={15} /> Delete
                     </button>
