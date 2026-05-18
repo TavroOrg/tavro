@@ -298,10 +298,10 @@ const UseCaseViewPage: React.FC = () => {
     }
   }
 
-  async function fetchUseCaseSilently() {
+  async function fetchUseCaseSilently(forceRefresh = false) {
     if (!id) return;
     try {
-      const data = await mcpClient.getUseCaseDetails(id);
+      const data = await mcpClient.getUseCaseDetails(id, { forceRefresh });
       if (data) setUseCase(data);
     } catch {
       // silent — don't disrupt the UI
@@ -338,7 +338,8 @@ const UseCaseViewPage: React.FC = () => {
       (next as any).use_case_owner = updated.owner;
       return next;
     });
-    fetchUseCase();
+    mcpClient.invalidateCache();
+    fetchUseCaseSilently(true);
     refreshUseCases();
   };
 

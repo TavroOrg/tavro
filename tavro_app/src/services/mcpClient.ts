@@ -1084,8 +1084,10 @@ ${toolSummary}`;
         return deduped;
     }
 
-    async getUseCaseDetails(id: string): Promise<UseCaseDetail | undefined> {
-        if (this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
+    async getUseCaseDetails(id: string, opts?: { forceRefresh?: boolean }): Promise<UseCaseDetail | undefined> {
+        const forceRefresh = opts?.forceRefresh === true;
+        if (!forceRefresh && this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
+        if (forceRefresh) this._useCaseDetailCache.delete(id);
         try {
             const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
             const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
