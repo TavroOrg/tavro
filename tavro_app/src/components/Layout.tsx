@@ -4,8 +4,7 @@ import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness, Paperclip
-    AppWindow, Network
+    AppWindow, BriefcaseBusiness, Paperclip, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
