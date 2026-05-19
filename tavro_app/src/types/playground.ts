@@ -2,6 +2,7 @@
 
 export type InfraProvider =
   | 'claude'          // Anthropic API direct — works today, no cloud setup needed
+  | 'openai'          // OpenAI Chat Completions API
   | 'azure_foundry'   // Azure AI Foundry Agent Service
   | 'aws_bedrock'     // AWS Bedrock Agents
   | 'gcp_vertex';     // GCP Vertex AI Agents
@@ -27,11 +28,20 @@ export const INFRA_PROVIDERS: InfraProviderMeta[] = [
     configKeys:  ['ANTHROPIC_API_KEY'],
   },
   {
+    id:          'openai',
+    label:       'OpenAI',
+    shortLabel:  'OpenAI',
+    description: 'Direct OpenAI API with GPT models. Works immediately with your OpenAI API key.',
+    available:   true,
+    icon:        '✨',
+    configKeys:  ['OPENAI_API_KEY'],
+  },
+  {
     id:          'azure_foundry',
     label:       'Azure AI Foundry',
     shortLabel:  'Azure',
     description: 'Azure AI Agent Service with GPT-4o, Phi-4, and custom tool calling. Ideal for M365 environments.',
-    available:   false,
+    available:   true,
     icon:        '☁️',
     configKeys:  ['AZURE_AI_FOUNDRY_ENDPOINT', 'AZURE_AI_FOUNDRY_KEY'],
   },
@@ -124,6 +134,7 @@ export const OBSERVATION_TYPES: Record<PlaygroundObservation['type'], { label: s
 
 export const PROVIDER_MODELS: Record<InfraProvider, string[]> = {
   claude:        ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+  openai:        ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini'],
   azure_foundry: ['gpt-4o', 'gpt-4o-mini', 'phi-4'],
   aws_bedrock:   ['anthropic.claude-sonnet-4-6', 'amazon.titan-text-premier-v1:0'],
   gcp_vertex:    ['gemini-2.0-flash', 'gemini-1.5-pro'],

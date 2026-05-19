@@ -1,0 +1,140 @@
+European Union Artificial Intelligence Act: Article 5 – Prohibited AI Practices
+
+The following AI practices shall be prohibited:
+
+#art5.subliminal_techniques db mapping
+(a) the placing on the market, the putting into service or the use of an AI system that deploys subliminal techniques beyond a person’s consciousness or purposefully manipulative or deceptive techniques, with the objective, or the effect of materially distorting the behaviour of a person or a group of persons by appreciably impairing their ability to make an informed decision, thereby causing them to take a decision that they would not have otherwise taken in a manner that causes or is reasonably likely to cause that person, another person or group of persons significant harm;
+
+#art5.vulnerabilities db mapping
+(b) the placing on the market, the putting into service or the use of an AI system that exploits any of the vulnerabilities of a natural person or a specific group of persons due to their age, disability or a specific social or economic situation, with the objective, or the effect, of materially distorting the behaviour of that person or a person belonging to that group in a manner that causes or is reasonably likely to cause that person or another person significant harm;
+
+#art5.social_scoring db mapping
+(c) the placing on the market, the putting into service or the use of AI systems for the evaluation or classification of natural persons or groups of persons over a certain period of time based on their social behaviour or known, inferred or predicted personal or personality characteristics, with the social score leading to either or both of the following:
+(i) detrimental or unfavourable treatment of certain natural persons or groups of persons in social contexts that are unrelated to the contexts in which the data was originally generated or collected;
+(ii) detrimental or unfavourable treatment of certain natural persons or groups of persons that is unjustified or disproportionate to their social behaviour or its gravity;
+
+#art5.criminal_offences db mapping
+(d) the placing on the market, the putting into service for this specific purpose, or the use of an AI system for making risk assessments of natural persons in order to assess or predict the risk of a natural person committing a criminal offence, based solely on the profiling of a natural person or on assessing their personality traits and characteristics; this prohibition shall not apply to AI systems used to support the human assessment of the involvement of a person in a criminal activity, which is already based on objective and verifiable facts directly linked to a criminal activity;
+
+#art5.facial_recognition db mapping
+(e) the placing on the market, the putting into service for this specific purpose, or the use of AI systems that create or expand facial recognition databases through the untargeted scraping of facial images from the internet or CCTV footage;
+
+#art5.emotion_inference db mapping
+(f) the placing on the market, the putting into service for this specific purpose, or the use of AI systems to infer emotions of a natural person in the areas of workplace and education institutions, except where the use of the AI system is intended to be put in place or into the market for medical or safety reasons;
+
+#art5.biometric_categorization db mapping
+(g) the placing on the market, the putting into service for this specific purpose, or the use of biometric categorisation systems that categorise individually natural persons based on their biometric data to deduce or infer their race, political opinions, trade union membership, religious or philosophical beliefs, sex life or sexual orientation; this prohibition does not cover any labelling or filtering of lawfully acquired biometric datasets, such as images, based on biometric data or categorizing of biometric data in the area of law enforcement;
+
+#art5.realTime_biometric_id db mapping
+(h) the use of ‘real-time’ remote biometric identification systems in publicly accessible spaces for the purposes of law enforcement, unless and in so far as such use is strictly necessary for one of the following objectives:
+(i) the targeted search for specific victims of abduction, trafficking in human beings or sexual exploitation of human beings, as well as the search for missing persons;
+(ii) the prevention of a specific, substantial and imminent threat to the life or physical safety of natural persons or a genuine and present or genuine and foreseeable threat of a terrorist attack;
+(iii) the localisation or identification of a person suspected of having committed a criminal offence, for the purpose of conducting a criminal investigation or prosecution or executing a criminal penalty for offences punishable in the Member State concerned by a custodial sentence or a detention order for a maximum period of at least four years.
+
+
+
+European Union Artificial Intelligence Act: Article 6 – High-Risk AI Systems
+
+The following AI systems are considered high-risk: 
+#art6.biometrics db mapping
+1. Biometrics
+    (a) remote biometric identification systems. 
+This shall not include AI systems intended to be used for biometric verification the sole purpose of which is to confirm that a specific natural person is the person he or she claims to be;
+(b) AI systems intended to be used for biometric categorisation, according to sensitive or protected attributes or characteristics based on the inference of those attributes or characteristics;
+(c) AI systems intended to be used for emotion recognition.
+#art6.critical_infrastructure db mapping
+2. Critical infrastructure: AI systems intended to be used as safety components in the management and operation of critical digital infrastructure, road traffic, or in the supply of water, gas, heating or electricity.
+
+#art6.education_training db mapping
+3. Education and vocational training:  
+(a) AI systems intended to be used to determine access or admission or to assign natural persons to educational and vocational training institutions at all levels;
+(b) AI systems intended to be used to evaluate learning outcomes, including when those outcomes are used to steer the learning process of natural persons in educational and vocational training institutions at all levels;
+(c) AI systems intended to be used for the purpose of assessing the appropriate level of education that an individual will receive or will be able to access, in the context of or within educational and vocational training institutions at all levels;
+(d) AI systems intended to be used for monitoring and detecting prohibited behaviour of students during tests in the context of or within educational and vocational training institutions at all levels.
+
+#art6.employment_access db mapping
+4. Employment, workers’ management and access to self-employment:
+(a) AI systems intended to be used for the recruitment or selection of natural persons, in particular to place targeted job advertisements, to analyse and filter job applications, and to evaluate candidates;
+(b) AI systems intended to be used to make decisions affecting terms of work-related relationships, the promotion or termination of work-related contractual relationships, to allocate tasks based on individual behaviour or personal traits or characteristics or to monitor and evaluate the performance and behaviour of persons in such relationships;
+(c) AI systems intended to manage -performance appraisals, compensation, bonuses, and succession planning  for employees;
+(d) AI systems intended to track employee rest breaks or the number of times employees are coming into the office.
+
+#art6.essential_services_benefits db mapping
+Access to and enjoyment of essential private services and essential public services and benefits:AI systems intended to be used by public authorities or on behalf of public authorities to evaluate the eligibility of natural persons for essential public assistance benefits and services, including healthcare services, as well as to grant, reduce, revoke, or reclaim such benefits and services;
+5A. Evaluation of Creditworthiness:AI systems intended to be used to evaluate the creditworthiness of natural persons or establish their credit score or pulling credit histories from providers such as TansUnion, Equifax and Experian, 
+5B. AI systems in life insurance:AI systems intended to be used for risk assessment, policy recommendations, quotes, quotations, policy renewals, underwriting, calculation of premiums and pricing in relation to natural persons in life insurance relation to natural persons.
+5C. AI systems in health insurance:AI systems intended to be used for risk assessment, policy recommendations, quotes, quotations, policy renewals, underwriting, calculation of premiums and pricing in relation to natural persons in health  insurance  in the case of life and health insurance;
+5D. Emergency Calls:AI systems intended to evaluate and classify emergency calls by natural persons or to be used to dispatch, or to establish priority in the dispatching of, emergency first response services, including by police, firefighters and medical aid, as well as emergency healthcare patient triage systems.
+
+
+#art6.law_enforcement db mapping
+6. Law enforcement, in so far as their use is permitted under relevant Union or national law:
+(a) AI systems intended to be used by or on behalf of law enforcement authorities, or by Union institutions, bodies, offices or agencies in support of law enforcement authorities or on their behalf to assess the risk of a natural person becoming the victim of criminal offences;
+(b) AI systems intended to be used by or on behalf of law enforcement authorities or by Union institutions, bodies, offices or agencies in support of law enforcement authorities as polygraphs or similar tools;
+(c) AI systems intended to be used by or on behalf of law enforcement authorities, or by Union institutions, bodies, offices or agencies, in support of law enforcement authorities to evaluate the reliability of evidence in the course of the investigation or prosecution of criminal offences;
+(d) AI systems intended to be used by law enforcement authorities or on their behalf or by Union institutions, bodies, offices or agencies in support of law enforcement authorities for assessing the risk of a natural person offending or re-offending not solely on the basis of the profiling of natural persons as referred to in Article 3(4) of Directive (EU) 2016/680, or to assess personality traits and characteristics or past criminal behaviour of natural persons or groups;
+(e) AI systems intended to be used by or on behalf of law enforcement authorities or by Union institutions, bodies, offices or agencies in support of law enforcement authorities for the profiling of natural persons as referred to in Article 3(4) of Directive (EU) 2016/680 in the course of the detection, investigation or prosecution of criminal offences.
+
+#art6.migration_border_control db mapping
+7. Migration, asylum and border control management, in so far as their use is permitted under relevant Union or national law:
+(a) AI systems intended to be used by or on behalf of competent public authorities or by Union institutions, bodies, offices or agencies as polygraphs or similar tools;
+(b) AI systems intended to be used by or on behalf of competent public authorities or by Union institutions, bodies, offices or agencies to assess a risk, including a security risk, a risk of irregular migration, or a health risk, posed by a natural person who intends to enter or who has entered into the territory of a Member State;
+(c) AI systems intended to be used by or on behalf of competent public authorities or by Union institutions, bodies,offices or agencies to assist competent public authorities for the examination of applications for asylum, visa or residence permits and for associated complaints with regard to the eligibility of the natural persons applying for a status, including related assessments of the reliability of evidence;
+(d) AI systems intended to be used by or on behalf of competent public authorities, or by Union institutions, bodies, offices or agencies, in the context of migration, asylum or border control management, for the purpose of detecting, recognising or identifying natural persons, with the exception of the verification of travel documents.
+
+#art6.justice_democracy db mapping
+8. Administration of justice and democratic processes:
+(a) AI systems intended to be used by a judicial authority or on their behalf to assist a judicial authority in researching and interpreting facts and the law and in applying the law to a concrete set of facts, or to be used in a similar way in alternative dispute resolution;
+(b) AI systems intended to be used for influencing the outcome of an election or referendum or the voting behaviour of natural persons in the exercise of their vote in elections or referenda. This does not include AI systems to the output of which natural persons are not directly exposed, such as tools used to organise, optimise or structure political campaigns from an administrative or logistical point of view
+
+#art6.products_safety db mapping
+9. The AI system is intended to be used as a safety component of a product, or the AI system is itself a product;
+
+#annex1_med_devices_eu_2017/745
+# Item c above is added because the definition of “medical device” includes software for prediction or alleviation of disease.
+
+10. Medical Devices
+(a) The AI system is intended to be used as a digital twin for clinical trials or digital twin for personalized health care. 
+(b) The AI system is intended to be used as a medical device. The term ‘medical device’ means any instrument, apparatus, appliance, software, implant, reagent, material or other article intended by the manufacturer to be used, alone or in combination, for human beings for one or more of the following specific medical purposes: 
+—  diagnosis, prevention, monitoring, prediction, prognosis, treatment or alleviation of disease, —  diagnosis, monitoring, treatment, alleviation of, or compensation for, an injury or disability, 
+—  investigation, replacement or modification of the anatomy or of a physiological or pathological process or state, 
+—  providing information by means of in vitro examination of specimens derived from the human body, including organ, blood and tissue donations, 
+—  devices for the control or support of conception
+—  products specifically intended for the cleaning, disinfection or sterilisation of devices,
+(c) The AI system is intended to be used to support clinical trials
+
+
+#annex1_in_vitro_eu_2017/746
+
+11. In Vitro Diagnostic Medical Devices
+(a) The AI system is intended to be used as an in vitro diagnostic medical device. ‘In vitro diagnostic medical device’ means any medical device which is a reagent, reagent product, calibrator, control material, kit, instrument, apparatus, piece of equipment, software or system, whether used alone or in combination, intended by the manufacturer to be used in vitro for the examination of specimens, including blood and tissue donations, derived from the human body, solely or principally for the purpose of providing information on one or more of the following: 
+(i) concerning a physiological or pathological process or state; 
+(ii) concerning congenital physical or mental impairments; 
+(iii) concerning the predisposition to a medical condition or a disease; 
+(iv) to determine the safety and compatibility with potential recipients; 
+(v) to predict treatment response or reactions; (f) to define or monitor therapeutic measures;
+(vi) Is a specimen receptacle.
+
+#annex1_other
+
+12. Other High Risk Items
+(a) The AI system is part of machinery;
+(b) The AI system is to support toy safety;
+(c) The AI system is part of recreational craft or personal watercraft;
+(d) The AI system supports lifts or elevators or safety components for lifts or elevators;
+(e) The AI system relates to equipment and protective systems intended for use in potentially explosive atmospheres;
+(f) The AI system relates to radio equipment;
+(g) The AI system relates to pressure equipment;
+(h) The AI system relates to cableway installations;
+(i) The AI system relates to personal protective equipment;
+(j) The AI system relates to appliances burning gaseous fuels;
+(k) The AI system relates to civil aviation safety;
+(l) The AI system relates to two- or three-wheel vehicles and quadricycles;
+(m) The AI system relates to agricultural and forestry vehicles;
+(n) The AI system relates to marine equipment;
+(o) The AI system relates to rail systems;
+(p) The AI system relates to motor vehicles and their trailers, full-self driving vehicles and autonomous vehicles;
+(q) The AI system relates to civilian aircraft, civil aviation, auto-pilot, unmanned aircraft or drones and their engines, propellers, parts and equipment to control them remotely.
+
+
+

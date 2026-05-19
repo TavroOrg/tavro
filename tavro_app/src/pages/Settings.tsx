@@ -3,10 +3,10 @@ import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Loader2, RefreshCw, Code2,
     BotMessageSquare, Eye, EyeOff, Trash2, Terminal,
-    Database, CloudOff, Download
+    Database, CloudOff, Download, CircleHelp, ExternalLink
 } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
-import { useInspectJson } from '../hooks/useInspectJson';
+import { generatePKCE } from '../services/pkce';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCacheMode } from '../hooks/useCacheMode';
 import {
@@ -36,7 +36,6 @@ const Settings: React.FC = () => {
     // App config
     const { theme, setTheme } = useTheme();
     const [saved, setSaved] = useState(false);
-    const [inspectJson, setInspectJson] = useInspectJson();
     const [showLogs, setShowLogs] = useShowLogs();
     const [cacheMode, setCacheMode] = useCacheMode();
 
@@ -44,7 +43,6 @@ const Settings: React.FC = () => {
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
     const [connectionError, setConnectionError] = useState<string | null>(null);
     const [mcpUrl, setMcpUrl] = useState('');
-    const [tenantId, setTenantId] = useState('');
 
     // LLM config — per-provider
     type ProviderState = { model: string; key: string; showKey: boolean; saved: boolean; configured: boolean };
@@ -75,7 +73,6 @@ const Settings: React.FC = () => {
     useEffect(() => {
         // Theme is handled by context
         setMcpUrl(localStorage.getItem('tavro_mcp_url') || '');
-        setTenantId(localStorage.getItem('tavro_tenant_id') || '');
 
 
         // Load cached data settings
@@ -126,12 +123,80 @@ const Settings: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
-    const handleSaveSettings = () => {
-        localStorage.setItem('tavro_mcp_url', mcpUrl.trim());
-        localStorage.setItem('tavro_tenant_id', tenantId.trim());
+    const handleSaveSettings = async () => {
+        const url = mcpUrl.trim();
+        if (!url) return;
+
+        localStorage.setItem('tavro_mcp_url', url);
         mcpClient.invalidateCache();
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        setConnectionStatus('connecting');
+        setConnectionError(null);
+        setSaved(false);
+
+        try {
+            // Derive base path: https://host/cognito/mcp → https://host/cognito
+            const mcpBase = url.substring(0, url.lastIndexOf('/'));
+            const redirectUri = `${window.location.origin}/auth/callback`;
+
+            // Step 1: Dynamic Client Registration
+            let regRes: Response;
+            try {
+                regRes = await fetch(`${mcpBase}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                    body: JSON.stringify({
+                        client_name: 'tavro-portal',
+                        redirect_uris: [redirectUri],
+                        token_endpoint_auth_method: 'none',
+                    }),
+                });
+            } catch {
+                throw new Error(
+                    `Cannot reach MCP server at ${mcpBase}/register. ` +
+                    `Check that the server is running and has CORS enabled for this origin (${window.location.origin}).`
+                );
+            }
+            if (!regRes.ok) throw new Error(`Client registration failed: HTTP ${regRes.status}`);
+            const regData = await regRes.json();
+            const dcrClientId = regData.client_id;
+            if (!dcrClientId) throw new Error('No client_id returned from registration.');
+
+            // Step 2: Discover authorization endpoint
+            let authorizationEndpoint = `${mcpBase}/authorize`;
+            try {
+                const metaRes = await fetch(`${mcpBase}/.well-known/oauth-authorization-server`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' },
+                });
+                if (metaRes.ok) {
+                    const meta = await metaRes.json();
+                    if (meta.authorization_endpoint) authorizationEndpoint = meta.authorization_endpoint;
+                }
+            } catch { /* fall back to {mcpBase}/authorize */ }
+
+            // Step 3: Generate PKCE
+            const { verifier, challenge } = await generatePKCE();
+
+            // Step 4: Persist OAuth session state for the callback
+            localStorage.setItem('tavro_dcr_client_id', dcrClientId);
+            localStorage.setItem('tavro_pkce_verifier', verifier);
+            localStorage.setItem('tavro_auth_redirect_uri', redirectUri);
+            localStorage.setItem('tavro_auth_flow_origin', 'settings');
+            localStorage.removeItem('tavro_oidc_provider'); // must NOT be 'zitadel'
+
+            // Step 5: Redirect — user authenticates with the OAuth provider
+            const authUrl = new URL(authorizationEndpoint);
+            authUrl.searchParams.set('response_type', 'code');
+            authUrl.searchParams.set('client_id', dcrClientId);
+            authUrl.searchParams.set('redirect_uri', redirectUri);
+            authUrl.searchParams.set('code_challenge', challenge);
+            authUrl.searchParams.set('code_challenge_method', 'S256');
+
+            window.location.href = authUrl.toString();
+
+        } catch (err: any) {
+            setConnectionStatus('error');
+            setConnectionError(err.message || 'OAuth setup failed.');
+        }
     };
 
     const handleSaveProvider = (p: LLMProvider) => {
@@ -151,19 +216,6 @@ const Settings: React.FC = () => {
     const handleSetActive = (p: LLMProvider) => {
         setActiveProvider(p);
         setActiveProviderState(p);
-    };
-
-    const handleTestConnection = async () => {
-        setConnectionStatus('connecting');
-        setConnectionError(null);
-        try {
-            await mcpClient.disconnect();
-            await mcpClient.connect();
-            setConnectionStatus('connected');
-        } catch (err: any) {
-            setConnectionStatus('error');
-            setConnectionError(err.message || 'Failed to connect to MCP Server.');
-        }
     };
 
     const ThemeOption = ({ mode, label, icon }: { mode: 'light' | 'dark' | 'system'; label: string; icon: React.ReactNode }) => (
@@ -347,44 +399,33 @@ const Settings: React.FC = () => {
                                 type="text"
                                 value={mcpUrl}
                                 onChange={(e) => setMcpUrl(e.target.value)}
+                                placeholder="http://localhost:9001/mcp"
                                 className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all font-mono"
                             />
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                                Tenant ID
-                            </label>
-                            <input
-                                type="text"
-                                value={tenantId}
-                                onChange={(e) => setTenantId(e.target.value)}
-                                placeholder="Derived from token if empty"
-                                className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all font-mono"
-                            />
-                            <p className="text-[10px] text-slate-400">
-                                The MCP server typically derives the tenant ID from your authentication token. Manual override is used for testing multi-tenant environments.
-                            </p>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <button
-                                onClick={handleTestConnection}
-                                className="text-xs font-semibold text-blue-500 hover:text-blue-600 flex items-center gap-1"
-                            >
-                                {connectionStatus === 'connecting' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                                Test Connection
-                            </button>
+                        <div className="flex items-center justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
                             <button
                                 onClick={handleSaveSettings}
-                                className={`px-5 py-2 rounded-xl font-bold text-sm transition-all text-white shadow-lg shadow-blue-500/20 ${saved ? 'bg-emerald-500' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                disabled={connectionStatus === 'connecting'}
+                                className={`flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-sm transition-all text-white shadow-lg shadow-blue-500/20 disabled:cursor-not-allowed ${
+                                    connectionStatus === 'connected' && saved
+                                        ? 'bg-emerald-500'
+                                        : connectionStatus === 'error'
+                                        ? 'bg-rose-500 hover:bg-rose-600'
+                                        : 'bg-blue-600 hover:bg-blue-700'
+                                }`}
                             >
-                                {saved ? '✓ Saved' : 'Update Connection'}
+                                {connectionStatus === 'connecting' && <Loader2 size={14} className="animate-spin" />}
+                                {connectionStatus === 'connecting'
+                                    ? 'Redirecting...'
+                                    : connectionStatus === 'connected' && saved
+                                    ? '✓ Connected'
+                                    : connectionStatus === 'error'
+                                    ? '✗ Retry'
+                                    : 'Update Connection'}
                             </button>
                         </div>
-                        {connectionStatus === 'connected' && (
-                            <p className="text-[11px] font-bold text-emerald-500 uppercase tracking-widest">✓ Successfully Connected</p>
-                        )}
                         {connectionStatus === 'error' && (
                             <p className="text-[11px] font-bold text-rose-500 uppercase tracking-widest">✗ Connection Failed: {connectionError}</p>
                         )}
@@ -399,24 +440,8 @@ const Settings: React.FC = () => {
                     <span className="font-bold text-slate-800 dark:text-slate-100">Developer Settings</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
-                    {/* Inspect JSON Toggle */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Inspect JSON</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Enables raw JSON inspection on agent detail pages</p>
-                        </div>
-                        <button
-                            role="switch"
-                            aria-checked={inspectJson}
-                            onClick={() => setInspectJson(!inspectJson)}
-                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${inspectJson ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
-                        >
-                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${inspectJson ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
-
                     {/* Show Logs Toggle */}
-                    <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
+                    <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm font-bold text-slate-800 dark:text-slate-200 font-sans flex items-center gap-2">
                                 <Terminal size={14} className="text-blue-500" />
@@ -550,6 +575,25 @@ const Settings: React.FC = () => {
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* Appearance */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
+                <div className="p-5 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <CircleHelp size={16} className="text-blue-500" />
+                        <span className="font-bold text-slate-800 dark:text-white">Help</span>
+                    </div>
+                    <a
+                        href="https://www.tavro.ai/wp-content/uploads/2026/04/Tavro_2.1-Getting-Started-User-Guide.pdf"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
+                        title="Open guide in new tab"
+                    >
+                        <ExternalLink size={16} />
+                    </a>
                 </div>
             </div>
 

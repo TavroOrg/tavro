@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS core.agent_ai_use_cases (
+  tenant_id TEXT,
+  agent_id TEXT,
+  identifier TEXT,
+  name TEXT,
+  description TEXT,
+  proposed_by TEXT,
+  owner TEXT,
+  function TEXT,
+  problem_statement TEXT,
+  expected_benefits TEXT,
+  priority TEXT,
+  status TEXT,
+  created_ts timestamp,
+  updated_ts timestamp,
+  agent_internal_id TEXT,
+  agent_risk_exposure_are decimal(10, 2),
+  no_of_associated_agents int,
+  inherent_risk_classification TEXT,
+  residual_risk_classification TEXT,
+  agent_risk_tier_art TEXT,
+  blended_risk_score decimal(10, 2),
+  inherent_risk_classification_score decimal(10, 2),
+  residual_risk_classification_score decimal(10, 2),
+  solution_approach TEXT
+);
+

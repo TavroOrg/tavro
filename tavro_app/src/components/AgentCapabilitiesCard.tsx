@@ -11,7 +11,7 @@ import React from 'react';
 import { AgentData } from '../types/agent';
 import {
     Cpu, ShieldCheck, ServerCog, BookMarked, FileCode2,
-    BrainCircuit, Scale, Lock, Globe, ClipboardList
+    Bot, Scale, Lock, Globe, ClipboardList
 } from 'lucide-react';
 
 interface Props { agent: AgentData; }
@@ -136,7 +136,7 @@ const AgentCapabilitiesCard: React.FC<Props> = ({ agent }) => {
         const m = agent.memory!;
         sections.push(
             <div key="memory" className="flex flex-col gap-3">
-                <SHead icon={<BrainCircuit size={13} />} title="Memory Configuration" />
+                <SHead icon={<Bot size={13} />} title="Memory Configuration" />
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-2">
                     <KV label="Name" value={m.name} />
                     <KV label="Type" value={m.type} />

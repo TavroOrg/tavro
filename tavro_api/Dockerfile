@@ -1,15 +1,37 @@
 FROM python:3.12-slim
 
-# Add curl for healthcheck
-RUN apt-get update -qq && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
+    rm -rf /var/lib/apt/lists/*
 
+# Install Temporal CLI (used by the embedded worker)
+RUN curl -sSL https://temporal.download/cli.sh | bash
+ENV PATH="/root/.temporalio/bin:${PATH}"
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# ── Install Python dependencies ───────────────────────────────────────────────
+COPY tavro_api/requirements.txt /tmp/requirements.txt
+COPY tavro-python-stack/services/requirements.txt /tmp/requirements-risk.txt
+COPY tavro-python-stack/services/requirements-postgres.txt /tmp/requirements-postgres.txt
+COPY tavro-python-stack/dist/tavro_agent_card-0.1.1-py3-none-any.whl /tmp/
 
-COPY . .
+RUN pip install  \
+      -r /tmp/requirements.txt \
+      -r /tmp/requirements-risk.txt \
+      -r /tmp/requirements-postgres.txt && \
+    pip install /tmp/tavro_agent_card-0.1.1-py3-none-any.whl
+
+# ── Copy Digital Twin API source ─────────────────────────────────────────────
+COPY tavro_api/ /app/
+
+# ── Copy Risk stack source (keeps original import paths intact) ───────────────
+COPY tavro-python-stack/services     /app/services
+COPY tavro-python-stack/risk_agents  /app/risk_agents
+COPY tavro-python-stack/utils        /app/utils
+COPY tavro-python-stack/config.yaml.example /app/config.yaml.example
+
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 

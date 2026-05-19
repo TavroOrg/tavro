@@ -39,7 +39,7 @@ const CompliancePage: React.FC = () => {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 text-white p-2.5 rounded-xl shadow-sm">
+          <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-sm">
             <Scale size={20} />
           </div>
           <div>
@@ -59,7 +59,7 @@ const CompliancePage: React.FC = () => {
               <button key={t} onClick={() => setTypeFilter(t)}
                 className={`text-[11px] font-bold px-2.5 py-1.5 rounded-md transition-all capitalize ${
                   typeFilter === t
-                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 }`}>
                 {t === 'all' ? 'All' : ITEM_TYPE_META[t].label}
@@ -76,7 +76,7 @@ const CompliancePage: React.FC = () => {
           </div>
 
           <button onClick={refresh} disabled={loading}
-            className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50">
+            className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
@@ -88,7 +88,7 @@ const CompliancePage: React.FC = () => {
           </button>
           {activeCompany && (
             <button onClick={() => navigate('/compliance/new?type=policy')}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
+              className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg shadow-sm transition-colors">
               <FileText size={12} /> Add Policy
             </button>
           )}
@@ -120,7 +120,7 @@ const CompliancePage: React.FC = () => {
         {(typeFilter === 'all' || typeFilter === 'policy') && (
           <Section
             title="Policies & Guidelines"
-            icon={<FileText size={15} className="text-violet-600 dark:text-violet-400" />}
+            icon={<FileText size={15} className="text-blue-600 dark:text-blue-400" />}
             count={policies.length}
             loading={loading}
             items={policies}
@@ -197,7 +197,7 @@ const ComplianceCard: React.FC<{ item: ComplianceItem; onClick: () => void }> = 
         {item.short_name && (
           <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5">{item.short_name}</p>
         )}
-        <p className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors leading-snug">
+        <p className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-snug">
           {item.name}
         </p>
         {item.issuing_body && (
@@ -212,7 +212,7 @@ const ComplianceCard: React.FC<{ item: ComplianceItem; onClick: () => void }> = 
             <span className="text-rose-500 dark:text-rose-400 font-bold">{item.open_gaps} gaps</span>
           )}
         </div>
-        <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-indigo-500 transform group-hover:translate-x-0.5 transition-all" />
+        <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 transform group-hover:translate-x-0.5 transition-all" />
       </div>
     </div>
   );

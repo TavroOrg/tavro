@@ -4,6 +4,7 @@ import AgentHeader from './AgentHeader';
 import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
 import AgentImpact from './AgentImpact';
+import AgentRelatedTab from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
@@ -12,9 +13,15 @@ interface AgentViewProps {
     agent: AgentData;
 }
 
-type TabType = 'IDENTIFICATION' | 'CONFIG' | 'IMPACT' | 'LINEAGE' | 'RISK' | 'CONTEXT';
+type TabType =
+    | 'IDENTIFICATION'
+    | 'CONFIG'
+    | 'IMPACT'
+    | 'LINEAGE'
+    | 'RISK'
+    | 'CONTEXT';
 
-const TABS: { id: TabType; label: string }[] = [
+const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
     { id: 'CONFIG', label: 'Technical Configuration' },
     { id: 'IMPACT', label: 'Business Impact' },
@@ -42,7 +49,7 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
 
             {/* Tab Navigation */}
             <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide border-b border-slate-200">
-                {TABS.map(tab => (
+                {BASE_TABS.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
@@ -63,7 +70,11 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
                 {activeTab === 'CONFIG' && <AgentTechConfigTab agent={agent} />}
 
                 {activeTab === 'IMPACT' && (
-                    <div className="mt-4"><AgentImpact agent={agent} /></div>
+                    <div className="mt-4">
+                        <AgentImpact agent={agent} hideAssetSections>
+                            <AgentRelatedTab agent={agent} mode="all" embedded />
+                        </AgentImpact>
+                    </div>
                 )}
 
                 {activeTab === 'LINEAGE' && (

@@ -60,6 +60,22 @@ function defaultConfig(): PlaygroundConfig {
   };
 }
 
+function buildFallbackSystemPrompt(config: PlaygroundConfig): string {
+  const name = (config.agentName || 'Agent Prototype').trim();
+  return [
+    `You are ${name}, an AI agent prototype.`,
+    '',
+    'When the user asks what this agent does, provide a concise capability summary inferred from the agent name.',
+    'If details are uncertain, state assumptions clearly but still provide a best-effort description.',
+    'Suggested response structure:',
+    '1) Agent purpose (1-2 lines)',
+    '2) Typical tasks (3-5 bullets)',
+    '3) Inputs required',
+    '4) Outputs produced',
+    '5) Limitations / unknowns',
+  ].join('\n');
+}
+
 // ── Context shape ─────────────────────────────────────────────────────────────
 
 interface SessionSummary {
@@ -156,9 +172,13 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const startSession = useCallback(async () => {
     try {
-      const result = await apiPost<{ session_id: string }>('/session', {
+      const systemPromptToUse = config.systemPrompt.trim() || buildFallbackSystemPrompt(config);
+      const result = await apiPost<{
+        session_id: string;
+        azure_foundry_agent?: { enabled?: boolean; agent_name?: string | null };
+      }>('/session', {
         agent_name:     config.agentName,
-        system_prompt:  config.systemPrompt,
+        system_prompt:  systemPromptToUse,
         provider:       config.provider,
         model:          config.model,
         temperature:    config.temperature,
@@ -166,17 +186,20 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         tools:          config.tools,
         company_id:     config.companyId,
         company_name:   config.companyName,
-        use_case_id:    config.useCaseId,
-        use_case_title: config.useCaseTitle,
+        use_case_id:    config.useCaseId || config.agentName,
+        use_case_title: config.useCaseTitle || config.agentName,
       });
 
       setSessionId(result.session_id);
       setSessionActive(true);
       setSummary(null);
+      const azureAgentNote = result.azure_foundry_agent?.enabled && result.azure_foundry_agent.agent_name
+        ? ` · Foundry agent ${result.azure_foundry_agent.agent_name}`
+        : '';
       setMessages([{
         id:        'session-init',
         role:      'system',
-        content:   `Session started · ${config.provider} · ${config.model}`,
+        content:   `Session started · ${config.provider} · ${config.model}${azureAgentNote}`,
         timestamp: new Date(),
       }]);
     } catch (err: any) {

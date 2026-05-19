@@ -2,6 +2,10 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { UseCaseSummary } from '../types/useCase';
 import { mcpClient } from '../services/mcpClient';
 
+const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache';
+const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts';
+const USECASE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface UseCaseState {
@@ -26,25 +30,43 @@ const UseCaseContext = createContext<UseCaseState>({
 // ── Provider ─────────────────────────────────────────────────────────────────
 
 export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [useCases, setUseCases] = useState<UseCaseSummary[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [useCases, setUseCases] = useState<UseCaseSummary[]>(() => {
+        try {
+            const raw = sessionStorage.getItem(USECASE_CACHE_KEY);
+            return raw ? JSON.parse(raw) as UseCaseSummary[] : [];
+        } catch {
+            return [];
+        }
+    });
+    const [loading, setLoading] = useState(useCases.length === 0);
     const [error, setError] = useState<string | null>(null);
-    const [lastFetched, setLastFetched] = useState<Date | null>(null);
+    const [lastFetched, setLastFetched] = useState<Date | null>(() => {
+        const ts = sessionStorage.getItem(USECASE_CACHE_TS_KEY);
+        if (!ts) return null;
+        const num = Number(ts);
+        return Number.isFinite(num) ? new Date(num) : null;
+    });
 
     const fetchingRef = useRef(false);
 
     const fetchUseCases = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current) return;
+        // Allow explicit invalidation (refresh after create/update) to bypass the guard
+        if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
         setLoading(true);
         setError(null);
         if (invalidate) {
             mcpClient.invalidateCache();
+            sessionStorage.removeItem(USECASE_CACHE_KEY);
+            sessionStorage.removeItem(USECASE_CACHE_TS_KEY);
         }
         try {
             const data = await mcpClient.getAllUseCases();
             setUseCases(data);
-            setLastFetched(new Date());
+            const now = Date.now();
+            setLastFetched(new Date(now));
+            sessionStorage.setItem(USECASE_CACHE_KEY, JSON.stringify(data));
+            sessionStorage.setItem(USECASE_CACHE_TS_KEY, String(now));
         } catch (err: any) {
             setError(err.message ?? 'Failed to load AI Use Case catalog');
         } finally {
@@ -54,7 +76,10 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, []);
 
     useEffect(() => {
-        fetchUseCases(false);
+        const ts = sessionStorage.getItem(USECASE_CACHE_TS_KEY);
+        const ageMs = ts ? Date.now() - Number(ts) : Number.POSITIVE_INFINITY;
+        const shouldInvalidate = ageMs > USECASE_CACHE_MAX_AGE_MS;
+        fetchUseCases(shouldInvalidate);
     }, [fetchUseCases]);
 
     const refresh = useCallback(() => fetchUseCases(true), [fetchUseCases]);

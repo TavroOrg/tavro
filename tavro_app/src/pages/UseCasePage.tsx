@@ -1,59 +1,52 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
-import { UseCaseSummary } from '../types/useCase';
-import { mcpClient } from '../services/mcpClient';
 import { useUseCases } from '../context/UseCaseContext';
 import UseCaseCatalog from '../components/UseCaseCatalog';
-
-/** Server-enforced page size. */
-const PAGE_SIZE = 10;
-
+import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
+
+const PAGE_SIZE = 10;
 
 const UseCasePage: React.FC = () => {
     useChatSync('use_case_catalog', null);
-    // ── Paged fetch state ─────────────────────────────────────────────────────
-    const [pagedUseCases, setPagedUseCases] = useState<UseCaseSummary[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [page, setPage] = useState(1);
-    const [totalRecords, setTotalRecords] = useState<number | null>(null);
 
-    // ── Search across the full cached catalog ─────────────────────────────────
+    const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
-    const { useCases: allUseCases } = useUseCases();
+    const { useCases: allUseCases, loading, error, refresh } = useUseCases();
 
     const navigate = useNavigate();
+    const location = useLocation();
 
-    const hasMore = totalRecords !== null ? page * PAGE_SIZE < totalRecords : false;
-
-    const fetchPage = useCallback(async (pageNum: number) => {
-        setLoading(true);
-        setError(null);
-        try {
-            const startRecord = (pageNum - 1) * PAGE_SIZE + 1;
-            console.log(`[UseCasePage] Fetching page ${pageNum} (start_record=${startRecord})...`);
-            const { useCases: data, totalRecords: total } = await mcpClient.getUseCaseCatalogPage(startRecord);
-            setPagedUseCases(data);
-            setTotalRecords(total);
-        } catch (err: any) {
-            console.error('[UseCasePage] Error:', err);
-            setError(err.message || 'Failed to load AI Use Case catalog');
-        } finally {
-            setLoading(false);
+    useEffect(() => {
+        const incomingPage = Number((location.state as any)?.page);
+        if (Number.isFinite(incomingPage) && incomingPage > 0) {
+            setPage(incomingPage);
+            navigate(location.pathname, { replace: true, state: null });
         }
-    }, []);
+    }, [location.pathname, location.state, navigate]);
 
-    useEffect(() => { fetchPage(page); }, [page, fetchPage]);
+    const totalPages = Math.max(1, Math.ceil(allUseCases.length / PAGE_SIZE));
+    const hasMore = page < totalPages;
 
-    // When the user clears the search, reset to page 1
-    useEffect(() => { if (!searchTerm) setPage(1); }, [searchTerm]);
+    useEffect(() => {
+        if (!searchTerm) setPage(1);
+    }, [searchTerm]);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
 
     const handlePrev = () => { if (page > 1) setPage(p => p - 1); };
     const handleNext = () => { if (hasMore) setPage(p => p + 1); };
 
     const isSearching = searchTerm.trim().length > 0;
+
+    const pagedUseCases = useMemo(() => {
+        const start = (page - 1) * PAGE_SIZE;
+        return allUseCases.slice(start, start + PAGE_SIZE);
+    }, [allUseCases, page]);
+
     const displayedUseCases = isSearching
         ? allUseCases.filter(uc =>
             uc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -66,8 +59,8 @@ const UseCasePage: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
+            <TimedInfoToast storageKey="tavro_use_case_notice" />
 
-            {/* Header + pagination */}
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-slate-800">AI Use Case Catalog</h2>
@@ -75,8 +68,8 @@ const UseCasePage: React.FC = () => {
                         {isSearching
                             ? `${displayedUseCases.length} result${displayedUseCases.length !== 1 ? 's' : ''} for "${searchTerm}" across all ${allUseCases.length} use cases`
                             : loading && pagedUseCases.length === 0
-                                ? 'Loading…'
-                                : `Page ${page}${totalRecords !== null ? ` of ${Math.ceil(totalRecords / PAGE_SIZE)}` : ''} · ${pagedUseCases.length} use cases · ${allUseCases.length || totalRecords || 0} total`
+                                ? 'Loading...'
+                                : `Page ${page} of ${totalPages} - ${pagedUseCases.length} use cases of ${allUseCases.length} total`
                         }
                     </p>
                 </div>
@@ -110,7 +103,6 @@ const UseCasePage: React.FC = () => {
                 )}
             </div>
 
-            {/* Error */}
             {!loading && error && (
                 <div className="flex flex-col justify-center items-center min-h-[40vh] gap-4">
                     <div className="flex items-start gap-3 text-red-500 bg-red-50 border border-red-200 rounded-xl px-6 py-4 max-w-lg">
@@ -121,7 +113,7 @@ const UseCasePage: React.FC = () => {
                         </div>
                     </div>
                     <button
-                        onClick={() => fetchPage(page)}
+                        onClick={refresh}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-all"
                     >
                         <RefreshCw size={14} /> Retry
@@ -129,16 +121,15 @@ const UseCasePage: React.FC = () => {
                 </div>
             )}
 
-            {/* Catalog grid */}
             {!error && (
                 <UseCaseCatalog
                     useCases={displayedUseCases}
                     searchTerm={searchTerm}
                     onSearchChange={setSearchTerm}
+                    currentPage={page}
                 />
             )}
 
-            {/* Bottom pagination — hidden during search */}
             {!isSearching && !loading && !error && pagedUseCases.length > 0 && (
                 <div className="flex justify-center items-center gap-2 pb-4">
                     <button onClick={handlePrev} disabled={page === 1}

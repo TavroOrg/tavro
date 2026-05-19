@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-    ActivitySquare, Library, Layers, Settings,
-    LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
-    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck
+    Home, Bot, Workflow, BarChart2, Settings,
+    LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
+    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
+    AppWindow, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -11,7 +12,9 @@ import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
-import { Network } from 'lucide-react';
+import { clearAllSessions } from '../store/chatSessionStore';
+
+import travoLogo from '../assets/travo_logo.png';
 
 type ActivePanel = 'chat' | 'devlog' | null;
 
@@ -126,17 +129,41 @@ const Layout: React.FC = () => {
 
     // ── Auth ─────────────────────────────────────────────────────────────────
     const handleLogout = () => {
+        const idToken = localStorage.getItem('tavro_id_token');
+        const issuer = localStorage.getItem('tavro_oidc_issuer') || import.meta.env.VITE_ZITADEL_ISSUER?.replace(/\/$/, '');
+        const postLogoutRedirectUri = `${window.location.origin}/login`;
+
         [
             'tavro_auth', 'tavro_access_token', 'tavro_id_token', 'tavro_raw_access_token',
-            'tavro_mcp_refresh_token', 'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id'
+            'tavro_mcp_refresh_token', 'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
+            'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
+            'tavro_oidc_state'
         ].forEach(k => localStorage.removeItem(k));
-        // Reset the MCP client session so the next login starts fresh
+        // Clear persisted chat sessions and reset MCP client
+        clearAllSessions();
         mcpClient.disconnect();
+
+        if (issuer && idToken) {
+            const logoutUrl = new URL(`${issuer}/oidc/v1/end_session`);
+            logoutUrl.searchParams.set('id_token_hint', idToken);
+            logoutUrl.searchParams.set('post_logout_redirect_uri', postLogoutRedirectUri);
+            window.location.href = logoutUrl.toString();
+            return;
+        }
+
         navigate('/login');
     };
 
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+
+    useEffect(() => {
+        const rightRailWidth = isPanelOpen ? panelWidth : 72;
+        document.documentElement.style.setProperty('--tavro-right-rail-width', `${rightRailWidth}px`);
+        return () => {
+            document.documentElement.style.setProperty('--tavro-right-rail-width', '72px');
+        };
+    }, [isPanelOpen, panelWidth]);
 
     return (
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
@@ -147,14 +174,14 @@ const Layout: React.FC = () => {
                     <div className="flex flex-col">
                         {/* Logo */}
                         <div
-                            className={`flex items-center ${isLeftPanelOpen ? 'px-6' : 'px-0 justify-center'} py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
+                            className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
                             onClick={() => navigate('/')}
                         >
-                            <div className="bg-blue-600 text-white p-2 rounded-lg shadow-sm flex-shrink-0">
-                                <Layers size={22} />
+                            <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
+                                <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
                             </div>
                             <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
-                                Agent <span className="text-blue-600">BizOps</span>
+                                Tavro Agent <span className="text-blue-600">BizOps</span>
                             </span>
                         </div>
 
@@ -167,25 +194,10 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Home" : undefined}
                             >
-                                <ActivitySquare size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Home size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Home</span>
                             </button>
-                            <button
-                                onClick={() => navigate('/blueprint')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Company Blueprint" : undefined}
-                            >
-                                <Network
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint')
-                                        ? 'text-blue-600 dark:text-blue-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Blueprint</span>
-                            </button>
+
                             <button
                                 onClick={() => navigate('/use-cases')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
@@ -204,61 +216,30 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Agents" : undefined}
                             >
-                                <Library size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Bot size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
                             </button>
 
                             <button
-                                onClick={() => navigate('/compliance')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
-                                    } ${location.pathname.startsWith('/compliance')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
-                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Compliance" : undefined}
+                                onClick={() => navigate('/applications')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Applications" : undefined}
                             >
-                                <Scale
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
-                                    }`}>Compliance</span>
+                                <AppWindow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
                             </button>
+
                             <button
-                                onClick={() => navigate('/audit')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
-                                    } ${location.pathname.startsWith('/audit')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
-                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Audit Center" : undefined}
+                                onClick={() => navigate('/processes')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Processes" : undefined}
                             >
-                                <ShieldCheck
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
-                                    }`}>Audit Center</span>
-                            </button>
-                            <button
-                                onClick={() => navigate('/playground')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
-                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Agent Playground" : undefined}
-                            >
-                                <FlaskConical
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/playground')
-                                        ? 'text-violet-600 dark:text-violet-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
+                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-700 dark:text-blue-300' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
                             </button>
 
                             <button
@@ -268,10 +249,77 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Insights" : undefined}
                             >
-                                <Zap size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <BarChart2 size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Insights</span>
                             </button>
-
+                            <button
+                                onClick={() => navigate('/blueprint')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Company Blueprint" : undefined}
+                            >
+                                <Network
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint')
+                                        ? 'text-blue-600 dark:text-blue-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Blueprint</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/compliance')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
+                                    } ${location.pathname.startsWith('/compliance')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Compliance" : undefined}
+                            >
+                                <Scale
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
+                                        ? 'text-blue-600 dark:text-blue-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
+                                    }`}>Compliance</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/audit')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
+                                    } ${location.pathname.startsWith('/audit')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Audit Center" : undefined}
+                            >
+                                <ShieldCheck
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
+                                        ? 'text-blue-600 dark:text-blue-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
+                                    }`}>Audit Center</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/playground')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                                    }`}
+                                title={!isLeftPanelOpen ? "Agent Playground" : undefined}
+                            >
+                                <FlaskConical
+                                    size={18}
+                                    className={`flex-shrink-0 ${location.pathname.startsWith('/playground')
+                                        ? 'text-blue-600 dark:text-blue-400'
+                                        : 'text-slate-400 dark:text-slate-500'}`}
+                                />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
+                            </button>
                         </div>
                         {/* Catalog Sync Widget */}
                         <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
@@ -320,23 +368,23 @@ const Layout: React.FC = () => {
                     </div>
 
                     {/* Bottom Actions */}
-                    <div className={`flex flex-col gap-1 border-t border-slate-100 bg-slate-50/50 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
                         <button
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
                                 ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                : 'bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'}`}
                             title={!isLeftPanelOpen ? "Settings" : undefined}
                         >
-                            <Settings size={18} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                            <Settings size={18} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-300'}`} />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Settings</span>
                         </button>
                         <button
                             onClick={handleLogout}
-                            className={`flex items-center py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-all w-full mt-2 group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
+                            className={`flex items-center py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full mt-2 group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
                             title={!isLeftPanelOpen ? "Sign Out" : undefined}
                         >
-                            <LogOut size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-500 group-hover:text-red-500 transition-colors" />
+                            <LogOut size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Sign Out</span>
                         </button>
                     </div>
@@ -414,21 +462,23 @@ const Layout: React.FC = () => {
                 style={{ width: isPanelOpen ? `${panelWidth}px` : '72px' }}
             >
                 {!isPanelOpen ? (
-                    <div className="flex flex-col items-center py-6 gap-4 w-full h-full">
+                    <div className="flex flex-col items-center py-6 gap-3 w-full h-full">
                         <button
                             onClick={() => setActivePanel('chat')}
-                            className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                            className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                             title="AI Assistant"
                         >
-                            <MessageCircle size={22} />
+                            <MessageCircle size={26} />
+                            <span className="text-[9px] font-semibold leading-none">Chat</span>
                         </button>
                         {showLogs && (
                             <button
                                 onClick={() => setActivePanel('devlog')}
-                                className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                                className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                                 title="Dev Logs"
                             >
-                                <Terminal size={22} />
+                                <Terminal size={26} />
+                                <span className="text-[9px] font-semibold leading-none">Logs</span>
                             </button>
                         )}
                     </div>
@@ -510,3 +560,4 @@ const Layout: React.FC = () => {
 };
 
 export default Layout;
+

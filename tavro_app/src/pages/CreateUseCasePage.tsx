@@ -1,15 +1,24 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { mcpClient } from '../services/mcpClient';
-import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
+import { useCaseApi } from '../services/useCaseApi';
 
-const PRIORITIES = ['High', 'Medium', 'Low'];
+const PRIORITIES = [
+    '1 - Critical',
+    '2 - High',
+    '3 - Moderate',
+    '4 - Low',
+    '5 - Planning',
+];
 const STATUSES = ['Proposed', 'In Review', 'Active', 'Deprecated'];
 
 const CreateUseCasePage: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { refresh } = useUseCases();
+    const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
 
     const [form, setForm] = useState({
         name: '',
@@ -19,7 +28,7 @@ const CreateUseCasePage: React.FC = () => {
         function: '',
         problem_statement: '',
         expected_benefits: '',
-        priority: 'Medium',
+        priority: '3 - Moderate',
         status: 'Proposed',
     });
     const [saving, setSaving] = useState(false);
@@ -34,11 +43,34 @@ const CreateUseCasePage: React.FC = () => {
         if (!form.name.trim()) return;
         setSaving(true);
         setError(null);
+        // Ensure live mode before write call so connect() establishes a real MCP session.
+        localStorage.setItem('tavro_cache_mode', 'false');
+        window.dispatchEvent(new Event('tavro_settings_change'));
         try {
-            await mcpClient.createAiUseCase(form);
+            const created = await mcpClient.createAiUseCase({
+                title: form.name.trim(),
+                description: form.description.trim(),
+                business_problem_statement: form.problem_statement.trim(),
+                expected_benefits: form.expected_benefits.trim(),
+                priority: form.priority,
+                ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
+            });
+            if (linkAgentId && created?.use_case_id) {
+                await useCaseApi.linkAgent(created.use_case_id, linkAgentId);
+            }
             setSuccess(true);
-            refresh(); // refresh context immediately
+            sessionStorage.setItem(
+                'tavro_use_case_notice',
+                linkAgentId
+                    ? 'AI Use Case created and linked to agent successfully.'
+                    : 'AI Use Case created successfully. It will appear in the catalog shortly.'
+            );
+            refresh();
             setTimeout(() => {
+                if (linkAgentId) {
+                    navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                    return;
+                }
                 navigate('/use-cases');
             }, 1200);
         } catch (err: any) {
@@ -48,9 +80,9 @@ const CreateUseCasePage: React.FC = () => {
         }
     };
 
-    const inputCls = 'w-full text-sm border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all bg-white placeholder:text-slate-400';
-    const selectCls = 'w-full text-sm border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all bg-white';
-    const labelCls = 'block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5';
+    const inputCls = 'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500';
+    const selectCls = 'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100';
+    const labelCls = 'block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1.5';
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-3xl mx-auto pb-12">
@@ -58,22 +90,32 @@ const CreateUseCasePage: React.FC = () => {
             {/* Top bar */}
             <div className="flex items-center justify-between">
                 <button
-                    onClick={() => navigate('/use-cases')}
-                    className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-all bg-transparent border-none cursor-pointer"
+                    onClick={() => {
+                        if (linkAgentId) {
+                            navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                            return;
+                        }
+                        navigate('/use-cases');
+                    }}
+                    className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
                 >
-                    <ArrowLeft size={16} /> Back to Use Cases
+                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : 'Back to Use Cases'}
                 </button>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm overflow-hidden border border-slate-200 dark:border-slate-800">
                 {/* Header */}
-                <div className="flex items-center gap-3 px-8 py-6 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white">
+                <div className="flex items-center gap-3 px-8 py-6 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-50 to-white dark:from-slate-900 dark:to-slate-800">
                     <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl">
                         <Lightbulb size={24} />
                     </div>
                     <div>
-                        <h2 className="text-xl font-bold text-slate-800 tracking-tight">Create AI Use Case</h2>
-                        <p className="text-sm text-slate-500 mt-0.5">Register a new AI use case in the Agent Biz Ops catalog</p>
+                        <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Create AI Use Case</h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                            {linkAgentId
+                                ? 'Register a new AI use case and link it to this agent'
+                                : 'Register a new AI use case in the Agent Biz Ops catalog'}
+                        </p>
                     </div>
                 </div>
 
@@ -96,9 +138,10 @@ const CreateUseCasePage: React.FC = () => {
 
                         {/* Description */}
                         <div>
-                            <label className={labelCls}>Description</label>
+                            <label className={labelCls}>Description <span className="text-red-500">*</span></label>
                             <textarea
                                 rows={3}
+                                required
                                 value={form.description}
                                 onChange={e => set('description', e.target.value)}
                                 placeholder="Brief overview of what this AI use case does…"
@@ -145,8 +188,8 @@ const CreateUseCasePage: React.FC = () => {
                                         type="button"
                                         onClick={() => set('status', s)}
                                         className={`px-5 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${form.status === s
-                                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                            : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
+                                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
                                             }`}
                                     >
                                         {s}
@@ -181,7 +224,7 @@ const CreateUseCasePage: React.FC = () => {
 
                         {/* Error */}
                         {error && (
-                            <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+                            <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl px-4 py-3 text-sm">
                                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                                 <span>{error}</span>
                             </div>
@@ -189,18 +232,24 @@ const CreateUseCasePage: React.FC = () => {
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-slate-50">
-                        <button type="button" onClick={() => navigate('/use-cases')}
-                            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-all">
+                    <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                        <button type="button" onClick={() => {
+                            if (linkAgentId) {
+                                navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                                return;
+                            }
+                            navigate('/use-cases');
+                        }}
+                            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">
                             Cancel
                         </button>
                         <button
                             type="submit"
-                            disabled={saving || !form.name.trim() || success}
+                            disabled={saving || !form.name.trim() || !form.description.trim() || success}
                             className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'
                                 }`}
                         >
-                            {saving ? <Loader2 size={16} className="animate-spin" /> : success ? <CheckCircle2 size={16} /> : <Lightbulb size={16} />}
+                            {saving ? <Loader2 size={16} className="animate-spin" /> : success ? <CheckCircle2 size={16} /> : <ClipboardList size={16} />}
                             {saving ? 'Creating…' : success ? 'Created!' : 'Create Use Case'}
                         </button>
                     </div>
@@ -211,3 +260,6 @@ const CreateUseCasePage: React.FC = () => {
 };
 
 export default CreateUseCasePage;
+
+
+

@@ -219,15 +219,15 @@ const AuditInitModal: React.FC<Props> = ({
                   disabled={!opt.enabled}
                   className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
                     scopeType === opt.value && opt.enabled
-                      ? 'border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 shadow-sm'
+                      ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20 shadow-sm'
                       : opt.enabled
-                      ? 'border-slate-200 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-indigo-700 bg-white dark:bg-slate-800/50'
+                      ? 'border-slate-200 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 bg-white dark:bg-slate-800/50'
                       : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/20 opacity-40 cursor-not-allowed'
                   }`}
                 >
                   <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
                     scopeType === opt.value && opt.enabled
-                      ? 'border-indigo-500 bg-indigo-500'
+                      ? 'border-blue-500 bg-blue-500'
                       : 'border-slate-300 dark:border-slate-600'
                   }`}>
                     {scopeType === opt.value && opt.enabled && (
@@ -237,7 +237,7 @@ const AuditInitModal: React.FC<Props> = ({
                   <div className="flex-1">
                     <p className={`text-sm font-semibold ${
                       scopeType === opt.value && opt.enabled
-                        ? 'text-indigo-700 dark:text-indigo-300'
+                        ? 'text-blue-700 dark:text-blue-300'
                         : 'text-slate-700 dark:text-slate-200'
                     }`}>{opt.label}</p>
                   </div>
@@ -272,7 +272,7 @@ const AuditInitModal: React.FC<Props> = ({
           <button
             onClick={handleSubmit}
             disabled={submitting || !activeCompany || loading}
-            className="flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 px-5 py-2.5 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500 px-5 py-2.5 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {submitting
               ? <><Loader2 size={14} className="animate-spin" /> Launching…</>
