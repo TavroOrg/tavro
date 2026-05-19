@@ -4,10 +4,11 @@ import {
     ActivitySquare, Library, Layers, Settings,
     LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness
+    AppWindow, BriefcaseBusiness, Paperclip
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
+import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
@@ -15,7 +16,12 @@ import { mcpClient } from '../services/mcpClient';
 import { Network } from 'lucide-react';
 import travoLogo from '../assets/travo_logo.png';
 
-type ActivePanel = 'chat' | 'devlog' | null;
+type ActivePanel = 'chat' | 'devlog' | 'attachment' | null;
+
+/** Check if current route is an agent view page */
+function isAgentPage(pathname: string): boolean {
+    return /^\/agent\//.test(pathname);
+}
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
@@ -154,6 +160,7 @@ const Layout: React.FC = () => {
 
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+    const isOnAgentPage = isAgentPage(location.pathname);
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -477,6 +484,15 @@ const Layout: React.FC = () => {
                                 <Terminal size={22} />
                             </button>
                         )}
+                        {isOnAgentPage && (
+                            <button
+                                onClick={() => setActivePanel('attachment')}
+                                className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
+                                title="Attachments"
+                            >
+                                <Paperclip size={22} />
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="flex h-full w-full">
@@ -523,11 +539,24 @@ const Layout: React.FC = () => {
                                     <button
                                         onClick={() => setActivePanel('devlog')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'devlog'
-                                            ? 'border-blue-500 text-blue-600 bg-white'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+                                            ? 'border-blue-500 text-blue-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                                     >
                                         <Terminal size={14} />
                                         Dev Logs
+                                    </button>
+                                )}
+
+                                {/* Attachment tab — show only on agent pages */}
+                                {isOnAgentPage && (
+                                    <button
+                                        onClick={() => setActivePanel('attachment')}
+                                        className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
+                                            ? 'border-amber-500 text-amber-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                                    >
+                                        <Paperclip size={14} />
+                                        Attachments
                                     </button>
                                 )}
 
@@ -546,6 +575,7 @@ const Layout: React.FC = () => {
                             <div className="flex-1 overflow-hidden">
                                 {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
+                                {activePanel === 'attachment' && isOnAgentPage && <AttachmentPanel />}
                             </div>
                         </div>
                     </div>
