@@ -276,7 +276,7 @@ const AgentViewPage: React.FC = () => {
     const prettyJson = JSON.stringify(agent, null, 2);
 
     return (
-        <div className="flex-col gap-6 w-full animate-fade-in pb-12 relative">
+        <div className="flex-col gap-6 w-full animate-fade-in relative">
             {/* Top bar */}
             <div className="flex items-center justify-between mb-2">
                 <button
