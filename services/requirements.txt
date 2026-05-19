@@ -8,7 +8,6 @@ uvicorn
 google-auth
 PyJWT
 temporalio
-cvss
 rapidfuzz
 python-jose[cryptography]
 PyYAML

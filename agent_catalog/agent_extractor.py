@@ -16,8 +16,8 @@ set_environment('databases')
 set_environment('postgres')
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
-    CORE_GLUE_DB_NAME=os.getenv("CORE_GLUE_DB_NAME")
-    CURATED_GLUE_DB_NAME=os.getenv("CURATED_GLUE_DB_NAME")
+    CORE_DB_NAME=os.getenv("CORE_DB_NAME")
+    CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
     RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME"))
 
     @staticmethod
@@ -95,7 +95,7 @@ class AgentMetadataExporter:
         # ---------- 3. Query ----------
         query = f"""
         SELECT agent_id, agent_name
-        FROM {cls.CORE_GLUE_DB_NAME}.agents
+        FROM {cls.CORE_DB_NAME}.agents
         WHERE (
             lower(agent_name) LIKE %s
             OR lower(agent_name) LIKE %s
@@ -251,7 +251,7 @@ class AgentMetadataExporter:
             # ---------- 5. Existence check ----------
             check_query = f"""
             SELECT 1
-            FROM {cls.CORE_GLUE_DB_NAME}.agents
+            FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = %s
             {tenant_where}
             LIMIT 1
@@ -282,10 +282,10 @@ class AgentMetadataExporter:
                         f"""
                         SELECT a.agent_name, a.agent_description,
                                i.instruction, i.governance_status, i.role
-                        FROM {cls.CORE_GLUE_DB_NAME}.agents a
+                        FROM {cls.CORE_DB_NAME}.agents a
                         LEFT JOIN LATERAL (
                             SELECT instruction, governance_status, role
-                            FROM {cls.CORE_GLUE_DB_NAME}.agent_identifications
+                            FROM {cls.CORE_DB_NAME}.agent_identifications
                             WHERE agent_id = a.agent_id
                               AND COALESCE(is_current, true) = true
                             ORDER BY is_current DESC NULLS LAST,
@@ -331,7 +331,7 @@ class AgentMetadataExporter:
                             u.status,
                             u.updated_ts,
                             u.created_ts
-                        FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases u
+                        FROM {cls.CORE_DB_NAME}.agent_ai_use_cases u
                         WHERE u.agent_id = %s
                         ORDER BY u.identifier, u.updated_ts DESC NULLS LAST, u.created_ts DESC NULLS LAST
                         """,
@@ -442,7 +442,7 @@ class AgentMetadataExporter:
                     *,
                     ROW_NUMBER() OVER () AS rn,
                     COUNT(*) OVER () AS total_records
-                FROM {cls.CURATED_GLUE_DB_NAME}.agent_360
+                FROM {cls.CURATED_DB_NAME}.agent_360
                 {where_clause}
             ) AS catalog_page
             WHERE rn BETWEEN {start} AND {end}
@@ -566,8 +566,8 @@ class AgentMetadataExporter:
                 a.agent_description,
                 a.source_system,
                 i.instruction
-            FROM {cls.CORE_GLUE_DB_NAME}.agents a
-            LEFT JOIN {cls.CORE_GLUE_DB_NAME}.agent_identifications i
+            FROM {cls.CORE_DB_NAME}.agents a
+            LEFT JOIN {cls.CORE_DB_NAME}.agent_identifications i
                 ON a.agent_internal_id = i.agent_internal_id
                 AND a.agent_id = i.agent_id
                 AND i.is_current = true
@@ -645,7 +645,7 @@ class AgentMetadataExporter:
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
         tenant_id_column = "tenant_id," if tenant_id else ""
         queries.append(f"""
-        INSERT INTO {cls.CORE_GLUE_DB_NAME}.agents (
+        INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
             agent_internal_id,
             agent_id,
@@ -669,7 +669,7 @@ class AgentMetadataExporter:
 
         # 2. agent_identifications
         queries.append(f"""
-        INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_identifications (
+        INSERT INTO {cls.CORE_DB_NAME}.agent_identifications (
             {tenant_id_column}
             agent_internal_id,
             agent_id,
@@ -727,7 +727,7 @@ class AgentMetadataExporter:
                 """)
 
             tools_query = f"""
-            INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_tools (
+            INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
                 {tenant_id_column}
                 agent_internal_id,
                 tool_id,
@@ -747,7 +747,7 @@ class AgentMetadataExporter:
             ks_name = cls.sanitize(knowledge_source.get("name"))
             ks_desc = cls.sanitize(knowledge_source.get("description"))
             queries.append(f"""
-            INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources (
+            INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources (
                 {tenant_id_column}
                 agent_internal_id,
                 agent_id,
@@ -770,7 +770,7 @@ class AgentMetadataExporter:
         # 5. data source insert (only if tools exist)
         if data_source_values:
             queries.append(f"""
-            INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_data_sources (
+            INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
                 {tenant_id_column}
                 agent_internal_id,
                 agent_id,
@@ -921,7 +921,7 @@ class AgentMetadataExporter:
         if tenant_id and str(tenant_id).strip():
             tenant_id_clean = cls.sanitize(str(tenant_id).strip())
         query = f"""
-        INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases (
+        INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
             tenant_id,
             identifier,
             name,
@@ -1063,11 +1063,11 @@ class AgentMetadataExporter:
                                     rel.agent_id AS agent_id,
                                     ag.agent_name AS agent_name,
                                     ai.environment AS environment
-                                FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases rel
-                                LEFT JOIN {cls.CORE_GLUE_DB_NAME}.agents ag
+                                FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                                LEFT JOIN {cls.CORE_DB_NAME}.agents ag
                                     ON ag.agent_id = rel.agent_id
                                    AND ag.is_current = true
-                                LEFT JOIN {cls.CORE_GLUE_DB_NAME}.agent_identifications ai
+                                LEFT JOIN {cls.CORE_DB_NAME}.agent_identifications ai
                                     ON ai.agent_internal_id = rel.agent_internal_id
                                    AND COALESCE(ai.is_current, true) = true
                                 WHERE rel.identifier = u.identifier
@@ -1077,7 +1077,7 @@ class AgentMetadataExporter:
                         ),
                         '[]'::json
                     ) AS of_associated_agents
-                FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases u
+                FROM {cls.CORE_DB_NAME}.agent_ai_use_cases u
                 {where_sql}
                 ORDER BY u.updated_ts DESC NULLS LAST, u.created_ts DESC
                 LIMIT 1
@@ -1139,7 +1139,7 @@ class AgentMetadataExporter:
                     created_ts,
                     ROW_NUMBER() OVER (ORDER BY created_ts DESC) AS rn,
                     COUNT(*) OVER () AS total_records
-                FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+                FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
                 {where_sql}
             ) AS use_case_page
             WHERE rn BETWEEN {start} AND {end}
@@ -1217,14 +1217,14 @@ class AgentMetadataExporter:
 
         # 2. Check for existing relationship (Prevent duplicate rows)
         tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
-        check_q = f"SELECT 1 FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}' AND agent_id = '{agent_catalog_id}' {tenant_where} LIMIT 1"
+        check_q = f"SELECT 1 FROM {cls.CORE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}' AND agent_id = '{agent_catalog_id}' {tenant_where} LIMIT 1"
         is_duplicate = len(cls.execute_select(check_q)) > 0
 
         # 3. Fetch Target Agent Details
         # Use COALESCE(is_current, true) so imported agents with NULL is_current are included.
         agent_q = f"""
             SELECT agent_id, agent_internal_id
-            FROM {cls.CORE_GLUE_DB_NAME}.agents
+            FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = '{agent_catalog_id}'
               AND COALESCE(is_current, true) = true
             LIMIT 1
@@ -1233,7 +1233,7 @@ class AgentMetadataExporter:
         # Fall back to curated.agent_360 for externally-imported agents not in core.agents
         if not agent_res:
             agent_res = cls.execute_select(
-                f"SELECT agent_id, agent_internal_id FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
+                f"SELECT agent_id, agent_internal_id FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
             )
         if not agent_res:
             raise ValueError(f"Agent {agent_catalog_id} not found.")
@@ -1242,22 +1242,22 @@ class AgentMetadataExporter:
         # 4. Metrics & Metadata: Calculate current family stats + the target agent
         metrics_q = f"""
             WITH current_agents AS (
-                SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}'  {tenant_where}
+                SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}'  {tenant_where}
                 UNION
                 SELECT '{target_internal_id}'
             ),
             risk_metrics AS (
                 SELECT 
                     MAX(blended_risk_score) as max_score,
-                    (SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                    (SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agent_risk_assessments
                      WHERE agent_internal_id IN (SELECT agent_internal_id FROM current_agents)
                      ORDER BY blended_risk_score DESC LIMIT 1) as worst_agent_id,
                     (SELECT COUNT(DISTINCT agent_internal_id) FROM current_agents) as total_agents
-                FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
                 WHERE agent_internal_id IN (SELECT agent_internal_id FROM current_agents)
                 AND is_current = true
             )
-            SELECT m.*, uc.* FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases uc, risk_metrics m
+            SELECT m.*, uc.* FROM {cls.CORE_DB_NAME}.agent_ai_use_cases uc, risk_metrics m
             WHERE uc.identifier = '{ai_use_case_id}' {tenant_where} LIMIT 1
         """
         metrics_res = cls.execute_select(metrics_q)
@@ -1289,10 +1289,10 @@ class AgentMetadataExporter:
         if not is_duplicate:
             is_placeholder = not data.get("agent_id") or data.get("agent_id").strip() == ""
             if is_placeholder:
-                action_q = f"UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases SET agent_id = '{agent_catalog_id}', agent_internal_id = '{target_internal_id}', updated_ts = TIMESTAMP '{now}' WHERE identifier = '{ai_use_case_id}'"
+                action_q = f"UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases SET agent_id = '{agent_catalog_id}', agent_internal_id = '{target_internal_id}', updated_ts = TIMESTAMP '{now}' WHERE identifier = '{ai_use_case_id}'"
             else:
                 action_q = f"""
-                    INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases (
+                    INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
                         agent_id, agent_internal_id, identifier, name, description, proposed_by, owner, 
                         function, problem_statement, expected_benefits, priority, status, 
                         created_ts, updated_ts, solution_approach
@@ -1312,7 +1312,7 @@ class AgentMetadataExporter:
 
         # 8. Step Two: GLOBAL SYNC (Updates all siblings to match aggregate data)
         sync_q = f"""
-            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
             SET agent_risk_exposure_are = {blended_score}, blended_risk_score = {blended_score},
                 no_of_associated_agents = {total_associated}, inherent_risk_classification = '{inherent_class}',
                 residual_risk_classification = '{residual_class}', inherent_risk_classification_score = {inherent_score},
@@ -1346,7 +1346,7 @@ class AgentMetadataExporter:
 
         rows_q = f"""
             SELECT *
-            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
             WHERE identifier = '{ai_use_case_id}' {tenant_where}
         """
         all_rows = cls.execute_select(rows_q)
@@ -1361,7 +1361,7 @@ class AgentMetadataExporter:
 
         if len(linked_rows) == 1 and (linked_rows[0].get("agent_id") or "").strip() == agent_catalog_id:
             clear_q = f"""
-                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+                UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
                 SET
                     agent_id = NULL,
                     agent_internal_id = NULL,
@@ -1382,7 +1382,7 @@ class AgentMetadataExporter:
             return {"message": "Relationship removed", "associated_count": 0}
 
         delete_q = f"""
-            DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            DELETE FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
             WHERE identifier = '{ai_use_case_id}'
               AND agent_id = '{agent_catalog_id}'
               {tenant_where}
@@ -1391,7 +1391,7 @@ class AgentMetadataExporter:
 
         remaining_agents_q = f"""
             SELECT DISTINCT agent_internal_id
-            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
             WHERE identifier = '{ai_use_case_id}'
               AND COALESCE(agent_internal_id, '') <> ''
               {tenant_where}
@@ -1402,7 +1402,7 @@ class AgentMetadataExporter:
 
         if associated_count == 0:
             reset_q = f"""
-                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+                UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
                 SET
                     agent_risk_exposure_are = 0,
                     blended_risk_score = 0,
@@ -1425,12 +1425,12 @@ class AgentMetadataExporter:
                     MAX(blended_risk_score) AS max_score,
                     (
                         SELECT agent_internal_id
-                        FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                        FROM {cls.CORE_DB_NAME}.agent_risk_assessments
                         WHERE agent_internal_id IN ({ids_sql})
                         ORDER BY blended_risk_score DESC
                         LIMIT 1
                     ) AS worst_agent_id
-                FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
                 WHERE agent_internal_id IN ({ids_sql})
                   AND is_current = true
             )
@@ -1460,7 +1460,7 @@ class AgentMetadataExporter:
         risk_tier = cls._get_risk_tier(blended_score)
 
         sync_q = f"""
-            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
             SET
                 agent_risk_exposure_are = {blended_score},
                 blended_risk_score = {blended_score},
@@ -1510,7 +1510,7 @@ class AgentMetadataExporter:
         agent_id = cls.sanitize(str(agent_id).strip())
 
         # Fetch agent info (1 query)
-        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
         
@@ -1519,29 +1519,29 @@ class AgentMetadataExporter:
 
         # Batch updates into single transaction
         if agent_name is not None and str(agent_name).strip():
-            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
         if description is not None and str(description).strip():
-            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
         if instruction:
             instr = cls.sanitize(instruction)
-            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
-            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
 
         if tools:
-            cls.execute_dml(f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_tools WHERE agent_id = '{agent_id}' {tenant_where}")
+            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools WHERE agent_id = '{agent_id}' {tenant_where}")
             vals = []
             for t in tools:
                 vals.append(f"({tenant_val}'{agent_internal_id}', '{agent_id}', '{cls.sanitize(t.get('name', ''))}', '{cls.sanitize(t.get('description', ''))}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
             if vals:
-                cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_tools ({tenant_col}agent_internal_id, agent_id, tool_name, tool_description, created_ts, updated_ts) VALUES {','.join(vals)}")
+                cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools ({tenant_col}agent_internal_id, agent_id, tool_name, tool_description, created_ts, updated_ts) VALUES {','.join(vals)}")
 
         if knowledge_source:
-            cls.execute_dml(f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
+            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
-            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
 
@@ -1558,7 +1558,7 @@ class AgentMetadataExporter:
 
         # Resolve the internal ID — needed for curated/risk tables
         rows = cls.execute_select(
-            f"SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
+            f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
         )
         if not rows:
             raise ValueError(f"Agent {agent_id} not found.")
@@ -1566,7 +1566,7 @@ class AgentMetadataExporter:
 
         # 1. Clear agent references on linked use cases (don't delete the use case itself)
         cls.execute_dml(f"""
-            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
             SET agent_id = NULL, agent_internal_id = NULL,
                 no_of_associated_agents = GREATEST(COALESCE(no_of_associated_agents, 1) - 1, 0)
             WHERE agent_id = '{agent_id}'
@@ -1575,20 +1575,20 @@ class AgentMetadataExporter:
         # 2. Core tables — all keyed on agent_id or agent_internal_id
         for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
             cls.execute_dml(
-                f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
+                f"DELETE FROM {cls.CORE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
             )
 
         cls.execute_dml(
-            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments WHERE agent_internal_id = '{agent_internal_id}'"
+            f"DELETE FROM {cls.CORE_DB_NAME}.agent_risk_assessments WHERE agent_internal_id = '{agent_internal_id}'"
         )
         cls.execute_dml(
-            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}'"
+            f"DELETE FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}'"
         )
 
         # 3. Curated snapshot
-        if cls.CURATED_GLUE_DB_NAME:
+        if cls.CURATED_DB_NAME:
             cls.execute_dml(
-                f"DELETE FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_internal_id = '{agent_internal_id}'"
+                f"DELETE FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_internal_id = '{agent_internal_id}'"
             )
 
         # 4. Risk management schema
@@ -1639,7 +1639,7 @@ class AgentMetadataExporter:
         # ---------- 3. Fetch Existing Record ----------
         query = f"""
             SELECT *
-            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
             WHERE identifier = '{use_case_id_clean}'
             {tenant_where}
             LIMIT 1
@@ -1656,7 +1656,7 @@ class AgentMetadataExporter:
             f"""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_schema = '{cls.sanitize(cls.CORE_GLUE_DB_NAME)}'
+            WHERE table_schema = '{cls.sanitize(cls.CORE_DB_NAME)}'
               AND table_name = 'agent_ai_use_cases'
             """
         )
@@ -1749,7 +1749,7 @@ class AgentMetadataExporter:
 
         # ---------- 8. Execute Update ----------
         update_query = f"""
-            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
             SET
                 {", ".join(updates)}
             WHERE identifier = '{use_case_id_clean}'
@@ -1791,7 +1791,7 @@ class AgentMetadataExporter:
             SELECT *,
                 ROW_NUMBER() OVER () AS rn,
                 COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_GLUE_DB_NAME}.business_applications
+            FROM {cls.CORE_DB_NAME}.business_applications
             {tenant_where}
         """
 
@@ -1842,7 +1842,7 @@ class AgentMetadataExporter:
             SELECT *,
                 ROW_NUMBER() OVER () AS rn,
                 COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_GLUE_DB_NAME}.business_processes
+            FROM {cls.CORE_DB_NAME}.business_processes
             {tenant_where}
         """
 

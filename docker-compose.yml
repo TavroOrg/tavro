@@ -1,7 +1,7 @@
 x-risk-worker-base: &risk_worker_base
   image: tavro-risk-worker:local
   build:
-    context: ./tavro-python-stack
+    context: .
     dockerfile: Dockerfile.worker
 
 services:
@@ -12,7 +12,6 @@ services:
       context: .
       dockerfile: tavro_Dockerfile
       args:
-        AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
     container_name: tavro-postgres
     restart: unless-stopped
@@ -25,7 +24,7 @@ services:
       - "5432:5432"       # keep open for Postico access on your Mac
     volumes:
       - tavro_pgdata:/var/lib/postgresql/data
-      - ./sql:/sql:ro
+      - ./ddl_scripts:/sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d tavro"]
       interval: 10s
@@ -36,7 +35,7 @@ services:
   # ── Temporal — Workflow Engine ───────────────────────────────────────────────
   risk-temporal:
     build:
-      context: ./tavro-python-stack
+      context: .
       dockerfile: services/Dockerfile
     container_name: risk-temporal
     restart: unless-stopped
@@ -88,10 +87,10 @@ services:
       - "8000:8000"
     volumes:
       - ./tavro_api:/app                                       # live reload — tavro_api code
-      - ./tavro-python-stack/services:/app/services:ro         # live reload — risk services
-      - ./tavro-python-stack/utils:/app/utils:ro               # live reload — risk utils
-      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro   # risk config
-      - ./tavro-python-stack/agent_cards:/app/agent_cards      # agent card output dir
+      - ./services:/app/services:ro                            # live reload — risk services
+      - ./utils:/app/utils:ro                                  # live reload — risk utils
+      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro  # risk config
+      - ./agent_cards:/app/agent_cards                         # agent card output dir
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s
@@ -120,7 +119,7 @@ services:
     volumes:
       - tavro_runtime_config:/usr/share/nginx/html/runtime:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -331,7 +330,7 @@ services:
     command:
       - /bin/sh
       - -c
-      - node /work/scripts/configure-zitadel-app.mjs && tail -f /dev/null
+      - node /work/iam/configure-zitadel-app.mjs && tail -f /dev/null
     environment:
       ZITADEL_API_URL: http://zitadel-api:8080
       ZITADEL_REQUEST_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
@@ -346,7 +345,7 @@ services:
       ZITADEL_APP_REDIRECT_URIS: ${ZITADEL_APP_REDIRECT_URIS}
       ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS: ${ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS}
     volumes:
-      - ./scripts:/work/scripts:ro
+      - ./iam:/work/iam:ro
       - zitadel-bootstrap:/zitadel/bootstrap:ro
       - tavro_runtime_config:/runtime:rw
     depends_on:
@@ -377,7 +376,7 @@ services:
   # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────
   risk-mcp-server:
     build:
-      context: ./tavro-python-stack
+      context: .
       dockerfile: Dockerfile.mcp
     container_name: risk-mcp-server
     restart: unless-stopped
@@ -393,11 +392,19 @@ services:
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
+      DB_NAME:           ${POSTGRES_DB:-tavro}
+      DB_USER:           ${POSTGRES_USER}
+      DB_PASSWORD:       ${POSTGRES_PASSWORD}
+      DB_HOST:           tavro-postgres
+      DB_PORT:           "5432"
+      DB_SSLMODE:        disable
     volumes:
-      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
-      - ./tavro-python-stack/agent_cards:/app/agent_cards
+      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
+      - ./agent_cards:/app/agent_cards
     depends_on:
       tavro-postgres:
+        condition: service_healthy
+      tavro-api:
         condition: service_healthy
 
   # ── Risk Worker — idle container for manual commands ─────────────────────────
@@ -411,7 +418,7 @@ services:
       DROP_DIR: /app/sample-data
       API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
     volumes:
-      - ./tavro-python-stack/sample-data:/app/sample-data
+      - ./sample-data:/app/sample-data
     depends_on:
       tavro-postgres:
         condition: service_healthy
@@ -427,7 +434,7 @@ services:
       DROP_DIR: /app/sample-data
       API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
     volumes:
-      - ./tavro-python-stack/sample-data:/app/sample-data
+      - ./sample-data:/app/sample-data
     depends_on:
       tavro-postgres:
         condition: service_healthy
@@ -443,7 +450,7 @@ services:
     environment:
       PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
     volumes:
-      - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
+      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy

@@ -35,7 +35,7 @@ def _get_connection_pool() -> pool.SimpleConnectionPool:
                         password=os.getenv("DB_PASSWORD"),
                         host=os.getenv("DB_HOST"),
                         port=int(os.getenv("DB_PORT")),
-                        sslmode="require",         # always enforce SSL on RDS
+                        sslmode=os.getenv("DB_SSLMODE", "prefer"),
                         options="-c default_transaction_read_only=on",  # read-only session
                         connect_timeout=5,
                     )

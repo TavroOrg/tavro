@@ -32,7 +32,6 @@ CREATE TYPE twin.dim_category AS ENUM (
     'organisation',
     'technology',
     'risk',
-    'finance',
     'custom'
 );
 
@@ -363,7 +362,6 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Organisation',  'organisation', true, 2),
     ('Technology',    'technology',   true, 2),
     ('Risk',          'risk',         true, 3),
-    ('Finance',       'finance',      true, 2),
     ('Custom',        'custom',       false, 2);
 
 -- -------------------------------------------------------------

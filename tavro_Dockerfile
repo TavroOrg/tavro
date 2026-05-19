@@ -48,11 +48,11 @@ COPY tavro_init_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
 
 # ── Risk stack schemas and tables ─────────────────────────────
 # Creates core, curated, raw, risk_management schemas then runs DDL
-COPY tavro-python-stack/ddl_scripts/01_create_schemas.sql /docker-entrypoint-initdb.d/10_risk_schemas.sql
-COPY tavro-python-stack/ddl_scripts/core/            /docker-entrypoint-initdb.d/risk/core/
-COPY tavro-python-stack/ddl_scripts/curated/         /docker-entrypoint-initdb.d/risk/curated/
-COPY tavro-python-stack/ddl_scripts/raw/             /docker-entrypoint-initdb.d/risk/raw/
-COPY tavro-python-stack/ddl_scripts/risk_management/ /docker-entrypoint-initdb.d/risk/risk_management/
+COPY ddl_scripts/01_create_schemas.sql /docker-entrypoint-initdb.d/10_risk_schemas.sql
+COPY ddl_scripts/core/            /docker-entrypoint-initdb.d/risk/core/
+COPY ddl_scripts/curated/         /docker-entrypoint-initdb.d/risk/curated/
+COPY ddl_scripts/raw/             /docker-entrypoint-initdb.d/risk/raw/
+COPY ddl_scripts/risk_management/ /docker-entrypoint-initdb.d/risk/risk_management/
 
 RUN printf '#!/bin/sh\n\
 set -eu\n\
@@ -64,5 +64,7 @@ done\n\
 echo "All risk DDL scripts completed."\n' \
 > /docker-entrypoint-initdb.d/20_run_risk_tables.sh \
 && chmod +x /docker-entrypoint-initdb.d/20_run_risk_tables.sh
+
+COPY ddl_scripts/tavro_setup_all.sql /docker-entrypoint-initdb.d/30_tavro_setup_all.sql
 
 EXPOSE 5432

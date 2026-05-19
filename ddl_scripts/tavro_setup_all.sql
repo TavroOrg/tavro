@@ -38,10 +38,9 @@ SET search_path = twin, ag_catalog, public;
 DO $$ BEGIN
     CREATE TYPE twin.dim_category AS ENUM (
         'profile','strategy','process','application',
-        'organisation','technology','risk','finance','custom'
+        'organisation','technology','risk','custom'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
 
 DO $$ BEGIN
     CREATE TYPE twin.visibility_level AS ENUM (
@@ -466,7 +465,6 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Organisation', 'organisation', true, 2),
     ('Technology',   'technology',   true, 2),
     ('Risk',         'risk',         true, 3),
-    ('Finance',      'finance',      true, 2),
     ('Custom',       'custom',       false, 2)
 ON CONFLICT (name) DO NOTHING;
 

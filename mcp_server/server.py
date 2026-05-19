@@ -16,8 +16,8 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.applications import Starlette
 from contextlib import asynccontextmanager
 
-from risk_agents.agent_extractor import AgentMetadataExporter
-from risk_agents.users import get_approved_user
+from agent_catalog.agent_extractor import AgentMetadataExporter
+from agent_catalog.users import get_approved_user
 
 from utils.set_environment import set_environment
 
@@ -93,6 +93,15 @@ class TavroCognitoTokenVerifier(AWSCognitoTokenVerifier):
                     print(f"[DEBUG] UserInfo returned {resp.status_code}: {resp.text}")
         except Exception as e:
             print(f"[DEBUG] UserInfo fetch failed: {e}")
+
+        # Fallback identity if userinfo endpoint doesn't return email.
+        if not email:
+            email = (
+                (access_token.claims or {}).get("email")
+                or (access_token.claims or {}).get("username")
+            )
+            if email:
+                print(f"[DEBUG] Falling back to token claim identity: {email}")
 
         # Resolve tenant and enrich claims.
         approved_user = await get_approved_user(email)       

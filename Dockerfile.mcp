@@ -22,8 +22,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY mcp_server ./mcp_server
-COPY risk_agents ./risk_agents
+COPY agent_catalog ./agent_catalog
 COPY utils ./utils
-COPY config.yaml ./config.yaml
+COPY config.yaml.example ./config.yaml.example
+RUN cp config.yaml.example config.yaml
 
 CMD ["python", "-m", "mcp_server.server"]
