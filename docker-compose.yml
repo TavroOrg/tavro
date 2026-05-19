@@ -379,6 +379,11 @@ services:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
       PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DB_HOST:           tavro-postgres
+      DB_PORT:           "5432"
+      DB_USER:           ${POSTGRES_USER}
+      DB_PASSWORD:       ${POSTGRES_PASSWORD}
+      DB_Name:           tavro
       POSTGRES_HOST:     tavro-postgres
       POSTGRES_PORT:     "5432"
       POSTGRES_USER:     ${POSTGRES_USER}
@@ -388,7 +393,9 @@ services:
       mcp_host:          localhost
       mcp_port:          "9001"
       ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
-      ZITADEL_CONFIG_URL: http://zitadel-api:8080
+      ZITADEL_CONFIG_URL: http://proxy
+      ZITADEL_INTERNAL_BASE_URL: http://proxy
+      ZITADEL_INTERNAL_HOST_HEADER: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
       ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
       ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
       ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
@@ -401,6 +408,10 @@ services:
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      zitadel-api:
+        condition: service_healthy
+      proxy:
+        condition: service_started
       zitadel-configure-app:
         condition: service_started
 

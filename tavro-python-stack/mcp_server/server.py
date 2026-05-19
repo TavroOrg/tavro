@@ -689,20 +689,16 @@ zitadel_auth = ZitadelProvider(
     client_id=os.getenv("ZITADEL_CLIENT_ID", ""),
     client_secret=os.getenv("ZITADEL_CLIENT_SECRET") or None,
     base_url=ZITADEL_BASE_URL,
+    config_url=os.getenv("ZITADEL_CONFIG_URL") or None,
     jwt_signing_key=os.getenv("JWT_SIGNING_KEY"),
     required_scopes=os.getenv("ZITADEL_SCOPES", "openid profile email"),
     prompt=os.getenv("ZITADEL_PROMPT") or None,
     require_authorization_consent="external",
 )
 
-zitadel_auth_wrapped = MultiAuth(
-    server=zitadel_auth,
-    verifiers=[jwt_verifier],
-)
-
 zitadel_mcp = FastMCP(
     "Tavro MCP Server (ZITADEL)",
-    auth=zitadel_auth_wrapped,
+    auth=zitadel_auth,
 )
 
 zitadel_mcp.mount(core)
@@ -746,7 +742,7 @@ for r in google_auth.get_well_known_routes(mcp_path=MCP_PATH):
 # for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
 #     app.router.routes.append(r)
 
-for r in zitadel_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
+for r in zitadel_auth.get_well_known_routes(mcp_path=MCP_PATH):
     app.router.routes.append(r)
 
 # ---------------------------

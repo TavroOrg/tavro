@@ -99,7 +99,7 @@ const AuthCallback: React.FC = () => {
                         const origin = localStorage.getItem('tavro_auth_flow_origin');
                         localStorage.setItem('tavro_access_token', data.access_token);
                         if (origin === 'settings') {
-                            localStorage.setItem('tavro_mcp_access_token', data.id_token || data.access_token);
+                            localStorage.removeItem('tavro_mcp_access_token');
                             localStorage.setItem('tavro_cache_mode', 'false');
                             sessionStorage.removeItem('tavro_catalog_agents_cache');
                             sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
