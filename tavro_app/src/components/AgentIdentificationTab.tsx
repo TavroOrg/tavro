@@ -56,7 +56,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                                 {instrOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />} {instrOpen ? 'Collapse' : 'Expand'}
                             </button>
                         </div>
-                        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOpen ? 'max-h-[2500px]' : 'max-h-16'} overflow-y-auto pr-1`}>
+                        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOpen ? 'max-h-[2500px]' : 'max-h-32'} overflow-y-auto pr-1`}>
                             <pre className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
                                 {id?.instruction || '—'}
                             </pre>

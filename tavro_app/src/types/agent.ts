@@ -263,4 +263,7 @@ export interface AgentData {
   // Metadata
   sys_id?: string;
   id?: string;
+  latest_risk_score?: string | number | null;
+  latest_risk_class?: string | null;
+  latest_event_status?: string | null;
 }

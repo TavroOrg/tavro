@@ -803,6 +803,7 @@ ${toolSummary}`;
             const agents = rawList.map(item => ({
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
+                description: item.description || item.agent_description || item.summary || '',
                 identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' },
                 risk_assessment: normalizeRiskAssessment(item),
                 risk_summary:
