@@ -79,6 +79,11 @@ oAuth:
   AZURE_CLIENT_ID: ""
   AZURE_CLIENT_SECRET: ""
   AZURE_TENANT_ID: ""
+  ZITADEL_ISSUER: "http://localhost:8080"
+  ZITADEL_CLIENT_ID: ""
+  ZITADEL_CLIENT_SECRET: ""
+  ZITADEL_REDIRECT_PATH: "/auth/callback"
+  ZITADEL_SCOPES: "openid profile email"
   JWT_SIGNING_KEY: "super_secret_random_string_change_this"
 
 databases:
@@ -87,7 +92,7 @@ databases:
   RISK_MANAGEMENT_GLUE_DB_NAME: "risk_management"
 
 postgres:
-  POSTGRES_HOST: "postgres"
+  POSTGRES_HOST: "tavro-postgres"
   POSTGRES_PORT: "5432"
   POSTGRES_USER: "admin"
   POSTGRES_PASSWORD: "admin"
@@ -97,5 +102,5 @@ db:
   DB_Name: ""
   DB_USER: ""
   DB_PASSWORD: ""
-  DB_HOST: ""
+  DB_HOST: "tavro-postgres"
   DB_PORT: "5432"

@@ -2,6 +2,7 @@ psycopg2-binary
 watchdog
 a2a-sdk
 fastmcp
+httpx
 uvicorn
 requests
 rapidfuzz
