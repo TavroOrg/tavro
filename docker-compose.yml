@@ -99,6 +99,21 @@ services:
       retries: 3
       start_period: 20s
 
+  copilot-sdk:
+    build:
+      context: ./tavro_app/copilot-server
+      dockerfile: Dockerfile
+    container_name: tavro-copilot-sdk
+    restart: unless-stopped
+    ports:
+      - "4001:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
@@ -115,6 +130,8 @@ services:
     restart: unless-stopped
     depends_on:
       tavro-api:
+        condition: service_healthy
+      copilot-sdk:
         condition: service_healthy
     ports:
       - "9000:80"
