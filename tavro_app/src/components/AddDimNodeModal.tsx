@@ -3,7 +3,7 @@
 // Triggered from the "+ Add dimension" button on BlueprintPage.
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, RefreshCw, Shield, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { X, Plus, RefreshCw, Shield, Eye, EyeOff, Sparkles, Paperclip } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import type { DimCategory, VisibilityLevel, DimType } from '../types/blueprint';
@@ -23,6 +23,15 @@ const VISIBILITY_OPTIONS: { value: VisibilityLevel; label: string; desc: string 
   { value: 'confidential', label: 'Confidential', desc: 'Admin + data steward only' },
 ];
 
+const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — matches nginx client_max_body_size
+
+const filterBySize = (files: File[], onReject: (names: string[]) => void): File[] => {
+  const ok = files.filter(f => f.size <= MAX_FILE_BYTES);
+  const bad = files.filter(f => f.size > MAX_FILE_BYTES).map(f => f.name);
+  if (bad.length) onReject(bad);
+  return ok;
+};
+
 const REL_TYPES = [
   'depends_on', 'owned_by', 'supports', 'risks',
   'enables', 'part_of', 'governed_by', 'replaced_by', 'custom',
@@ -40,10 +49,12 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
   const [tags,       setTags]       = useState<string[]>([]);
   const [visibility, setVisibility] = useState<VisibilityLevel>('internal');
   const [sensitive,  setSensitive]  = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [saving,     setSaving]     = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error,      setError]      = useState<string | null>(null);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
   useEffect(() => { labelRef.current?.focus(); }, []);
 
@@ -96,7 +107,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
     setSaving(true);
     setError(null);
     try {
-      await blueprintApi.createNode({
+      const created = await blueprintApi.createNode({
         company_id:  activeCompany.id,
         dim_type_id: dimTypeId,
         label:       label.trim(),
@@ -105,6 +116,9 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
         visibility,
         sensitive,
       });
+      if (attachments.length > 0) {
+        await Promise.all(attachments.map(f => blueprintApi.uploadAttachment(created.id, f)));
+      }
       onCreated();
       onClose();
     } catch (err: any) {
@@ -299,6 +313,71 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
               <div className="w-3 h-3 bg-white rounded-full mx-0.5 shadow-sm" />
             </div>
           </button>
+
+          {/* Attachments */}
+          <Field label="Attachments">
+            <div
+              className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl px-4 py-4 flex flex-col items-center gap-2 cursor-pointer hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-all"
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => {
+                e.preventDefault();
+                const dropped = filterBySize(Array.from(e.dataTransfer.files), names =>
+                  setError(`File(s) exceed 50 MB limit: ${names.join(', ')}`));
+                setAttachments(prev => {
+                  const existing = new Set(prev.map(f => f.name));
+                  return [...prev, ...dropped.filter(f => !existing.has(f.name))];
+                });
+              }}
+            >
+              <Paperclip size={16} className="text-slate-400" />
+              <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
+                Click or drag files to attach
+              </p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                PDF, DOCX, XLSX, PNG, JPG — up to 50 MB each
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.txt"
+                className="hidden"
+                onChange={e => {
+                  const selected = filterBySize(Array.from(e.target.files ?? []), names =>
+                    setError(`File(s) exceed 50 MB limit: ${names.join(', ')}`));
+                  setAttachments(prev => {
+                    const existing = new Set(prev.map(f => f.name));
+                    return [...prev, ...selected.filter(f => !existing.has(f.name))];
+                  });
+                  e.target.value = '';
+                }}
+              />
+            </div>
+            {attachments.length > 0 && (
+              <ul className="flex flex-col gap-1 mt-1">
+                {attachments.map(file => (
+                  <li key={file.name}
+                    className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Paperclip size={11} className="text-slate-400 flex-shrink-0" />
+                      <span className="text-[11px] text-slate-700 dark:text-slate-200 truncate">{file.name}</span>
+                      <span className="text-[10px] text-slate-400 flex-shrink-0">
+                        {file.size < 1024 * 1024
+                          ? `${(file.size / 1024).toFixed(0)} KB`
+                          : `${(file.size / (1024 * 1024)).toFixed(1)} MB`}
+                      </span>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); setAttachments(p => p.filter(f => f.name !== file.name)); }}
+                      className="text-slate-400 hover:text-rose-500 transition-colors flex-shrink-0">
+                      <X size={11} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Field>
 
           {error && (
             <div className="text-sm text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-xl px-4 py-3">
