@@ -17,6 +17,7 @@ import CreateUseCasePage from './pages/CreateUseCasePage';
 import { CatalogProvider } from './context/CatalogContext';
 import { UseCaseProvider } from './context/UseCaseContext';
 import { ChatProvider } from './context/ChatContext';
+import { ChatSessionProvider } from './context/ChatSessionContext';
 import { ThemeProvider } from './context/ThemeContext';
 import './App.css';
 import BlueprintPage from './pages/BlueprintPage';
@@ -97,6 +98,7 @@ function App() {
   return (
     <BrowserRouter>
       <ThemeProvider>
+        <ChatSessionProvider>
         <ChatProvider>
           <SessionExpiredHandler />
           <div className="App">
@@ -159,6 +161,7 @@ function App() {
             </Routes>
           </div>
         </ChatProvider>
+        </ChatSessionProvider>
       </ThemeProvider>
     </BrowserRouter>
   );

@@ -275,8 +275,92 @@ class AgentMetadataExporter:
             )
 
             if local_card:
+                # Overlay mutable fields from the DB so edits are reflected immediately
+                # without needing to regenerate the card file.
+                try:
+                    db_rows = cls.execute_select(
+                        f"""
+                        SELECT a.agent_name, a.agent_description,
+                               i.instruction, i.governance_status, i.role
+                        FROM {cls.CORE_GLUE_DB_NAME}.agents a
+                        LEFT JOIN LATERAL (
+                            SELECT instruction, governance_status, role
+                            FROM {cls.CORE_GLUE_DB_NAME}.agent_identifications
+                            WHERE agent_id = a.agent_id
+                              AND COALESCE(is_current, true) = true
+                            ORDER BY is_current DESC NULLS LAST,
+                                     updated_ts DESC NULLS LAST
+                            LIMIT 1
+                        ) i ON true
+                        WHERE a.agent_id = %s
+                        LIMIT 1
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if db_rows:
+                        row = db_rows[0]
+                        if row.get("agent_name"):
+                            local_card["name"] = row["agent_name"]
+                        if row.get("agent_description"):
+                            local_card["description"] = row["agent_description"]
+                        ident = local_card.get("identification") or {}
+                        if row.get("instruction") is not None:
+                            ident["instruction"] = row["instruction"]
+                        if row.get("governance_status") is not None:
+                            ident["governance_status"] = row["governance_status"]
+                        if row.get("role") is not None:
+                            ident["role"] = row["role"]
+                        local_card["identification"] = ident
+                except Exception as overlay_err:
+                    print(f"[get_agent_card] DB overlay failed (returning card as-is): {overlay_err}")
+
+                # Overlay linked AI use cases for this specific agent_id.
+                try:
+                    use_case_rows = cls.execute_select(
+                        f"""
+                        SELECT DISTINCT ON (u.identifier)
+                            u.identifier,
+                            u.name,
+                            u.description,
+                            u.proposed_by,
+                            u.owner,
+                            u.function,
+                            u.problem_statement,
+                            u.expected_benefits,
+                            u.priority,
+                            u.status,
+                            u.updated_ts,
+                            u.created_ts
+                        FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases u
+                        WHERE u.agent_id = %s
+                        ORDER BY u.identifier, u.updated_ts DESC NULLS LAST, u.created_ts DESC NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    ai_use_cases = [
+                        {
+                            "identifier": r.get("identifier"),
+                            "name": r.get("name"),
+                            "description": r.get("description"),
+                            "proposed_by": r.get("proposed_by"),
+                            "owner": r.get("owner"),
+                            "function": r.get("function"),
+                            "problem_statement": r.get("problem_statement"),
+                            "expected_benefits": r.get("expected_benefits"),
+                            "priority": r.get("priority"),
+                            "status": r.get("status"),
+                        }
+                        for r in use_case_rows
+                        if r.get("identifier")
+                    ]
+                    local_card["ai_use_cases"] = ai_use_cases
+                    if ai_use_cases:
+                        # Keep backward compatibility for UIs that still read singular ai_use_case.
+                        local_card["ai_use_case"] = ai_use_cases[0]
+                except Exception as use_case_overlay_err:
+                    print(f"[get_agent_card] AI use case overlay failed: {use_case_overlay_err}")
+
                 return local_card
-            card_dir = cls._agent_card_dir()
 
             # ---------- 7. Not found ----------
             return {
@@ -942,7 +1026,103 @@ class AgentMetadataExporter:
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        # ---------- 3. Single Query ----------
+        # ---------- 3. Detail Query (single use-case with aggregated linked agents) ----------
+        if use_case_id:
+            detail_query = f"""
+                SELECT
+                    u.identifier,
+                    u.name,
+                    u.description,
+                    u.owner,
+                    u.problem_statement,
+                    u.expected_benefits,
+                    u.priority,
+                    u.status,
+                    u.solution_approach,
+                    u.created_ts,
+                    u.updated_ts,
+                    u.agent_risk_exposure_are,
+                    u.no_of_associated_agents,
+                    u.inherent_risk_classification,
+                    u.residual_risk_classification,
+                    u.inherent_risk_classification_score,
+                    u.residual_risk_classification_score,
+                    u.agent_risk_tier_art,
+                    COALESCE(
+                        (
+                            SELECT json_agg(
+                                json_build_object(
+                                    'agent_id', agent_rows.agent_id,
+                                    'name', agent_rows.agent_name,
+                                    'environment', agent_rows.environment
+                                )
+                                ORDER BY LOWER(COALESCE(agent_rows.agent_name, agent_rows.agent_id))
+                            )
+                            FROM (
+                                SELECT DISTINCT
+                                    rel.agent_id AS agent_id,
+                                    ag.agent_name AS agent_name,
+                                    ai.environment AS environment
+                                FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases rel
+                                LEFT JOIN {cls.CORE_GLUE_DB_NAME}.agents ag
+                                    ON ag.agent_id = rel.agent_id
+                                   AND ag.is_current = true
+                                LEFT JOIN {cls.CORE_GLUE_DB_NAME}.agent_identifications ai
+                                    ON ai.agent_internal_id = rel.agent_internal_id
+                                   AND COALESCE(ai.is_current, true) = true
+                                WHERE rel.identifier = u.identifier
+                                  AND rel.agent_id IS NOT NULL
+                                  AND rel.agent_id <> ''
+                            ) agent_rows
+                        ),
+                        '[]'::json
+                    ) AS of_associated_agents
+                FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases u
+                {where_sql}
+                ORDER BY u.updated_ts DESC NULLS LAST, u.created_ts DESC
+                LIMIT 1
+            """
+
+            detail_rows = cls.execute_select(detail_query)
+            if not detail_rows:
+                return {
+                    "start_record": 1,
+                    "end_record": 1,
+                    "record_count": 0,
+                    "total_records": 0,
+                    "data": [],
+                }
+
+            row = detail_rows[0]
+            return {
+                "start_record": 1,
+                "end_record": 1,
+                "record_count": 1,
+                "total_records": 1,
+                "data": [{
+                    "use_case_id": row.get("identifier"),
+                    "title": row.get("name"),
+                    "description": row.get("description"),
+                    "owner": row.get("owner"),
+                    "problem_statement": row.get("problem_statement"),
+                    "expected_benefits": row.get("expected_benefits"),
+                    "priority": row.get("priority"),
+                    "status": row.get("status"),
+                    "solution_approach": row.get("solution_approach"),
+                    "created_ts": row.get("created_ts"),
+                    "updated_ts": row.get("updated_ts"),
+                    "agent_risk_exposure_are": row.get("agent_risk_exposure_are"),
+                    "no_of_associated_agents": row.get("no_of_associated_agents"),
+                    "inherent_risk_classification": row.get("inherent_risk_classification"),
+                    "residual_risk_classification": row.get("residual_risk_classification"),
+                    "inherent_risk_classification_score": row.get("inherent_risk_classification_score"),
+                    "residual_risk_classification_score": row.get("residual_risk_classification_score"),
+                    "agent_risk_tier_art": row.get("agent_risk_tier_art"),
+                    "of_associated_agents": row.get("of_associated_agents") or [],
+                }],
+            }
+
+        # ---------- 4. Catalog Query ----------
         query = f"""
             SELECT *
             FROM (
@@ -965,7 +1145,7 @@ class AgentMetadataExporter:
             WHERE rn BETWEEN {start} AND {end}
         """
 
-        # ---------- 4. Execute ----------
+        # ---------- 5. Execute ----------
         result_rows = cls.execute_select(query)
 
         rows: List[Dict[str, Any]] = []
@@ -991,7 +1171,7 @@ class AgentMetadataExporter:
                 "created_ts": row_dict.get("created_ts"),
             })
 
-        # ---------- 7. Response ----------
+        # ---------- 6. Response ----------
         return {
             "start_record": start,
             "end_record": end,
@@ -1026,20 +1206,35 @@ class AgentMetadataExporter:
         # 1. Validation & Sanitization
         if not agent_catalog_id or not ai_use_case_id:
             raise ValueError("Both IDs are required.")
-            
+
+        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
         agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
         ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # 2. Check for existing relationship (Prevent duplicate rows)
-        tenant_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id else ""
+        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
         check_q = f"SELECT 1 FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}' AND agent_id = '{agent_catalog_id}' {tenant_where} LIMIT 1"
         is_duplicate = len(cls.execute_select(check_q)) > 0
 
         # 3. Fetch Target Agent Details
-        agent_where = f"AND tenant_id = '{cls.sanitize(tenant_id)}'" if tenant_id else ""
-        agent_q = f"SELECT agent_id, agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_catalog_id}' AND is_current = true {agent_where} LIMIT 1"
+        # Use COALESCE(is_current, true) so imported agents with NULL is_current are included.
+        agent_q = f"""
+            SELECT agent_id, agent_internal_id
+            FROM {cls.CORE_GLUE_DB_NAME}.agents
+            WHERE agent_id = '{agent_catalog_id}'
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+        """
         agent_res = cls.execute_select(agent_q)
+        # Fall back to curated.agent_360 for externally-imported agents not in core.agents
+        if not agent_res:
+            agent_res = cls.execute_select(
+                f"SELECT agent_id, agent_internal_id FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
+            )
         if not agent_res:
             raise ValueError(f"Agent {agent_catalog_id} not found.")
         target_internal_id = agent_res[0].get("agent_internal_id")
@@ -1130,6 +1325,159 @@ class AgentMetadataExporter:
         return {"message": "Relationship synchronized", "associated_count": total_associated}
 
     @classmethod
+    def remove_ai_use_case_agent_relationship(
+        cls,
+        agent_catalog_id: str,
+        ai_use_case_id: str,
+        tenant_id: Optional[str] = None
+    ):
+        if not agent_catalog_id or not ai_use_case_id:
+            raise ValueError("Both IDs are required.")
+
+        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
+        agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
+        ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
+
+        rows_q = f"""
+            SELECT *
+            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            WHERE identifier = '{ai_use_case_id}' {tenant_where}
+        """
+        all_rows = cls.execute_select(rows_q)
+        if not all_rows:
+            raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
+
+        matching_rows = [r for r in all_rows if (r.get("agent_id") or "").strip() == agent_catalog_id]
+        if not matching_rows:
+            return {"message": "Relationship not found", "associated_count": len([r for r in all_rows if (r.get("agent_id") or "").strip()])}
+
+        linked_rows = [r for r in all_rows if (r.get("agent_id") or "").strip()]
+
+        if len(linked_rows) == 1 and (linked_rows[0].get("agent_id") or "").strip() == agent_catalog_id:
+            clear_q = f"""
+                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+                SET
+                    agent_id = NULL,
+                    agent_internal_id = NULL,
+                    agent_risk_exposure_are = 0,
+                    blended_risk_score = 0,
+                    no_of_associated_agents = 0,
+                    inherent_risk_classification = '',
+                    residual_risk_classification = '',
+                    inherent_risk_classification_score = 0,
+                    residual_risk_classification_score = 0,
+                    agent_risk_tier_art = 'Low',
+                    updated_ts = TIMESTAMP '{now}'
+                WHERE identifier = '{ai_use_case_id}'
+                  AND agent_id = '{agent_catalog_id}'
+                  {tenant_where}
+            """
+            cls.execute_dml(clear_q)
+            return {"message": "Relationship removed", "associated_count": 0}
+
+        delete_q = f"""
+            DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            WHERE identifier = '{ai_use_case_id}'
+              AND agent_id = '{agent_catalog_id}'
+              {tenant_where}
+        """
+        cls.execute_dml(delete_q)
+
+        remaining_agents_q = f"""
+            SELECT DISTINCT agent_internal_id
+            FROM {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            WHERE identifier = '{ai_use_case_id}'
+              AND COALESCE(agent_internal_id, '') <> ''
+              {tenant_where}
+        """
+        remaining_rows = cls.execute_select(remaining_agents_q)
+        remaining_ids = [r.get("agent_internal_id") for r in remaining_rows if r.get("agent_internal_id")]
+        associated_count = len(remaining_ids)
+
+        if associated_count == 0:
+            reset_q = f"""
+                UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+                SET
+                    agent_risk_exposure_are = 0,
+                    blended_risk_score = 0,
+                    no_of_associated_agents = 0,
+                    inherent_risk_classification = '',
+                    residual_risk_classification = '',
+                    inherent_risk_classification_score = 0,
+                    residual_risk_classification_score = 0,
+                    agent_risk_tier_art = 'Low',
+                    updated_ts = TIMESTAMP '{now}'
+                WHERE identifier = '{ai_use_case_id}' {tenant_where}
+            """
+            cls.execute_dml(reset_q)
+            return {"message": "Relationship removed", "associated_count": 0}
+
+        ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
+        metrics_q = f"""
+            WITH risk_metrics AS (
+                SELECT
+                    MAX(blended_risk_score) AS max_score,
+                    (
+                        SELECT agent_internal_id
+                        FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                        WHERE agent_internal_id IN ({ids_sql})
+                        ORDER BY blended_risk_score DESC
+                        LIMIT 1
+                    ) AS worst_agent_id
+                FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments
+                WHERE agent_internal_id IN ({ids_sql})
+                  AND is_current = true
+            )
+            SELECT * FROM risk_metrics
+        """
+        metrics_res = cls.execute_select(metrics_q)
+        metrics = metrics_res[0] if metrics_res else {}
+        worst_agent_id = metrics.get("worst_agent_id")
+        blended_score = float(metrics.get("max_score") or 0.0)
+
+        inherent_class = ""
+        residual_class = ""
+        if worst_agent_id:
+            risk_detail_q = f"""
+                SELECT type_of_risk, risk_classification
+                FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
+                WHERE agent_internal_id = '{cls.sanitize(str(worst_agent_id))}'
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC
+            """
+            risk_rows = cls.execute_select(risk_detail_q)
+            inherent_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Inherent Risk'), "")
+            residual_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Residual Risk'), "")
+
+        inherent_score = cls._regulatory_risk_score(inherent_class)
+        residual_score = cls._regulatory_risk_score(residual_class)
+        risk_tier = cls._get_risk_tier(blended_score)
+
+        sync_q = f"""
+            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            SET
+                agent_risk_exposure_are = {blended_score},
+                blended_risk_score = {blended_score},
+                no_of_associated_agents = {associated_count},
+                inherent_risk_classification = '{inherent_class}',
+                residual_risk_classification = '{residual_class}',
+                inherent_risk_classification_score = {inherent_score},
+                residual_risk_classification_score = {residual_score},
+                agent_risk_tier_art = '{risk_tier}',
+                updated_ts = TIMESTAMP '{now}'
+            WHERE identifier = '{ai_use_case_id}' {tenant_where}
+        """
+        cls.execute_dml(sync_q)
+
+        return {"message": "Relationship removed", "associated_count": associated_count}
+
+    @classmethod
     def update_agent(
         cls,
         agent_id: Optional[str] = None,
@@ -1170,7 +1518,10 @@ class AgentMetadataExporter:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Batch updates into single transaction
-        if description:
+        if agent_name is not None and str(agent_name).strip():
+            cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+
+        if description is not None and str(description).strip():
             cls.execute_dml(f"UPDATE {cls.CORE_GLUE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
         if instruction:
@@ -1190,9 +1541,63 @@ class AgentMetadataExporter:
             cls.execute_dml(f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
-            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, source_name, source_description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_GLUE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
+
+    @classmethod
+    def delete_agent(
+        cls,
+        agent_id: str,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not agent_id or not str(agent_id).strip():
+            raise ValueError("agent_id is required")
+
+        agent_id = cls.sanitize(str(agent_id).strip())
+
+        # Resolve the internal ID — needed for curated/risk tables
+        rows = cls.execute_select(
+            f"SELECT agent_internal_id FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}' LIMIT 1"
+        )
+        if not rows:
+            raise ValueError(f"Agent {agent_id} not found.")
+        agent_internal_id = cls.sanitize(str(rows[0]["agent_internal_id"]))
+
+        # 1. Clear agent references on linked use cases (don't delete the use case itself)
+        cls.execute_dml(f"""
+            UPDATE {cls.CORE_GLUE_DB_NAME}.agent_ai_use_cases
+            SET agent_id = NULL, agent_internal_id = NULL,
+                no_of_associated_agents = GREATEST(COALESCE(no_of_associated_agents, 1) - 1, 0)
+            WHERE agent_id = '{agent_id}'
+        """)
+
+        # 2. Core tables — all keyed on agent_id or agent_internal_id
+        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
+            )
+
+        cls.execute_dml(
+            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agent_risk_assessments WHERE agent_internal_id = '{agent_internal_id}'"
+        )
+        cls.execute_dml(
+            f"DELETE FROM {cls.CORE_GLUE_DB_NAME}.agents WHERE agent_id = '{agent_id}'"
+        )
+
+        # 3. Curated snapshot
+        if cls.CURATED_GLUE_DB_NAME:
+            cls.execute_dml(
+                f"DELETE FROM {cls.CURATED_GLUE_DB_NAME}.agent_360 WHERE agent_internal_id = '{agent_internal_id}'"
+            )
+
+        # 4. Risk management schema
+        if cls.RISK_MANAGEMENT_DB_NAME:
+            cls.execute_dml(
+                f"DELETE FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment WHERE agent_internal_id = '{agent_internal_id}'"
+            )
+
+        return {"message": "Agent deleted successfully.", "agent_id": agent_id}
 
     @classmethod
     def update_ai_use_case(
@@ -1247,6 +1652,16 @@ class AgentMetadataExporter:
 
         current = rows[0]
 
+        existing_cols_rows = cls.execute_select(
+            f"""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = '{cls.sanitize(cls.CORE_GLUE_DB_NAME)}'
+              AND table_name = 'agent_ai_use_cases'
+            """
+        )
+        existing_cols = {str(r.get("column_name", "")).strip() for r in existing_cols_rows}
+
         # ---------- 4. Helpers ----------
         def clean_list(items):
             if not items:
@@ -1289,7 +1704,7 @@ class AgentMetadataExporter:
                 f"priority = '{cls.sanitize(normalized_priority)}'"
             )
 
-        if regulatory_impact is not None:
+        if regulatory_impact is not None and "regulatory_impact" in existing_cols:
             regulatory_impact_str = clean_list(regulatory_impact)
 
             updates.append(
@@ -1306,14 +1721,14 @@ class AgentMetadataExporter:
                 f"owner = '{cls.sanitize(use_case_owner)}'"
             )
 
-        if impacted_business_applications is not None:
+        if impacted_business_applications is not None and "impacted_business_applications" in existing_cols:
             applications_str = clean_list(impacted_business_applications)
 
             updates.append(
                 f"impacted_business_applications = '{cls.sanitize(applications_str or '')}'"
             )
 
-        if impacted_business_processes is not None:
+        if impacted_business_processes is not None and "impacted_business_processes" in existing_cols:
             processes_str = clean_list(impacted_business_processes)
 
             updates.append(
