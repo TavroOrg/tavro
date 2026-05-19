@@ -104,6 +104,7 @@ services:
         VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
         VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
         VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+        VITE_MCP_URL: ${VITE_MCP_URL:-http://localhost:9001/zitadel/mcp}
     container_name: tavro-app
     restart: unless-stopped
     depends_on:
@@ -378,12 +379,6 @@ services:
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
-      PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-      DB_HOST:           tavro-postgres
-      DB_PORT:           "5432"
-      DB_USER:           ${POSTGRES_USER}
-      DB_PASSWORD:       ${POSTGRES_PASSWORD}
-      DB_Name:           tavro
       POSTGRES_HOST:     tavro-postgres
       POSTGRES_PORT:     "5432"
       POSTGRES_USER:     ${POSTGRES_USER}

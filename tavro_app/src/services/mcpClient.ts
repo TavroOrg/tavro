@@ -222,8 +222,7 @@ class McpClientService {
     private _mcpTools: Array<{ name: string; description?: string; inputSchema?: any }> | null = null;
 
     private getMcpUrl(): string {
-        const configured = localStorage.getItem('tavro_mcp_url')?.trim();
-        return configured || 'http://localhost:9001/zitadel/mcp';
+        return import.meta.env.VITE_MCP_URL || 'http://localhost:9001/zitadel/mcp';
     }
 
     private getToken(): string {

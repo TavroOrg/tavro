@@ -7,7 +7,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from fastmcp.server.auth.oidc_proxy import OIDCConfiguration, OIDCProxy
-from fastmcp.server.auth.auth import AccessToken
+from fastmcp.server.auth.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.providers.jwt import JWTVerifier, parse_scopes
 from pydantic import AnyHttpUrl
 
@@ -350,4 +350,73 @@ class ZitadelProvider(OIDCProxy):
         return access_token.model_copy(update={"claims": enriched_claims})
 
 
-__all__ = ["ZitadelProvider"]
+class TavroZitadelTokenVerifier(TokenVerifier):
+    """Accepts ZITADEL access tokens issued during portal login.
+
+    This lets the portal reuse the token it already received from ZITADEL
+    instead of starting a second MCP OAuth redirect.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: ZitadelProvider,
+        required_scopes: list[str] | None = None,
+    ) -> None:
+        super().__init__(
+            required_scopes=required_scopes,
+        )
+        self.provider = provider
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        userinfo_claims = await self.provider._fetch_userinfo_claims(token)
+        if not userinfo_claims:
+            print("[DEBUG] Direct ZITADEL bearer token rejected by userinfo")
+            return None
+
+        email = self.provider._resolve_email({}, userinfo_claims)
+
+        if not email:
+            print("[DEBUG] No email found in direct ZITADEL bearer token")
+            print(f"  sub      : {userinfo_claims.get('sub')}")
+            print(f"  username : {userinfo_claims.get('preferred_username')}")
+            return None
+
+        approved_user = await get_approved_user(email)
+        if approved_user is None:
+            print(f"[DEBUG] No approved direct ZITADEL user found for email: {email}")
+            return None
+
+        enriched_claims = {
+            **userinfo_claims,
+            "email": approved_user.email,
+            "tenant_id": approved_user.tenant_id,
+        }
+
+        print("[DEBUG] ===== DIRECT ZITADEL AUTH SUCCESS =====")
+        print(f"  sub      : {enriched_claims.get('sub')}")
+        print(f"  username : {enriched_claims.get('preferred_username')}")
+        print(f"  email    : {enriched_claims.get('email')}")
+        print(f"  tenant_id: {enriched_claims.get('tenant_id')}")
+
+        scopes = (
+            parse_scopes(userinfo_claims.get("scope") or userinfo_claims.get("scopes") or "")
+            or self.required_scopes
+            or ["openid", "profile", "email"]
+        )
+
+        return AccessToken(
+            token=token,
+            client_id=str(
+                userinfo_claims.get("client_id")
+                or userinfo_claims.get("azp")
+                or userinfo_claims.get("sub")
+                or approved_user.email
+            ),
+            scopes=scopes,
+            expires_at=None,
+            claims=enriched_claims,
+        )
+
+
+__all__ = ["ZitadelProvider", "TavroZitadelTokenVerifier"]

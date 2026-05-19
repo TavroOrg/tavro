@@ -12,7 +12,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from fastmcp.server.auth.providers.google import GoogleProvider
 # from fastmcp.server.auth.providers.aws import AWSCognitoProvider, AWSCognitoTokenVerifier
-from mcp_server.zitadel_provider import ZitadelProvider
+from mcp_server.zitadel_provider import TavroZitadelTokenVerifier, ZitadelProvider
 from fastmcp.server.auth.auth import AccessToken    
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.auth.providers.jwt import JWTVerifier  
@@ -730,9 +730,19 @@ zitadel_auth = ZitadelProvider(
     require_authorization_consent="external",
 )
 
+zitadel_auth_wrapped = MultiAuth(
+    server=zitadel_auth,
+    verifiers=[
+        TavroZitadelTokenVerifier(
+            provider=zitadel_auth,
+            required_scopes=os.getenv("ZITADEL_SCOPES", "openid profile email").split(),
+        )
+    ],
+)
+
 zitadel_mcp = FastMCP(
     "Tavro MCP Server (ZITADEL)",
-    auth=zitadel_auth,
+    auth=zitadel_auth_wrapped,
 )
 
 zitadel_mcp.mount(core)
@@ -776,7 +786,7 @@ for r in google_auth.get_well_known_routes(mcp_path=MCP_PATH):
 # for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
 #     app.router.routes.append(r)
 
-for r in zitadel_auth.get_well_known_routes(mcp_path=MCP_PATH):
+for r in zitadel_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
     app.router.routes.append(r)
 
 # ---------------------------
