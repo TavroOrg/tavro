@@ -4,7 +4,7 @@ import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useChatSync } from '../hooks/useChatSync';
@@ -267,7 +267,16 @@ const UseCaseViewPage: React.FC = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [jsonOpen, setJsonOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { agents } = useCatalog();
+
+  const handleCopyJson = () => {
+    if (!useCase) return;
+    navigator.clipboard.writeText(JSON.stringify(useCase, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
   const { refresh: refreshUseCases } = useUseCases();
 
   const handleDelete = async () => {
@@ -372,6 +381,12 @@ const UseCaseViewPage: React.FC = () => {
     linkedAgents: ((useCase as any).agents ?? []).map((a: any) => a.name ?? a).filter(Boolean),
   } : null);
 
+  const prettyJson = useCase ? JSON.stringify(
+    Object.fromEntries(Object.entries(useCase as any).filter(([k]) => k !== 'agents')),
+    null, 2
+  ) : '';
+  const useCaseName = useCase ? ((useCase as any).name ?? (useCase as any).title ?? useCase.identifier ?? '') : '';
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in pb-12">
       <div className="flex items-center justify-between">
@@ -396,9 +411,16 @@ const UseCaseViewPage: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setAuditModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
             >
-              <ShieldCheck size={15} /> Compliance Audit
+              <ShieldCheck size={15} /> Audit
+            </button>
+            <button
+              onClick={() => setJsonOpen(true)}
+              title="AI Use Case Card"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Code2 size={14} /> AI Use Case Card
             </button>
             <button
               onClick={() => setEditOpen(true)}
@@ -462,6 +484,49 @@ const UseCaseViewPage: React.FC = () => {
         prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
         mode="use_case"
       />
+
+      {/* JSON Inspector Modal */}
+      {jsonOpen && useCase && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setJsonOpen(false); }}
+        >
+          <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-700">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+              <div className="flex items-center gap-2">
+                <Code2 size={16} className="text-blue-400" />
+                <span className="font-bold text-slate-100 text-sm">AI Use Case Card</span>
+                <span className="text-xs text-slate-400 font-mono ml-2 bg-slate-800 px-2 py-0.5 rounded">
+                  {useCaseName}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyJson}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-all border border-slate-700"
+                >
+                  {copied ? <><Check size={12} className="text-emerald-400" /> Copied!</> : <><Copy size={12} /> Copy</>}
+                </button>
+                <button
+                  onClick={() => setJsonOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto flex-1 p-5">
+              <pre className="text-xs text-slate-300 font-mono leading-relaxed whitespace-pre-wrap break-words">
+                {prettyJson}
+              </pre>
+            </div>
+            <div className="px-5 py-2.5 border-t border-slate-700 flex justify-between text-xs text-slate-500">
+              <span>{prettyJson.split('\n').length} lines</span>
+              <span>{(new TextEncoder().encode(prettyJson).length / 1024).toFixed(1)} KB</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

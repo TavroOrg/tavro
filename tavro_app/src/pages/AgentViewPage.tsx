@@ -298,7 +298,7 @@ const AgentViewPage: React.FC = () => {
                         onClick={() => setAuditModalOpen(true)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
                     >
-                        <ShieldCheck size={15} /> Compliance Audit
+                        <ShieldCheck size={15} /> Audit
                     </button>
                     <button
                         onClick={handleRequestRiskAssessment}
@@ -312,7 +312,7 @@ const AgentViewPage: React.FC = () => {
                     <button
                         onClick={() => setJsonOpen(true)}
                         title="Agent Card"
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
                     >
                         <Code2 size={14} />
                         Agent Card
