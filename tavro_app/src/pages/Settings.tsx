@@ -54,7 +54,7 @@ const Settings: React.FC = () => {
         byokBaseUrl?: string;
     };
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
-        github: 'gpt-4.1', openai: 'gpt-4o', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-20250514',
+        github: 'gpt-4.1', openai: 'gpt-4o', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
     };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);

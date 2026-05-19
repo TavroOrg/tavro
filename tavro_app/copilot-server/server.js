@@ -11,10 +11,6 @@ let client;
 let clientStarted = false;
 const sessions = new Map();
 
-const ANTHROPIC_SDK_MODEL_ALIASES = {
-    'claude-sonnet-4-5': 'claude-sonnet-4-20250514',
-};
-
 function isAuthError(message) {
     return /401|unauthori[sz]ed|Failed to fetch Copilot user info|not created with authentication info|token/i.test(message);
 }
@@ -56,13 +52,6 @@ function pickString(...values) {
 
 function hasCustomProvider(provider) {
     return !!(provider && provider.type);
-}
-
-function resolveSdkModel(model, provider) {
-    if (provider?.type === 'anthropic') {
-        return ANTHROPIC_SDK_MODEL_ALIASES[model] || model;
-    }
-    return model;
 }
 
 function extractEventContent(event) {
@@ -123,10 +112,9 @@ function buildModelCapabilities(provider) {
  * Build the session config, merging GitHub auth and optional BYOK provider.
  */
 function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId) {
-    const sdkModel = resolveSdkModel(model, provider);
     const providerCfg = buildProviderConfig(provider);
     const cfg = {
-        model: sdkModel,
+        model,
         sessionId,
         streaming: true,
         onPermissionRequest: approveAll,
@@ -203,7 +191,7 @@ app.post('/chat/complete', async (req, res) => {
 
     try {
         await ensureClientStarted();
-        console.log(`[copilot-proxy] /chat/complete model=${model} sdkModel=${resolveSdkModel(model, providerCfg)} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
+        console.log(`[copilot-proxy] /chat/complete model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
 
         const fallbackModels = ['gpt-4.1', 'gpt-4o', 'claude-sonnet-4.5', 'gpt-5'];
         const candidates = providerCfg ? [model] : [model, ...fallbackModels.filter(m => m !== model)];
@@ -253,9 +241,7 @@ app.post('/chat/complete', async (req, res) => {
         const message = err?.message ?? String(err);
         console.error('[copilot-proxy] /chat/complete failed', { message });
         if (providerCfg?.type === 'anthropic' && isAdaptiveThinkingError(message)) {
-            return res.status(500).json({
-                error: `${message}. Tavro maps claude-sonnet-4-5 to claude-sonnet-4-20250514 for Copilot SDK BYOK; rebuild/restart the copilot-sdk container if this error persists.`,
-            });
+            return res.status(500).json({ error: message });
         }
         const status = isAuthError(message) ? 401 : 500;
         return res.status(status).json({
@@ -294,7 +280,7 @@ app.post('/chat/stream', async (req, res) => {
 
     try {
         await ensureClientStarted();
-        console.log(`[copilot-proxy] /chat/stream model=${model} sdkModel=${resolveSdkModel(model, providerCfg)} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
+        console.log(`[copilot-proxy] /chat/stream model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
 
         const session = await getOrCreateSession({ sessionId, model, authToken, provider: providerCfg, messages });
 
@@ -324,9 +310,7 @@ app.post('/chat/stream', async (req, res) => {
         const message = err?.message ?? String(err);
         console.error('[copilot-proxy] /chat/stream failed', { message });
         if (providerCfg?.type === 'anthropic' && isAdaptiveThinkingError(message)) {
-            sendEvent({
-                error: `${message}. Tavro maps claude-sonnet-4-5 to claude-sonnet-4-20250514 for Copilot SDK BYOK; rebuild/restart the copilot-sdk container if this error persists.`,
-            });
+            sendEvent({ error: message });
             res.end();
             return;
         }

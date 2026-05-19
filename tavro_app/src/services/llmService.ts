@@ -52,7 +52,7 @@ export interface LLMConfig {
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
     openai: 'gpt-4o',
     gemini: 'gemini-1.5-flash',
-    anthropic: 'claude-sonnet-4-20250514',
+    anthropic: 'claude-sonnet-4-6',
     copilot: 'gpt-4.1',
 };
 
