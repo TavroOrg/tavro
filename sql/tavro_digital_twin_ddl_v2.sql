@@ -17,7 +17,7 @@ SET search_path = twin, ag_catalog, public;
 -- Enums
 CREATE TYPE twin.dim_category AS ENUM (
     'profile','strategy','process','application',
-    'organisation','technology','risk','custom'
+    'organisation','technology','risk','finance','custom'
 );
 CREATE TYPE twin.visibility_level AS ENUM (
     'public','internal','restricted','confidential'
@@ -196,4 +196,17 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Organisation', 'organisation', true, 2),
     ('Technology',   'technology',   true, 2),
     ('Risk',         'risk',         true, 3),
+    ('Finance',      'finance',      true, 2),
     ('Custom',       'custom',       false, 2);
+
+-- Dimension node attachments (files stored as bytea in Postgres)
+CREATE TABLE twin.dim_node_attachment (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    node_id      UUID        NOT NULL REFERENCES twin.dim_node(id) ON DELETE CASCADE,
+    filename     TEXT        NOT NULL,
+    content_type TEXT        NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes   BIGINT      NOT NULL,
+    data         BYTEA       NOT NULL,
+    uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX dim_node_attachment_node_idx ON twin.dim_node_attachment (node_id);

@@ -12,6 +12,7 @@ import type {
   GraphData,
   Page,
   DimCategory,
+  DimNodeAttachment,
 } from '../types/blueprint';
 import { getValidToken, refreshAccessToken } from './auth';
 
@@ -231,6 +232,46 @@ class BlueprintApiService {
       method: 'POST',
       body: JSON.stringify(params),
     });
+  }
+
+  // ── Attachments ──────────────────────────────────────────────────────────
+
+  async listAttachments(nodeId: string): Promise<DimNodeAttachment[]> {
+    return req(`/dim-nodes/${nodeId}/attachments`);
+  }
+
+  async uploadAttachment(nodeId: string, file: File): Promise<DimNodeAttachment> {
+    const token = await import('./auth').then(m => m.getValidToken());
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${V1}/dim-nodes/${nodeId}/attachments`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Upload failed ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
+  async deleteAttachment(attachmentId: string): Promise<void> {
+    return req(`/dim-nodes/attachments/${attachmentId}`, { method: 'DELETE' });
+  }
+
+  async downloadAttachment(attachmentId: string, filename: string): Promise<void> {
+    const token = await import('./auth').then(m => m.getValidToken());
+    const res = await fetch(`${V1}/dim-nodes/attachments/${attachmentId}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Download failed ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 }
 
