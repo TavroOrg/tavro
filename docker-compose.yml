@@ -379,6 +379,7 @@ services:
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
+      PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       POSTGRES_HOST:     tavro-postgres
       POSTGRES_PORT:     "5432"
       POSTGRES_USER:     ${POSTGRES_USER}
