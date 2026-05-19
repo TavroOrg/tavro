@@ -1,5 +1,7 @@
 import os
 import json
+import time
+from pathlib import Path
 import uvicorn
 from typing import Dict, Any, Optional, List
 from fastmcp import FastMCP
@@ -28,6 +30,38 @@ set_environment("mcp")
 set_environment("oAuth")
 set_environment("secrets")
 set_environment("fastapi")
+
+
+def _load_zitadel_client_id_from_runtime_config() -> str:
+    runtime_config_path = os.getenv(
+        "TAVRO_RUNTIME_CONFIG_FILE",
+        "/app/runtime/tavro-runtime-config.json",
+    )
+    should_wait = bool(os.getenv("TAVRO_RUNTIME_CONFIG_FILE"))
+    attempts = 60 if should_wait else 1
+    path = Path(runtime_config_path)
+
+    for attempt in range(attempts):
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    config = json.load(f)
+                client_id = str(config.get("zitadelClientId", "")).strip()
+                if client_id:
+                    return client_id
+        except Exception as exc:
+            print(f"Failed to read ZITADEL runtime config from {path}: {exc}")
+
+        if attempt < attempts - 1:
+            time.sleep(1)
+
+    return ""
+
+
+_runtime_zitadel_client_id = _load_zitadel_client_id_from_runtime_config()
+if _runtime_zitadel_client_id:
+    os.environ["ZITADEL_CLIENT_ID"] = _runtime_zitadel_client_id
+    print("ZITADEL_CLIENT_ID loaded from runtime config")
 
 # ---------------------------
 # Constants / deployment URLs
