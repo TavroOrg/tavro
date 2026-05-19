@@ -78,14 +78,13 @@ export class CopilotOrchestrator {
             appLogger.info(`[CopilotOrchestrator] iter=${iterCount + 1} result=${result.type} provider=${cfg.provider}`);
 
             if (result.type === 'text') {
-                if (executedTools.length === 0 && result.content) {
-                    // No tools were called; yield this response directly.
-                    // Avoids a redundant synthesis stream() call (critical for the
-                    // Copilot SDK provider which always returns text from complete()).
+                if (result.content) {
+                    // Model returned a text response — yield it directly.
                     yield result.content;
                     return;
                 }
-                // Tools were already executed — proceed to synthesis phase.
+                // complete() returned empty text for any reason — fall through
+                // to the synthesis phase so the model gets another chance.
                 break;
             }
 
@@ -143,6 +142,20 @@ export class CopilotOrchestrator {
             };
         }
 
+        if (executedTools.length > 0) {
+            // Tools were executed — the context contains tool_use and tool_result
+            // messages. Anthropic requires the tools array to be present when
+            // tool_result blocks appear in messages. Use complete() so the full
+            // schema is sent, and pass the tool defs to satisfy that requirement.
+            const synthResult = await provider.complete(context, toolDefs);
+            if (synthResult.type === 'text' && synthResult.content) {
+                yield synthResult.content;
+                return;
+            }
+        }
+
+        // No tools in context (or synthesis complete() also returned empty) —
+        // stream is safe to call without the tools array.
         yield* provider.stream(context);
     }
 }

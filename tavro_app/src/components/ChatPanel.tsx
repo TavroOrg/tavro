@@ -301,9 +301,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const buildHistory = (msgs: Message[]): ChatMessage[] => {
-        return msgs
-            .filter(m => m.id !== 'welcome' && !m.streaming)
-            .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
+        const filtered = msgs.filter(m => m.id !== 'welcome' && !m.streaming);
+        // Drop trailing user messages — if the previous response failed, the history
+        // would end with a user turn, and adding the new user message creates
+        // consecutive user roles which Anthropic rejects with HTTP 400.
+        let end = filtered.length;
+        while (end > 0 && filtered[end - 1].role === 'user') end--;
+        return filtered.slice(0, end).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
 
     const copyConversation = () => {
@@ -386,19 +390,31 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 }
             }
 
-            // Streaming complete — finalize and persist
-            const finalMsgs = accumulated.trim()
-                ? latestMessages.current.map(m =>
-                    m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
-                )
-                : [...latestMessages.current, {
-                    id: `err-${Date.now()}`,
-                    role: 'assistant' as const,
-                    text: 'I did not receive a response from the configured LLM. Please check the Copilot SDK proxy logs and token configuration.',
-                    timestamp: new Date(),
-                }];
-            setMessages(finalMsgs);
-            persist(finalMsgs);
+            // Streaming complete — finalize and persist.
+            // Use a functional update so we always operate on the actual current
+            // state, not the potentially-stale latestMessages ref. When the
+            // orchestrator yields the whole response as one chunk (complete() path),
+            // the loop runs once and ends immediately — React may not have flushed
+            // the earlier functional setMessages that added the streaming placeholder,
+            // so latestMessages.current can be stale. A direct setMessages(array)
+            // computed from the stale ref would overwrite the pending update.
+            setMessages(prev => {
+                let next: Message[];
+                if (accumulated.trim()) {
+                    const hasPlaceholder = prev.some(m => m.id === assistantId);
+                    next = hasPlaceholder
+                        ? prev.map(m => m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m)
+                        : [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: false }];
+                } else {
+                    next = [
+                        ...prev.filter(m => m.id !== assistantId),
+                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: 'I did not receive a response from the configured LLM. Please check the Copilot SDK proxy logs and token configuration.', timestamp: new Date() },
+                    ];
+                }
+                latestMessages.current = next;
+                persist(next);
+                return next;
+            });
 
         } catch (err: any) {
             const errMsg: Message = {

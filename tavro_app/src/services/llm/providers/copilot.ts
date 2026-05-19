@@ -366,6 +366,7 @@ export class CopilotProvider implements ILLMProvider {
     private anthropicModels(): string[] {
         return Array.from(new Set([
             this.model,
+            'claude-sonnet-4-6',
             'claude-sonnet-4-5',
             'claude-3-5-sonnet-20241022',
             'claude-3-5-haiku-20241022',
@@ -374,10 +375,6 @@ export class CopilotProvider implements ILLMProvider {
     }
 
     private async completeAnthropic(messages: RuntimeMessage[], tools: ToolDefinition[]): Promise<InternalCompletionResult> {
-        if (tools.length === 0) {
-            return this.completeViaProxy(messages);
-        }
-
         const system   = extractSystemAnthropic(messages);
         const chatMsgs = toWireMessagesAnthropic(messages);
         const errors: string[] = [];
@@ -418,7 +415,25 @@ export class CopilotProvider implements ILLMProvider {
     }
 
     private async *streamAnthropic(messages: RuntimeMessage[]): AsyncGenerator<string> {
-        yield* this.streamViaProxy(messages);
+        const system   = extractSystemAnthropic(messages);
+        const chatMsgs = toWireMessagesAnthropic(messages);
+        const errors: string[] = [];
+
+        for (const model of this.anthropicModels()) {
+            const res = await byokStream({
+                providerType: 'anthropic',
+                endpoint: this.anthropicEndpoint(),
+                apiKey: this.apiKey,
+                body: { model, max_tokens: 1024, system, messages: chatMsgs },
+            });
+            if (res.ok) {
+                yield* parseSSE(res.body!.getReader(), extractProxyDelta);
+                return;
+            }
+            const err = await res.json().catch(() => ({}));
+            errors.push(`${model}: HTTP ${res.status} ${err?.error?.message ?? err?.error ?? ''}`);
+        }
+        throw new Error(`Copilot Anthropic BYOK stream failed. Tried: ${errors.join(' | ')}`);
     }
 
     // ── GitHub Copilot proxy mode ─────────────────────────────────────────────

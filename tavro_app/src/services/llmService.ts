@@ -269,11 +269,12 @@ async function* streamAnthropic(cfg: LLMConfig, messages: ChatMessage[]): AsyncG
     const chatMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
     const modelsToTry = Array.from(new Set([
         cfg.model,
+        'claude-sonnet-4-6',
         'claude-sonnet-4-5',
         'claude-3-5-sonnet-20241022',
         'claude-3-5-haiku-20241022',
         'claude-3-opus-20240229',  // note: opus is still valid
-    ].filter(Boolean)));    
+    ].filter(Boolean)));
     const errors: string[] = [];
 
     for (const model of modelsToTry) {
@@ -359,7 +360,7 @@ async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGen
         const base = (byok.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
         const systemMsg = messages.find(m => m.role === 'system')?.content ?? '';
         const chatMsgs  = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
-        const modelsToTry = Array.from(new Set([cfg.model, 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'].filter(Boolean)));
+        const modelsToTry = Array.from(new Set([cfg.model, 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'].filter(Boolean)));
         const errors: string[] = [];
         for (const model of modelsToTry) {
             const res = await fetch('/copilot-api/chat/byok/stream', {
@@ -448,7 +449,7 @@ async function completeChatAnthropic(cfg: LLMConfig, messages: ChatMessage[], to
     const systemMsg = messages.find(m => m.role === 'system')?.content ?? '';
     const chatMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
     const modelsToTry = Array.from(new Set([
-        cfg.model, 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022',
+        cfg.model, 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022',
     ].filter(Boolean)));
     const errors: string[] = [];
     for (const model of modelsToTry) {
@@ -592,7 +593,7 @@ async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tool
         const base = (byok.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
         const systemMsg = messages.find(m => m.role === 'system')?.content ?? '';
         const chatMsgs  = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
-        const modelsToTry = Array.from(new Set([cfg.model, 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'].filter(Boolean)));
+        const modelsToTry = Array.from(new Set([cfg.model, 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'].filter(Boolean)));
         const errors: string[] = [];
         for (const model of modelsToTry) {
             const body: any = { model, max_tokens: 2048, system: systemMsg, messages: chatMsgs };

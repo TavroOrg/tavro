@@ -467,6 +467,10 @@ app.post('/chat/byok/complete', async (req, res) => {
             console.error(`[copilot-byok] upstream error ${upstream.status}`, { msg });
             return res.status(upstream.status).json({ error: msg });
         }
+        const stopReason = data?.stop_reason ?? 'unknown';
+        const contentCount = Array.isArray(data?.content) ? data.content.length : 0;
+        const contentTypes = Array.isArray(data?.content) ? data.content.map(c => c?.type).join(',') : 'none';
+        console.log(`[copilot-byok] response stop_reason=${stopReason} content_blocks=${contentCount} types=${contentTypes}`);
         return res.json(data);
     } catch (err) {
         console.error('[copilot-byok] /chat/byok/complete fetch failed', { error: err.message });
