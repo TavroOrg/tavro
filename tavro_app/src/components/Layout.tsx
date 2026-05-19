@@ -4,10 +4,11 @@ import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, Network
+    AppWindow, BriefcaseBusiness, Paperclip, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
+import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
@@ -16,7 +17,12 @@ import { clearAllSessions } from '../store/chatSessionStore';
 
 import travoLogo from '../assets/travo_logo.png';
 
-type ActivePanel = 'chat' | 'devlog' | null;
+type ActivePanel = 'chat' | 'devlog' | 'attachment' | null;
+
+/** Check if current route is an agent view page */
+function isAgentPage(pathname: string): boolean {
+    return /^\/agent\//.test(pathname);
+}
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
@@ -156,6 +162,7 @@ const Layout: React.FC = () => {
 
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+    const isOnAgentPage = isAgentPage(location.pathname);
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -337,11 +344,9 @@ const Layout: React.FC = () => {
                                 </div>
                                 {!anyLoading && (
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                        {agents.length > 0 && (
-                                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                                {agents.length} agents
-                                            </span>
-                                        )}
+                                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                            {agents.length} agents
+                                        </span>
                                         {useCases.length > 0 && (
                                             <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                                 {useCases.length} use cases
@@ -481,6 +486,15 @@ const Layout: React.FC = () => {
                                 <span className="text-[9px] font-semibold leading-none">Logs</span>
                             </button>
                         )}
+                        {isOnAgentPage && (
+                            <button
+                                onClick={() => setActivePanel('attachment')}
+                                className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
+                                title="Attachments"
+                            >
+                                <Paperclip size={22} />
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="flex h-full w-full">
@@ -527,11 +541,24 @@ const Layout: React.FC = () => {
                                     <button
                                         onClick={() => setActivePanel('devlog')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'devlog'
-                                            ? 'border-blue-500 text-blue-600 bg-white'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+                                            ? 'border-blue-500 text-blue-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                                     >
                                         <Terminal size={14} />
                                         Dev Logs
+                                    </button>
+                                )}
+
+                                {/* Attachment tab — show only on agent pages */}
+                                {isOnAgentPage && (
+                                    <button
+                                        onClick={() => setActivePanel('attachment')}
+                                        className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
+                                            ? 'border-amber-500 text-amber-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                                    >
+                                        <Paperclip size={14} />
+                                        Attachments
                                     </button>
                                 )}
 
@@ -550,6 +577,7 @@ const Layout: React.FC = () => {
                             <div className="flex-1 overflow-hidden">
                                 {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
+                                {activePanel === 'attachment' && isOnAgentPage && <AttachmentPanel />}
                             </div>
                         </div>
                     </div>

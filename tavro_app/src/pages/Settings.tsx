@@ -6,6 +6,7 @@ import {
     Database, CloudOff, Download, CircleHelp, ExternalLink
 } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
+import { useInspectJson } from '../hooks/useInspectJson';
 import { generatePKCE } from '../services/pkce';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCacheMode } from '../hooks/useCacheMode';
@@ -18,6 +19,8 @@ import {
 import { useTheme } from '../context/ThemeContext';
 
 const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
+// const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+const MCP_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:9001/zitadel/mcp';
 
 const PROVIDER_ICONS: Record<LLMProvider, string> = {
     openai: '🤖',
@@ -36,14 +39,10 @@ const Settings: React.FC = () => {
     }, [setViewContext]);
     // App config
     const { theme, setTheme } = useTheme();
+    const [inspectJson, setInspectJson] = useInspectJson();
     const [saved, setSaved] = useState(false);
     const [showLogs, setShowLogs] = useShowLogs();
     const [cacheMode, setCacheMode] = useCacheMode();
-
-    // Connection status
-    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
-    const [connectionError, setConnectionError] = useState<string | null>(null);
-    const [mcpUrl, setMcpUrl] = useState('');
 
     // LLM config — per-provider
     type ByokType = 'github' | 'openai' | 'azure' | 'anthropic';
@@ -87,10 +86,6 @@ const Settings: React.FC = () => {
     const generateLogRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        // Theme is handled by context
-        setMcpUrl(localStorage.getItem('tavro_mcp_url') || '');
-
-
         // Load cached data settings
         setCachedDataUrl(localStorage.getItem('tavro_cached_data_url') || '');
         setCachedDataLocalPath(localStorage.getItem('tavro_cached_data_local_path') || '');
@@ -137,82 +132,6 @@ const Settings: React.FC = () => {
         a.download = 'mcpCachedData.json';
         a.click();
         URL.revokeObjectURL(url);
-    };
-
-    const handleSaveSettings = async () => {
-        const url = mcpUrl.trim();
-        if (!url) return;
-
-        localStorage.setItem('tavro_mcp_url', url);
-        mcpClient.invalidateCache();
-        setConnectionStatus('connecting');
-        setConnectionError(null);
-        setSaved(false);
-
-        try {
-            // Derive base path: https://host/cognito/mcp → https://host/cognito
-            const mcpBase = url.substring(0, url.lastIndexOf('/'));
-            const redirectUri = `${window.location.origin}/auth/callback`;
-
-            // Step 1: Dynamic Client Registration
-            let regRes: Response;
-            try {
-                regRes = await fetch(`${mcpBase}/register`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-                    body: JSON.stringify({
-                        client_name: 'tavro-portal',
-                        redirect_uris: [redirectUri],
-                        token_endpoint_auth_method: 'none',
-                    }),
-                });
-            } catch {
-                throw new Error(
-                    `Cannot reach MCP server at ${mcpBase}/register. ` +
-                    `Check that the server is running and has CORS enabled for this origin (${window.location.origin}).`
-                );
-            }
-            if (!regRes.ok) throw new Error(`Client registration failed: HTTP ${regRes.status}`);
-            const regData = await regRes.json();
-            const dcrClientId = regData.client_id;
-            if (!dcrClientId) throw new Error('No client_id returned from registration.');
-
-            // Step 2: Discover authorization endpoint
-            let authorizationEndpoint = `${mcpBase}/authorize`;
-            try {
-                const metaRes = await fetch(`${mcpBase}/.well-known/oauth-authorization-server`, {
-                    headers: { 'ngrok-skip-browser-warning': 'true' },
-                });
-                if (metaRes.ok) {
-                    const meta = await metaRes.json();
-                    if (meta.authorization_endpoint) authorizationEndpoint = meta.authorization_endpoint;
-                }
-            } catch { /* fall back to {mcpBase}/authorize */ }
-
-            // Step 3: Generate PKCE
-            const { verifier, challenge } = await generatePKCE();
-
-            // Step 4: Persist OAuth session state for the callback
-            localStorage.setItem('tavro_dcr_client_id', dcrClientId);
-            localStorage.setItem('tavro_pkce_verifier', verifier);
-            localStorage.setItem('tavro_auth_redirect_uri', redirectUri);
-            localStorage.setItem('tavro_auth_flow_origin', 'settings');
-            localStorage.removeItem('tavro_oidc_provider'); // must NOT be 'zitadel'
-
-            // Step 5: Redirect — user authenticates with the OAuth provider
-            const authUrl = new URL(authorizationEndpoint);
-            authUrl.searchParams.set('response_type', 'code');
-            authUrl.searchParams.set('client_id', dcrClientId);
-            authUrl.searchParams.set('redirect_uri', redirectUri);
-            authUrl.searchParams.set('code_challenge', challenge);
-            authUrl.searchParams.set('code_challenge_method', 'S256');
-
-            window.location.href = authUrl.toString();
-
-        } catch (err: any) {
-            setConnectionStatus('error');
-            setConnectionError(err.message || 'OAuth setup failed.');
-        }
     };
 
     const handleSaveProvider = (p: LLMProvider) => {
@@ -474,53 +393,23 @@ const Settings: React.FC = () => {
 
             {/* ── MCP Connection ─────────────────────────────────────────── */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <Database size={16} className="text-blue-500" />
-                        <span className="font-bold text-slate-800 dark:text-slate-100">MCP Connection</span>
-                    </div>
+                <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
+                    <Database size={16} className="text-blue-500" />
+                    <span className="font-bold text-slate-800 dark:text-slate-100">MCP Connection</span>
                 </div>
-                <div className="p-5 flex flex-col gap-5">
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                                MCP Server URL
-                            </label>
-                            <input
-                                type="text"
-                                value={mcpUrl}
-                                onChange={(e) => setMcpUrl(e.target.value)}
-                                placeholder="http://localhost:9001/mcp"
-                                className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all font-mono"
-                            />
-                        </div>
-
-                        <div className="flex items-center justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <button
-                                onClick={handleSaveSettings}
-                                disabled={connectionStatus === 'connecting'}
-                                className={`flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-sm transition-all text-white shadow-lg shadow-blue-500/20 disabled:cursor-not-allowed ${
-                                    connectionStatus === 'connected' && saved
-                                        ? 'bg-emerald-500'
-                                        : connectionStatus === 'error'
-                                        ? 'bg-rose-500 hover:bg-rose-600'
-                                        : 'bg-blue-600 hover:bg-blue-700'
-                                }`}
-                            >
-                                {connectionStatus === 'connecting' && <Loader2 size={14} className="animate-spin" />}
-                                {connectionStatus === 'connecting'
-                                    ? 'Redirecting...'
-                                    : connectionStatus === 'connected' && saved
-                                    ? '✓ Connected'
-                                    : connectionStatus === 'error'
-                                    ? '✗ Retry'
-                                    : 'Update Connection'}
-                            </button>
-                        </div>
-                        {connectionStatus === 'error' && (
-                            <p className="text-[11px] font-bold text-rose-500 uppercase tracking-widest">✗ Connection Failed: {connectionError}</p>
-                        )}
-                    </div>
+                <div className="p-5 flex flex-col gap-3">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                        MCP Server URL
+                    </label>
+                    <input
+                        type="text"
+                        value={MCP_URL}
+                        readOnly
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-500 dark:text-slate-400 font-mono cursor-default select-all outline-none"
+                    />
+                    <p className="text-xs text-slate-400 dark:text-slate-500">
+                        Authentication is handled automatically on login.
+                    </p>
                 </div>
             </div>
 

@@ -6,6 +6,16 @@ import type {
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 
+export interface AgentAttachmentRecord {
+  id: string;
+  agent_id: string;
+  filename: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
@@ -108,6 +118,37 @@ class BusinessRelationsApi {
 
   async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
     return req(`/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
+    return req(`/agents/${encodeURIComponent(agentId)}/attachments`);
+  }
+
+  async uploadAgentAttachment(
+    agentId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<AgentAttachmentRecord> {
+    return req(`/agents/${encodeURIComponent(agentId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteAgentAttachment(agentId: string, attachmentId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async downloadAgentAttachment(agentId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+    }
+    return res.blob();
   }
 
   async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from api.database import get_db
 router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
+_AGENT_ATTACHMENTS_READY = False
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -177,6 +179,45 @@ class ProcessCreate(Process):
 
 class ProcessUpdate(Process):
     pass
+
+
+class AgentAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
+async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
+    global _AGENT_ATTACHMENTS_READY
+    if _AGENT_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.agent_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                agent_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
+            ON public.agent_attachment (agent_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _AGENT_ATTACHMENTS_READY = True
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -1111,6 +1152,146 @@ async def delete_process(
         )
     await db.commit()
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.get(
+    "/agents/{agent_id}/attachments",
+    tags=["Agents"],
+    summary="List Agent Attachments",
+)
+async def list_agent_attachments(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.agent_attachment
+            WHERE agent_id = :agent_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"agent_id": agent_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/agents/{agent_id}/attachments",
+    tags=["Agents"],
+    summary="Upload Agent Attachment",
+    status_code=201,
+)
+async def create_agent_attachment(
+    agent_id: str,
+    body: AgentAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.agent_attachment
+                (agent_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "agent_id": agent_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/agents/{agent_id}/attachments/{attachment_id}/download",
+    tags=["Agents"],
+    summary="Download Agent Attachment",
+)
+async def download_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/agents/{agent_id}/attachments/{attachment_id}",
+    tags=["Agents"],
+    summary="Delete Agent Attachment",
+)
+async def delete_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
 
 
 @router.get(
