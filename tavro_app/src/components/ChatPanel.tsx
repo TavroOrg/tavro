@@ -363,7 +363,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             }
 
             const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            const stream = mcpClient.chat(text, buildHistory(withUser), { viewType, viewData, systemPrompt });
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt });
             let firstToken = true;
             let accumulated = '';
 

@@ -54,6 +54,15 @@ export class CopilotOrchestrator {
             this.tokenBudget,
         );
 
+        if (isSimpleGreeting(userMessage) || isToolInventoryQuestion(userMessage)) {
+            const greetingContext = trimToTokenBudget(
+                buildRuntimeMessages(systemPrompt, history, userMessage),
+                this.tokenBudget,
+            );
+            yield* provider.stream(greetingContext);
+            return;
+        }
+
         // Fast path: no tools — go straight to streaming.
         if (toolDefs.length === 0) {
             yield* provider.stream(context);
@@ -136,6 +145,17 @@ export class CopilotOrchestrator {
 
         yield* provider.stream(context);
     }
+}
+
+function isSimpleGreeting(message: string): boolean {
+    const normalized = message.trim().toLowerCase().replace(/[!.,\s]+$/g, '');
+    return /^(hi|hello|hey|hiya|yo|namaste|good morning|good afternoon|good evening)$/.test(normalized);
+}
+
+function isToolInventoryQuestion(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    return /\b(what|which|list|show)\b.*\b(tools?|capabilities|actions)\b/.test(normalized)
+        || /\btools?\b.*\b(have|available|can use)\b/.test(normalized);
 }
 
 // ── Prompt builders ───────────────────────────────────────────────────────────

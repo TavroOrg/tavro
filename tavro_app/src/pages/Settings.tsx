@@ -46,10 +46,24 @@ const Settings: React.FC = () => {
     const [mcpUrl, setMcpUrl] = useState('');
 
     // LLM config — per-provider
-    type ProviderState = { model: string; key: string; showKey: boolean; saved: boolean; configured: boolean };
+    type ByokType = 'github' | 'openai' | 'azure' | 'anthropic';
+    type ProviderState = {
+        model: string; key: string; showKey: boolean; saved: boolean; configured: boolean;
+        // Copilot-only BYOK fields
+        byokType?: ByokType;
+        byokBaseUrl?: string;
+    };
+    const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
+        github: 'gpt-4.1', openai: 'gpt-4o', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-20250514',
+    };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);
-        return { model: cfg?.model || DEFAULT_MODELS[p], key: cfg?.apiKey || '', showKey: false, saved: false, configured: !!cfg };
+        const base: ProviderState = { model: cfg?.model || DEFAULT_MODELS[p], key: cfg?.apiKey || '', showKey: false, saved: false, configured: !!cfg };
+        if (p === 'copilot') {
+            base.byokType  = (cfg?.byok?.type as ByokType) ?? 'github';
+            base.byokBaseUrl = cfg?.byok?.baseUrl ?? '';
+        }
+        return base;
     };
     const [providerStates, setProviderStates] = useState<Record<LLMProvider, ProviderState>>(() => ({
         openai: initProviderState('openai'),
@@ -204,7 +218,10 @@ const Settings: React.FC = () => {
     const handleSaveProvider = (p: LLMProvider) => {
         const s = providerStates[p];
         if (!s.key.trim()) return;
-        saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: s.key.trim() });
+        const byok = (p === 'copilot' && s.byokType && s.byokType !== 'github')
+            ? { type: s.byokType as 'openai' | 'azure' | 'anthropic', baseUrl: s.byokBaseUrl?.trim() || undefined }
+            : undefined;
+        saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: s.key.trim(), byok });
         updateProvider(p, { configured: true, saved: true });
         setTimeout(() => updateProvider(p, { saved: false }), 2500);
     };
@@ -290,6 +307,61 @@ const Settings: React.FC = () => {
 
                                 {/* Card body */}
                                 <div className="p-4 flex flex-col gap-3">
+
+                                    {/* ── Copilot BYOK: Provider Type ── */}
+                                    {p === 'copilot' && (
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Provider Type</label>
+                                            <select
+                                                value={s.byokType ?? 'github'}
+                                                onChange={e => {
+                                                    const t = e.target.value as ByokType;
+                                                    updateProvider(p, {
+                                                        byokType: t,
+                                                        model: BYOK_DEFAULT_MODELS[t],
+                                                        byokBaseUrl: '',
+                                                    });
+                                                }}
+                                                className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all"
+                                            >
+                                                <option value="github">GitHub Copilot (requires subscription)</option>
+                                                <option value="openai">OpenAI</option>
+                                                <option value="azure">Azure OpenAI / Azure AI Foundry</option>
+                                                <option value="anthropic">Anthropic (Claude)</option>
+                                            </select>
+                                            <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                                                {s.byokType === 'github' && 'Uses your GitHub Copilot subscription via the local proxy server.'}
+                                                {s.byokType === 'openai' && 'Uses Copilot SDK BYOK with OpenAI or OpenAI-compatible endpoints.'}
+                                                {s.byokType === 'azure' && 'Uses Copilot SDK BYOK with Azure OpenAI. Base URL required.'}
+                                                {s.byokType === 'anthropic' && 'Uses Copilot SDK BYOK with Anthropic Claude.'}
+                                                {!s.byokType && 'Select how requests are routed.'}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {/* ── Copilot BYOK: Base URL (azure required, openai optional) ── */}
+                                    {p === 'copilot' && s.byokType && s.byokType !== 'github' && s.byokType !== 'anthropic' && (
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                                Base URL {s.byokType === 'azure' ? <span className="text-rose-400">*</span> : '(optional)'}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={s.byokBaseUrl ?? ''}
+                                                onChange={e => updateProvider(p, { byokBaseUrl: e.target.value })}
+                                                placeholder={
+                                                    s.byokType === 'azure'
+                                                        ? 'https://my-resource.openai.azure.com'
+                                                        : 'https://api.openai.com/v1  (leave blank for default)'
+                                                }
+                                                className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
+                                            />
+                                            {s.byokType === 'azure' && (
+                                                <p className="text-[10px] text-slate-400 dark:text-slate-500">Host only — do not include <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">/openai/v1</code></p>
+                                            )}
+                                        </div>
+                                    )}
+
                                     {/* Model */}
                                     <div className="flex flex-col gap-1">
                                         <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Model</label>
@@ -297,21 +369,38 @@ const Settings: React.FC = () => {
                                             type="text"
                                             value={s.model}
                                             onChange={e => updateProvider(p, { model: e.target.value })}
-                                            placeholder={DEFAULT_MODELS[p]}
+                                            placeholder={p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}
                                             className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
                                         />
-                                        <p className="text-[10px] text-slate-400 dark:text-slate-500">Default: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">{DEFAULT_MODELS[p]}</code></p>
+                                        <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                                            Default: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">
+                                                {p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}
+                                            </code>
+                                            {p === 'copilot' && s.byokType === 'azure' && ' — must match your deployment name'}
+                                        </p>
                                     </div>
 
                                     {/* API Key */}
                                     <div className="flex flex-col gap-1">
-                                        <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">API Key</label>
+                                        <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                            {p === 'copilot' && s.byokType === 'anthropic' ? 'Anthropic API Key' :
+                                             p === 'copilot' && s.byokType === 'azure'     ? 'Azure API Key' :
+                                             p === 'copilot' && s.byokType === 'openai'    ? 'OpenAI API Key' :
+                                             p === 'copilot'                               ? 'GitHub Copilot Token' :
+                                             'API Key'}
+                                        </label>
                                         <div className="relative">
                                             <input
                                                 type={s.showKey ? 'text' : 'password'}
                                                 value={s.key}
                                                 onChange={e => updateProvider(p, { key: e.target.value })}
-                                                placeholder={`Paste your ${PROVIDER_LABELS[p]} API key`}
+                                                placeholder={
+                                                    p === 'copilot' && s.byokType === 'anthropic' ? 'sk-ant-...' :
+                                                    p === 'copilot' && s.byokType === 'azure'     ? 'Paste your Azure API key' :
+                                                    p === 'copilot' && s.byokType === 'openai'    ? 'sk-...' :
+                                                    p === 'copilot'                               ? 'Paste your GitHub Copilot token' :
+                                                    `Paste your ${PROVIDER_LABELS[p]} API key`
+                                                }
                                                 className="w-full text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 pr-9 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
                                             />
                                             <button
