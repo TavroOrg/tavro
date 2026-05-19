@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
+  AppWindow,
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
   Info,
   Loader2,
   Pencil,
   PlusCircle,
   Save,
   Search,
+  ShieldAlert,
   Trash2,
   Unlink2,
   XCircle,
@@ -197,9 +200,44 @@ const labelFromOptions = (value: string, options: Option[]): string => {
   return found ? found.label : value;
 };
 
-const HintLabel: React.FC<{ label: string; hint?: string }> = ({ label, hint }) => (
+type HeaderMetricMeta = {
+  label: string;
+  tone: 'high' | 'medium' | 'low' | 'neutral';
+};
+
+const getCriticalityMeta = (value: string): HeaderMetricMeta => {
+  const display = labelFromOptions(value, BUSINESS_CRITICALITY_OPTIONS);
+  const normalized = display.toLowerCase();
+
+  if (normalized.includes('high')) return { label: display, tone: 'high' };
+  if (normalized.includes('medium')) return { label: display, tone: 'medium' };
+  if (normalized.includes('low')) return { label: display, tone: 'low' };
+  if (display === 'N/A') return { label: display, tone: 'neutral' };
+  return { label: display, tone: 'neutral' };
+};
+
+const getEmergencyTierMeta = (value: string): HeaderMetricMeta => {
+  const display = labelFromOptions(value, EMERGENCY_TIER_OPTIONS);
+  const normalized = display.toLowerCase();
+
+  if (normalized.includes('mission critical')) return { label: display, tone: 'high' };
+  if (normalized.includes('business critical')) return { label: display, tone: 'medium' };
+  if (normalized.includes('non-critical')) return { label: display, tone: 'low' };
+  if (display === 'N/A') return { label: display, tone: 'neutral' };
+  return { label: display, tone: 'neutral' };
+};
+
+const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+
+const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
+    {required && <span className="text-red-500">*</span>}
     {hint && (
       <span title={hint}>
         <Info size={12} className="text-slate-400" />
@@ -235,6 +273,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [attemptedSave, setAttemptedSave] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
@@ -261,6 +300,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       const data = await businessRelationsApi.getApplication(id);
       setApplication(data);
       setForm(formFromApplication(data));
+      setAttemptedSave(false);
     } catch (err: any) {
       setError(err.message || 'Failed to load business application');
     } finally {
@@ -273,6 +313,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(null);
       setForm(emptyForm());
       setEditing(true);
+      setAttemptedSave(false);
       setLoading(false);
       setTab('overview');
       setError(null);
@@ -308,7 +349,15 @@ const BusinessApplicationViewPage: React.FC = () => {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
+  const isApplicationNameMissing = !form.application_name.trim();
+
   const handleSave = async () => {
+    setAttemptedSave(true);
+    if (isApplicationNameMissing) {
+      setActionError('Application Name is required.');
+      return;
+    }
+
     setSaving(true);
     setActionError(null);
     try {
@@ -329,6 +378,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateApplication(application.business_application_id, payload);
       setApplication(updated);
       setForm(formFromApplication(updated));
+      setAttemptedSave(false);
       setEditing(false);
     } catch (err: any) {
       setActionError(err.message || 'Failed to save application');
@@ -339,6 +389,7 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const handleCancelEdit = () => {
     setActionError(null);
+    setAttemptedSave(false);
     if (isCreateMode) {
       navigate('/applications');
       return;
@@ -422,6 +473,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const appTitle = form.application_name || application?.application_name || 'New Application';
   const appId = application?.business_application_id || 'Will be generated on create';
   const relatedAgentCount = application?.related_agents?.length ?? 0;
+  const criticalityMeta = getCriticalityMeta(form.business_criticality);
+  const emergencyTierMeta = getEmergencyTierMeta(form.emergency_tier);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
@@ -457,6 +510,7 @@ const BusinessApplicationViewPage: React.FC = () => {
               <button
                 onClick={() => {
                   setTab('overview');
+                  setAttemptedSave(false);
                   setEditing(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -484,11 +538,43 @@ const BusinessApplicationViewPage: React.FC = () => {
       )}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-blue-600 to-cyan-500" />
-        <div className="p-6">
-          <h2 className="text-xl font-bold text-slate-800">{appTitle}</h2>
-          <p className="text-xs font-mono text-slate-400 mt-1">{appId}</p>
-          <p className="text-sm text-slate-600 mt-3">{form.application_description || 'No description available.'}</p>
+        <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
+        <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+            <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+              <AppWindow size={24} />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Application</span>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{appTitle}</h2>              
+              <p className="text-xs font-mono text-slate-400 mt-1">{appId}</p>           
+              <p className="text-sm text-slate-600 line-clamp-2">
+                {form.application_description || 'No description available.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Business Criticality
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(criticalityMeta.tone)}`}>
+                {criticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {criticalityMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Emergency Tier
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(emergencyTierMeta.tone)}`}>
+                {emergencyTierMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {emergencyTierMeta.label}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -522,14 +608,24 @@ const BusinessApplicationViewPage: React.FC = () => {
           <Section title="Details">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Application Name" />
+                <HintLabel label="Application Name" required />
                 {editing ? (
-                  <input
-                    value={form.application_name}
-                    onChange={(e) => setField('application_name', e.target.value)}
-                    className={inputCls}
-                    placeholder="Application name"
-                  />
+                  <>
+                    <input
+                      value={form.application_name}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setField('application_name', value);
+                        if (attemptedSave && value.trim()) setActionError(null);
+                      }}
+                      className={`${inputCls} ${attemptedSave && isApplicationNameMissing ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20' : ''}`}
+                      placeholder="Application name"
+                      aria-invalid={attemptedSave && isApplicationNameMissing}
+                    />
+                    {attemptedSave && isApplicationNameMissing && (
+                      <p className="text-xs text-red-600">Application Name is required.</p>
+                    )}
+                  </>
                 ) : (
                   <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
                     {form.application_name || 'N/A'}

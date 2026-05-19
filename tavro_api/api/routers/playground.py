@@ -29,6 +29,9 @@ ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL_DEFAULT = "gpt-4o"
 
+AZURE_OPENAI_API_VERSION_DEFAULT = "2024-02-15-preview"
+AZURE_FOUNDRY_AGENT_API_VERSION_DEFAULT = "v1"
+
 # ── In-memory session store ───────────────────────────────────────────────────
 # { session_id: { config, messages, created_at, updated_at } }
 session_store: dict[str, dict] = {}
@@ -82,6 +85,10 @@ class SessionResponse(BaseModel):
     updated_at:  str
     token_total: int
 
+class AzureFoundryAgentProvisioning(BaseModel):
+    enabled: bool = False
+    agent_name: str | None = None
+    agent: dict[str, Any] | None = None
 
 # =============================================================
 # Helpers
@@ -439,6 +446,220 @@ async def _run_openai_chat(
 
     return content or "[No response generated]", tokens_used
 
+def _azure_openai_settings(config: SessionConfig) -> tuple[str, str, str, str, bool]:
+    endpoint = (
+        os.getenv("AZURE_AI_FOUNDRY_ENDPOINT", "")
+        or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    ).rstrip("/")
+    api_key = (
+        os.getenv("AZURE_AI_FOUNDRY_KEY", "")
+        or os.getenv("AZURE_OPENAI_API_KEY", "")
+    )
+    api_version = (
+        os.getenv("AZURE_AI_FOUNDRY_API_VERSION", "")
+        or os.getenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION_DEFAULT)
+    )
+    deployment = (
+        os.getenv("AZURE_AI_FOUNDRY_DEPLOYMENT", "").strip()
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip()
+        or (config.model or "").strip()
+        or OPENAI_MODEL_DEFAULT
+    )
+
+    missing = []
+    if not endpoint:
+        missing.append("AZURE_AI_FOUNDRY_ENDPOINT")
+    if not api_key:
+        missing.append("AZURE_AI_FOUNDRY_KEY")
+    if not deployment:
+        missing.append("AZURE_AI_FOUNDRY_DEPLOYMENT")
+    if missing:
+        raise HTTPException(status_code=500, detail=f"{', '.join(missing)} not configured")
+
+    uses_v1_api = "/api/projects/" in endpoint or api_version.lower() == "v1"
+    if uses_v1_api:
+        url = f"{endpoint}/openai/v1/chat/completions"
+    else:
+        url = (
+            f"{endpoint}/openai/deployments/{deployment}/chat/completions"
+            f"?api-version={api_version}"
+        )
+    return url, api_key, api_version, deployment, uses_v1_api
+
+
+def _azure_foundry_project_settings(config: SessionConfig) -> tuple[str, str, str, str]:
+    endpoint = (
+        os.getenv("AZURE_AI_FOUNDRY_ENDPOINT", "")
+        or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    ).rstrip("/")
+    token = (
+        os.getenv("AZURE_AI_FOUNDRY_AGENT_TOKEN", "")
+        or os.getenv("AZURE_AI_FOUNDRY_TOKEN", "")
+        or os.getenv("AZURE_AI_FOUNDRY_KEY", "")
+    )
+    api_version = (
+        os.getenv("AZURE_AI_FOUNDRY_AGENT_API_VERSION", "")
+        or os.getenv("AZURE_AI_FOUNDRY_PROJECT_API_VERSION", "")
+        or AZURE_FOUNDRY_AGENT_API_VERSION_DEFAULT
+    )
+    deployment = (
+        os.getenv("AZURE_AI_FOUNDRY_DEPLOYMENT", "").strip()
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip()
+        or (config.model or "").strip()
+        or OPENAI_MODEL_DEFAULT
+    )
+
+    missing = []
+    if not endpoint:
+        missing.append("AZURE_AI_FOUNDRY_ENDPOINT")
+    if not token:
+        missing.append("AZURE_AI_FOUNDRY_AGENT_TOKEN or AZURE_AI_FOUNDRY_KEY")
+    if not deployment:
+        missing.append("AZURE_AI_FOUNDRY_DEPLOYMENT")
+    if missing:
+        raise HTTPException(status_code=500, detail=f"{', '.join(missing)} not configured")
+    if "/api/projects/" not in endpoint:
+        raise HTTPException(
+            status_code=500,
+            detail="AZURE_AI_FOUNDRY_ENDPOINT must be a Foundry project endpoint ending in /api/projects/{project-name}",
+        )
+
+    return endpoint, token, api_version, deployment
+
+
+def _azure_agent_resource_name(agent_name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9-]+", "-", agent_name.strip().lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    if not normalized:
+        normalized = "tavro-agent"
+    if len(normalized) > 63:
+        normalized = normalized[:63].strip("-")
+    return normalized or "tavro-agent"
+
+
+def _azure_agent_headers(token_or_key: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if token_or_key.count(".") >= 2:
+        headers["Authorization"] = f"Bearer {token_or_key}"
+    else:
+        headers["api-key"] = token_or_key
+    return headers
+
+
+async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
+    endpoint, token_or_key, api_version, deployment = _azure_foundry_project_settings(config)
+    agent_name = _azure_agent_resource_name(config.agent_name)
+    description = (
+        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
+    )[:512]
+    payload = {
+        "name": agent_name,
+        "description": description,
+        "definition": {
+            "kind": "prompt",
+            "model": deployment,
+            "instructions": config.system_prompt,
+        },
+        "metadata": {
+            "source": "tavro-playground",
+            "tavro_agent_name": config.agent_name[:512],
+            "tavro_use_case_id": (config.use_case_id or "")[:512],
+            "tavro_use_case_title": (config.use_case_title or "")[:512],
+        },
+    }
+    create_url = f"{endpoint}/agents?api-version={api_version}"
+    update_url = f"{endpoint}/agents/{agent_name}?api-version={api_version}"
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            create_url,
+            headers=_azure_agent_headers(token_or_key),
+            json=payload,
+        )
+        if resp.status_code == 409:
+            resp = await client.post(
+                update_url,
+                headers=_azure_agent_headers(token_or_key),
+                json=payload,
+            )
+
+    if resp.status_code not in (200, 201):
+        detail = resp.text[:600]
+        if resp.status_code in (401, 403):
+            detail += (
+                " The Foundry Agents API usually requires an Entra token with "
+                "Azure AI User access. Set AZURE_AI_FOUNDRY_AGENT_TOKEN from "
+                "`az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv`."
+            )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure Foundry agent provisioning failed {resp.status_code}: {detail}",
+        )
+
+    return AzureFoundryAgentProvisioning(
+        enabled=True,
+        agent_name=agent_name,
+        agent=resp.json(),
+    )
+
+
+async def _run_azure_openai_chat(
+    config: SessionConfig,
+    history: list[dict],
+    user_message: str,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int]:
+    messages = [{"role": "system", "content": config.system_prompt}]
+    messages.extend(history)
+
+    extra_attachment_text = ""
+    if attachments:
+        attachment_chunks = [_openai_attachment_to_text(att) for att in attachments]
+        extra_attachment_text = "\n\n" + "\n\n".join(attachment_chunks)
+
+    messages.append({
+        "role": "user",
+        "content": f"{user_message}{extra_attachment_text}",
+    })
+
+    url, api_key, _, deployment, uses_v1_api = _azure_openai_settings(config)
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "temperature": config.temperature,
+    }
+    if uses_v1_api:
+        payload["model"] = deployment
+        payload["max_completion_tokens"] = config.max_tokens
+    else:
+        payload["max_tokens"] = config.max_tokens
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            url,
+            headers={
+                "api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure OpenAI API error {resp.status_code}: {resp.text[:400]}",
+        )
+
+    data = resp.json()
+    content = (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+        .strip()
+    )
+    usage = data.get("usage", {}) or {}
+    tokens_used = int(usage.get("total_tokens", 0))
+
+    return content or "[No response generated]", tokens_used
 
 # =============================================================
 # POST /session — create a new session
@@ -449,6 +670,12 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
     session_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
 
+    provider = (config.provider or "claude").lower()
+    azure_agent = AzureFoundryAgentProvisioning()
+
+    if provider in ("azure_foundry", "azure", "azure_openai"):
+        azure_agent = await _provision_azure_foundry_agent(config)
+
     session_store[session_id] = {
         "session_id":  session_id,
         "config":      config.model_dump(),
@@ -456,9 +683,10 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
         "created_at":  now,
         "updated_at":  now,
         "token_total": 0,
+        "azure_foundry_agent": azure_agent.model_dump(),
     }
 
-    return {"session_id": session_id, "status": "created"}
+    return {"session_id": session_id, "status": "created", "azure_foundry_agent": azure_agent.model_dump()}
 
 
 # =============================================================
@@ -494,10 +722,15 @@ async def send_message(
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:
             raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
-    else:
+    elif provider in ("claude", "anthropic"):
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    elif provider in ("azure_foundry", "azure", "azure_openai"):
+        api_key = ""
+        _azure_openai_settings(config)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported playground provider: {config.provider}")
 
     now         = datetime.utcnow().isoformat()
     user_msg_id = str(uuid.uuid4())
@@ -529,6 +762,10 @@ async def send_message(
         if provider == "openai":
             response_text, tokens_used = await _run_openai_chat(
                 config, history, body.content, api_key, attachments=body.attachments
+            )
+        elif provider in ("azure_foundry", "azure", "azure_openai"):
+            response_text, tokens_used = await _run_azure_openai_chat(
+                config, history, body.content, attachments=body.attachments
             )
         else:
             response_text, tokens_used = await _run_agent_loop(
@@ -636,6 +873,37 @@ Return ONLY a JSON object with this structure:
                         {"role": "user", "content": prompt},
                     ],
                 },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to generate summary")
+        data = resp.json()
+        raw = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+    elif provider in ("azure_foundry", "azure", "azure_openai"):
+        summary_config = SessionConfig(**config)
+        url, api_key, _, deployment, uses_v1_api = _azure_openai_settings(summary_config)
+        payload: dict[str, Any] = {
+            "messages": [
+                {"role": "system", "content": "You are an AI evaluation assistant. Return only valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        if uses_v1_api:
+            payload["model"] = deployment
+            payload["max_completion_tokens"] = 1024
+        else:
+            payload["max_tokens"] = 1024
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
             )
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Failed to generate summary")

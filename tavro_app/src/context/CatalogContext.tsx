@@ -27,15 +27,24 @@ const CatalogContext = createContext<CatalogState>({
 
 const hasRiskClassification = (agent: AgentData): boolean => hasResolvedAgentRisk(agent);
 
-const isPendingAssessment = (agent: AgentData): boolean =>
-    agent.identification?.governance_status === 'Risk Assessment is running' && !hasRiskClassification(agent);
+const isPendingAssessment = (agent: AgentData): boolean => {
+    const status = agent.identification?.governance_status ?? (agent as any).latest_event_status;
+    return status === 'Risk Assessment is running' && !hasRiskClassification(agent);
+};
 
 const mergeAgent = (fresh: AgentData, previous: AgentData): AgentData => ({
     // Fresh catalog data is authoritative; previous state is fallback only.
     ...previous,
     ...fresh,
+    // Prefer non-empty values — prevents stale catalog from overwriting a recent optimistic edit
+    name: fresh.name || previous.name,
     description: fresh.description || previous.description,
-    identification: { ...previous.identification, ...fresh.identification },
+    identification: {
+        ...previous.identification,
+        ...fresh.identification,
+        // Keep governance_status from previous if fresh catalog doesn't carry it
+        governance_status: fresh.identification?.governance_status ?? previous.identification?.governance_status,
+    },
     risk_assessment: { ...previous.risk_assessment, ...fresh.risk_assessment },
 });
 

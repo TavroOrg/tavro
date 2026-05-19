@@ -212,7 +212,7 @@ const PlaygroundPage: React.FC = () => {
       {/* ── Header ───────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-8 py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors">
         <div className="flex items-center gap-3">
-          <div className="bg-violet-600 text-white p-2.5 rounded-xl shadow-sm">
+          <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-sm">
             <FlaskConical size={18} />
           </div>
           <div>
@@ -234,7 +234,7 @@ const PlaygroundPage: React.FC = () => {
           )}
 
           {/* Provider badge */}
-          <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 px-2.5 py-1 rounded-full">
+          <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 px-2.5 py-1 rounded-full">
             {INFRA_PROVIDERS.find(p => p.id === config.provider)?.shortLabel ?? config.provider}
             {' · '}{config.model.split('/').pop()?.split('-').slice(0,3).join('-')}
           </span>
@@ -244,7 +244,7 @@ const PlaygroundPage: React.FC = () => {
             <button
               onClick={startSession}
               disabled={!config.agentName.trim()}
-              className="flex items-center gap-2 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={14} /> Start session
             </button>

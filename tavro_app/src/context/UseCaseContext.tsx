@@ -50,12 +50,15 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const fetchingRef = useRef(false);
 
     const fetchUseCases = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current) return;
+        // Allow explicit invalidation (refresh after create/update) to bypass the guard
+        if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
         setLoading(true);
         setError(null);
         if (invalidate) {
             mcpClient.invalidateCache();
+            sessionStorage.removeItem(USECASE_CACHE_KEY);
+            sessionStorage.removeItem(USECASE_CACHE_TS_KEY);
         }
         try {
             const data = await mcpClient.getAllUseCases();

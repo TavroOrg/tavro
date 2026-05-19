@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { useInspectJson } from '../hooks/useInspectJson';
+import { generatePKCE } from '../services/pkce';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCacheMode } from '../hooks/useCacheMode';
 import {
@@ -37,6 +38,7 @@ const Settings: React.FC = () => {
     // App config
     const { theme, setTheme } = useTheme();
     const [inspectJson, setInspectJson] = useInspectJson();
+    const [saved, setSaved] = useState(false);
     const [showLogs, setShowLogs] = useShowLogs();
     const [cacheMode, setCacheMode] = useCacheMode();
 
@@ -326,24 +328,8 @@ const Settings: React.FC = () => {
                     <span className="font-bold text-slate-800 dark:text-slate-100">Developer Settings</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
-                    {/* Inspect JSON Toggle */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Inspect JSON</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Enables raw JSON inspection on agent detail pages</p>
-                        </div>
-                        <button
-                            role="switch"
-                            aria-checked={inspectJson}
-                            onClick={() => setInspectJson(!inspectJson)}
-                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${inspectJson ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
-                        >
-                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${inspectJson ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
-
                     {/* Show Logs Toggle */}
-                    <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
+                    <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm font-bold text-slate-800 dark:text-slate-200 font-sans flex items-center gap-2">
                                 <Terminal size={14} className="text-blue-500" />

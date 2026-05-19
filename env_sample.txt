@@ -10,6 +10,16 @@ POSTGRES_PASSWORD=tavro_secret_changeme
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 
+AZURE_AI_FOUNDRY_ENDPOINT=https://tavro-portal-development.services.ai.azure.com/api/projects/proj-default
+AZURE_AI_FOUNDRY_KEY=
+AZURE_AI_FOUNDRY_API_VERSION=2024-02-15-preview
+AZURE_AI_FOUNDRY_AGENT_API_VERSION=v1
+# Required for creating agents in Foundry. Generate with:
+# az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
+#AZURE_AI_FOUNDRY_AGENT_TOKEN=
+# Optional. If omitted, the selected playground model is used as the Azure deployment name.
+AZURE_AI_FOUNDRY_DEPLOYMENT=gpt-5.4-mini
+
 # ── pgAdmin ───────────────────────────────────────────────────────────────────
 PGADMIN_DEFAULT_EMAIL=admin@tavro.local
 PGADMIN_DEFAULT_PASSWORD=pgadmin_changeme

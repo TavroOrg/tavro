@@ -1,21 +1,28 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-    ActivitySquare, Library, Layers, Settings,
-    LogOut, Database, RefreshCw, ClipboardList, Zap, MessageCircle, X, Terminal,
+    Home, Bot, Workflow, BarChart2, Settings,
+    LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness
+    AppWindow, BriefcaseBusiness, Paperclip, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
+import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
-import { Network } from 'lucide-react';
+import { clearAllSessions } from '../store/chatSessionStore';
+
 import travoLogo from '../assets/travo_logo.png';
 
-type ActivePanel = 'chat' | 'devlog' | null;
+type ActivePanel = 'chat' | 'devlog' | 'attachment' | null;
+
+/** Check if current route is an agent view page */
+function isAgentPage(pathname: string): boolean {
+    return /^\/agent\//.test(pathname);
+}
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
@@ -138,7 +145,8 @@ const Layout: React.FC = () => {
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
             'tavro_oidc_state'
         ].forEach(k => localStorage.removeItem(k));
-        // Reset the MCP client session so the next login starts fresh
+        // Clear persisted chat sessions and reset MCP client
+        clearAllSessions();
         mcpClient.disconnect();
 
         if (issuer && idToken) {
@@ -154,6 +162,7 @@ const Layout: React.FC = () => {
 
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+    const isOnAgentPage = isAgentPage(location.pathname);
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -192,7 +201,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Home" : undefined}
                             >
-                                <ActivitySquare size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Home size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Home</span>
                             </button>
 
@@ -214,29 +223,29 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Agents" : undefined}
                             >
-                                <Library size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Bot size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
                             </button>
 
                             <button
                                 onClick={() => navigate('/applications')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
-                                    ? 'bg-sky-50 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 shadow-sm'
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Applications" : undefined}
                             >
-                                <AppWindow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <AppWindow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
                             </button>
 
                             <button
                                 onClick={() => navigate('/processes')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
-                                    ? 'bg-emerald-50 dark:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 shadow-sm'
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Processes" : undefined}
                             >
-                                <BriefcaseBusiness size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-700 dark:text-blue-300' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
                             </button>
 
@@ -247,7 +256,7 @@ const Layout: React.FC = () => {
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Insights" : undefined}
                             >
-                                <Zap size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <BarChart2 size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Insights</span>
                             </button>
                             <button
@@ -270,7 +279,7 @@ const Layout: React.FC = () => {
                                 onClick={() => navigate('/compliance')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/compliance')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                         : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Compliance" : undefined}
@@ -278,7 +287,7 @@ const Layout: React.FC = () => {
                                 <Scale
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
@@ -288,7 +297,7 @@ const Layout: React.FC = () => {
                                 onClick={() => navigate('/audit')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/audit')
-                                        ? 'bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                         : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Audit Center" : undefined}
@@ -296,7 +305,7 @@ const Layout: React.FC = () => {
                                 <ShieldCheck
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
-                                        ? 'text-indigo-600 dark:text-indigo-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
@@ -305,7 +314,7 @@ const Layout: React.FC = () => {
                             <button
                                 onClick={() => navigate('/playground')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
-                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
                                 title={!isLeftPanelOpen ? "Agent Playground" : undefined}
@@ -313,7 +322,7 @@ const Layout: React.FC = () => {
                                 <FlaskConical
                                     size={18}
                                     className={`flex-shrink-0 ${location.pathname.startsWith('/playground')
-                                        ? 'text-violet-600 dark:text-violet-400'
+                                        ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
@@ -458,21 +467,32 @@ const Layout: React.FC = () => {
                 style={{ width: isPanelOpen ? `${panelWidth}px` : '72px' }}
             >
                 {!isPanelOpen ? (
-                    <div className="flex flex-col items-center py-6 gap-4 w-full h-full">
+                    <div className="flex flex-col items-center py-6 gap-3 w-full h-full">
                         <button
                             onClick={() => setActivePanel('chat')}
-                            className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                            className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                             title="AI Assistant"
                         >
-                            <MessageCircle size={22} />
+                            <MessageCircle size={26} />
+                            <span className="text-[9px] font-semibold leading-none">Chat</span>
                         </button>
                         {showLogs && (
                             <button
                                 onClick={() => setActivePanel('devlog')}
-                                className="p-3 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-blue-100 dark:hover:border-slate-700 outline-none"
+                                className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                                 title="Dev Logs"
                             >
-                                <Terminal size={22} />
+                                <Terminal size={26} />
+                                <span className="text-[9px] font-semibold leading-none">Logs</span>
+                            </button>
+                        )}
+                        {isOnAgentPage && (
+                            <button
+                                onClick={() => setActivePanel('attachment')}
+                                className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
+                                title="Attachments"
+                            >
+                                <Paperclip size={22} />
                             </button>
                         )}
                     </div>
@@ -521,11 +541,24 @@ const Layout: React.FC = () => {
                                     <button
                                         onClick={() => setActivePanel('devlog')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'devlog'
-                                            ? 'border-blue-500 text-blue-600 bg-white'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+                                            ? 'border-blue-500 text-blue-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                                     >
                                         <Terminal size={14} />
                                         Dev Logs
+                                    </button>
+                                )}
+
+                                {/* Attachment tab — show only on agent pages */}
+                                {isOnAgentPage && (
+                                    <button
+                                        onClick={() => setActivePanel('attachment')}
+                                        className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
+                                            ? 'border-amber-500 text-amber-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                                    >
+                                        <Paperclip size={14} />
+                                        Attachments
                                     </button>
                                 )}
 
@@ -544,6 +577,7 @@ const Layout: React.FC = () => {
                             <div className="flex-1 overflow-hidden">
                                 {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
+                                {activePanel === 'attachment' && isOnAgentPage && <AttachmentPanel />}
                             </div>
                         </div>
                     </div>

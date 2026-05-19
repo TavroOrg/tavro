@@ -1,7 +1,7 @@
 ﻿import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
 import { getAgentRiskLevel, hasResolvedAgentRisk } from '../utils/agentRisk';
-import { Search, BrainCircuit, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
+import { Search, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
 interface AgentCatalogProps {
     agents: AgentData[];
@@ -12,8 +12,10 @@ interface AgentCatalogProps {
 
 const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearchChange, onSelectAgent }) => {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-    const isPendingAssessment = (agent: AgentData): boolean =>
-        agent.identification?.governance_status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+    const isPendingAssessment = (agent: AgentData): boolean => {
+        const status = agent.identification?.governance_status ?? (agent as any).latest_event_status;
+        return status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+    };
 
     const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => getAgentRiskLevel(agent);
 
@@ -103,16 +105,16 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                                 Running Risk Assessment
                                             </div>
                                         )}
-                                        <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${
-                                            pending
-                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                                                : isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
+                                        {!pending && (
+                                            <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border ${
+                                                isHigh ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-100 dark:border-red-800/50'
                                                 : isMed ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-100 dark:border-amber-800/50'
                                                 : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/50'
-                                        }`}>
-                                            {pending ? <Loader2 size={10} className="animate-spin" /> : isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
-                                            RISK: {pending ? 'ASSESSING' : risk === 'prohibited' ? 'PROHIBITED' : isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
-                                        </div>
+                                            }`}>
+                                                {isHigh || isMed ? <ShieldAlert size={10} /> : <CheckCircle2 size={10} />}
+                                                RISK: {risk === 'prohibited' ? 'PROHIBITED' : isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'LOW'}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
