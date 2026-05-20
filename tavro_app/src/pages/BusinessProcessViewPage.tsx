@@ -252,6 +252,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
+  const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
@@ -442,6 +443,15 @@ const BusinessProcessViewPage: React.FC = () => {
             console.warn('Process created but auto-link to agent failed.', linkErr);
           }
         }
+        if (linkUseCaseId) {
+          try {
+            await useCaseApi.linkProcess(linkUseCaseId, created.business_process_id);
+          } catch (linkErr) {
+            console.warn('Process created but auto-link to AI use case failed.', linkErr);
+          }
+          navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
+          return;
+        }
         navigate(`/processes/${encodeURIComponent(created.business_process_id)}`, { replace: true });
         return;
       }
@@ -462,6 +472,10 @@ const BusinessProcessViewPage: React.FC = () => {
     setActionError(null);
     setAttemptedSave(false);
     if (isCreateMode) {
+      if (linkUseCaseId) {
+        navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+        return;
+      }
       navigate('/processes');
       return;
     }
@@ -590,10 +604,16 @@ const BusinessProcessViewPage: React.FC = () => {
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
-          onClick={() => navigate('/processes')}
+          onClick={() => {
+            if (isCreateMode && linkUseCaseId) {
+              navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+              return;
+            }
+            navigate('/processes');
+          }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> Back to Processes
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Processes'}
         </button>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -1204,14 +1224,23 @@ const BusinessProcessViewPage: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Add AI Use Case Relation</p>
-              <div className="relative w-full max-w-sm">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchUseCases}
-                  onChange={(e) => setSearchUseCases(e.target.value)}
-                  placeholder="Filter AI use cases..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+                <Link
+                  to={`/use-cases/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
+                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <PlusCircle size={12} />
+                  Create AI Use Case
+                </Link>
+                <div className="relative w-full sm:w-[320px] max-w-full">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={searchUseCases}
+                    onChange={(e) => setSearchUseCases(e.target.value)}
+                    placeholder="Filter AI use cases..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
               </div>
             </div>
             <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">

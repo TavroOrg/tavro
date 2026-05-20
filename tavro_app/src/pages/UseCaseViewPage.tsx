@@ -604,14 +604,25 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
           <p className="text-sm font-bold text-slate-700">Add Process Relation</p>
-          <div className="relative w-full max-w-sm">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Filter processes..."
-              className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+            {useCaseId && (
+              <Link
+                to={`/processes/new?linkUseCaseId=${encodeURIComponent(useCaseId)}`}
+                className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <PlusCircle size={12} />
+                Create Process
+              </Link>
+            )}
+            <div className="relative w-full sm:w-[320px] max-w-full">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter processes..."
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
           </div>
         </div>
         <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
