@@ -105,6 +105,11 @@ services:
       dockerfile: Dockerfile
     container_name: tavro-copilot-sdk
     restart: unless-stopped
+    environment:
+      # Docker-internal URL for the Tavro MCP server.
+      # The copilot-server registers this with each Copilot SDK session so the
+      # SDK can automatically route tool calls to Tavro's MCP backend.
+      MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
     ports:
       - "4001:4000"
     healthcheck:
