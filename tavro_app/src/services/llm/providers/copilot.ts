@@ -19,6 +19,22 @@ function getCopilotSessionId(): string {
     return id;
 }
 
+/**
+ * Read Tavro MCP credentials from localStorage so the proxy can wire the MCP
+ * server into the GitHub Copilot SDK session for automatic tool routing.
+ * Only used for the non-BYOK (GitHub Copilot SDK) path.
+ */
+function getMcpCredentials(): { mcpToken: string | null; mcpTenantId: string | null } {
+    return {
+        mcpToken:
+            localStorage.getItem('tavro_mcp_access_token') ||
+            localStorage.getItem('tavro_access_token') ||
+            localStorage.getItem('tavro_id_token') ||
+            null,
+        mcpTenantId: localStorage.getItem('tavro_tenant_id') || null,
+    };
+}
+
 // ── OpenAI wire helpers ───────────────────────────────────────────────────────
 
 function maxTokensKey(model: string): string {
@@ -439,6 +455,7 @@ export class CopilotProvider implements ILLMProvider {
     // ── GitHub Copilot proxy mode ─────────────────────────────────────────────
 
     private async completeViaProxy(messages: RuntimeMessage[]): Promise<InternalCompletionResult> {
+        const { mcpToken, mcpTenantId } = getMcpCredentials();
         const res = await fetch(PROXY_COMPLETE, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -448,6 +465,8 @@ export class CopilotProvider implements ILLMProvider {
                 messages,
                 provider: toProxyProvider(this.byok, this.apiKey, this.model),
                 sessionId: getCopilotSessionId(),
+                mcpToken,
+                mcpTenantId,
             }),
         });
         if (!res.ok) {
@@ -461,6 +480,7 @@ export class CopilotProvider implements ILLMProvider {
     }
 
     private async *streamViaProxy(messages: RuntimeMessage[]): AsyncGenerator<string> {
+        const { mcpToken, mcpTenantId } = getMcpCredentials();
         const res = await fetch(PROXY_STREAM, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -470,6 +490,8 @@ export class CopilotProvider implements ILLMProvider {
                 messages,
                 provider: toProxyProvider(this.byok, this.apiKey, this.model),
                 sessionId: getCopilotSessionId(),
+                mcpToken,
+                mcpTenantId,
             }),
         });
         if (!res.ok) {
