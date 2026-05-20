@@ -16,6 +16,8 @@ router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
+_APPLICATION_ATTACHMENTS_READY = False
+_PROCESS_ATTACHMENTS_READY = False
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -187,6 +189,12 @@ class AgentAttachmentCreate(BaseModel):
     content_base64: str
 
 
+class EntityAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
 async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     global _AGENT_ATTACHMENTS_READY
     if _AGENT_ATTACHMENTS_READY:
@@ -218,6 +226,72 @@ async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     )
     await db.commit()
     _AGENT_ATTACHMENTS_READY = True
+
+
+async def _ensure_application_attachments_table(db: AsyncSession) -> None:
+    global _APPLICATION_ATTACHMENTS_READY
+    if _APPLICATION_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.application_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                application_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS application_attachment_application_idx
+            ON public.application_attachment (application_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _APPLICATION_ATTACHMENTS_READY = True
+
+
+async def _ensure_process_attachments_table(db: AsyncSession) -> None:
+    global _PROCESS_ATTACHMENTS_READY
+    if _PROCESS_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.process_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                process_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS process_attachment_process_idx
+            ON public.process_attachment (process_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _PROCESS_ATTACHMENTS_READY = True
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -1033,6 +1107,12 @@ async def delete_application(
                 {"business_application_id": application_id},
             )
 
+    await _ensure_application_attachments_table(db)
+    await db.execute(
+        text("DELETE FROM public.application_attachment WHERE application_id = :application_id"),
+        {"application_id": application_id},
+    )
+
     result = await db.execute(
         text(
             """
@@ -1246,6 +1326,12 @@ async def delete_process(
                 {"business_process_id": process_id},
             )
 
+    await _ensure_process_attachments_table(db)
+    await db.execute(
+        text("DELETE FROM public.process_attachment WHERE process_id = :process_id"),
+        {"process_id": process_id},
+    )
+
     process_cols = await _table_columns(db, "core", "business_processes")
     if "parent_process_id" in process_cols:
         await db.execute(
@@ -1410,6 +1496,286 @@ async def delete_agent_attachment(
             """
         ),
         {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.get(
+    "/applications/{application_id}/attachments",
+    tags=["Applications"],
+    summary="List Application Attachments",
+)
+async def list_application_attachments(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.application_attachment
+            WHERE application_id = :application_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"application_id": application_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/applications/{application_id}/attachments",
+    tags=["Applications"],
+    summary="Upload Application Attachment",
+    status_code=201,
+)
+async def create_application_attachment(
+    application_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.application_attachment
+                (application_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "application_id": application_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/applications/{application_id}/attachments/{attachment_id}/download",
+    tags=["Applications"],
+    summary="Download Application Attachment",
+)
+async def download_application_attachment(
+    application_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.application_attachment
+            WHERE id = :attachment_id
+              AND application_id = :application_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "application_id": application_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/applications/{application_id}/attachments/{attachment_id}",
+    tags=["Applications"],
+    summary="Delete Application Attachment",
+)
+async def delete_application_attachment(
+    application_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.application_attachment
+            WHERE id = :attachment_id
+              AND application_id = :application_id
+            """
+        ),
+        {"attachment_id": attachment_id, "application_id": application_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.get(
+    "/processes/{process_id}/attachments",
+    tags=["Processes"],
+    summary="List Process Attachments",
+)
+async def list_process_attachments(
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.process_attachment
+            WHERE process_id = :process_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"process_id": process_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/processes/{process_id}/attachments",
+    tags=["Processes"],
+    summary="Upload Process Attachment",
+    status_code=201,
+)
+async def create_process_attachment(
+    process_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.process_attachment
+                (process_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "process_id": process_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/processes/{process_id}/attachments/{attachment_id}/download",
+    tags=["Processes"],
+    summary="Download Process Attachment",
+)
+async def download_process_attachment(
+    process_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.process_attachment
+            WHERE id = :attachment_id
+              AND process_id = :process_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "process_id": process_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/processes/{process_id}/attachments/{attachment_id}",
+    tags=["Processes"],
+    summary="Delete Process Attachment",
+)
+async def delete_process_attachment(
+    process_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.process_attachment
+            WHERE id = :attachment_id
+              AND process_id = :process_id
+            """
+        ),
+        {"attachment_id": attachment_id, "process_id": process_id},
     )
     if (result.rowcount or 0) == 0:
         raise HTTPException(status_code=404, detail="Attachment not found")
