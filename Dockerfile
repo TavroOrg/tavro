@@ -5,11 +5,11 @@ ENV POSTGRES_PASSWORD=admin
 ENV POSTGRES_DB=agent_db
 
 # Copy schema file and subfolders separately
-COPY ddl_scripts/01_create_schemas.sql /docker-entrypoint-initdb.d/01_create_schemas.sql
-COPY ddl_scripts/core/            /docker-entrypoint-initdb.d/core/
-COPY ddl_scripts/curated/         /docker-entrypoint-initdb.d/curated/
-COPY ddl_scripts/raw/             /docker-entrypoint-initdb.d/raw/
-COPY ddl_scripts/risk_management/ /docker-entrypoint-initdb.d/risk_management/
+COPY sql/01_create_schemas.sql /docker-entrypoint-initdb.d/01_create_schemas.sql
+COPY sql/core/            /docker-entrypoint-initdb.d/core/
+COPY sql/curated/         /docker-entrypoint-initdb.d/curated/
+COPY sql/raw/             /docker-entrypoint-initdb.d/raw/
+COPY sql/risk_management/ /docker-entrypoint-initdb.d/risk_management/
 
 # Generate the runner script fresh during build — always LF, never CRLF
 RUN printf '#!/bin/sh\n\
