@@ -3,16 +3,17 @@
 // Used in the list view of BlueprintPage.
 
 import React from 'react';
-import { ChevronRight, ExternalLink, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { ChevronRight, ShieldAlert, Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { DimNode } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
 
 interface BlueprintDimCardProps {
   node: DimNode;
   onClick: (node: DimNode) => void;
+  onDelete?: (node: DimNode) => void;
 }
 
-const BlueprintDimCard: React.FC<BlueprintDimCardProps> = ({ node, onClick }) => {
+const BlueprintDimCard: React.FC<BlueprintDimCardProps> = ({ node, onClick, onDelete }) => {
   const cat = node.category ?? 'custom';
   const palette = CATEGORY_PALETTE[cat as keyof typeof CATEGORY_PALETTE] ?? CATEGORY_PALETTE.custom;
 
@@ -75,12 +76,23 @@ const BlueprintDimCard: React.FC<BlueprintDimCardProps> = ({ node, onClick }) =>
         </div>
       )}
 
-      {/* ── Footer: id + open arrow ──────────────────────────────────────── */}
+      {/* ── Footer: id + delete + open arrow ─────────────────────────────── */}
       <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
         <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
           {node.id.slice(0, 8)}
         </span>
-        <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transform group-hover:translate-x-0.5 transition-all" />
+        <div className="flex items-center gap-1">
+          {onDelete && (
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(node); }}
+              className="p-1 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Delete dimension"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          <ChevronRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transform group-hover:translate-x-0.5 transition-all" />
+        </div>
       </div>
     </div>
   );
@@ -91,9 +103,10 @@ const BlueprintDimCard: React.FC<BlueprintDimCardProps> = ({ node, onClick }) =>
 interface BlueprintDimRowProps {
   node: DimNode;
   onClick: (node: DimNode) => void;
+  onDelete?: (node: DimNode) => void;
 }
 
-export const BlueprintDimRow: React.FC<BlueprintDimRowProps> = ({ node, onClick }) => {
+export const BlueprintDimRow: React.FC<BlueprintDimRowProps> = ({ node, onClick, onDelete }) => {
   const cat = node.category ?? 'custom';
   const palette = CATEGORY_PALETTE[cat as keyof typeof CATEGORY_PALETTE] ?? CATEGORY_PALETTE.custom;
 
@@ -125,7 +138,16 @@ export const BlueprintDimRow: React.FC<BlueprintDimRowProps> = ({ node, onClick 
           </span>
         )}
       </div>
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-1">
+        {onDelete && (
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(node); }}
+            className="p-1 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 rounded transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete dimension"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
         <ChevronRight size={16} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transform group-hover:translate-x-0.5 transition-all" />
       </div>
     </div>
