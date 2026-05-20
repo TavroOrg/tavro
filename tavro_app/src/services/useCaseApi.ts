@@ -98,6 +98,19 @@ class UseCaseApiService {
             method: 'DELETE',
         });
     }
+
+    async linkProcess(useCaseId: string, processId: string): Promise<{ message: string; associated_count: number }> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/processes`, {
+            method: 'POST',
+            body: JSON.stringify({ process_id: processId }),
+        });
+    }
+
+    async unlinkProcess(useCaseId: string, processId: string): Promise<{ message: string; associated_count: number }> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/processes/${encodeURIComponent(processId)}`, {
+            method: 'DELETE',
+        });
+    }
 }
 
 export const useCaseApi = new UseCaseApiService();

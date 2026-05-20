@@ -75,7 +75,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       ? 'Manage application links'
       : mode === 'processes'
         ? 'Manage process links'
-        : 'Manage application and process links';
+        : 'Manage application, process, and AI use case links';
   const [relations, setRelations] = useState<AgentRelationsPayload | null>(null);
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
