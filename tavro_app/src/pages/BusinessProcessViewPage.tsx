@@ -17,13 +17,15 @@ import {
   XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
 import type {
   BusinessProcessRecord,
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useUseCases } from '../context/UseCaseContext';
 
-type Tab = 'overview' | 'related_agents' | 'related_processes';
+type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases';
 type Option = { label: string; value: string };
 
 const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
@@ -247,6 +249,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
+  const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
 
@@ -263,8 +266,11 @@ const BusinessProcessViewPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const [searchAgents, setSearchAgents] = useState('');
+  const [searchUseCases, setSearchUseCases] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
+  const [actingUseCase, setActingUseCase] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [useCaseRelationError, setUseCaseRelationError] = useState<string | null>(null);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -304,6 +310,8 @@ const BusinessProcessViewPage: React.FC = () => {
     if (!id || isCreateMode) return;
     setLoading(true);
     setError(null);
+    setRelationError(null);
+    setUseCaseRelationError(null);
     try {
       const [proc, processes] = await Promise.all([
         businessRelationsApi.getProcess(id),
@@ -357,6 +365,32 @@ const BusinessProcessViewPage: React.FC = () => {
       );
     });
   }, [agents, linkedAgentIds, searchAgents]);
+
+  const relatedUseCases = useMemo(() => {
+    return process?.related_use_cases ?? [];
+  }, [process]);
+
+  const linkedUseCaseIds = useMemo(() => {
+    const ids = new Set<string>();
+    relatedUseCases.forEach((useCase) => {
+      if (useCase.identifier) ids.add(useCase.identifier);
+    });
+    return ids;
+  }, [relatedUseCases]);
+
+  const availableUseCases = useMemo(() => {
+    const q = searchUseCases.trim().toLowerCase();
+    return allUseCases.filter((useCase) => {
+      const useCaseId = useCase.identifier || '';
+      if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
+      if (!q) return true;
+      return (
+        useCaseId.toLowerCase().includes(q) ||
+        (useCase.name ?? '').toLowerCase().includes(q) ||
+        (useCase.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allUseCases, linkedUseCaseIds, searchUseCases]);
 
   const relatedProcessRows = useMemo(() => {
     if (!process) return [];
@@ -478,6 +512,36 @@ const BusinessProcessViewPage: React.FC = () => {
     }
   };
 
+  const addUseCase = async (useCaseId: string) => {
+    if (!process) return;
+    setActingUseCase(useCaseId);
+    setUseCaseRelationError(null);
+    try {
+      await useCaseApi.linkProcess(useCaseId, process.business_process_id);
+      await load();
+      refreshUseCases();
+    } catch (err: any) {
+      setUseCaseRelationError(err.message || 'Failed to add AI use case relation');
+    } finally {
+      setActingUseCase(null);
+    }
+  };
+
+  const removeUseCase = async (useCaseId: string) => {
+    if (!process) return;
+    setActingUseCase(useCaseId);
+    setUseCaseRelationError(null);
+    try {
+      await useCaseApi.unlinkProcess(useCaseId, process.business_process_id);
+      await load();
+      refreshUseCases();
+    } catch (err: any) {
+      setUseCaseRelationError(err.message || 'Failed to remove AI use case relation');
+    } finally {
+      setActingUseCase(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-slate-500">
@@ -512,6 +576,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const currentProcessId = process?.business_process_id || '';
   const relatedAgentCount = process?.related_agents?.length ?? 0;
   const relatedProcessCount = relatedProcessRows.length;
+  const relatedUseCaseCount = relatedUseCases.length;
   const businessCriticalityMeta = getImpactMeta(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS);
   const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
   const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
@@ -675,6 +740,16 @@ const BusinessProcessViewPage: React.FC = () => {
               }`}
             >
               Related Processes({relatedProcessCount})
+            </button>
+            <button
+              onClick={() => setTab('related_use_cases')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_use_cases'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related AI Use Cases({relatedUseCaseCount})
             </button>
           </>
         )}
@@ -1076,6 +1151,95 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
             )}
           </Section>
+        </div>
+      )}
+
+      {tab === 'related_use_cases' && process && (
+        <div className="flex flex-col gap-4">
+          {useCaseRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {useCaseRelationError}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Currently Related AI Use Cases ({relatedUseCaseCount})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {relatedUseCases.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No AI use cases linked.</div>
+              )}
+              {relatedUseCases.map((rel, idx) => {
+                const useCaseId = rel.identifier || `missing-${idx}`;
+                const catalogMatch = allUseCases.find((uc) => uc.identifier === useCaseId);
+                const displayName = rel.name || catalogMatch?.name || useCaseId;
+                const busy = actingUseCase === useCaseId;
+                return (
+                  <div key={`${useCaseId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/use-case/${encodeURIComponent(useCaseId)}`}
+                        className="text-sm font-semibold text-blue-600 hover:underline"
+                      >
+                        {displayName}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
+                    </div>
+                    <button
+                      onClick={() => removeUseCase(useCaseId)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add AI Use Case Relation</p>
+              <div className="relative w-full max-w-sm">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={searchUseCases}
+                  onChange={(e) => setSearchUseCases(e.target.value)}
+                  placeholder="Filter AI use cases..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableUseCases.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available AI use cases to link.</div>
+              )}
+              {availableUseCases.map((useCase) => {
+                const useCaseId = useCase.identifier || '';
+                const busy = actingUseCase === useCaseId;
+                return (
+                  <div key={useCaseId} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{useCase.name || useCaseId}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
+                    </div>
+                    <button
+                      onClick={() => addUseCase(useCaseId)}
+                      disabled={!useCaseId || busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -99,6 +99,21 @@ services:
       retries: 3
       start_period: 20s
 
+  copilot-sdk:
+    build:
+      context: ./tavro_app/copilot-server
+      dockerfile: Dockerfile
+    container_name: tavro-copilot-sdk
+    restart: unless-stopped
+    ports:
+      - "4001:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
@@ -110,10 +125,13 @@ services:
         VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
         VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
         VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+        VITE_MCP_URL: ${VITE_MCP_URL:-http://localhost:9001/zitadel/mcp}
     container_name: tavro-app
     restart: unless-stopped
     depends_on:
       tavro-api:
+        condition: service_healthy
+      copilot-sdk:
         condition: service_healthy
     ports:
       - "9000:80"
@@ -393,12 +411,29 @@ services:
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
+      ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      ZITADEL_CONFIG_URL: http://proxy
+      ZITADEL_INTERNAL_BASE_URL: http://proxy
+      ZITADEL_INTERNAL_HOST_HEADER: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      TAVRO_RUNTIME_CONFIG_FILE: /app/runtime/tavro-runtime-config.json
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
+      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
     volumes:
       - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
       - ./tavro-python-stack/agent_cards:/app/agent_cards
+      - tavro_runtime_config:/app/runtime:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      zitadel-api:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+      zitadel-configure-app:
+        condition: service_started
 
   # ── Risk Worker — idle container for manual commands ─────────────────────────
   risk-worker:
