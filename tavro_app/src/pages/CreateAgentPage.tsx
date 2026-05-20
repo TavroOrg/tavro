@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
+import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 import { AgentData } from '../types/agent';
 
@@ -28,43 +29,51 @@ const CreateAgentPage: React.FC = () => {
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
 
-  const extractAgentId = (result: any, fallbackName: string): string => {
-    const candidates = [
-      result?.agent_id,
-      result?.agent_internal_id,
-      result?.id,
-      result?.identifier,
-      result?.agent?.agent_id,
-      result?.data?.agent_id,
-      result?.agent_card?.identification?.agent_id,
-      result?.agent_card?.agent_id,
-    ];
-    for (const value of candidates) {
-      if (value && String(value).trim()) return String(value).trim();
-    }
-    return fallbackName;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSaving(true);
     setError(null);
-    // Switch to live mode before calling the MCP server so that connect()
-    // establishes a real session (cache mode stubs it out without a session ID).
-    localStorage.setItem('tavro_cache_mode', 'false');
-    window.dispatchEvent(new Event('tavro_settings_change'));
     try {
-      const createResult = await mcpClient.createAgent({
-        agent_name: form.name.trim(),
-        description: form.description.trim(),
-        // instruction is required by the MCP tool; fall back to description if blank
-        instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
-        ...(form.owner.trim() && { owner: form.owner.trim() }),
-        ...(form.role.trim() && { role: form.role.trim() }),
-        ...(form.environment.trim() && { environment: form.environment.trim() }),
-      });
-      const createdAgentId = extractAgentId(createResult, form.name.trim());
+      const UUID_LOOSE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+      const TAV_LOOSE = /\bTAV[A-Z0-9]{6,}\b/i;
+
+      const extractFromStr = (s: string): string | null => {
+        const m = s.match(UUID_LOOSE) ?? s.match(TAV_LOOSE);
+        return m ? m[0] : null;
+      };
+
+      function deepScanUuid(obj: unknown): string | null {
+        if (typeof obj === 'string') return extractFromStr(obj);
+        if (!obj || typeof obj !== 'object') return null;
+        for (const val of Object.values(obj as Record<string, unknown>)) {
+          const found = typeof val === 'string' ? extractFromStr(val) : deepScanUuid(val);
+          if (found) return found;
+        }
+        return null;
+      }
+
+      let createdAgentId: string;
+      try {
+        const createResult = await agentApi.createAgent({
+          agent_name: form.name.trim(),
+          description: form.description.trim(),
+          instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
+          ...(form.role.trim() && { role: form.role.trim() }),
+          ...(form.environment.trim() && { environment: form.environment.trim() }),
+          ...(form.owner.trim() && { owner: form.owner.trim() }),
+        });
+        createdAgentId = createResult.agent_id;
+      } catch {
+        const mcpResult = await mcpClient.createAgent({
+          agent_name: form.name.trim(),
+          description: form.description.trim(),
+          instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
+        });
+        const scanned = deepScanUuid(mcpResult);
+        createdAgentId = scanned ?? form.name.trim();
+      }
+      mcpClient.invalidateCache();
       const optimisticAgent: AgentData = {
         name: form.name.trim(),
         description: form.description.trim() || form.name.trim(),

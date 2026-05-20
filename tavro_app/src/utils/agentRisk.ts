@@ -28,7 +28,33 @@ function extractLabels(agent: AgentData): string[] {
     .map(asText);
 }
 
+function parseRiskScore(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const num = typeof value === 'number' ? value : Number.parseFloat(String(value).trim());
+  return Number.isFinite(num) ? num : null;
+}
+
+function extractBlendedRiskScore(agent: AgentData): number | null {
+  const score =
+    parseRiskScore(agent.latest_risk_score) ??
+    parseRiskScore(agent.risk_assessment?.blended_risk_score) ??
+    parseRiskScore((agent as any).blended_risk_score) ??
+    parseRiskScore((agent as any).risk_score);
+  return score;
+}
+
+function classifyBlendedRisk(score: number): Exclude<AgentRiskLevel, 'prohibited'> {
+  if (score >= 7) return 'high';
+  if (score >= 3) return 'medium';
+  return 'low';
+}
+
 export function getAgentRiskLevel(agent: AgentData): AgentRiskLevel {
+  const blendedScore = extractBlendedRiskScore(agent);
+  if (blendedScore !== null) {
+    return classifyBlendedRisk(blendedScore);
+  }
+
   const labels = extractLabels(agent);
   const textBlobs = extractTextBlobs(agent);
 
@@ -56,6 +82,7 @@ export function getAgentRiskLevel(agent: AgentData): AgentRiskLevel {
 }
 
 export function hasResolvedAgentRisk(agent: AgentData): boolean {
+  if (extractBlendedRiskScore(agent) !== null) return true;
   const labels = extractLabels(agent);
   if (labels.length > 0) return true;
   const textBlobs = extractTextBlobs(agent);

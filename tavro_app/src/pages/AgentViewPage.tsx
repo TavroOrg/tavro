@@ -95,6 +95,9 @@ const AgentViewPage: React.FC = () => {
 
             const mcpData = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
             const apiData = apiResult.status === 'fulfilled' ? apiResult.value : null;
+            const existingCatalog = catalogAgents.find(a =>
+                (a.identification?.agent_id && a.identification.agent_id === id) || a.name === id
+            );
 
             let resolved: AgentData | null = null;
 
@@ -109,11 +112,13 @@ const AgentViewPage: React.FC = () => {
                         instruction: apiData?.instruction ?? mcpData.identification?.instruction,
                         governance_status: apiData?.governance_status ?? mcpData.identification?.governance_status,
                     },
+                    latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
+                    latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
                 };
             } else if (apiData) {
-                // Preserve governance_status from existing catalog entry if REST API returns null
+                // Preserve governance/risk snapshot from existing catalog entry if REST API returns null
                 // (happens for agents created before governance_status was persisted to DB)
-                const existingCatalog = catalogAgents.find(a =>
+                const apiCatalog = catalogAgents.find(a =>
                     (a.identification?.agent_id && a.identification.agent_id === (apiData.agent_id ?? id)) ||
                     a.name === (apiData.agent_name ?? id)
                 );
@@ -126,14 +131,16 @@ const AgentViewPage: React.FC = () => {
                         role: apiData.role ?? null,
                         instruction: apiData.instruction ?? null,
                         governance_status: apiData.governance_status ??
-                            existingCatalog?.identification?.governance_status ?? null,
+                            apiCatalog?.identification?.governance_status ?? null,
                     },
                     configuration: { autonomy_level: null },
-                    tool: existingCatalog?.tool ?? [],
-                    data_source: existingCatalog?.data_source ?? [],
-                    application: existingCatalog?.application ?? [],
-                    business_process: existingCatalog?.business_process ?? [],
-                    risk_assessment: existingCatalog?.risk_assessment ?? null,
+                    tool: apiCatalog?.tool ?? [],
+                    data_source: apiCatalog?.data_source ?? [],
+                    application: apiCatalog?.application ?? [],
+                    business_process: apiCatalog?.business_process ?? [],
+                    risk_assessment: apiCatalog?.risk_assessment ?? null,
+                    latest_risk_score: apiCatalog?.latest_risk_score ?? null,
+                    latest_risk_class: apiCatalog?.latest_risk_class ?? null,
                 };
             } else {
                 const fromCatalog = catalogAgents.find(a =>
@@ -170,10 +177,9 @@ const AgentViewPage: React.FC = () => {
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
         if (agent.identification.governance_status !== 'Risk Assessment is running') return;
-        const timer = window.setInterval(() => {
-            fetchAgent();
-        }, 10000);
-        return () => window.clearInterval(timer);
+        const handleWorkflowUpdate = () => { fetchAgent(); };
+        window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+        return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);
 
@@ -269,7 +275,7 @@ const AgentViewPage: React.FC = () => {
     const prettyJson = JSON.stringify(agent, null, 2);
 
     return (
-        <div className="flex-col gap-6 w-full animate-fade-in pb-12 relative">
+        <div className="flex-col gap-6 w-full animate-fade-in relative">
             {/* Top bar */}
             <div className="flex items-center justify-between mb-2">
                 <button
@@ -298,7 +304,7 @@ const AgentViewPage: React.FC = () => {
                         onClick={() => setAuditModalOpen(true)}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
                     >
-                        <ShieldCheck size={15} /> Compliance Audit
+                        <ShieldCheck size={15} /> Audit
                     </button>
                     <button
                         onClick={handleRequestRiskAssessment}
@@ -312,7 +318,7 @@ const AgentViewPage: React.FC = () => {
                     <button
                         onClick={() => setJsonOpen(true)}
                         title="Agent Card"
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
                     >
                         <Code2 size={14} />
                         Agent Card
