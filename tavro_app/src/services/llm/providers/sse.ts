@@ -22,11 +22,13 @@ export async function* parseSSE(
             if (!trimmed.startsWith('data:')) continue;
             const data = trimmed.slice(5).trim();
             if (data === '[DONE]') return;
+            let parsed: any;
             try {
-                const parsed = JSON.parse(data);
-                const delta = extractDelta(parsed);
-                if (delta) yield delta;
+                parsed = JSON.parse(data);
             } catch { /* skip malformed / keep-alive chunks */ }
+            if (parsed === undefined) continue;
+            const delta = extractDelta(parsed);
+            if (delta) yield delta;
         }
     }
 }

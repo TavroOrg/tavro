@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 # ── Enums (mirror Postgres enums as strings — no import coupling) ──
 
-DimCategory     = str   # profile | strategy | process | application | organisation | technology | risk | custom
+DimCategory     = str   # profile | strategy | process | application | organisation | technology | risk | finance | custom
 VisibilityLevel = str   # public | internal | restricted | confidential
 RelType         = str   # depends_on | owned_by | supports | risks | enables | part_of | governed_by | replaced_by | custom
 
@@ -58,6 +58,22 @@ class DimTypeCreate(DimTypeBase):
 class DimType(DimTypeBase):
     id:         UUID
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── Dimension Node ────────────────────────────────────────────
+
+# ── Attachment ───────────────────────────────────────────────────────────────
+
+class AttachmentOut(BaseModel):
+    id:           UUID
+    node_id:      UUID
+    filename:     str
+    content_type: str
+    size_bytes:   int
+    uploaded_at:  datetime
 
     class Config:
         from_attributes = True

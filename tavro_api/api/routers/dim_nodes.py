@@ -3,14 +3,15 @@
 # =============================================================
 
 from uuid import UUID
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import json
 
 from api.database import get_db
-from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page
+from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
 
 router = APIRouter()
 
@@ -154,5 +155,75 @@ async def soft_delete_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)
     await db.execute(
         text("UPDATE twin.dim_node SET valid_to = now() WHERE id = :id AND valid_to IS NULL"),
         {"id": str(node_id)},
+    )
+    await db.commit()
+
+
+# ── Attachments ──────────────────────────────────────────────────────────────
+
+@router.get("/{node_id}/attachments", response_model=List[AttachmentOut])
+async def list_attachments(node_id: UUID, db: AsyncSession = Depends(get_db)):
+    rows = await db.execute(
+        text("""
+            SELECT id, node_id, filename, content_type, size_bytes, uploaded_at
+            FROM twin.dim_node_attachment
+            WHERE node_id = :node_id
+            ORDER BY uploaded_at
+        """),
+        {"node_id": str(node_id)},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post("/{node_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_attachment(
+    node_id: UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await file.read()
+    row = await db.execute(
+        text("""
+            INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+            VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+            RETURNING id, node_id, filename, content_type, size_bytes, uploaded_at
+        """),
+        {
+            "node_id":      str(node_id),
+            "filename":     file.filename or "unnamed",
+            "content_type": file.content_type or "application/octet-stream",
+            "size_bytes":   len(data),
+            "data":         data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get("/attachments/{attachment_id}/download")
+async def download_attachment(attachment_id: UUID, db: AsyncSession = Depends(get_db)):
+    row = await db.execute(
+        text("""
+            SELECT filename, content_type, data
+            FROM twin.dim_node_attachment
+            WHERE id = :id
+        """),
+        {"id": str(attachment_id)},
+    )
+    result = row.mappings().first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return Response(
+        content=bytes(result["data"]),
+        media_type=result["content_type"],
+        headers={"Content-Disposition": f'attachment; filename="{result["filename"]}"'},
+    )
+
+
+@router.delete("/attachments/{attachment_id}", status_code=204)
+async def delete_attachment(attachment_id: UUID, db: AsyncSession = Depends(get_db)):
+    await db.execute(
+        text("DELETE FROM twin.dim_node_attachment WHERE id = :id"),
+        {"id": str(attachment_id)},
     )
     await db.commit()

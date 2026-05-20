@@ -65,15 +65,15 @@ const ComplianceSetupPage: React.FC = () => {
     setResearchError(null);
     setResearchResult(null);
     try {
-      let result: any;
+      let jobId: string;
       if (form.item_type === 'regulation') {
-        result = await complianceApi.researchRegulation({
+        const { job_id } = await complianceApi.researchRegulation({
           name: form.name, short_name: form.short_name || undefined,
           issuing_body: form.issuing_body || undefined,
           jurisdiction: form.jurisdiction, industry_tags: form.industry_tags,
         });
+        jobId = job_id;
       } else {
-        // Read file text if uploaded
         let docTxt = docText;
         if (docFile && !docTxt) {
           if (docFile.type === 'application/pdf') {
@@ -83,12 +83,14 @@ const ComplianceSetupPage: React.FC = () => {
           }
           setDocText(docTxt);
         }
-        result = await complianceApi.researchPolicy({
+        const { job_id } = await complianceApi.researchPolicy({
           name: form.name, company_id: activeCompany!.id,
           description: form.description || undefined,
           doc_text: docTxt || undefined,
         });
+        jobId = job_id;
       }
+      const result = await complianceApi.pollResearchJob(jobId);
       setResearchResult(result);
       setSelectedDims(new Set(result.dimensions.map((_: any, i: number) => i)));
     } catch (err: any) {

@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
-import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider } from '../services/llmService';
+import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
@@ -117,20 +119,90 @@ function renderMarkdown(text: string, isUser: boolean): React.ReactNode {
     );
 }
 
-const TypingIndicator: React.FC = () => (
-    <div className="flex items-end gap-2 mb-4">
-        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
-            <Bot size={14} className="text-white" />
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+/** Full markdown renderer using react-markdown + remark-gfm (tables, headers, code, etc.) */
+const MarkdownContent: React.FC<{ text: string }> = ({ text }) => (
+    <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+            p: ({ children }) => <p className="my-1 leading-relaxed">{children}</p>,
+            h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mt-3 mb-1 border-b border-slate-200 pb-1">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-sm font-bold text-slate-800 mt-3 mb-1">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-700 mt-2 mb-1">{children}</h3>,
+            strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+            em: ({ children }) => <em className="italic text-slate-700">{children}</em>,
+            ul: ({ children }) => <ul className="list-disc list-outside ml-4 space-y-0.5 my-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-outside ml-4 space-y-0.5 my-1">{children}</ol>,
+            li: ({ children }) => <li className="text-slate-700 leading-relaxed">{children}</li>,
+            blockquote: ({ children }) => (
+                <blockquote className="border-l-2 border-blue-400 pl-3 text-slate-500 italic my-2">{children}</blockquote>
+            ),
+            hr: () => <hr className="my-3 border-slate-200" />,
+            pre: ({ children }) => <>{children}</>,
+            code({ children, className }) {
+                if (className) {
+                    return (
+                        <pre className="bg-slate-800 text-slate-100 rounded-lg p-3 overflow-x-auto text-[11px] font-mono my-2 whitespace-pre">
+                            <code className={className}>{children}</code>
+                        </pre>
+                    );
+                }
+                return (
+                    <code className="bg-slate-100 text-slate-800 border border-slate-200 px-1 py-0.5 rounded text-[11px] font-mono">{children}</code>
+                );
+            },
+            table: ({ children }) => (
+                <div className="overflow-x-auto my-2 rounded-lg border border-slate-200">
+                    <table className="min-w-full border-collapse text-xs">{children}</table>
+                </div>
+            ),
+            thead: ({ children }) => <thead className="bg-slate-50 border-b border-slate-200">{children}</thead>,
+            tbody: ({ children }) => <tbody className="divide-y divide-slate-100">{children}</tbody>,
+            tr: ({ children }) => <tr className="hover:bg-slate-50 transition-colors">{children}</tr>,
+            th: ({ children }) => (
+                <th className="text-left px-3 py-2 font-semibold text-slate-700 text-[11px] uppercase tracking-wider whitespace-nowrap">{children}</th>
+            ),
+            td: ({ children }) => <td className="px-3 py-2 text-slate-600 leading-snug">{children}</td>,
+            a: ({ children, href }) => (
+                <a href={href} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>
+            ),
+        }}
+    >
+        {text}
+    </ReactMarkdown>
+);
+
+const TypingIndicator: React.FC = () => {
+    const messages = [
+        'Thinking…',
+        'Analyzing your request…',
+        'Gathering information…',
+        'Formulating response…',
+    ];
+    const [idx, setIdx] = useState(0);
+
+    useEffect(() => {
+        const t = setInterval(() => setIdx(i => (i + 1) % messages.length), 2200);
+        return () => clearInterval(t);
+    }, []);
+
+    return (
+        <div className="flex items-end gap-2 mb-4">
+            <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
+                <Bot size={14} className="text-white" />
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <div className="text-sm text-slate-700 font-medium">{messages[idx]}</div>
+                    <div className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-);
+    );
+};
 
 const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => void }> = ({ message, onDownloadPDF }) => {
     const isUser = message.role === 'user';
@@ -150,7 +222,7 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
                 </div>
                 <div className={`group relative max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm break-words ${isUser ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'
                     }`}>
-                    {renderMarkdown(message.text, isUser)}
+                    <MarkdownContent text={message.text} />
                     {message.streaming && (
                         <span className="inline-block w-0.5 h-3.5 bg-blue-500 ml-0.5 animate-pulse align-middle rounded" />
                     )}
@@ -232,20 +304,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const [configuredProviders, setConfiguredProviders] = useState<{ provider: LLMProvider; label: string }[]>([]);
 
     useEffect(() => {
-        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
         const configured = providers
             .map(p => ({ provider: p, cfg: getProviderConfig(p) }))
             .filter(x => x.cfg !== null)
             .map(x => ({
                 provider: x.provider,
-                label: `${x.provider === 'openai' ? 'OpenAI' : x.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${x.cfg!.model}`,
+                label: `${PROVIDER_LABELS[x.provider]} · ${x.cfg!.model}`,
             }));
         setConfiguredProviders(configured);
     }, []);
 
     const llmCfg = activeProviderState ? getProviderConfig(activeProviderState) : null;
     const modelLabel = llmCfg
-        ? `${llmCfg.provider === 'openai' ? 'OpenAI' : llmCfg.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${llmCfg.model}`
+        ? `${PROVIDER_LABELS[llmCfg.provider]} · ${llmCfg.model}`
         : null;
 
     // ── Messages state (per-session) ───────────────────────────────────────────
@@ -301,9 +373,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const buildHistory = (msgs: Message[]): ChatMessage[] => {
-        return msgs
-            .filter(m => m.id !== 'welcome' && !m.streaming)
-            .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
+        const filtered = msgs.filter(m => m.id !== 'welcome' && !m.streaming);
+        // Drop trailing user messages — if the previous response failed, the history
+        // would end with a user turn, and adding the new user message creates
+        // consecutive user roles which Anthropic rejects with HTTP 400.
+        let end = filtered.length;
+        while (end > 0 && filtered[end - 1].role === 'user') end--;
+        return filtered.slice(0, end).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
 
     const copyConversation = () => {
@@ -363,7 +439,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             }
 
             const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            const stream = mcpClient.chat(text, buildHistory(withUser), { viewType, viewData, systemPrompt });
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt });
             let firstToken = true;
             let accumulated = '';
 
@@ -386,12 +462,31 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 }
             }
 
-            // Streaming complete — finalize and persist
-            const finalMsgs = latestMessages.current.map(m =>
-                m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
-            );
-            setMessages(finalMsgs);
-            persist(finalMsgs);
+            // Streaming complete — finalize and persist.
+            // Use a functional update so we always operate on the actual current
+            // state, not the potentially-stale latestMessages ref. When the
+            // orchestrator yields the whole response as one chunk (complete() path),
+            // the loop runs once and ends immediately — React may not have flushed
+            // the earlier functional setMessages that added the streaming placeholder,
+            // so latestMessages.current can be stale. A direct setMessages(array)
+            // computed from the stale ref would overwrite the pending update.
+            setMessages(prev => {
+                let next: Message[];
+                if (accumulated.trim()) {
+                    const hasPlaceholder = prev.some(m => m.id === assistantId);
+                    next = hasPlaceholder
+                        ? prev.map(m => m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m)
+                        : [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: false }];
+                } else {
+                    next = [
+                        ...prev.filter(m => m.id !== assistantId),
+                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: 'I did not receive a response from the configured LLM. Please check the Copilot SDK proxy logs and token configuration.', timestamp: new Date() },
+                    ];
+                }
+                latestMessages.current = next;
+                persist(next);
+                return next;
+            });
 
         } catch (err: any) {
             const errMsg: Message = {

@@ -17,7 +17,7 @@ const CO_W = 160;   const CO_H = 56;
 
 const CAT_RANK: Record<DimCategory, number> = {
   profile:0, strategy:1, organisation:2, process:3,
-  application:4, technology:5, risk:6, custom:7,
+  application:4, technology:5, risk:6, finance:7, custom:8,
 };
 
 function catPos(i: number, n: number) {

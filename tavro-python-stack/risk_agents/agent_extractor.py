@@ -428,12 +428,7 @@ class AgentMetadataExporter:
         where_clause = ""
         if tenant_mode == "TENANT":
             where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
+            WHERE tenant_id = '{tenant_id}'
             """
         query = f"""
             SELECT *

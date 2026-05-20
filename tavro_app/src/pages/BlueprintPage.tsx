@@ -21,7 +21,7 @@ import { useBlueprintChatSync } from '../hooks/useChatSync';
 
 const ALL_CATEGORIES: DimCategory[] = [
   'profile', 'strategy', 'organisation', 'process',
-  'application', 'technology', 'risk', 'custom',
+  'application', 'technology', 'risk', 'finance', 'custom',
 ];
 
 type ViewMode = 'graph' | 'grid' | 'list';

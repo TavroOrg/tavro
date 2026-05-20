@@ -161,7 +161,7 @@ class ComplianceApiService {
     issuing_body?:  string;
     jurisdiction?:  string[];
     industry_tags?: string[];
-  }): Promise<{ dimensions: any[]; sources: string[]; notice: string; turns_used: number }> {
+  }): Promise<{ job_id: string }> {
     return req('/research/regulation', { method: 'POST', body: JSON.stringify(params) });
   }
 
@@ -170,8 +170,24 @@ class ComplianceApiService {
     company_id:  string;
     description?: string;
     doc_text?:   string;
-  }): Promise<{ dimensions: any[]; sources: string[]; notice: string; turns_used: number }> {
+  }): Promise<{ job_id: string }> {
     return req('/research/policy', { method: 'POST', body: JSON.stringify(params) });
+  }
+
+  async pollResearchJob(
+    jobId: string,
+    intervalMs = 2500,
+    timeoutMs  = 300_000,
+  ): Promise<{ dimensions: any[]; sources: string[]; notice: string; turns_used: number }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, intervalMs));
+      const job: { status: string; result: any; error: string | null } =
+        await req(`/research/job/${jobId}`);
+      if (job.status === 'done')   return job.result;
+      if (job.status === 'error')  throw new Error(job.error ?? 'Research failed');
+    }
+    throw new Error('Research timed out — please try again');
   }
 
   async saveDimensions(compliance_item_id: string, dimensions: any[]): Promise<{ saved: number; skipped: number }> {
