@@ -15,6 +15,14 @@ const CAT_W = 120;  const CAT_H = 44;
 const LEAF_W = 156; const LEAF_H = 48;
 const CO_W = 160;   const CO_H = 56;
 
+function centerLabelFontSize(label: string) {
+  const len = label.trim().length;
+  if (len > 48) return 8.5;
+  if (len > 36) return 9.5;
+  if (len > 24) return 10.5;
+  return 13;
+}
+
 const CAT_RANK: Record<DimCategory, number> = {
   profile:0, strategy:1, organisation:2, process:3,
   application:4, technology:5, risk:6, finance:7, custom:8,
@@ -36,6 +44,7 @@ function leafPos(ci: number, cn: number, li: number, ln: number) {
 
 const CompanyNode: React.FC<NodeProps> = ({ data }) => {
   const d = data as { label: string };
+  const labelFontSize = centerLabelFontSize(d.label);
   return (
     <div style={{
       width: CO_W, height: CO_H, background: '#1e40af', borderRadius: 14,
@@ -44,8 +53,13 @@ const CompanyNode: React.FC<NodeProps> = ({ data }) => {
     }}>
       <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9', margin: 0, textAlign: 'center', padding: '0 10px', lineHeight: 1.3 }}>{d.label}</p>
-      <p style={{ fontSize: 9, color: '#93c5fd', margin: '2px 0 0', letterSpacing: '0.05em' }}>COMPANY BLUEPRINT</p>
+      <p title={d.label} style={{
+        width: '100%', fontSize: labelFontSize, fontWeight: 700, color: '#f1f5f9', margin: 0,
+        textAlign: 'center', padding: '0 8px', lineHeight: 1.05, overflow: 'hidden',
+        display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+        wordBreak: 'normal',
+      }}>{d.label}</p>
+      <p style={{ fontSize: 8, color: '#93c5fd', margin: '1px 0 0', letterSpacing: '0.04em' }}>COMPANY BLUEPRINT</p>
     </div>
   );
 };
