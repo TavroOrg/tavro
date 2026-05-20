@@ -177,10 +177,9 @@ const AgentViewPage: React.FC = () => {
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
         if (agent.identification.governance_status !== 'Risk Assessment is running') return;
-        const timer = window.setInterval(() => {
-            fetchAgent();
-        }, 10000);
-        return () => window.clearInterval(timer);
+        const handleWorkflowUpdate = () => { fetchAgent(); };
+        window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+        return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);
 

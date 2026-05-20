@@ -28,6 +28,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
     });
 
     const riskLevel: 'prohibited' | 'high' | 'medium' | 'low' = getAgentRiskLevel(agent);
+    const isWorkflowRunning = (id?.governance_status ?? (agent as any).latest_event_status) === 'Risk Assessment is running';
     const riskScore = agent.latest_risk_score
         ?? agent.risk_assessment?.blended_risk_score
         ?? agent.risk_assessment?.regulatory_risk_score;
@@ -46,14 +47,14 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
     return (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col">
             <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
-                <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+                <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[60%]">
                     <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
                         <Bot size={28} />
                     </div>
                     <div className="flex flex-col gap-1.5 min-w-0">
                         <h2 className="text-2xl font-bold text-slate-800 tracking-tight break-words">{agent.name}</h2>
                         <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600 truncate max-w-[150px] sm:max-w-xs">
+                            <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600 break-all">
                                 {id?.agent_id || 'N/A'}
                             </span>
                             {id?.environment && <Badge text={id.environment} color="blue" />}
@@ -84,15 +85,17 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
 
                 <div className="flex flex-col items-center md:items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
                     <div className="flex items-stretch justify-center md:justify-end gap-3 w-full">
-                        <div className={`px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center min-w-[170px] ${riskCardClass}`}>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Blended Score</span>
-                            <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                {riskLevel === 'low'
-                                    ? <CheckCircle2 size={14} />
-                                    : <ShieldAlert size={14} />}
-                                {riskScore ?? 'N/A'}
-                            </span>
-                        </div>
+                        {!isWorkflowRunning && (
+                            <div className={`px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center min-w-[170px] ${riskCardClass}`}>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Blended Score</span>
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} />
+                                        : <ShieldAlert size={14} />}
+                                    {riskScore ?? 'N/A'}
+                                </span>
+                            </div>
+                        )}
                         <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center min-w-[140px]">
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>
                             {agent.provider?.url
