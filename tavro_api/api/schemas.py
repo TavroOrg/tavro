@@ -22,7 +22,7 @@ RelType         = str   # depends_on | owned_by | supports | risks | enables | p
 class CompanyBase(BaseModel):
     name:         str
     industry:     str
-    region:       str
+    region:       str = ""
     legal_entity: Optional[str] = None
 
 class CompanyCreate(CompanyBase):
