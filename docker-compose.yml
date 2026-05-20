@@ -59,6 +59,8 @@ services:
     environment:
       # Digital Twin DB (asyncpg)
       DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      PYTHONPATH:                 /app:/opt
+      CATALOG_CONFIG_PATH:        /config/config.yaml
       # AI keys
       ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
       AZURE_AI_FOUNDRY_AGENT_API_VERSION: '${AZURE_AI_FOUNDRY_AGENT_API_VERSION:-v1}'
@@ -82,15 +84,15 @@ services:
       RISK_MANAGEMENT_GLUE_DB_NAME: risk_management
       # Temporal
       TEMPORAL_ADDRESS:     risk-temporal:7233
-      LOCAL_AGENT_CARD_DIR: /app/agent_cards
+      LOCAL_AGENT_CARD_DIR: /data/agent_cards
     ports:
       - "8000:8000"
     volumes:
       - ./tavro_api:/app                                       # live reload — tavro_api code
-      - ./services:/app/services:ro                            # live reload — risk services
-      - ./utils:/app/utils:ro                                  # live reload — risk utils
-      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro  # risk config
-      - ./agent_cards:/app/agent_cards                         # agent card output dir
+      - ./services:/opt/services:ro                            # live reload — risk services
+      - ./utils:/opt/utils:ro                                  # live reload — risk utils
+      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/config/config.yaml:ro  # risk config
+      - ./agent_cards:/data/agent_cards                        # agent card output dir
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s

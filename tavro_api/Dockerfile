@@ -11,15 +11,11 @@ ENV PATH="/root/.temporalio/bin:${PATH}"
 WORKDIR /app
 
 # ── Install Python dependencies ───────────────────────────────────────────────
-COPY tavro_api/requirements.txt /tmp/requirements.txt
-COPY services/requirements.txt /tmp/requirements-risk.txt
-COPY services/requirements-postgres.txt /tmp/requirements-postgres.txt
+COPY requirements.txt /tmp/requirements.txt
 COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl /tmp/
 
 RUN pip install  \
-      -r /tmp/requirements.txt \
-      -r /tmp/requirements-risk.txt \
-      -r /tmp/requirements-postgres.txt && \
+      -r /tmp/requirements.txt && \
     pip install /tmp/tavro_agent_card-0.1.1-py3-none-any.whl
 
 # ── Copy Digital Twin API source ─────────────────────────────────────────────
