@@ -1,6 +1,6 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
-import { getAgentRiskLevel, hasResolvedAgentRisk } from '../utils/agentRisk';
+import { getAgentRiskLevel } from '../utils/agentRisk';
 import { Search, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
 interface AgentCatalogProps {
@@ -14,7 +14,7 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const isPendingAssessment = (agent: AgentData): boolean => {
         const status = agent.identification?.governance_status ?? (agent as any).latest_event_status;
-        return status === 'Risk Assessment is running' && !hasResolvedAgentRisk(agent);
+        return status === 'Risk Assessment is running';
     };
 
     const getRiskLevel = (agent: AgentData): 'prohibited' | 'high' | 'medium' | 'low' => getAgentRiskLevel(agent);
@@ -118,9 +118,9 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                     </div>
                                 </div>
 
-                                <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                                    <span>ID: {(agent.identification?.agent_id || agent.id || 'N/A').slice(0, 8)}</span>
-                                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                                <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                                    <span className="font-mono truncate min-w-0">ID: {agent.identification?.agent_id || agent.id || 'N/A'}</span>
+                                    <ChevronRight size={14} className="shrink-0 group-hover:translate-x-1 transition-transform" />
                                 </div>
                             </div>
                         );
@@ -203,4 +203,5 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
 };
 
 export default AgentCatalog;
+
 

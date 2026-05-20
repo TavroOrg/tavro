@@ -198,7 +198,6 @@ class BlueprintApiService {
     company_name: string;
     ticker?: string;
     industry: string;
-    region: string;
   }): Promise<ResearchResponse> {
     return req('/blueprint/research', {
       method: 'POST',

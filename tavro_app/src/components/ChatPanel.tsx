@@ -13,6 +13,7 @@ import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../serv
 import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSessions } from '../context/ChatSessionContext';
 import type { StoredMessage } from '../store/chatSessionStore';
+import { useUseCases } from '../context/UseCaseContext';
 
 interface Message {
     id: string;
@@ -407,6 +408,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const { viewType, viewData } = useChatContext();
     const { activeCompany, nodes } = useBlueprint();
     const { sessions, activeSession, activeSessionId, createSession, switchSession, deleteSession, updateSessionMessages, updateSessionProvider } = useChatSessions();
+    const { upsertUseCase, refresh: refreshUseCases } = useUseCases();
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
     const blueprintCtx: BlueprintContext | null = activeCompany ? {
@@ -505,6 +507,29 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         while (end > 0 && filtered[end - 1].role === 'user') end--;
         return filtered.slice(0, end).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
+
+    const syncUseCaseFromAssistantResponse = useCallback((assistantText: string, userPrompt: string) => {
+        const requestedCreateUseCase = /\b(create|add|register)\b[\s\S]{0,120}\b(ai\s+)?use\s*case\b/i.test(userPrompt);
+        if (!requestedCreateUseCase) return;
+
+        // Always refresh after a create-use-case request so catalog pills update
+        // even when the assistant response format varies.
+        refreshUseCases();
+
+        const idMatch = assistantText.match(/Identifier:\s*([^\n\r]+)/i);
+        const nameMatch = assistantText.match(/Name:\s*([^\n\r]+)/i);
+        const statusMatch = assistantText.match(/Status:\s*([^\n\r]+)/i);
+
+        const identifier = idMatch?.[1]?.trim();
+        const name = nameMatch?.[1]?.trim();
+        if (!identifier || !name) return;
+
+        upsertUseCase({
+            identifier,
+            name,
+            status: statusMatch?.[1]?.trim() || 'Proposed',
+        });
+    }, [refreshUseCases, upsertUseCase]);
 
     const copyConversation = () => {
         const transcript = buildTranscript(messages, activeSession?.title, modelLabel);
@@ -616,6 +641,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 persist(next);
                 return next;
             });
+
+            if (accumulated.trim()) {
+                syncUseCaseFromAssistantResponse(accumulated, text);
+            }
 
         } catch (err: any) {
             const errMsg: Message = {

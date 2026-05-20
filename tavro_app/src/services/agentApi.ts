@@ -26,6 +26,9 @@ export interface AgentCreatePayload {
     agent_name: string;
     description: string;
     instruction: string;
+    role?: string;
+    environment?: string;
+    owner?: string;
     tools?: Array<{ name: string; description: string }>;
     knowledge_source?: { name: string; description: string };
 }
@@ -42,6 +45,19 @@ export interface AgentCatalogResponse {
     record_count: number;
     total_records: number;
     data: any[];
+}
+
+export interface RiskWorkflowStatus {
+    workflow_id: string;
+    run_id?: string | null;
+    agent_internal_id: string;
+    agent_id: string;
+    agent_name: string;
+    agent_description: string;
+    status: 'running' | 'completed' | 'failed' | string;
+    error?: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
 class AgentApiService {
@@ -78,6 +94,14 @@ class AgentApiService {
         return req(`/agents/${encodeURIComponent(agentId)}/risk-assessment`, {
             method: 'POST',
         });
+    }
+
+    async getRiskWorkflows(params?: { status?: string; agentId?: string }): Promise<RiskWorkflowStatus[]> {
+        const qp = new URLSearchParams();
+        if (params?.status) qp.set('status', params.status);
+        if (params?.agentId) qp.set('agent_id', params.agentId);
+        const q = qp.toString();
+        return req(`/risk/workflows${q ? `?${q}` : ''}`);
     }
 }
 
