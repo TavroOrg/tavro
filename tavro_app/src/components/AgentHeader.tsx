@@ -70,17 +70,13 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
 
                 <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
                     <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Status</span>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1.5"></div>
-                            Active
-                        </span>
-                    </div>
-                    <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Version</span>
-                        <span className="flex items-center gap-1.5 text-sm font-bold text-slate-700">
-                            <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                            v{agent.version || '1.0'}
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Blended Risk Score</span>
+                        <span className={`text-sm font-bold ${
+                            agent.risk_assessment?.blended_risk_score
+                                ? (parseFloat(agent.risk_assessment.blended_risk_score) >= 7 ? 'text-red-600' : parseFloat(agent.risk_assessment.blended_risk_score) >= 4 ? 'text-amber-600' : 'text-emerald-600')
+                                : 'text-slate-400'
+                        }`}>
+                            {agent.risk_assessment?.blended_risk_score ?? '—'}
                         </span>
                     </div>
                     <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
@@ -93,6 +89,20 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
                                     : riskLevel === 'medium'
                                         ? <><ShieldAlert size={14} /> Medium</>
                                         : <><CheckCircle2 size={14} /> Low</>}
+                        </span>
+                    </div>
+                    <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Status</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1.5"></div>
+                            Active
+                        </span>
+                    </div>
+                    <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[90px]">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Version</span>
+                        <span className="flex items-center gap-1.5 text-sm font-bold text-slate-700">
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            v{agent.version || '1.0'}
                         </span>
                     </div>
                 </div>

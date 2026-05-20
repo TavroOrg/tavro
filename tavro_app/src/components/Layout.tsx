@@ -12,6 +12,8 @@ import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
+const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
 
@@ -53,43 +55,9 @@ const Layout: React.FC = () => {
     const [showLogs] = useShowLogs();
     const { loading: catalogLoading, lastFetched, refresh, agents } = useCatalog();
     const { loading: ucLoading, refresh: ucRefresh, useCases } = useUseCases();
+    const { activeCompany } = useBlueprint();
     const anyLoading = catalogLoading || ucLoading;
     const timeSince = useTimeSince(lastFetched);
-
-    // ── Cache fallback banner ────────────────────────────────────────────────
-    const [cacheFallbackReason, setCacheFallbackReason] = useState<string | null>(null);
-    const [dismissedCacheMode, setDismissedCacheMode] = useState(false);
-    const [isCacheMode, setIsCacheMode] = useState(
-        () => localStorage.getItem('tavro_cache_mode') === 'true'
-    );
-
-    useEffect(() => {
-        // Listen for remote→local fallback events dispatched by mcpClient
-        const onFallback = (e: Event) => {
-            const reason = (e as CustomEvent<{ reason: string }>).detail?.reason;
-            setCacheFallbackReason(reason || 'Remote cached data unavailable');
-        };
-        window.addEventListener('tavro:cache_fallback', onFallback);
-
-        // Keep isCacheMode in sync with localStorage changes (e.g. settings page)
-        const onStorageChange = () => {
-            const newCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
-            setIsCacheMode(newCacheMode);
-            // Clear banners if cache mode is turned off
-            if (!newCacheMode) {
-                setCacheFallbackReason(null);
-                setDismissedCacheMode(false);
-            }
-        };
-        window.addEventListener('storage', onStorageChange);
-        window.addEventListener('tavro_settings_change', onStorageChange);
-
-        return () => {
-            window.removeEventListener('tavro:cache_fallback', onFallback);
-            window.removeEventListener('storage', onStorageChange);
-            window.removeEventListener('tavro_settings_change', onStorageChange);
-        };
-    }, []);
 
     const handleRefreshAll = () => {
         refresh();
@@ -408,56 +376,13 @@ const Layout: React.FC = () => {
             {/* ── Main Content Area ─────────────────────────────────────────── */}
             <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
 
-                {/* ── Cached Data Mode Banner ─────────────────────────────── */}
-                {isCacheMode && !dismissedCacheMode && (
-                    <div className="flex items-center gap-3 px-5 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-medium flex-shrink-0">
-                        <Database size={13} className="text-amber-500 flex-shrink-0" />
-                        <span>
-                            <span className="font-bold">Cached Data Mode</span> is active — displaying data from
-                            {cacheFallbackReason ? ' local bundled cache (remote source unavailable)' : ' cached source'}.
-                            {' '}Live MCP calls are disabled.
-                        </span>
-                        <div className="ml-auto flex items-center gap-3">
-                            <button
-                                onClick={() => navigate('/settings')}
-                                className="text-amber-700 underline underline-offset-2 hover:text-amber-900 transition-colors whitespace-nowrap"
-                            >
-                                Settings
-                            </button>
-                            <button
-                                onClick={() => setDismissedCacheMode(true)}
-                                className="text-amber-600 hover:text-amber-900 transition-colors flex-shrink-0"
-                                title="Dismiss"
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ── Remote Cache Fallback Warning Banner ────────────────── */}
-                {cacheFallbackReason && (
-                    <div className="flex items-start gap-3 px-5 py-3 bg-orange-50 border-b border-orange-200 text-orange-800 text-xs flex-shrink-0">
-                        <AlertTriangle size={14} className="text-orange-500 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                            <span className="font-bold">Remote cache unavailable — using local bundled data.</span>
-                            <span className="text-orange-700 ml-1">Reason: {cacheFallbackReason}</span>
-                        </div>
-                        <button
-                            onClick={() => setCacheFallbackReason(null)}
-                            className="ml-2 text-orange-500 hover:text-orange-700 transition-colors flex-shrink-0"
-                            title="Dismiss"
-                        >
-                            <X size={14} />
-                        </button>
-                    </div>
-                )}
-
-                <div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
+<div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
                     <Outlet />
                 </div>
-                <footer className="border-t border-slate-200 dark:border-slate-800 py-6 text-center text-xs text-slate-400 dark:text-slate-500 mt-auto bg-white dark:bg-slate-900 transition-colors">
-                    © 2026 Tavro AI.
+                <footer className="border-t border-slate-200 dark:border-slate-800 py-4 px-6 text-xs text-slate-600 dark:text-slate-400 mt-auto bg-white dark:bg-slate-900 transition-colors flex items-center justify-between">
+                    <span>Tavro {TAVRO_VERSION}</span>
+                    <span>{activeCompany?.name ?? '—'}</span>
+                    <span>© 2026 Tavro AI.</span>
                 </footer>
             </main>
 
