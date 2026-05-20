@@ -13,6 +13,7 @@ import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../serv
 import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSessions } from '../context/ChatSessionContext';
 import type { StoredMessage } from '../store/chatSessionStore';
+import { useUseCases } from '../context/UseCaseContext';
 
 interface Message {
     id: string;
@@ -77,9 +78,133 @@ function saveTextAsPdf(title: string, text: string, filename: string): void {
     doc.save(filename);
 }
 
-function isPdfRequest(text: string): boolean {
+// ── Export / download helpers ──────────────────────────────────────────────────
+
+type ExportFormat = 'pdf' | 'csv' | 'xlsx' | 'json' | 'docx' | 'txt' | 'md';
+
+const EXPORT_LABELS: Record<ExportFormat, string> = {
+    pdf:  'PDF',
+    csv:  'CSV file',
+    xlsx: 'Excel file',
+    json: 'JSON file',
+    docx: 'Word document',
+    txt:  'text file',
+    md:   'Markdown file',
+};
+
+const EXPORT_INSTRUCTIONS: Record<ExportFormat, string> = {
+    pdf:  '\n\nThe user wants the response as a downloadable PDF. Provide a comprehensive, well-structured answer with all relevant data.',
+    csv:  '\n\nThe user wants tabular data as a CSV file. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row.',
+    xlsx: '\n\nThe user wants data as a spreadsheet. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row (will be downloaded as an Excel-compatible file).',
+    json: '\n\nThe user wants data as a JSON file. Use available tools to fetch the relevant data, then output it inside a ```json code block.',
+    docx: '\n\nThe user wants the response as a Word document. Structure your response with clear headings (## for sections) and well-formatted paragraphs.',
+    txt:  '\n\nThe user wants the response as a plain text file. Write clean, well-structured prose without markdown symbols.',
+    md:   '\n\nThe user wants the response as a Markdown document. Use proper Markdown with headers, bullet lists, and code blocks where appropriate.',
+};
+
+/** Detect which download format (if any) the user is asking for. */
+function detectExportFormat(text: string): ExportFormat | null {
     const msg = text.toLowerCase();
-    return msg.includes('pdf') && (msg.includes('generate') || msg.includes('create') || msg.includes('download') || msg.includes('export'));
+    const hasAction = ['generate', 'create', 'download', 'export', 'give', 'provide',
+        'get', 'make', 'produce', 'output', 'save', 'report'].some(w => msg.includes(w));
+    if (!hasAction) return null;
+
+    if (msg.includes('docx') || (msg.includes('word') && (msg.includes('document') || msg.includes('file') || msg.includes('doc')))) return 'docx';
+    if (msg.includes('excel') || msg.includes('xlsx') || msg.includes('.xls')) return 'xlsx';
+    if (msg.includes('csv') || msg.includes('comma-separated') || msg.includes('comma separated')) return 'csv';
+    if (msg.includes('json')) return 'json';
+    if (msg.includes('markdown') || msg.includes('.md')) return 'md';
+    if (msg.includes('.txt') || msg.includes('text file') || msg.includes('plain text')) return 'txt';
+    if (msg.includes('pdf')) return 'pdf';
+    return null;
+}
+
+function downloadBlob(content: string, filename: string, mimeType: string): void {
+    const blob = new Blob([content], { type: mimeType });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/** Extract the first matching fenced code block from an LLM response. */
+function extractCodeBlock(text: string, ...patterns: string[]): string | null {
+    const pat = patterns.length ? patterns.join('|') : '[a-z]*';
+    const m = text.match(new RegExp('```(?:' + pat + ')?\\n([\\s\\S]+?)\\n```', 'i'));
+    return m ? m[1].trim() : null;
+}
+
+/** Wrap markdown content in a minimal HTML structure that Word can open. */
+function markdownToWordHtml(text: string): string {
+    const body = text
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
+        .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>');
+    return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+  xmlns:w='urn:schemas-microsoft-com:office:word'
+  xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset='utf-8'><title>Tavro AI Export</title></head>
+<body><p>${body}</p></body></html>`;
+}
+
+/**
+ * Trigger the appropriate file download for the given export format.
+ * Returns true when a file was successfully created and downloaded.
+ */
+function handleExport(format: ExportFormat, content: string, title: string, basename: string): boolean {
+    switch (format) {
+        case 'pdf': {
+            saveTextAsPdf(title, content, `${basename}.pdf`);
+            return true;
+        }
+        case 'csv':
+        case 'xlsx': {
+            const data = extractCodeBlock(content, 'csv', 'tsv', 'text', 'plain');
+            if (data && data.includes(',') && data.split('\n').length >= 2) {
+                downloadBlob(data, `${basename}.csv`, 'text/csv;charset=utf-8;');
+                return true;
+            }
+            return false;
+        }
+        case 'json': {
+            const data = extractCodeBlock(content, 'json');
+            if (data) {
+                downloadBlob(data, `${basename}.json`, 'application/json');
+                return true;
+            }
+            return false;
+        }
+        case 'md': {
+            downloadBlob(content, `${basename}.md`, 'text/markdown;charset=utf-8;');
+            return true;
+        }
+        case 'txt': {
+            const plain = content
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/^#{1,6}\s+/gm, '')
+                .replace(/[*_`]/g, '')
+                .trim();
+            downloadBlob(plain, `${basename}.txt`, 'text/plain;charset=utf-8;');
+            return true;
+        }
+        case 'docx': {
+            downloadBlob(markdownToWordHtml(content), `${basename}.doc`, 'application/msword');
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/** @deprecated kept for any external callers — use detectExportFormat instead */
+function isPdfRequest(text: string): boolean {
+    return detectExportFormat(text) === 'pdf';
 }
 
 /** Render a line with **bold** and _italic_ support. */
@@ -283,6 +408,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const { viewType, viewData } = useChatContext();
     const { activeCompany, nodes } = useBlueprint();
     const { sessions, activeSession, activeSessionId, createSession, switchSession, deleteSession, updateSessionMessages, updateSessionProvider } = useChatSessions();
+    const { upsertUseCase, refresh: refreshUseCases } = useUseCases();
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
     const blueprintCtx: BlueprintContext | null = activeCompany ? {
@@ -382,6 +508,29 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         return filtered.slice(0, end).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
 
+    const syncUseCaseFromAssistantResponse = useCallback((assistantText: string, userPrompt: string) => {
+        const requestedCreateUseCase = /\b(create|add|register)\b[\s\S]{0,120}\b(ai\s+)?use\s*case\b/i.test(userPrompt);
+        if (!requestedCreateUseCase) return;
+
+        // Always refresh after a create-use-case request so catalog pills update
+        // even when the assistant response format varies.
+        refreshUseCases();
+
+        const idMatch = assistantText.match(/Identifier:\s*([^\n\r]+)/i);
+        const nameMatch = assistantText.match(/Name:\s*([^\n\r]+)/i);
+        const statusMatch = assistantText.match(/Status:\s*([^\n\r]+)/i);
+
+        const identifier = idMatch?.[1]?.trim();
+        const name = nameMatch?.[1]?.trim();
+        if (!identifier || !name) return;
+
+        upsertUseCase({
+            identifier,
+            name,
+            status: statusMatch?.[1]?.trim() || 'Proposed',
+        });
+    }, [refreshUseCases, upsertUseCase]);
+
     const copyConversation = () => {
         const transcript = buildTranscript(messages, activeSession?.title, modelLabel);
         navigator.clipboard.writeText(transcript || welcome.text);
@@ -422,24 +571,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         const assistantId = `assistant-${Date.now()}`;
 
         try {
-            if (isPdfRequest(text)) {
-                const transcript = buildTranscript(withUser, activeSession?.title, modelLabel);
-                saveTextAsPdf(activeSession?.title ?? 'Tavro AI Assistant Chat', transcript, `tavro-chat-${Date.now()}.pdf`);
-                const confirmMsg: Message = {
-                    id: assistantId,
-                    role: 'assistant',
-                    text: 'I generated a PDF from the current chat and started the download.',
-                    timestamp: new Date(),
-                };
-                const withConfirm = [...withUser, confirmMsg];
-                setMessages(withConfirm);
-                setLoading(false);
-                persist(withConfirm);
-                return;
-            }
-
+            const exportFormat = detectExportFormat(text);
             const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt });
+            // Append a format instruction so the LLM generates content in the
+            // requested output format (CSV, JSON, DOCX, PDF, etc.).
+            const effectiveSystemPrompt = exportFormat
+                ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
+                : systemPrompt;
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt });
             let firstToken = true;
             let accumulated = '';
 
@@ -459,6 +598,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                         latestMessages.current = next;
                         return next;
                     });
+                }
+            }
+
+            // Trigger file download once streaming is finished (synchronous, before
+            // setMessages so the download happens exactly once outside a React updater).
+            let exportDownloaded = false;
+            if (exportFormat && accumulated.trim()) {
+                exportDownloaded = handleExport(
+                    exportFormat,
+                    accumulated,
+                    activeSession?.title ?? 'Tavro AI Response',
+                    `tavro-export-${Date.now()}`,
+                );
+                if (exportDownloaded) {
+                    accumulated += `\n\n---\n*Your ${EXPORT_LABELS[exportFormat]} has been downloaded.*`;
                 }
             }
 
@@ -487,6 +641,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 persist(next);
                 return next;
             });
+
+            if (accumulated.trim()) {
+                syncUseCaseFromAssistantResponse(accumulated, text);
+            }
 
         } catch (err: any) {
             const errMsg: Message = {

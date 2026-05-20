@@ -25,7 +25,7 @@ export interface Company {
 export interface CompanyCreate {
   name: string;
   industry: string;
-  region: string;
+  region?: string;
   legal_entity?: string;
 }
 

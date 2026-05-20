@@ -99,4 +99,23 @@ BEGIN
         ON DELETE SET NULL;
     END IF;
 
+    IF to_regclass('core.ai_use_case_business_processes') IS NOT NULL THEN
+        EXECUTE '
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_processes
+            ON core.ai_use_case_business_processes (ai_use_case_id, business_process_id, tenant_id)
+        ';
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_ai_use_case_business_processes_business_process'
+        ) THEN
+            ALTER TABLE core.ai_use_case_business_processes
+            ADD CONSTRAINT fk_core_ai_use_case_business_processes_business_process
+            FOREIGN KEY (business_process_id)
+            REFERENCES core.business_processes (business_process_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
 END $$;

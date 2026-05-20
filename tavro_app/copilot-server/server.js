@@ -3,6 +3,13 @@ import cors from 'cors';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
 const PORT = Number(process.env.PORT || 4000);
+
+// Docker-internal URL for the Tavro MCP server.
+// Within the Docker network the service is reachable at its service name.
+// Override via MCP_INTERNAL_URL env var when deploying outside Docker or to a
+// different host.
+const MCP_INTERNAL_URL = process.env.MCP_INTERNAL_URL || 'http://risk-mcp-server:9001/zitadel/mcp';
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
@@ -109,9 +116,15 @@ function buildModelCapabilities(provider) {
 }
 
 /**
- * Build the session config, merging GitHub auth and optional BYOK provider.
+ * Build the session config, merging GitHub auth, optional BYOK provider, and
+ * optional Tavro MCP server credentials.
+ *
+ * mcpConfig: { token: string, tenantId?: string } | null
+ *   When provided (and no BYOK provider is set), the Tavro MCP server is
+ *   registered with the session so the SDK can call Tavro tools automatically
+ *   without manual orchestration on the frontend.
  */
-function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId) {
+function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId, mcpConfig) {
     const providerCfg = buildProviderConfig(provider);
     const cfg = {
         model,
@@ -119,7 +132,8 @@ function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId)
         streaming: true,
         onPermissionRequest: approveAll,
         useLoggedInUser: false,
-        availableTools: [],
+        // availableTools not restricted — SDK uses all tools exposed by registered
+        // MCP servers and its own built-in capabilities.
     };
     if (systemPrompt) {
         cfg.systemMessage = {
@@ -134,6 +148,28 @@ function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId)
     if (providerCfg) cfg.provider = providerCfg;
     const modelCapabilities = buildModelCapabilities(provider);
     if (modelCapabilities) cfg.modelCapabilities = modelCapabilities;
+
+    // Wire the Tavro MCP server into the session for the GitHub Copilot SDK
+    // path (non-BYOK).  BYOK sessions keep the frontend orchestrator handling
+    // tool calls; only SDK-native sessions gain internal MCP routing here.
+    if (mcpConfig?.token && !provider && MCP_INTERNAL_URL) {
+        const mcpHeaders = {
+            'Authorization': `Bearer ${mcpConfig.token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'ngrok-skip-browser-warning': 'true',
+        };
+        if (mcpConfig.tenantId) mcpHeaders['tenant_id'] = mcpConfig.tenantId;
+        cfg.mcpServers = {
+            'tavro-mcp': {
+                type: 'http',
+                url: MCP_INTERNAL_URL,
+                tools: ['*'],
+                headers: mcpHeaders,
+            },
+        };
+    }
+
     return cfg;
 }
 
@@ -153,19 +189,21 @@ function splitPromptMessages(messages) {
     return { systemPrompt, prompt };
 }
 
-function sessionCacheKey({ sessionId, model, provider }) {
+function sessionCacheKey({ sessionId, model, provider, hasMcp }) {
     const providerType = provider?.type || 'github';
     const providerBase = provider?.baseUrl || '';
-    return `${sessionId || 'default'}::${providerType}::${providerBase}::${model}`;
+    // hasMcp is included so sessions with/without MCP are never shared.
+    return `${sessionId || 'default'}::${providerType}::${providerBase}::${model}::${hasMcp ? 'mcp' : 'nomcp'}`;
 }
 
-async function getOrCreateSession({ sessionId, model, authToken, provider, messages }) {
-    const cacheKey = sessionCacheKey({ sessionId, model, provider });
+async function getOrCreateSession({ sessionId, model, authToken, provider, messages, mcpConfig }) {
+    const hasMcp = !!(mcpConfig?.token);
+    const cacheKey = sessionCacheKey({ sessionId, model, provider, hasMcp });
     const cached = sessions.get(cacheKey);
     if (cached?.session) return cached.session;
 
     const { systemPrompt } = splitPromptMessages(messages);
-    const session = await client.createSession(buildSessionConfig(model, authToken, provider, systemPrompt, sessionId));
+    const session = await client.createSession(buildSessionConfig(model, authToken, provider, systemPrompt, sessionId, mcpConfig));
     sessions.set(cacheKey, {
         session,
         lastUsed: Date.now(),
@@ -176,7 +214,7 @@ async function getOrCreateSession({ sessionId, model, authToken, provider, messa
 // ── POST /chat/complete — non-streaming, returns JSON ──────────────────────────
 
 app.post('/chat/complete', async (req, res) => {
-    const { model, apiKey, messages, provider, sessionId } = req.body ?? {};
+    const { model, apiKey, messages, provider, sessionId, mcpToken, mcpTenantId } = req.body ?? {};
 
     if (!model) return res.status(400).json({ error: 'Missing model' });
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'Missing messages array' });
@@ -189,9 +227,12 @@ app.post('/chat/complete', async (req, res) => {
         });
     }
 
+    // MCP credentials — only used for the non-BYOK (GitHub Copilot SDK) path.
+    const mcpConfig = mcpToken ? { token: mcpToken, tenantId: mcpTenantId || '' } : null;
+
     try {
         await ensureClientStarted();
-        console.log(`[copilot-proxy] /chat/complete model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
+        console.log(`[copilot-proxy] /chat/complete model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}${mcpConfig ? ' mcp=true' : ''}`);
 
         const fallbackModels = ['gpt-4.1', 'gpt-4o', 'claude-sonnet-4.5', 'gpt-5'];
         const candidates = providerCfg ? [model] : [model, ...fallbackModels.filter(m => m !== model)];
@@ -201,7 +242,7 @@ app.post('/chat/complete', async (req, res) => {
 
         for (const candidate of candidates) {
             try {
-                session = await getOrCreateSession({ sessionId, model: candidate, authToken, provider: providerCfg, messages });
+                session = await getOrCreateSession({ sessionId, model: candidate, authToken, provider: providerCfg, messages, mcpConfig });
                 chosenModel = candidate;
                 if (candidate !== model) {
                     console.warn(`[copilot-proxy] falling back from ${model} to ${candidate}`);
@@ -256,7 +297,7 @@ app.post('/chat/complete', async (req, res) => {
 // ── POST /chat/stream — SSE streaming ─────────────────────────────────────────
 
 app.post('/chat/stream', async (req, res) => {
-    const { model, apiKey, messages, provider, sessionId } = req.body ?? {};
+    const { model, apiKey, messages, provider, sessionId, mcpToken, mcpTenantId } = req.body ?? {};
 
     if (!model || !Array.isArray(messages)) {
         res.status(400).json({ error: 'Missing model or messages' });
@@ -270,6 +311,8 @@ app.post('/chat/stream', async (req, res) => {
         return;
     }
 
+    const mcpConfig = mcpToken ? { token: mcpToken, tenantId: mcpTenantId || '' } : null;
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -280,9 +323,9 @@ app.post('/chat/stream', async (req, res) => {
 
     try {
         await ensureClientStarted();
-        console.log(`[copilot-proxy] /chat/stream model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}`);
+        console.log(`[copilot-proxy] /chat/stream model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}${mcpConfig ? ' mcp=true' : ''}`);
 
-        const session = await getOrCreateSession({ sessionId, model, authToken, provider: providerCfg, messages });
+        const session = await getOrCreateSession({ sessionId, model, authToken, provider: providerCfg, messages, mcpConfig });
 
         let streamedContent = '';
         const unsub = session.on('assistant.message_delta', (event) => {

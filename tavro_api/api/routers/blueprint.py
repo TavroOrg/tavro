@@ -32,8 +32,8 @@ OPENAI_MODEL      = "gpt-4o"
 #   Default 3 — Claude rarely needs more than 2 for a well-known public company.
 #   Set to 1 to force a single search; set to 0 to disable web search entirely.
 
-RESEARCH_MAX_OUTPUT_TOKENS: int = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "2048"))
-RESEARCH_MAX_SEARCH_TURNS:  int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "3"))
+RESEARCH_MAX_OUTPUT_TOKENS: int = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "3000"))
+RESEARCH_MAX_SEARCH_TURNS:  int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "5"))
 
 
 # =============================================================
@@ -45,7 +45,7 @@ class ResearchRequest(BaseModel):
     company_name: str
     ticker:       str | None = None
     industry:     str
-    region:       str
+    region:       str = ""   # kept for backwards-compat; no longer required
 
 class ResearchedNode(BaseModel):
     category:   str
@@ -194,29 +194,15 @@ async def _call_openai(
 def _resolve_blueprint_llm() -> tuple[str, str]:
     """
     Resolve provider/key for blueprint endpoints.
-    Priority:
-    1) BLUEPRINT_LLM_PROVIDER=openai|anthropic (if key exists)
-    2) OPENAI_API_KEY if present
-    3) ANTHROPIC_API_KEY if present
+    Research flows are enforced to Anthropic-only.
     """
-    preferred = (os.getenv("BLUEPRINT_LLM_PROVIDER", "").strip().lower() or None)
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-
-    if preferred == "openai":
-        if not openai_key:
-            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=openai but OPENAI_API_KEY not configured")
-        return "openai", openai_key
-    if preferred == "anthropic":
-        if not anthropic_key:
-            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY not configured")
-        return "anthropic", anthropic_key
-
-    if openai_key:
-        return "openai", openai_key
     if anthropic_key:
         return "anthropic", anthropic_key
-    raise HTTPException(status_code=500, detail="No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+    raise HTTPException(
+        status_code=500,
+        detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
+    )
 
 
 def _collect_text(data: dict) -> str:
@@ -234,6 +220,96 @@ def _collect_tool_results(data: dict) -> list[dict]:
         }
         for b in data.get("content", []) if b.get("type") == "tool_use"
     ]
+
+
+async def _fetch_sec_filing_info(ticker: str) -> dict:
+    """
+    Look up a public company on SEC EDGAR by ticker symbol.
+    Returns structured metadata + the direct URL of the latest 10-K document
+    so the AI can fetch it during web-search turns.
+
+    SEC EDGAR requires a User-Agent header identifying the caller.
+    Docs: https://www.sec.gov/developer
+    """
+    headers = {"User-Agent": "Tavro Platform research@tavro.ai"}
+    result: dict = {}
+    try:
+        async with httpx.AsyncClient(
+            timeout=25.0, headers=headers, follow_redirects=True
+        ) as client:
+            # ── Step 1: Search EDGAR for the ticker's 10-K filings ───────────
+            search_resp = await client.get(
+                "https://efts.sec.gov/LATEST/search-index",
+                params={
+                    "q":         f'"{ticker}"',
+                    "forms":     "10-K",
+                    "dateRange": "custom",
+                    "startdt":   "2021-01-01",
+                },
+            )
+            if search_resp.status_code != 200:
+                return result
+
+            hits = search_resp.json().get("hits", {}).get("hits", [])
+            if not hits:
+                return result
+
+            src = hits[0]["_source"]
+            acc_no       = src.get("accession_no", "")         # e.g. "0000320193-24-000005"
+            entity_name  = src.get("entity_name",  "")
+            file_date    = src.get("file_date",    "")
+            period       = src.get("period_of_report", "")
+
+            # CIK is the leading zero-padded portion of the accession number
+            cik_str = acc_no.split("-")[0] if "-" in acc_no else ""
+            if not cik_str:
+                return result
+            cik_int = int(cik_str)
+
+            result = {
+                "entity_name":         entity_name,
+                "cik":                 cik_str,
+                "latest_10k_date":     file_date,
+                "latest_10k_period":   period,
+                "filing_browser_url":  (
+                    f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                    f"&CIK={cik_str}&type=10-K&dateb=&owner=include&count=5"
+                ),
+            }
+
+            # ── Step 2: Company submissions → richer metadata + doc URL ──────
+            subs_resp = await client.get(
+                f"https://data.sec.gov/submissions/CIK{cik_str}.json"
+            )
+            if subs_resp.status_code == 200:
+                subs = subs_resp.json()
+                result["sic_description"]        = subs.get("sicDescription", "")
+                result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
+                result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
+                biz = subs.get("addresses", {}).get("business", {})
+                result["hq"] = (
+                    f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
+                )
+
+                # Find the primary document of the most recent 10-K
+                recent   = subs.get("filings", {}).get("recent", {})
+                for form, acc, doc in zip(
+                    recent.get("form",            []),
+                    recent.get("accessionNumber", []),
+                    recent.get("primaryDocument", []),
+                ):
+                    if form == "10-K" and doc:
+                        acc_clean = acc.replace("-", "")
+                        result["doc_url"] = (
+                            f"https://www.sec.gov/Archives/edgar/data/"
+                            f"{cik_int}/{acc_clean}/{doc}"
+                        )
+                        break
+
+    except Exception:
+        pass   # SEC fetch is best-effort; research proceeds without it
+
+    return result
 
 
 # =============================================================
@@ -265,6 +341,8 @@ Categories to include:
 - "profile": exactly 1 node — identity, HQ, size, founding, key markets
 - "strategy": 3-5 nodes — one per major strategic priority from recent communications
 - "organisation": 3-6 nodes — one per major business segment or division
+- "finance": 3-5 nodes — revenue figures, profitability, balance sheet highlights,
+  capital allocation, and financial performance trends
 
 Rules:
 - Only use publicly available information
@@ -272,6 +350,50 @@ Rules:
 - Tags: lowercase, hyphen-separated, max 8 per node
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
 Do not write ```json or ``` anywhere. Start your response with { and end with }."""
+
+
+PUBLIC_RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
+for an enterprise AI governance platform called Tavro.
+
+This is a PUBLICLY LISTED company. You MUST base your research on official SEC filings,
+specifically the company's most recent 10-K annual report on SEC EDGAR. Do not rely on
+general knowledge — retrieve the actual filing from the URL(s) provided in the prompt.
+
+Return ONLY a JSON object (no prose, no markdown fences, no explanation):
+
+{
+  "nodes": [
+    {
+      "category": "profile",
+      "label": "string",
+      "summary": "2-5 sentence plain text description",
+      "tags": ["lowercase-hyphenated", "keywords"],
+      "visibility": "internal",
+      "sensitive": false
+    }
+  ],
+  "sources": ["10-K FY2024 (SEC EDGAR)", "DEF 14A 2024"],
+  "notice": "One sentence noting this is sourced from SEC EDGAR filings."
+}
+
+Categories to include (draw directly from the 10-K):
+- "profile": exactly 1 node — legal name, state of incorporation, HQ, employee count,
+  fiscal year-end, principal markets (from Item 1 Business section)
+- "strategy": 3-5 nodes — each node is one major strategic priority stated in the
+  10-K (Item 1 Business, Item 7 MD&A, or earnings communications)
+- "organisation": 3-6 nodes — each node is one reportable business segment or major
+  division as disclosed in the 10-K segment footnotes
+- "finance": 3-5 nodes — draw from Item 8 Financial Statements and Item 7 MD&A:
+  annual revenue, net income / EPS, key balance sheet metrics (total assets, long-term
+  debt), capital allocation (dividends, buybacks), and any significant financial trends
+
+Rules:
+- Base summaries on the actual 10-K text; cite the filing year in each summary
+- Use specific numbers (e.g. "$5.2B revenue FY2023") where disclosed
+- Summaries: 2-5 sentences, plain text, no bullet points
+- Tags: lowercase, hyphen-separated, max 8 per node
+- Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
+Start your response with { and end with }."""
 
 
 # =============================================================
@@ -282,14 +404,63 @@ Do not write ```json or ``` anywhere. Start your response with { and end with }.
 async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get_db)):
     provider, api_key = _resolve_blueprint_llm()
 
-    ticker_line = f"Ticker: {body.ticker}" if body.ticker else ""
-    user_prompt = (
-        f"Research this company and return the Blueprint JSON:\n\n"
-        f"Company: {body.company_name}\n{ticker_line}\n"
-        f"Industry: {body.industry}\nRegion: {body.region}\n\n"
-        f"Use web search to find accurate public information, "
-        f"then return ONLY the JSON object — no other text."
-    )
+    is_public = bool(body.ticker)
+
+    # ── For public companies: pre-fetch SEC EDGAR data ────────────────────────
+    sec_ctx: dict = {}
+    if is_public:
+        sec_ctx = await _fetch_sec_filing_info(body.ticker)  # type: ignore[arg-type]
+
+    # ── Build user prompt ─────────────────────────────────────────────────────
+    if is_public:
+        sec_block = ""
+        if sec_ctx:
+            sec_block = (
+                f"\nSEC EDGAR Data (use these official sources — do NOT skip them):\n"
+                f"  Registered name : {sec_ctx.get('entity_name', body.company_name)}\n"
+                f"  CIK             : {sec_ctx.get('cik', 'unknown')}\n"
+                f"  HQ              : {sec_ctx.get('hq', '')}\n"
+                f"  SIC description : {sec_ctx.get('sic_description', '')}\n"
+                f"  State of incorp : {sec_ctx.get('state_of_incorporation', '')}\n"
+                f"  Fiscal year end : {sec_ctx.get('fiscal_year_end', '')}\n"
+                f"  Latest 10-K     : filed {sec_ctx.get('latest_10k_date', '')} "
+                f"(period ending {sec_ctx.get('latest_10k_period', '')})\n"
+                f"  10-K document   : {sec_ctx.get('doc_url', '')}\n"
+                f"  EDGAR filings   : {sec_ctx.get('filing_browser_url', '')}\n"
+            )
+            instruction = (
+                "Fetch the 10-K document URL above and read Item 1 (Business), "
+                "Item 7 (MD&A), and Item 8 (Financial Statements). "
+                "Base your nodes on facts from that document."
+            )
+        else:
+            instruction = (
+                f"Search SEC EDGAR (https://www.sec.gov/cgi-bin/browse-edgar?"
+                f"action=getcompany&company=&CIK={body.ticker}&type=10-K&dateb="
+                f"&owner=include&count=5) for the latest 10-K filing. "
+                "Base your nodes on the actual 10-K content."
+            )
+
+        user_prompt = (
+            f"Research this PUBLIC company using its SEC EDGAR 10-K filing "
+            f"and return the Blueprint JSON:\n\n"
+            f"Company : {body.company_name}\n"
+            f"Ticker  : {body.ticker}\n"
+            f"Industry: {body.industry}\n"
+            f"{sec_block}\n"
+            f"{instruction}\n\n"
+            f"Return ONLY the JSON object — no other text."
+        )
+        system_prompt = PUBLIC_RESEARCH_SYSTEM
+    else:
+        user_prompt = (
+            f"Research this company and return the Blueprint JSON:\n\n"
+            f"Company: {body.company_name}\n"
+            f"Industry: {body.industry}\n\n"
+            f"Use web search to find accurate public information, "
+            f"then return ONLY the JSON object — no other text."
+        )
+        system_prompt = RESEARCH_SYSTEM
 
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
 
@@ -299,9 +470,9 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
     # ── Turn 1 ────────────────────────────────────────────────────────────────
     if provider == "openai":
-        data = await _call_openai(api_key, messages, RESEARCH_SYSTEM, RESEARCH_MAX_OUTPUT_TOKENS)
+        data = await _call_openai(api_key, messages, system_prompt, RESEARCH_MAX_OUTPUT_TOKENS)
     else:
-        data = await _call_anthropic(api_key, messages, RESEARCH_SYSTEM, tools)
+        data = await _call_anthropic(api_key, messages, system_prompt, tools)
     turns_used = 0
 
     # ── Follow-up turns while Claude uses web search ──────────────────────────
@@ -312,7 +483,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
         turns_used += 1
         messages.append({"role": "assistant", "content": data["content"]})
         messages.append({"role": "user",      "content": tool_results})
-        data = await _call_anthropic(api_key, messages, RESEARCH_SYSTEM, tools)
+        data = await _call_anthropic(api_key, messages, system_prompt, tools)
 
     # ── If we hit the turn cap but Claude still wants to search, force answer ──
     if provider == "anthropic" and data.get("stop_reason") == "tool_use":
@@ -331,7 +502,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             })
             # Final call with no tools — forces a text response
             data = await _call_anthropic(
-                api_key, messages, RESEARCH_SYSTEM,
+                api_key, messages, system_prompt,
                 tools=None,  # no tools = must produce text
                 max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
             )
@@ -364,11 +535,11 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             )})
             if provider == "openai":
                 cont_data = await _call_openai(
-                    api_key, messages, RESEARCH_SYSTEM, RESEARCH_MAX_OUTPUT_TOKENS
+                    api_key, messages, system_prompt, RESEARCH_MAX_OUTPUT_TOKENS
                 )
             else:
                 cont_data = await _call_anthropic(
-                    api_key, messages, RESEARCH_SYSTEM,
+                    api_key, messages, system_prompt,
                     tools=None,
                     max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
                 )

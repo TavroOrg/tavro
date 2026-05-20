@@ -800,7 +800,14 @@ ${toolSummary}`;
             const agents = rawList.map(item => ({
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
-                identification: { ...item.identification, agent_id: item.identification?.agent_id || item.agent_id || 'Unknown' },
+                description: item.description || item.agent_description || item.summary || '',
+                identification: {
+                    ...item.identification,
+                    agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
+                    role: item.identification?.role || item.role || undefined,
+                    owner: item.identification?.owner || item.owner || item.agent_owner || undefined,
+                    environment: item.identification?.environment || item.environment || undefined,
+                },
                 risk_assessment: normalizeRiskAssessment(item),
                 risk_summary:
                     item.risk_summary ??
@@ -939,6 +946,7 @@ ${toolSummary}`;
                 owner: raw.identification?.owner || raw.owner || raw.agent_owner || raw.agent_owner_name,
                 instruction: raw.identification?.instruction || raw.instruction || raw.agent_description || raw.summary,
                 environment: raw.identification?.environment || raw.environment,
+                role: raw.identification?.role || raw.role || undefined,
             },
             capabilities: raw.capabilities ?? {},
             application: raw.application ?? [],

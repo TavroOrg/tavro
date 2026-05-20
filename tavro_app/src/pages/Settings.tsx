@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Settings2, Moon, Sun, Monitor,
-    CheckCircle2, Loader2, RefreshCw, Code2,
+    CheckCircle2, Code2,
     BotMessageSquare, Eye, EyeOff, Trash2, Terminal,
-    Database, CloudOff, Download, CircleHelp, ExternalLink
+    Database, CircleHelp, ExternalLink
 } from 'lucide-react';
-import { mcpClient } from '../services/mcpClient';
 import { useInspectJson } from '../hooks/useInspectJson';
-import { generatePKCE } from '../services/pkce';
 import { useShowLogs } from '../hooks/useShowLogs';
-import { useCacheMode } from '../hooks/useCacheMode';
 import {
     DEFAULT_MODELS, PROVIDER_HINTS, PROVIDER_LABELS, LLMProvider,
     getProviderConfig, saveProviderConfig, clearProviderConfig,
@@ -37,12 +34,11 @@ const Settings: React.FC = () => {
     useEffect(() => {
         setViewContext('settings');
     }, [setViewContext]);
-    // App config
+
     const { theme, setTheme } = useTheme();
     const [inspectJson, setInspectJson] = useInspectJson();
     const [saved, setSaved] = useState(false);
     const [showLogs, setShowLogs] = useShowLogs();
-    const [cacheMode, setCacheMode] = useCacheMode();
 
     // LLM config — per-provider
     type ByokType = 'github' | 'openai' | 'azure' | 'anthropic';
@@ -53,7 +49,7 @@ const Settings: React.FC = () => {
         byokBaseUrl?: string;
     };
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
-        github: 'gpt-4.1', openai: 'gpt-4o', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
+        github: 'gpt-4.1', openai: 'gpt-5.5', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
     };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);
@@ -75,64 +71,6 @@ const Settings: React.FC = () => {
     const updateProvider = (p: LLMProvider, patch: Partial<ProviderState>) =>
         setProviderStates(s => ({ ...s, [p]: { ...s[p], ...patch } }));
 
-    // Cached data settings
-    const [cachedDataUrl, setCachedDataUrl] = useState('');
-    const [cachedDataLocalPath, setCachedDataLocalPath] = useState('');
-    const [cachedDataLimitMB, setCachedDataLimitMB] = useState('10');
-    const [cachedDataSaved, setCachedDataSaved] = useState(false);
-    const [generateLog, setGenerateLog] = useState<string[]>([]);
-    const [isGenerating, setIsGenerating] = useState(false);
-    const [generatedJson, setGeneratedJson] = useState<string | null>(null);
-    const generateLogRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        // Load cached data settings
-        setCachedDataUrl(localStorage.getItem('tavro_cached_data_url') || '');
-        setCachedDataLocalPath(localStorage.getItem('tavro_cached_data_local_path') || '');
-        setCachedDataLimitMB(localStorage.getItem('tavro_cached_data_limit_mb') || '10');
-    }, []);
-
-    // Auto-scroll generate log
-    useEffect(() => {
-        if (generateLogRef.current) {
-            generateLogRef.current.scrollTop = generateLogRef.current.scrollHeight;
-        }
-    }, [generateLog]);
-
-    const handleSaveCachedDataSettings = () => {
-        localStorage.setItem('tavro_cached_data_url', cachedDataUrl.trim());
-        localStorage.setItem('tavro_cached_data_local_path', cachedDataLocalPath.trim());
-        localStorage.setItem('tavro_cached_data_limit_mb', cachedDataLimitMB);
-        // Reset the cached data store so it reloads with new settings
-        mcpClient.invalidateCache();
-        setCachedDataSaved(true);
-        setTimeout(() => setCachedDataSaved(false), 2500);
-    };
-
-    const handleGenerateCache = async () => {
-        setIsGenerating(true);
-        setGenerateLog([]);
-        setGeneratedJson(null);
-        try {
-            const json = await mcpClient.generateCachedData();
-            setGeneratedJson(json);
-        } catch (err: any) {
-            setGenerateLog(prev => [...prev, `❌ Error: ${err.message}`]);
-        } finally {
-            setIsGenerating(false);
-        }
-    };
-
-    const handleDownloadCache = () => {
-        if (!generatedJson) return;
-        const blob = new Blob([generatedJson], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'mcpCachedData.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    };
 
     const handleSaveProvider = (p: LLMProvider) => {
         const s = providerStates[p];
@@ -180,8 +118,6 @@ const Settings: React.FC = () => {
                     <p className="text-slate-500 dark:text-slate-400 text-sm">Manage preferences and connection status</p>
                 </div>
             </div>
-
-
 
             {/* ── Chat AI Configuration ─────────────────────────────────────── */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
@@ -258,26 +194,20 @@ const Settings: React.FC = () => {
                                         </div>
                                     )}
 
-                                    {/* ── Copilot BYOK: Base URL (azure required, openai optional) ── */}
-                                    {p === 'copilot' && s.byokType && s.byokType !== 'github' && s.byokType !== 'anthropic' && (
+                                    {/* ── Copilot BYOK: Base URL (azure required; openai uses backend default) ── */}
+                                    {p === 'copilot' && s.byokType === 'azure' && (
                                         <div className="flex flex-col gap-1">
                                             <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                                                Base URL {s.byokType === 'azure' ? <span className="text-rose-400">*</span> : '(optional)'}
+                                                Base URL <span className="text-rose-400">*</span>
                                             </label>
                                             <input
                                                 type="text"
                                                 value={s.byokBaseUrl ?? ''}
                                                 onChange={e => updateProvider(p, { byokBaseUrl: e.target.value })}
-                                                placeholder={
-                                                    s.byokType === 'azure'
-                                                        ? 'https://my-resource.openai.azure.com'
-                                                        : 'https://api.openai.com/v1  (leave blank for default)'
-                                                }
+                                                placeholder="https://my-resource.openai.azure.com"
                                                 className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
                                             />
-                                            {s.byokType === 'azure' && (
-                                                <p className="text-[10px] text-slate-400 dark:text-slate-500">Host only — do not include <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">/openai/v1</code></p>
-                                            )}
+                                            <p className="text-[10px] text-slate-400 dark:text-slate-500">Host only — do not include <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">/openai/v1</code></p>
                                         </div>
                                     )}
 
@@ -438,127 +368,10 @@ const Settings: React.FC = () => {
                             <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${showLogs ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                     </div>
-
-                    <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
-                        <div>
-                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                                <Database size={14} className="text-amber-500" />
-                                Cached Data Mode
-                                {cacheMode && (
-                                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">ACTIVE</span>
-                                )}
-                            </p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Use cached MCP data instead of live server calls. Useful for demos and offline use.</p>
-                        </div>
-                        <button
-                            role="switch"
-                            aria-checked={cacheMode}
-                            onClick={() => setCacheMode(!cacheMode)}
-                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${cacheMode ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
-                        >
-                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${cacheMode ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
                 </div>
             </div>
 
-            {/* ── Cached Data Configuration ──────────────────────────────────── */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
-                    <Database size={16} className="text-amber-500" />
-                    <span className="font-bold text-slate-800 dark:text-white">Cached Data Configuration</span>
-                    {cacheMode && (
-                        <span className="ml-auto flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                            <CloudOff size={10} /> Live calls disabled
-                        </span>
-                    )}
-                </div>
-                <div className="p-5 flex flex-col gap-5">
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                        Configure where the app loads cached MCP data from. Sources are tried in priority order:{' '}
-                        <strong>Remote URL</strong> → <strong>Local Path</strong> → <strong>Bundled fallback</strong>.
-                    </p>
-
-                    {/* Remote URL */}
-                    <div className="flex flex-col gap-2">
-                        <label className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Remote Cache URL</label>
-                        <input
-                            type="url"
-                            value={cachedDataUrl}
-                            onChange={e => setCachedDataUrl(e.target.value)}
-                            placeholder="https://your-bucket.s3.amazonaws.com/mcpCachedData.json"
-                            className="text-sm border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all font-mono"
-                        />
-                    </div>
-
-                    {/* Local Path */}
-                    <div className="flex flex-col gap-2">
-                        <label className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Local Cache Path</label>
-                        <input
-                            type="text"
-                            value={cachedDataLocalPath}
-                            onChange={e => setCachedDataLocalPath(e.target.value)}
-                            placeholder="/cache/mcpCachedData.json"
-                            className="text-sm border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all font-mono"
-                        />
-                    </div>
-
-                    {/* Size Limit */}
-                    <div className="flex flex-col gap-2">
-                        <label className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Size Limit (MB)</label>
-                        <div className="flex items-center gap-3">
-                            <input
-                                type="number"
-                                min="1"
-                                max="100"
-                                value={cachedDataLimitMB}
-                                onChange={e => setCachedDataLimitMB(e.target.value)}
-                                className="w-28 text-sm border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all font-mono"
-                            />
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Limit for remote data fetching.</p>
-                        </div>
-                    </div>
-
-                    {/* Save settings */}
-                    <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
-                        <button
-                            onClick={handleSaveCachedDataSettings}
-                            className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all text-white shadow-lg shadow-blue-500/20 ${cachedDataSaved ? 'bg-emerald-500' : 'bg-blue-600 hover:bg-blue-700'}`}
-                        >
-                            {cachedDataSaved ? '✓ Saved!' : 'Save Cache Settings'}
-                        </button>
-                    </div>
-
-                    {/* Generate Cache from live MCP */}
-                    <div className="border-t border-slate-100 dark:border-slate-800 pt-5 flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Generate Cache from Live MCP</p>
-                            </div>
-                            <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                                {generatedJson && (
-                                    <button
-                                        onClick={handleDownloadCache}
-                                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all text-white bg-emerald-500 hover:bg-emerald-600"
-                                    >
-                                        <Download size={15} /> Download
-                                    </button>
-                                )}
-                                <button
-                                    onClick={handleGenerateCache}
-                                    disabled={isGenerating || cacheMode}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all text-white bg-blue-500 hover:bg-blue-600 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 disabled:cursor-not-allowed"
-                                >
-                                    {isGenerating ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                                    {isGenerating ? 'Generating…' : 'Generate'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Appearance */}
+            {/* Help */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
                 <div className="p-5 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
                     <div className="flex items-center gap-2">

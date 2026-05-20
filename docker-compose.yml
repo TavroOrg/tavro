@@ -105,6 +105,11 @@ services:
       dockerfile: Dockerfile
     container_name: tavro-copilot-sdk
     restart: unless-stopped
+    environment:
+      # Docker-internal URL for the Tavro MCP server.
+      # The copilot-server registers this with each Copilot SDK session so the
+      # SDK can automatically route tool calls to Tavro's MCP backend.
+      MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
     ports:
       - "4001:4000"
     healthcheck:
@@ -143,22 +148,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
-  # ── pgAdmin 4 — database browser ────────────────────────────────────────────
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: tavro-pgadmin
-    restart: unless-stopped
-    depends_on:
-      tavro-postgres:
-        condition: service_healthy
-    environment:
-      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-    ports:
-      - "5050:80"
-    volumes:
-      - tavro_pgadmin:/var/lib/pgadmin
 
   proxy:
     image: ${TRAEFIK_IMAGE}
@@ -487,7 +476,6 @@ services:
 
 volumes:
   tavro_pgdata:
-  tavro_pgadmin:
   zitadel-bootstrap:
   tavro_runtime_config:
 

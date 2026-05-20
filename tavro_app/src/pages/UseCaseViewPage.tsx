@@ -4,13 +4,15 @@ import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import EditUseCaseModal from '../components/EditUseCaseModal';
 import { useCaseApi } from '../services/useCaseApi';
+import { businessRelationsApi } from '../services/businessRelationsApi';
+import type { BusinessProcessRecord } from '../types/businessRelations';
 
 const USE_CASE_AGENT_COUNT_CACHE_KEY = 'tavro_use_case_agent_count_cache';
 
@@ -19,6 +21,157 @@ interface AgentsSectionProps {
   agents: AgentData[];
   onSilentRefetch: () => void;
 }
+
+interface ProcessRelationsSectionProps {
+  useCase: UseCaseDetail;
+  onSilentRefetch: () => void;
+}
+
+const normalizeUseCaseProcesses = (raw: any): Array<{
+  identifier: string;
+  name: string;
+  description: string | null;
+  business_criticality: string | null;
+}> => {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const rows: Array<{
+    identifier: string;
+    name: string;
+    description: string | null;
+    business_criticality: string | null;
+  }> = [];
+
+  raw.forEach((item: any) => {
+    const identifier = String(item?.business_process_id ?? item?.identifier ?? item?.id ?? '').trim();
+    if (!identifier || seen.has(identifier)) return;
+    seen.add(identifier);
+    rows.push({
+      identifier,
+      name: String(item?.process_name ?? item?.name ?? identifier),
+      description: item?.description ?? item?.process_description ?? null,
+      business_criticality: item?.business_criticality ?? null,
+    });
+  });
+
+  return rows;
+};
+
+const normalizeUseCaseAgents = (raw: any): Array<{ agent_id: string; name: string; environment: string | null }> => {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const rows: Array<{ agent_id: string; name: string; environment: string | null }> = [];
+
+  raw.forEach((item: any) => {
+    const agentId = String(item?.agent_id ?? item?.identifier ?? item?.id ?? '').trim();
+    if (!agentId || seen.has(agentId)) return;
+    seen.add(agentId);
+    rows.push({
+      agent_id: agentId,
+      name: String(item?.name ?? item?.agent_name ?? agentId),
+      environment: item?.environment ?? null,
+    });
+  });
+
+  return rows;
+};
+
+const mergeUseCaseWithRestDetail = (
+  base: UseCaseDetail | undefined,
+  restPayload: any,
+  processCatalog: any[] | undefined,
+  fallbackId: string,
+): UseCaseDetail | undefined => {
+  const normalizedUseCaseId = String(fallbackId || '').trim().toLowerCase();
+  const catalogLinkedProcesses = normalizeUseCaseProcesses(
+    (processCatalog ?? []).filter((proc: any) => {
+      const related = Array.isArray(proc?.related_use_cases) ? proc.related_use_cases : [];
+      return related.some((uc: any) => {
+        const ucId = String(uc?.identifier ?? uc?.ai_use_case_id ?? '').trim().toLowerCase();
+        return ucId && ucId === normalizedUseCaseId;
+      });
+    }).map((proc: any) => ({
+      identifier: proc.business_process_id,
+      business_process_id: proc.business_process_id,
+      name: proc.process_name,
+      process_name: proc.process_name,
+      description: proc.process_description,
+      business_criticality: proc.business_criticality,
+    })),
+  );
+
+  const mergeProcessLists = (...lists: Array<Array<{
+    identifier: string;
+    name: string;
+    description: string | null;
+    business_criticality: string | null;
+  }>>) => {
+    const byId = new Map<string, {
+      identifier: string;
+      name: string;
+      description: string | null;
+      business_criticality: string | null;
+    }>();
+    lists.forEach((list) => {
+      list.forEach((proc) => {
+        const key = String(proc.identifier || '').trim().toLowerCase();
+        if (!key) return;
+        if (!byId.has(key)) {
+          byId.set(key, proc);
+          return;
+        }
+        const existing = byId.get(key)!;
+        byId.set(key, {
+          ...existing,
+          name: existing.name || proc.name,
+          description: existing.description || proc.description,
+          business_criticality: existing.business_criticality || proc.business_criticality,
+        });
+      });
+    });
+    return Array.from(byId.values());
+  };
+
+  const row = Array.isArray(restPayload?.data) ? restPayload.data[0] : null;
+  const restLinkedProcesses = row
+    ? normalizeUseCaseProcesses(row.of_associated_business_processes ?? row.business_processes ?? [])
+    : [];
+  const baseLinkedProcesses = normalizeUseCaseProcesses((base as any)?.business_processes ?? []);
+  const linkedProcesses = mergeProcessLists(restLinkedProcesses, catalogLinkedProcesses, baseLinkedProcesses);
+
+  if (!row) {
+    if (!base) return undefined;
+    return {
+      ...base,
+      business_processes: linkedProcesses,
+    } as UseCaseDetail;
+  }
+  const linkedAgents = normalizeUseCaseAgents(
+    row.of_associated_agents ?? row.agents ?? [],
+  );
+
+  if (base) {
+    return {
+      ...base,
+      business_processes: linkedProcesses,
+      agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
+    } as UseCaseDetail;
+  }
+
+  return {
+    identifier: String(row.identifier ?? row.use_case_id ?? row.id ?? fallbackId),
+    name: String(row.name ?? row.title ?? 'Unnamed Use Case'),
+    description: row.description ?? null,
+    owner: row.owner ?? row.use_case_owner ?? null,
+    priority: row.priority ?? null,
+    status: row.status ?? null,
+    problem_statement: row.problem_statement ?? row.business_problem_statement ?? null,
+    expected_benefits: row.expected_benefits ?? null,
+    function: row.function ?? null,
+    agents: linkedAgents,
+    business_processes: linkedProcesses,
+  } as UseCaseDetail;
+};
 
 const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilentRefetch }) => {
   const { refresh: refreshUC } = useUseCases();
@@ -255,6 +408,260 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
   );
 };
 
+const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+  const { refresh: refreshUC } = useUseCases();
+  const useCaseId = useCase.identifier ?? '';
+  const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [acting, setActing] = useState<string | null>(null);
+  const [relationError, setRelationError] = useState<string | null>(null);
+  const [pendingLinkIds, setPendingLinkIds] = useState<Set<string>>(new Set());
+  const [pendingUnlinkIds, setPendingUnlinkIds] = useState<Set<string>>(new Set());
+
+  const linkedProcessesFromServer = useMemo(
+    () => normalizeUseCaseProcesses((useCase as any).business_processes ?? (useCase as any).of_associated_business_processes ?? []),
+    [useCase],
+  );
+
+  const serverLinkedById = useMemo(() => {
+    const map = new Map<string, {
+      identifier: string;
+      name: string;
+      description: string | null;
+      business_criticality: string | null;
+    }>();
+    linkedProcessesFromServer.forEach((proc) => {
+      if (proc.identifier) map.set(proc.identifier, proc);
+    });
+    return map;
+  }, [linkedProcessesFromServer]);
+
+  useEffect(() => {
+    setPendingLinkIds((prev) => {
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (serverLinkedById.has(id)) next.delete(id);
+      }
+      return next;
+    });
+    setPendingUnlinkIds((prev) => {
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (!serverLinkedById.has(id)) next.delete(id);
+      }
+      return next;
+    });
+  }, [serverLinkedById]);
+
+  const linkedProcesses = useMemo(() => {
+    const visibleServerRows = linkedProcessesFromServer.filter((proc) => !pendingUnlinkIds.has(proc.identifier));
+    const optimisticLinks = Array.from(pendingLinkIds)
+      .filter((id) => !serverLinkedById.has(id))
+      .map((id) => {
+        const catalogRow = allProcesses.find((p) => p.business_process_id === id);
+        return {
+          identifier: id,
+          name: catalogRow?.process_name || id,
+          description: catalogRow?.process_description ?? null,
+          business_criticality: catalogRow?.business_criticality ?? null,
+        };
+      });
+    return [...visibleServerRows, ...optimisticLinks];
+  }, [allProcesses, linkedProcessesFromServer, pendingLinkIds, pendingUnlinkIds, serverLinkedById]);
+
+  const linkedProcessIds = useMemo(() => {
+    const ids = new Set(linkedProcessesFromServer.map(proc => proc.identifier).filter(Boolean));
+    pendingLinkIds.forEach((id) => ids.add(id));
+    pendingUnlinkIds.forEach((id) => ids.delete(id));
+    return ids;
+  }, [linkedProcessesFromServer, pendingLinkIds, pendingUnlinkIds]);
+
+  const availableProcesses = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return allProcesses.filter(proc => {
+      if (linkedProcessIds.has(proc.business_process_id)) return false;
+      if (!q) return true;
+      return (
+        proc.business_process_id.toLowerCase().includes(q) ||
+        (proc.process_name ?? '').toLowerCase().includes(q) ||
+        (proc.process_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allProcesses, linkedProcessIds, searchTerm]);
+
+  const loadProcessCatalog = async () => {
+    setLoadingCatalog(true);
+    try {
+      const data = await businessRelationsApi.listProcesses();
+      setAllProcesses(data);
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to load process catalog.');
+    } finally {
+      setLoadingCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProcessCatalog();
+  }, []);
+
+  const handleLinkProcess = async (processId: string) => {
+    if (!useCaseId || !processId || linkedProcessIds.has(processId)) return;
+    setActing(`add:${processId}`);
+    setRelationError(null);
+    setPendingUnlinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(processId);
+      return next;
+    });
+    setPendingLinkIds((prev) => new Set([...prev, processId]));
+    try {
+      await useCaseApi.linkProcess(useCaseId, processId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setPendingLinkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(processId);
+        return next;
+      });
+      setRelationError(err.message || 'Failed to link process.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleUnlinkProcess = async (processId: string) => {
+    if (!useCaseId || !processId || !linkedProcessIds.has(processId)) return;
+    setActing(`remove:${processId}`);
+    setRelationError(null);
+    setPendingLinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(processId);
+      return next;
+    });
+    setPendingUnlinkIds((prev) => new Set([...prev, processId]));
+    try {
+      await useCaseApi.unlinkProcess(useCaseId, processId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setPendingUnlinkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(processId);
+        return next;
+      });
+      setRelationError(err.message || 'Failed to unlink process.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {relationError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {relationError}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100">
+          <p className="text-sm font-bold text-slate-700">Currently Related Processes ({linkedProcesses.length})</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {linkedProcesses.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No business processes linked.</div>
+          )}
+          {linkedProcesses.map((proc) => {
+            const processId = proc.identifier;
+            const removeKey = `remove:${processId}`;
+            const isPendingUnlink = pendingUnlinkIds.has(processId);
+            return (
+              <div key={processId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
+                <div className="min-w-0">
+                  <Link to={`/processes/${encodeURIComponent(processId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                    {proc.name}
+                  </Link>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{processId}</p>
+                </div>
+                <button
+                  onClick={() => handleUnlinkProcess(processId)}
+                  disabled={acting === removeKey}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-bold text-slate-700">Add Process Relation</p>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+            {useCaseId && (
+              <Link
+                to={`/processes/new?linkUseCaseId=${encodeURIComponent(useCaseId)}`}
+                className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <PlusCircle size={12} />
+                Create Process
+              </Link>
+            )}
+            <div className="relative w-full sm:w-[320px] max-w-full">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter processes..."
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+          {loadingCatalog && (
+            <div className="p-5 text-sm text-slate-500 inline-flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Loading processes...
+            </div>
+          )}
+          {!loadingCatalog && availableProcesses.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No available processes to link.</div>
+          )}
+          {!loadingCatalog && availableProcesses.map(proc => {
+            const processId = proc.business_process_id;
+            const addKey = `add:${processId}`;
+            const busy = acting === addKey;
+            return (
+              <div key={processId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-700 truncate">{proc.process_name || processId}</p>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{processId}</p>
+                </div>
+                <button
+                  onClick={() => handleLinkProcess(processId)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                  Link
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UseCaseViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -267,7 +674,16 @@ const UseCaseViewPage: React.FC = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [jsonOpen, setJsonOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { agents } = useCatalog();
+
+  const handleCopyJson = () => {
+    if (!useCase) return;
+    navigator.clipboard.writeText(JSON.stringify(useCase, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
   const { refresh: refreshUseCases } = useUseCases();
 
   const handleDelete = async () => {
@@ -290,9 +706,21 @@ const UseCaseViewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await mcpClient.getUseCaseDetails(id);
-      if (!data) throw new Error('Use Case not found');
-      setUseCase(data);
+      const [mcpResult, restResult, processesResult] = await Promise.allSettled([
+        mcpClient.getUseCaseDetails(id, { forceRefresh: true }),
+        useCaseApi.getUseCase(id),
+        businessRelationsApi.listProcesses(),
+      ]);
+
+      const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
+      const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
+      const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
+        ? processesResult.value
+        : [];
+      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, processRows, id);
+
+      if (!merged) throw new Error('Use Case not found');
+      setUseCase(merged);
     } catch (err: any) {
       setError(err.message || 'Failed to load use case details');
     } finally {
@@ -303,8 +731,18 @@ const UseCaseViewPage: React.FC = () => {
   async function fetchUseCaseSilently(forceRefresh = false) {
     if (!id) return;
     try {
-      const data = await mcpClient.getUseCaseDetails(id, { forceRefresh });
-      if (data) setUseCase(data);
+      const [mcpResult, restResult, processesResult] = await Promise.allSettled([
+        mcpClient.getUseCaseDetails(id, { forceRefresh }),
+        useCaseApi.getUseCase(id),
+        businessRelationsApi.listProcesses(),
+      ]);
+      const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
+      const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
+      const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
+        ? processesResult.value
+        : [];
+      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, processRows, id);
+      if (merged) setUseCase(merged);
     } catch {
       // silent — don't disrupt the UI
     }
@@ -372,6 +810,12 @@ const UseCaseViewPage: React.FC = () => {
     linkedAgents: ((useCase as any).agents ?? []).map((a: any) => a.name ?? a).filter(Boolean),
   } : null);
 
+  const prettyJson = useCase ? JSON.stringify(
+    Object.fromEntries(Object.entries(useCase as any).filter(([k]) => k !== 'agents')),
+    null, 2
+  ) : '';
+  const useCaseName = useCase ? ((useCase as any).name ?? (useCase as any).title ?? useCase.identifier ?? '') : '';
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in pb-12">
       <div className="flex items-center justify-between">
@@ -396,9 +840,16 @@ const UseCaseViewPage: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setAuditModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
             >
-              <ShieldCheck size={15} /> Compliance Audit
+              <ShieldCheck size={15} /> Audit
+            </button>
+            <button
+              onClick={() => setJsonOpen(true)}
+              title="AI Use Case Card"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Code2 size={14} /> AI Use Case Card
             </button>
             <button
               onClick={() => setEditOpen(true)}
@@ -442,6 +893,7 @@ const UseCaseViewPage: React.FC = () => {
         <UseCaseView
           useCase={useCase}
           agentsComponent={<AgentsSection useCase={useCase} agents={agents} onSilentRefetch={fetchUseCaseSilently} />}
+          businessImpactComponent={<ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />}
         />
       )}
 
@@ -462,6 +914,49 @@ const UseCaseViewPage: React.FC = () => {
         prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
         mode="use_case"
       />
+
+      {/* JSON Inspector Modal */}
+      {jsonOpen && useCase && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setJsonOpen(false); }}
+        >
+          <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-700">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+              <div className="flex items-center gap-2">
+                <Code2 size={16} className="text-blue-400" />
+                <span className="font-bold text-slate-100 text-sm">AI Use Case Card</span>
+                <span className="text-xs text-slate-400 font-mono ml-2 bg-slate-800 px-2 py-0.5 rounded">
+                  {useCaseName}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyJson}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-all border border-slate-700"
+                >
+                  {copied ? <><Check size={12} className="text-emerald-400" /> Copied!</> : <><Copy size={12} /> Copy</>}
+                </button>
+                <button
+                  onClick={() => setJsonOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto flex-1 p-5">
+              <pre className="text-xs text-slate-300 font-mono leading-relaxed whitespace-pre-wrap break-words">
+                {prettyJson}
+              </pre>
+            </div>
+            <div className="px-5 py-2.5 border-t border-slate-700 flex justify-between text-xs text-slate-500">
+              <span>{prettyJson.split('\n').length} lines</span>
+              <span>{(new TextEncoder().encode(prettyJson).length / 1024).toFixed(1)} KB</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

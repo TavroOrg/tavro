@@ -250,8 +250,11 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
 def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     related_processes_raw = _json_list(row.get("related_processes"))
+    related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_processes: list[dict[str, Any]] = []
+    normalized_related_use_cases: list[dict[str, Any]] = []
     seen_process_ids: set[str] = set()
+    seen_use_case_ids: set[str] = set()
 
     for rel in related_processes_raw:
         if not isinstance(rel, dict):
@@ -279,6 +282,24 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
         )
 
     row["related_processes"] = normalized_related_processes
+    for rel in related_use_cases_raw:
+        if not isinstance(rel, dict):
+            continue
+        use_case_id = _text_or_none(rel.get("identifier") or rel.get("ai_use_case_id"))
+        if not use_case_id or use_case_id in seen_use_case_ids:
+            continue
+        seen_use_case_ids.add(use_case_id)
+        normalized_related_use_cases.append(
+            {
+                "identifier": use_case_id,
+                "name": _text_or_none(rel.get("name")),
+                "description": _text_or_none(rel.get("description")),
+                "owner": _text_or_none(rel.get("owner")),
+                "priority": _text_or_none(rel.get("priority")),
+                "status": _text_or_none(rel.get("status")),
+            }
+        )
+    row["related_use_cases"] = normalized_related_use_cases
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 
@@ -656,6 +677,7 @@ async def _fetch_processes(
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "proc_rel.related_processes",
+        "uc_rel.related_use_cases",
     ]
 
     has_abp = await _table_exists(db, "core", "agent_business_processes")
@@ -725,6 +747,93 @@ async def _fetch_processes(
         ) proc_rel ON TRUE
     """
 
+    has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
+    has_auc = await _table_exists(db, "core", "agent_ai_use_cases")
+    auc_order_sql = "ORDER BY 1"
+    if has_auc:
+        auc_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        order_parts: list[str] = []
+        if "updated_ts" in auc_cols:
+            order_parts.append("auc.updated_ts DESC NULLS LAST")
+        if "created_ts" in auc_cols:
+            order_parts.append("auc.created_ts DESC NULLS LAST")
+        if "identifier" in auc_cols:
+            order_parts.append("auc.identifier")
+        if order_parts:
+            auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
+    if has_uc_proc_rel and has_auc:
+        uc_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', related.name,
+                            'description', related.description,
+                            'owner', related.owner,
+                            'priority', related.priority,
+                            'status', related.status
+                        )
+                        ORDER BY LOWER(COALESCE(related.name, related.ai_use_case_id))
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT
+                        rel.ai_use_case_id,
+                        latest.name,
+                        latest.description,
+                        latest.owner,
+                        latest.priority,
+                        latest.status
+                    FROM core.ai_use_case_business_processes rel
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            auc.name,
+                            auc.description,
+                            auc.owner,
+                            auc.priority,
+                            auc.status
+                        FROM core.agent_ai_use_cases auc
+                        WHERE auc.identifier = rel.ai_use_case_id
+                        {auc_order_sql}
+                        LIMIT 1
+                    ) latest ON TRUE
+                    WHERE rel.business_process_id = bp.business_process_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    elif has_uc_proc_rel:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', NULL,
+                            'description', NULL,
+                            'owner', NULL,
+                            'priority', NULL,
+                            'status', NULL
+                        )
+                        ORDER BY LOWER(related.ai_use_case_id)
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT rel.ai_use_case_id
+                    FROM core.ai_use_case_business_processes rel
+                    WHERE rel.business_process_id = bp.business_process_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    else:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_use_cases
+            ) uc_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(bp.process_name, bp.business_process_id))"
@@ -759,6 +868,7 @@ async def _fetch_processes(
                 ON parent.business_process_id = bp.parent_process_id
             {rel_join_sql}
             {proc_rel_sql}
+            {uc_rel_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1117,6 +1227,19 @@ async def delete_process(
                 text(
                     """
                     DELETE FROM core.agent_business_processes
+                    WHERE business_process_id = :business_process_id
+                    """
+                ),
+                {"business_process_id": process_id},
+            )
+
+    if await _table_exists(db, "core", "ai_use_case_business_processes"):
+        uc_proc_cols = await _table_columns(db, "core", "ai_use_case_business_processes")
+        if "business_process_id" in uc_proc_cols:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM core.ai_use_case_business_processes
                     WHERE business_process_id = :business_process_id
                     """
                 ),
