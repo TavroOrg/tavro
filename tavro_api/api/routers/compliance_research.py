@@ -35,6 +35,7 @@ OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL      = "gpt-4o"
 MAX_OUTPUT_TOKENS = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4096"))
 MAX_SEARCH_TURNS  = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "3"))
+MAX_JSON_CONTINUATIONS = int(os.getenv("RESEARCH_MAX_JSON_CONTINUATIONS", "3"))
 
 
 # ======================================================# Schemas
@@ -144,29 +145,15 @@ async def _call_openai(
 def _resolve_compliance_llm() -> tuple[str, str]:
     """
     Resolve provider/key for compliance research endpoints.
-    Priority:
-    1) COMPLIANCE_LLM_PROVIDER=openai|anthropic (if key exists)
-    2) ANTHROPIC_API_KEY if present (default, supports web search)
-    3) OPENAI_API_KEY if present
+    Research flows are enforced to Anthropic-only.
     """
-    preferred = (os.getenv("COMPLIANCE_LLM_PROVIDER", "").strip().lower() or None)
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-
-    if preferred == "openai":
-        if not openai_key:
-            raise HTTPException(status_code=500, detail="COMPLIANCE_LLM_PROVIDER=openai but OPENAI_API_KEY not configured")
-        return "openai", openai_key
-    if preferred == "anthropic":
-        if not anthropic_key:
-            raise HTTPException(status_code=500, detail="COMPLIANCE_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY not configured")
-        return "anthropic", anthropic_key
-
     if anthropic_key:
         return "anthropic", anthropic_key
-    if openai_key:
-        return "openai", openai_key
-    raise HTTPException(status_code=500, detail="No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+    raise HTTPException(
+        status_code=500,
+        detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
+    )
 
 
 def _collect_text(data: dict) -> str:
@@ -217,23 +204,70 @@ async def _run_research(
     # Strip invalid JSON control characters (keep tab, newline, carriage return)
     raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", raw)
 
-    # Truncation recovery
+    # Truncation recovery: if JSON is cut off, allow multiple continuation rounds.
     if data.get("stop_reason") == "max_tokens":
-        try: json.loads(_extract_json(raw), strict=False)
-        except json.JSONDecodeError:
-            messages.append({"role": "assistant", "content": raw})
-            messages.append({"role": "user", "content": "Continue and complete the JSON from where you left off."})
-            if provider == "openai":
-                cont = await _call_openai(api_key, messages, system, MAX_OUTPUT_TOKENS)
-            else:
-                cont = await _call_anthropic(api_key, messages, system, tools=None)
-            cont_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", _collect_text(cont).strip())
-            raw = raw + cont_text
+        for _ in range(MAX_JSON_CONTINUATIONS):
+            try:
+                json.loads(_extract_json(raw), strict=False)
+                break
+            except json.JSONDecodeError:
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous JSON was truncated. Continue exactly from where it ended "
+                        "and finish the same JSON object. Return only raw JSON continuation text."
+                    ),
+                })
+                if provider == "openai":
+                    cont = await _call_openai(api_key, messages, system, MAX_OUTPUT_TOKENS)
+                else:
+                    cont = await _call_anthropic(api_key, messages, system, tools=None)
+                cont_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", _collect_text(cont).strip())
+                if not cont_text:
+                    break
+                raw = raw + cont_text
+                if cont.get("stop_reason") != "max_tokens":
+                    # One more parse attempt will happen after loop.
+                    break
 
     try:
         parsed = json.loads(_extract_json(raw), strict=False)
-    except json.JSONDecodeError as e:
-        raise HTTPException(502, f"JSON parse error: {str(e)[:200]}")
+    except json.JSONDecodeError:
+        # One repair attempt: ask the model to normalize prior output into valid JSON only.
+        repair_system = (
+            "You are a JSON formatter. Convert the user's input into strictly valid JSON. "
+            "Return only one JSON object. No markdown, no commentary, no backticks."
+        )
+        repair_prompt = (
+            "The following output is intended to be JSON but is malformed. "
+            "Fix it into valid JSON with the same schema and content as much as possible.\n\n"
+            f"{raw}"
+        )
+        if provider == "openai":
+            repaired_data = await _call_openai(
+                api_key,
+                [{"role": "user", "content": repair_prompt}],
+                repair_system,
+                MAX_OUTPUT_TOKENS,
+            )
+        else:
+            repaired_data = await _call_anthropic(
+                api_key,
+                [{"role": "user", "content": repair_prompt}],
+                repair_system,
+                tools=None,
+                max_tokens=MAX_OUTPUT_TOKENS,
+            )
+        repaired_raw = _collect_text(repaired_data).strip()
+        if repaired_raw.startswith("```"):
+            repaired_raw = re.sub(r"^```(?:json)?\s*", "", repaired_raw)
+            repaired_raw = re.sub(r"\s*```$", "", repaired_raw).strip()
+        repaired_raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", repaired_raw)
+        try:
+            parsed = json.loads(_extract_json(repaired_raw), strict=False)
+        except json.JSONDecodeError as e2:
+            raise HTTPException(502, f"JSON parse error: {str(e2)[:200]}")
 
     dims    = [ResearchedDimension(**d) for d in parsed.get("dimensions", [])]
     sources = parsed.get("sources", [])

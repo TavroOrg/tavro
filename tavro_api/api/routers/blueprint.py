@@ -194,29 +194,15 @@ async def _call_openai(
 def _resolve_blueprint_llm() -> tuple[str, str]:
     """
     Resolve provider/key for blueprint endpoints.
-    Priority:
-    1) BLUEPRINT_LLM_PROVIDER=openai|anthropic (if key exists)
-    2) OPENAI_API_KEY if present
-    3) ANTHROPIC_API_KEY if present
+    Research flows are enforced to Anthropic-only.
     """
-    preferred = (os.getenv("BLUEPRINT_LLM_PROVIDER", "").strip().lower() or None)
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-
-    if preferred == "openai":
-        if not openai_key:
-            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=openai but OPENAI_API_KEY not configured")
-        return "openai", openai_key
-    if preferred == "anthropic":
-        if not anthropic_key:
-            raise HTTPException(status_code=500, detail="BLUEPRINT_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY not configured")
-        return "anthropic", anthropic_key
-
-    if openai_key:
-        return "openai", openai_key
     if anthropic_key:
         return "anthropic", anthropic_key
-    raise HTTPException(status_code=500, detail="No LLM key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+    raise HTTPException(
+        status_code=500,
+        detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
+    )
 
 
 def _collect_text(data: dict) -> str:

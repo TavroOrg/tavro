@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Library, ClipboardList, Zap } from 'lucide-react';
+import { Bot, ClipboardList, BarChart2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useChatContext } from '../context/ChatContext';
 import travoLogo from '../assets/travo_logo.png';
@@ -46,7 +46,7 @@ const HomePage: React.FC = () => {
                         className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-200 dark:hover:border-blue-800 transition-all group"
                     >
                         <div className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm group-hover:scale-110 transition-transform">
-                            <Library size={24} className="text-blue-600 dark:text-blue-400" />
+                            <Bot size={24} className="text-blue-600 dark:text-blue-400" />
                         </div>
                         <div className="text-center">
                             <h3 className="font-bold text-slate-800 dark:text-slate-200">Agents</h3>
@@ -59,7 +59,7 @@ const HomePage: React.FC = () => {
                         className="flex flex-col items-center gap-3 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-200 dark:hover:border-blue-800 transition-all group"
                     >
                         <div className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm group-hover:scale-110 transition-transform">
-                            <Zap size={24} className="text-blue-600 dark:text-blue-400" />
+                            <BarChart2 size={24} className="text-blue-600 dark:text-blue-400" />
                         </div>
                         <div className="text-center">
                             <h3 className="font-bold text-slate-800 dark:text-slate-200">Insights</h3>
