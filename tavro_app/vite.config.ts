@@ -37,6 +37,11 @@ export default defineConfig({
             proxyRes.pipe(res);
           });
         }
+      },
+      '/copilot-api': {
+        target: 'http://localhost:4001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/copilot-api/, '')
       }
     }
   }

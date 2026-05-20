@@ -41,6 +41,7 @@ DO $$ BEGIN
         'organisation','technology','risk','finance','custom'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
 
 ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
 

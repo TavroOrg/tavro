@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
-    ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
+    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, BriefcaseBusiness, Paperclip, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
@@ -312,11 +312,9 @@ const Layout: React.FC = () => {
                                 </div>
                                 {!anyLoading && (
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                        {agents.length > 0 && (
-                                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                                {agents.length} agents
-                                            </span>
-                                        )}
+                                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                            {agents.length} agents
+                                        </span>
                                         {useCases.length > 0 && (
                                             <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                                 {useCases.length} use cases

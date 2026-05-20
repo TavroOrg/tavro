@@ -8,6 +8,7 @@ from temporalio.worker import Worker
 from temporalio.client import Client
 
 from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph
+from api.routers.dim_types import seed_system_dim_types
 from api.routers import blueprint
 from api.routers import playground
 from api.routers import compliance, compliance_research
@@ -63,6 +64,7 @@ async def _run_temporal_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await seed_system_dim_types()
     worker_task = asyncio.create_task(_run_temporal_worker())
     yield
     worker_task.cancel()
