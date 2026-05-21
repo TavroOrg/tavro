@@ -48,6 +48,10 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   const id = agent.identification ?? {} as any;
   const cfg = agent.configuration ?? {} as any;
 
+  const linkedUseCases = Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length
+    ? agent.ai_use_cases
+    : (agent.ai_use_case ? [agent.ai_use_case] : []);
+
   const toolLeaves: LeafNodeData[] = (agent.tool ?? []).slice(0, 5).map((t, i) => ({
     id: `t-${i}-${t.name ?? 'tool'}`,
     label: t.name ?? `Tool ${i + 1}`,
@@ -75,16 +79,25 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   const bizLeaves: LeafNodeData[] = [
     ...(agent.application ?? []).slice(0, 5).map((a, i) => ({
       id: `app-${i}-${a.identifier ?? a.name ?? 'unknown'}`,
-      label: a.name ?? `App ${i + 1}`,
-      sublabel: a.business_criticality ?? undefined,
-      badgeText: a.business_criticality ?? undefined,
-      badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
+      label: a.name ?? `Application ${i + 1}`,
+      sublabel:'Application',
+      // sublabel: a.business_criticality ?? undefined,
+      // badgeText: a.business_criticality ?? undefined,
+      // badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
     })),
     ...(agent.business_process ?? []).slice(0, 3).map((p, i) => ({
       id: `proc-${i}-${p.identifier ?? 'unknown'}`,
       label: p.name ?? `Process ${i + 1}`,
-      sublabel: 'Process',
+      sublabel:'Process',
     })),
+    ...linkedUseCases.slice(0, 3).map((u, i) => {
+      const uc = u as any;
+      return {
+        id: `uc-${i}-${uc.identifier ?? uc.use_case_id ?? uc.id ?? 'unknown'}`,
+        label: uc.name ?? uc.title ?? `AI Use Case ${i + 1}`,
+        sublabel: 'AI Use Case',        
+      };
+    }),
   ];
   if (!bizLeaves.length) bizLeaves.push({ id: 'bz0', label: 'No business context', sublabel: 'recorded' });
 
