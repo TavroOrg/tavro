@@ -296,11 +296,22 @@ class McpClientService {
 
             appLogger.info('MCP initialize → request', { headers: initHeaders, body: initBody });
 
-            const res = await fetch(mcpUrl, {
-                method: 'POST',
-                headers: initHeaders,
-                body: JSON.stringify(initBody)
-            });
+            const initController = new AbortController();
+            const initTimeoutId = setTimeout(() => initController.abort(), 30_000);
+            let res: Response;
+            try {
+                res = await fetch(mcpUrl, {
+                    method: 'POST',
+                    headers: initHeaders,
+                    body: JSON.stringify(initBody),
+                    signal: initController.signal,
+                });
+            } catch (err: any) {
+                if (err.name === 'AbortError') throw new Error('MCP initialization timed out (30s)');
+                throw err;
+            } finally {
+                clearTimeout(initTimeoutId);
+            }
 
             if (!res.ok) {
                 const body = await res.text();
@@ -376,11 +387,22 @@ class McpClientService {
         appLogger.tool(`${name} -> request`, { headers: requestHeaders, body: requestBody });
 
         const executeToolCall = async (): Promise<any> => {
-            const res = await fetch(mcpUrl, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(requestBody)
-            });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60_000);
+            let res: Response;
+            try {
+                res = await fetch(mcpUrl, {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal,
+                });
+            } catch (err: any) {
+                if (err.name === 'AbortError') throw new Error(`MCP tool call timed out (60s): ${name}`);
+                throw err;
+            } finally {
+                clearTimeout(timeoutId);
+            }
             const rawText = await res.text();
 
             if (!res.ok) {
@@ -528,11 +550,11 @@ class McpClientService {
         }));
     }
 
-    async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}): AsyncGenerator<string> {
+    async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}, requestId?: string): AsyncGenerator<string> {
         const llmCfg = getLLMConfig();
 
         if (llmCfg) {
-            yield* this._llmChatWithTools(userMessage, history, context, llmCfg);
+            yield* this._llmChatWithTools(userMessage, history, context, llmCfg, requestId);
             return;
         }
 
@@ -550,6 +572,7 @@ class McpClientService {
         history: ChatMessage[],
         context: ChatViewContext,
         llmCfg: LLMConfig,
+        requestId?: string,
     ): AsyncGenerator<string> {
         try {
             const mcpTools = await this.fetchMcpTools();
@@ -608,6 +631,7 @@ ${toolSummary}`;
                     [],
                     llmCfg,
                     async () => null,
+                    requestId,
                 );
                 return;
             }
@@ -619,6 +643,7 @@ ${toolSummary}`;
                 toolDefs,
                 llmCfg,
                 (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt),
+                requestId,
             );
 
         } catch (err: any) {
@@ -647,7 +672,17 @@ ${toolSummary}`;
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
         try {
-            return await this.callTool(name, toolArgs);
+            const result = await this.callTool(name, toolArgs);
+            // Fire cache-busting events for write tools so the UI auto-refreshes.
+            if (result && !result.error) {
+                if (name === 'create_ai_use_case') {
+                    this.invalidateCache();
+                    window.dispatchEvent(new CustomEvent('tavro:usecase-created', { detail: result }));
+                } else if (name === 'create_agent') {
+                    this.invalidateCache();
+                }
+            }
+            return result;
         } catch (err: any) {
             appLogger.error(`Tool execution failed: ${name}`, { error: err.message });
             return { error: err.message, details: 'Tool execution failed. The agent may retry with corrected arguments.' };
@@ -807,6 +842,7 @@ ${toolSummary}`;
                     role: item.identification?.role || item.role || undefined,
                     owner: item.identification?.owner || item.owner || item.agent_owner || undefined,
                     environment: item.identification?.environment || item.environment || undefined,
+                    governance_status: item.identification?.governance_status || item.latest_event_status || undefined,
                 },
                 risk_assessment: normalizeRiskAssessment(item),
                 risk_summary:
@@ -829,8 +865,7 @@ ${toolSummary}`;
     async getAgentDetails(id: string): Promise<AgentData | undefined> {
         if (this._agentDetailCache.has(id)) return this._agentDetailCache.get(id);
         try {
-            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
-            const data = await this.callTool('get_agent_card', isId ? { agent_id: id } : { agent_name: id });
+            const data = await this.callTool('get_agent_card', { agent_id: id });
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
@@ -868,10 +903,12 @@ ${toolSummary}`;
         const all = [...first.agents];
         const total = first.totalRecords;
         let start = 11;
-        while (start <= total) {
+        let pages = 0;
+        while (start <= total && pages < 50) {
             const { agents } = await this.getCatalogPage(start);
             all.push(...agents);
             start += 10;
+            pages++;
         }
         this._agentCache = all;
         return all;
@@ -1032,18 +1069,28 @@ ${toolSummary}`;
         const all = [...first.useCases];
         const total = first.totalRecords;
         let start = 11;
-        while (start <= total) {
+        let pages = 0;
+        while (start <= total && pages < 50) {
             const { useCases } = await this.getUseCaseCatalogPage(start);
             all.push(...useCases);
             start += 10;
+            pages++;
         }
-        // Deduplicate by identifier in case the server returns the same item on multiple pages
-        const seen = new Set<string>();
+        // Deduplicate by identifier; fall back to title+name when identifier is missing
+        const seenIds = new Set<string>();
+        const seenNames = new Set<string>();
         const deduped = all.filter(uc => {
             const id = uc.identifier || (uc as any).id;
-            if (!id) return true;
-            if (seen.has(id)) return false;
-            seen.add(id);
+            if (id) {
+                if (seenIds.has(id)) return false;
+                seenIds.add(id);
+                return true;
+            }
+            const nameKey = (uc.name ?? '').toLowerCase().trim();
+            if (nameKey) {
+                if (seenNames.has(nameKey)) return false;
+                seenNames.add(nameKey);
+            }
             return true;
         });
         this._useCaseCache = deduped;
@@ -1055,8 +1102,10 @@ ${toolSummary}`;
         if (!forceRefresh && this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
         if (forceRefresh) this._useCaseDetailCache.delete(id);
         try {
-            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
-            const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
+            // The previous approach seems to be searching for ServiceNow specific IDs or titles
+            // const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
+            // const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
+            const data = await this.callTool('get_ai_use_case', { use_case_id: id });
             const unwrapped = unwrapToolResponse(data, ['ai_use_case_agent_card', 'use_case_card', 'ai_use_case', 'data']);
             if (unwrapped) {
                 const detail = normaliseUseCase(unwrapped);
@@ -1107,7 +1156,11 @@ ${toolSummary}`;
             ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
         };
         const data = await this.callTool('create_ai_use_case', payload);
+        if (data && typeof data === 'object' && data.error) {
+            throw new Error(data.details || data.error);
+        }
         this.invalidateCache();
+        window.dispatchEvent(new CustomEvent('tavro:usecase-created', { detail: data }));
         return data;
     }
 

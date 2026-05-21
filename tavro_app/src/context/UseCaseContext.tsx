@@ -53,8 +53,10 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const fetchUseCases = useCallback(async (invalidate = false) => {
         if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
-        setLoading(true);
         setError(null);
+        // Only block the UI if there is no data yet or the user explicitly synced.
+        const hasExistingData = Boolean(sessionStorage.getItem(USECASE_CACHE_KEY));
+        if (!hasExistingData || invalidate) setLoading(true);
         if (invalidate) mcpClient.invalidateCache();
 
         try {
@@ -108,6 +110,12 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const ts = sessionStorage.getItem(USECASE_CACHE_TS_KEY);
         const ageMs = ts ? Date.now() - Number(ts) : Number.POSITIVE_INFINITY;
         fetchUseCases(ageMs > USECASE_CACHE_MAX_AGE_MS);
+    }, [fetchUseCases]);
+
+    useEffect(() => {
+        const handler = () => fetchUseCases(true);
+        window.addEventListener('tavro:usecase-created', handler);
+        return () => window.removeEventListener('tavro:usecase-created', handler);
     }, [fetchUseCases]);
 
     const refresh = useCallback(() => fetchUseCases(true), [fetchUseCases]);

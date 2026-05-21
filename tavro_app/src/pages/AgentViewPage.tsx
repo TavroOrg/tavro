@@ -1,14 +1,101 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
+import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
 import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import EditAgentModal from '../components/EditAgentModal';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
+
+const hasNonBlankText = (value: unknown): boolean =>
+    typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+
+const EMPTY_APPLICATION_CARD = {
+    identifier: null,
+    name: null,
+    description: null,
+    business_criticality: null,
+    emergency_tier: null,
+};
+
+const EMPTY_PROCESS_CARD = {
+    identifier: null,
+    name: null,
+    description: null,
+    business_criticality: null,
+};
+
+const EMPTY_USE_CASE_CARD = {
+    identifier: null,
+    name: null,
+    description: null,
+    proposed_by: null,
+    owner: null,
+    business_function: null,
+    problem_statement: null,
+    expected_benefits: null,
+    priority: null,
+    status: null,
+};
+
+const normalizeUseCasesForCard = (agent: AgentData): any[] => {
+    if (Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length) return agent.ai_use_cases;
+    const fallback = (agent as any).ai_use_case;
+    if (Array.isArray(fallback) && fallback.length) return fallback;
+    return fallback ? [fallback] : [];
+};
+
+const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
+    const applications = (agent.application ?? [])
+        .map((app: any) => ({
+            identifier: app?.identifier ?? null,
+            name: app?.name ?? null,
+            description: app?.description ?? null,
+            business_criticality: app?.business_criticality ?? null,
+            emergency_tier: app?.emergency_tier ?? null,
+        }))
+        .filter((app: any) => hasNonBlankText(app.identifier ?? app.name));
+
+    const processes = (agent.business_process ?? [])
+        .map((proc: any) => ({
+            identifier: proc?.identifier ?? null,
+            name: proc?.name ?? null,
+            description: proc?.description ?? null,
+            business_criticality: proc?.business_criticality ?? null,
+        }))
+        .filter((proc: any) => hasNonBlankText(proc.identifier ?? proc.name));
+
+    const aiUseCases = normalizeUseCasesForCard(agent)
+        .map((uc: any) => ({
+            identifier: uc?.identifier ?? uc?.use_case_id ?? uc?.id ?? null,
+            name: uc?.name ?? uc?.title ?? null,
+            description: uc?.description ?? null,
+            proposed_by: uc?.proposed_by ?? null,
+            owner: uc?.owner ?? uc?.use_case_owner ?? null,
+            business_function: uc?.business_function ?? uc?.function ?? null,
+            problem_statement: uc?.problem_statement ?? null,
+            expected_benefits: uc?.expected_benefits ?? null,
+            priority: uc?.priority ?? null,
+            status: uc?.status ?? null,
+        }))
+        .filter((uc: any) => hasNonBlankText(uc.identifier ?? uc.name));
+
+    const normalizedApplications = applications.length ? applications : [EMPTY_APPLICATION_CARD];
+    const normalizedProcesses = processes.length ? processes : [EMPTY_PROCESS_CARD];
+    const normalizedUseCases = aiUseCases.length ? aiUseCases : [EMPTY_USE_CASE_CARD];
+
+    return {
+        ...agent,
+        application: normalizedApplications,
+        business_process: normalizedProcesses,
+        ai_use_case: normalizedUseCases,
+        ai_use_cases: normalizedUseCases,
+    };
+};
 
 const AgentViewPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -83,6 +170,36 @@ const AgentViewPage: React.FC = () => {
             risk_assessment: null,
         };
     };
+
+    const handleBusinessImpactChange = useCallback((snapshot: AgentBusinessImpactSnapshot) => {
+        setAgent(prev => {
+            if (!prev) return prev;
+
+            const fallbackUseCase = (prev as any).ai_use_case;
+            const currentUseCases = Array.isArray(prev.ai_use_cases) && prev.ai_use_cases.length
+                ? prev.ai_use_cases
+                : (Array.isArray(fallbackUseCase)
+                    ? fallbackUseCase
+                    : (fallbackUseCase ? [fallbackUseCase] : []));
+            const currentSignature = JSON.stringify({
+                applications: prev.application ?? [],
+                processes: prev.business_process ?? [],
+                useCases: currentUseCases,
+            });
+            const nextSignature = JSON.stringify(snapshot);
+            if (currentSignature === nextSignature) return prev;
+
+            const next: AgentData = {
+                ...prev,
+                application: snapshot.applications,
+                business_process: snapshot.processes,
+                ai_use_cases: snapshot.useCases,
+                ai_use_case: snapshot.useCases[0] ?? null,
+            };
+            upsertAgent(next);
+            return next;
+        });
+    }, [upsertAgent]);
 
     const fetchAgent = async () => {
         if (!id) return;
@@ -193,6 +310,15 @@ const AgentViewPage: React.FC = () => {
         framework:   (agent as any).framework,
     } : null);
 
+    useEffect(() => {
+        if (!jsonOpen) return;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [jsonOpen]);
+
     const handleCopyJson = () => {
         if (!agent) return;
         navigator.clipboard.writeText(JSON.stringify(agent, null, 2));
@@ -272,7 +398,7 @@ const AgentViewPage: React.FC = () => {
         );
     }
 
-    const prettyJson = JSON.stringify(agent, null, 2);
+    const prettyJson = JSON.stringify(buildAgentCardPayload(agent), null, 2);
 
     return (
         <div className="flex-col gap-6 w-full animate-fade-in relative">
@@ -345,15 +471,21 @@ const AgentViewPage: React.FC = () => {
                 </div>
             )}
 
-            <AgentView agent={agent} />
+            <AgentView agent={agent} onBusinessImpactChange={handleBusinessImpactChange} />
 
             {/* JSON Inspector Modal */}
-            {jsonOpen && (
+            {jsonOpen && createPortal(
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                    className="fixed z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm border border-slate-200 shadow-sm"
+                    style={{
+                        top: '24px',
+                        bottom: '56px',
+                        left: 'calc(var(--tavro-left-rail-width, 280px) + 24px)',
+                        right: 'calc(var(--tavro-right-rail-width, 72px) + 24px)',
+                    }}
                     onClick={(e) => { if (e.target === e.currentTarget) setJsonOpen(false); }}
                 >
-                    <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-700">
+                    <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl h-full max-h-[760px] flex flex-col overflow-hidden border border-slate-700">
                         {/* Modal header */}
                         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
                             <div className="flex items-center gap-2">
@@ -392,7 +524,8 @@ const AgentViewPage: React.FC = () => {
                             <span>{(new TextEncoder().encode(prettyJson).length / 1024).toFixed(1)} KB</span>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* Delete confirmation modal */}

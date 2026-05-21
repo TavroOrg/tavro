@@ -77,6 +77,7 @@ function toWireTools(defs: ToolDefinition[]): any[] {
 
 export class GeminiProvider implements ILLMProvider {
     readonly name = 'gemini';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -118,31 +119,32 @@ export class GeminiProvider implements ILLMProvider {
     }
 
     async *stream(messages: RuntimeMessage[]): AsyncGenerator<string> {
+        // Route through the server proxy so the backend continues processing even
+        // if the browser navigates away. The server caches chunks by requestId.
         const si = systemInstruction(messages);
-        // Only enable googleSearch grounding when we are NOT in synthesis mode
-        // (i.e., no tool results in context). Having function responses in the
-        // message history while also requesting googleSearch causes API errors.
         const hasFunctionResults = messages.some(m => m.role === 'tool');
-        const body: any = {
+        const geminiBody: any = {
             contents: toWireMessages(messages),
             generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
         };
-        if (si) body.systemInstruction = si;
-        if (!hasFunctionResults) body.tools = [{ googleSearch: {} }];
+        if (si) geminiBody.systemInstruction = si;
+        if (!hasFunctionResults) geminiBody.tools = [{ googleSearch: {} }];
 
-        const res = await fetch(apiUrl(this.model, this.apiKey, true), {
+        const res = await fetch('/copilot-api/chat/proxy/gemini', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({
+                model: this.model,
+                apiKey: this.apiKey,
+                body: geminiBody,
+                ...(this.requestId ? { requestId: this.requestId } : {}),
+            }),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.error?.message ?? `Gemini stream error ${res.status}`);
         }
-        yield* parseSSE(
-            res.body!.getReader(),
-            p => p?.candidates?.[0]?.content?.parts?.[0]?.text ?? '',
-        );
+        yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
     }
 
     buildToolCallMessage(toolCalls: ToolCallRecord[]): RuntimeMessage {

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import base64
 import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from api.database import get_db
 router = APIRouter()
 
 CORE = os.getenv("CORE_GLUE_DB_NAME", "core")
+_USE_CASE_ATTACHMENTS_READY = False
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
@@ -83,6 +85,12 @@ class LinkProcessRequest(BaseModel):
     process_id: str
 
 
+class UseCaseAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
 async def _ensure_use_case_process_relation_table(db: AsyncSession) -> None:
     await db.execute(
         text(
@@ -106,6 +114,39 @@ async def _ensure_use_case_process_relation_table(db: AsyncSession) -> None:
             """
         )
     )
+
+
+async def _ensure_use_case_attachments_table(db: AsyncSession) -> None:
+    global _USE_CASE_ATTACHMENTS_READY
+    if _USE_CASE_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.use_case_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                use_case_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS use_case_attachment_use_case_idx
+            ON public.use_case_attachment (use_case_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _USE_CASE_ATTACHMENTS_READY = True
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +210,7 @@ async def list_use_cases(
                         ROW_NUMBER() OVER (ORDER BY created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records
                     FROM {CORE}.agent_ai_use_cases
-                    {where_sql}
+                    {"WHERE identifier IS NOT NULL AND identifier != '' AND " + where_sql[6:] if where_sql else "WHERE identifier IS NOT NULL AND identifier != ''"}
                     ORDER BY identifier, created_ts DESC
                 ) t
                 WHERE rn BETWEEN :start AND :end
@@ -298,7 +339,8 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     relp.business_process_id,
                     COALESCE(bp.process_name, relp.process_name, relp.business_process_id) AS process_name,
                     bp.process_description AS description,
-                    bp.business_criticality
+                    bp.business_criticality,
+                    LOWER(COALESCE(bp.process_name, relp.process_name, relp.business_process_id)) AS process_sort_key
                 FROM {CORE}.ai_use_case_business_processes relp
                 LEFT JOIN {CORE}.business_processes bp
                     ON bp.business_process_id = relp.business_process_id
@@ -306,7 +348,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND relp.business_process_id IS NOT NULL
                   AND relp.business_process_id <> ''
                   {process_tenant_filter}
-                ORDER BY LOWER(COALESCE(bp.process_name, relp.process_name, relp.business_process_id))
+                ORDER BY process_sort_key
                 """
             ),
             {"uid": normalized_use_case_id, "tid": tenant_id},
@@ -402,8 +444,13 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=404, detail=f"AI Use Case '{use_case_id}' not found.")
 
         await _ensure_use_case_process_relation_table(db)
+        await _ensure_use_case_attachments_table(db)
         await db.execute(
             text(f"DELETE FROM {CORE}.ai_use_case_business_processes WHERE ai_use_case_id = :uid"),
+            {"uid": use_case_id},
+        )
+        await db.execute(
+            text("DELETE FROM public.use_case_attachment WHERE use_case_id = :uid"),
             {"uid": use_case_id},
         )
         await db.execute(
@@ -781,3 +828,126 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+@router.get("/{use_case_id}/attachments", summary="List AI Use Case Attachments")
+async def list_use_case_attachments(use_case_id: str, db: AsyncSession = Depends(get_db)):
+    await _ensure_use_case_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.use_case_attachment
+            WHERE use_case_id = :use_case_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"use_case_id": use_case_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post("/{use_case_id}/attachments", summary="Upload AI Use Case Attachment", status_code=201)
+async def create_use_case_attachment(
+    use_case_id: str,
+    body: UseCaseAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_use_case_attachments_table(db)
+
+    filename = (body.filename or "").strip()
+    mime_type = (body.mime_type or "").strip() or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.use_case_attachment
+                (use_case_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "use_case_id": use_case_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get("/{use_case_id}/attachments/{attachment_id}/download", summary="Download AI Use Case Attachment")
+async def download_use_case_attachment(
+    use_case_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_use_case_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.use_case_attachment
+            WHERE id = :attachment_id
+              AND use_case_id = :use_case_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "use_case_id": use_case_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/{use_case_id}/attachments/{attachment_id}", summary="Delete AI Use Case Attachment")
+async def delete_use_case_attachment(
+    use_case_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_use_case_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.use_case_attachment
+            WHERE id = :attachment_id
+              AND use_case_id = :use_case_id
+            """
+        ),
+        {"attachment_id": attachment_id, "use_case_id": use_case_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}

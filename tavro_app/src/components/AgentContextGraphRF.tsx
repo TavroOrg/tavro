@@ -17,6 +17,18 @@ interface ContextGroup {
   leaves: LeafNodeData[];
 }
 
+const hasNonBlankText = (value: unknown): boolean =>
+  typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+
+const normalizedLinkedUseCases = (agent: AgentData): any[] => {
+  if (Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length) {
+    return agent.ai_use_cases;
+  }
+  const fallback = (agent as any).ai_use_case;
+  if (Array.isArray(fallback)) return fallback;
+  return fallback ? [fallback] : [];
+};
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const CAT_RING_R = 220; const LEAF_RING_R = 390;
@@ -48,6 +60,16 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   const id = agent.identification ?? {} as any;
   const cfg = agent.configuration ?? {} as any;
 
+  const linkedUseCases = normalizedLinkedUseCases(agent).filter((u: any) =>
+    hasNonBlankText(u?.identifier ?? u?.use_case_id ?? u?.id ?? u?.name ?? u?.title),
+  );
+
+  const toolLeaves: LeafNodeData[] = (agent.tool ?? []).slice(0, 5).map((t, i) => ({
+    id: `t-${i}-${t.name ?? 'tool'}`,
+    label: t.name ?? `Tool ${i + 1}`,
+    sublabel: 'Tool',
+  }));
+
   const techLeaves: LeafNodeData[] = [
     id.role && { id: 'role', label: 'Role', sublabel: id.role },
     id.environment && { id: 'env', label: 'Environment', sublabel: id.environment },
@@ -56,31 +78,48 @@ function buildGroups(agent: AgentData): ContextGroup[] {
     cfg.access_scope && { id: 'scope', label: 'Access Scope', sublabel: cfg.access_scope },
     cfg.memory_type && { id: 'mem', label: 'Memory', sublabel: cfg.memory_type },
     cfg.reasoning_model && { id: 'llm', label: 'LLM Model', sublabel: cfg.reasoning_model },
+    ...toolLeaves,
   ].filter(Boolean) as LeafNodeData[];
 
+  const toolArr = Array.isArray(agent.tool) ? agent.tool : (agent.tool && typeof agent.tool === 'object' ? [agent.tool] : []);
+  const dsArr = Array.isArray(agent.data_source) ? agent.data_source : (agent.data_source && typeof agent.data_source === 'object' ? [agent.data_source] : []);
   const funcLeaves: LeafNodeData[] = [
-    ...(agent.tool ?? []).slice(0, 5).map(t => ({ id: `t-${t.name}`, label: t.name, sublabel: 'Tool' })),
-    ...(agent.data_source ?? []).slice(0, 4).map((ds, i) => ({
-      id: `ds-${i}`, label: ds.source_object_name ?? 'Data Source', sublabel: ds.source_object_type,
+    ...toolArr.slice(0, 5).map((t: any) => ({ id: `t-${t.name ?? t.tool_name ?? 'tool'}`, label: String(t.name ?? t.tool_name ?? 'Tool'), sublabel: 'Tool' })),
+    ...dsArr.slice(0, 4).map((ds: any, i: number) => ({
+      id: `ds-${i}`, label: String(ds.source_object_name ?? ds.source_name ?? ds.source ?? 'Data Source'), sublabel: String(ds.source_object_type ?? ds.type ?? ''),
     })),
   ];
-  if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No tools/sources', sublabel: 'configured' });
+  if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No data sources', sublabel: 'configured' });
 
   const bizLeaves: LeafNodeData[] = [
-    ...(agent.application ?? []).slice(0, 5).map((a, i) => ({
+    ...(agent.application ?? [])
+      .filter((a) => hasNonBlankText(a?.identifier ?? a?.name))
+      .slice(0, 5)
+      .map((a, i) => ({
       id: `app-${i}-${a.identifier ?? a.name ?? 'unknown'}`,
-      label: a.name ?? `App ${i + 1}`,
-      sublabel: a.business_criticality ?? undefined,
-      badgeText: a.business_criticality ?? undefined,
-      badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
+      label: a.name ?? `Application ${i + 1}`,
+      sublabel:'Application',
+      // sublabel: a.business_criticality ?? undefined,
+      // badgeText: a.business_criticality ?? undefined,
+      // badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
     })),
-    ...(agent.business_process ?? []).slice(0, 3).map((p, i) => ({
+    ...(agent.business_process ?? [])
+      .filter((p) => hasNonBlankText(p?.identifier ?? p?.name))
+      .slice(0, 3)
+      .map((p, i) => ({
       id: `proc-${i}-${p.identifier ?? 'unknown'}`,
       label: p.name ?? `Process ${i + 1}`,
-      sublabel: 'Process',
+      sublabel:'Process',
     })),
+    ...linkedUseCases.slice(0, 3).map((u, i) => {
+      const uc = u as any;
+      return {
+        id: `uc-${i}-${uc.identifier ?? uc.use_case_id ?? uc.id ?? 'unknown'}`,
+        label: uc.name ?? uc.title ?? `AI Use Case ${i + 1}`,
+        sublabel: 'AI Use Case',        
+      };
+    }),
   ];
-  if (!bizLeaves.length) bizLeaves.push({ id: 'bz0', label: 'No business context', sublabel: 'recorded' });
 
   const ra = agent.risk_assessment;
   const riskLeaves: LeafNodeData[] = [];

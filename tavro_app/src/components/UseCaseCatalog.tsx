@@ -185,10 +185,11 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         const priorityTone = getPriorityTone(uc.priority);
                         const priorityTheme = getPriorityTheme(priorityTone);
 
+                        const navId = uc.identifier ?? uc.id;
                         return (
                             <div
-                                key={uc.id}
-                                onClick={() => navigate(`/use-case/${uc.id}`, { state: { fromUseCasePage: true, page: currentPage } })}
+                                key={uc.identifier ?? uc.id}
+                                onClick={() => navId ? navigate(`/use-case/${navId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
                                 className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-700 transition-all cursor-pointer overflow-hidden flex flex-col h-full"
                             >
                                 <div className="h-2 bg-gradient-to-r from-blue-500 to-indigo-600" />
@@ -247,10 +248,11 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                             const priorityLabel = String(uc.priority ?? 'N/A');
                             const priorityTone = getPriorityTone(uc.priority);
                             const priorityTheme = getPriorityTheme(priorityTone);
+                            const listNavId = uc.identifier ?? uc.id;
                             return (
                                 <div
-                                    key={uc.id}
-                                    onClick={() => navigate(`/use-case/${uc.id}`, { state: { fromUseCasePage: true, page: currentPage } })}
+                                    key={uc.identifier ?? uc.id}
+                                    onClick={() => listNavId ? navigate(`/use-case/${listNavId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
                                     className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
