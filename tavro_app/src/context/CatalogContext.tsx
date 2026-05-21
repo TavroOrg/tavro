@@ -63,6 +63,7 @@ type TemporalWorkflowStatus = 'running' | 'completed' | 'failed';
 
 type TemporalWorkflowRecord = {
     workflow_id: string;
+    agent_internal_id?: string;
     agent_id: string;
     name: string;
     description: string;
@@ -134,12 +135,14 @@ function readTemporalRecords(): TemporalWorkflowRecord[] {
                             ? 'failed'
                             : 'running';
                 const workflowId = String(item?.workflow_id ?? item?.workflowId ?? item?.id ?? `wf_${index}`);
+                const agentInternalId = String(item?.agent_internal_id ?? item?.agentInternalId ?? '').trim();
                 const agentId = String(item?.agent_id ?? item?.agentId ?? item?.name ?? item?.agent_name ?? '').trim();
                 const name = String((item?.name ?? item?.agent_name ?? item?.title ?? agentId) || 'Unnamed Agent').trim();
                 const description = String(item?.description ?? item?.agent_description ?? '').trim();
                 if (!agentId && !name) return null;
                 return {
                     workflow_id: workflowId,
+                    agent_internal_id: agentInternalId || undefined,
                     agent_id: agentId || name,
                     name: name || agentId,
                     description,
@@ -187,8 +190,8 @@ function toPendingAgentFromWorkflow(record: TemporalWorkflowRecord): AgentData {
         description: record.description || record.name,
         version: '1.0',
         identification: {
-            // Use name as the navigable id for temporary pills so details route can resolve by name.
-            agent_id: record.name,
+            // Keep the real agent id visible while the assessment is running.
+            agent_id: record.agent_internal_id || record.agent_id || record.name,
             role: null,
             instruction: null,
             governance_status: 'Risk Assessment is running',
@@ -224,10 +227,13 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const lastWorkflowSnapshotRef = useRef('');
 
     const fetchAgents = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current) return;
+        if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
-        setLoading(true);
         setError(null);
+        // Only block the UI if there is no data yet or the user explicitly synced.
+        // Background auto-refreshes should be silent when cached data is already showing.
+        const hasExistingData = Boolean(sessionStorage.getItem(AGENT_CACHE_KEY));
+        if (!hasExistingData || invalidate) setLoading(true);
 
         if (invalidate) {
             mcpClient.invalidateCache();
@@ -308,6 +314,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 if (!active) return;
                 const normalized = workflows.map((w: RiskWorkflowStatus) => ({
                     workflow_id: w.workflow_id,
+                    agent_internal_id: w.agent_internal_id || undefined,
                     agent_id: w.agent_id || w.agent_internal_id,
                     name: w.agent_name || w.agent_id || w.agent_internal_id,
                     description: w.agent_description || '',

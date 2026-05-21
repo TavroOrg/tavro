@@ -22,7 +22,7 @@ services:
       POSTGRES_DB:                       tavro
       POSTGRES_SHARED_PRELOAD_LIBRARIES: "age"
     ports:
-      - "5432:5432"       # keep open for Postico access on your Mac
+      - "5433:5432"       # keep open for Postico access on your Mac
     volumes:
       - tavro_pgdata:/var/lib/postgresql/data
       - ./sql:/sql:ro
@@ -410,6 +410,7 @@ services:
       ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
       VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
       VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
+      TAVRO_API_URL: http://tavro-api:8000
     volumes:
       - ./tavro-python-stack/config.yaml:/app/config.yaml:ro
       - ./tavro-python-stack/agent_cards:/app/agent_cards
@@ -418,6 +419,8 @@ services:
       tavro-postgres:
         condition: service_healthy
       zitadel-api:
+        condition: service_healthy
+      tavro-api:
         condition: service_healthy
       proxy:
         condition: service_started

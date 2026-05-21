@@ -3,6 +3,7 @@ import json
 import time
 from pathlib import Path
 import uvicorn
+import httpx
 from typing import Dict, Any, Optional, List
 from fastmcp import FastMCP
 from starlette.routing import Route, Mount
@@ -30,6 +31,8 @@ set_environment("mcp")
 set_environment("oAuth")
 set_environment("secrets")
 set_environment("fastapi")
+
+TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
 
 
 def _load_zitadel_client_id_from_runtime_config() -> str:
@@ -319,11 +322,15 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
             tenant_id,
         )
 
-        result = AgentMetadataExporter.get_agent_catalog(
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/agents/",
+                params={"start_record": start_record, "record_range": record_range},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            result = resp.json()
 
         return result
 
@@ -497,21 +504,40 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
             tenant_id,
         )
         
-        print(f"Received title: '{title}', description: '{description}', business_problem_statement: '{business_problem_statement}', expected_benefits: '{expected_benefits}', priority: '{priority}', regulatory_impact: '{regulatory_impact}', solution_approach: '{solution_approach}', use_case_owner: '{use_case_owner}', impacted_business_applications: '{impacted_business_applications}', impacted_business_processes: '{impacted_business_processes}'")
+        payload: Dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "business_problem_statement": business_problem_statement,
+            "expected_benefits": expected_benefits,
+            "priority": priority,
+        }
+        if regulatory_impact is not None:
+            payload["regulatory_impact"] = regulatory_impact
+        if solution_approach is not None:
+            payload["solution_approach"] = solution_approach
+        if use_case_owner is not None:
+            payload["use_case_owner"] = use_case_owner
+        if impacted_business_applications is not None:
+            payload["impacted_business_applications"] = impacted_business_applications
+        if impacted_business_processes is not None:
+            payload["impacted_business_processes"] = impacted_business_processes
 
-        result = AgentMetadataExporter.create_ai_use_case(
-            title=title,
-            description=description,
-            business_problem_statement=business_problem_statement,
-            expected_benefits=expected_benefits,
-            priority=priority,
-            regulatory_impact=regulatory_impact,
-            solution_approach=solution_approach,
-            use_case_owner=use_case_owner,
-            impacted_business_applications=impacted_business_applications,
-            impacted_business_processes=impacted_business_processes,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/use-cases/",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            api_result = resp.json()
+
+        result = {
+            "message": api_result.get("message", "AI Use Case created successfully."),
+            "identifier": api_result.get("use_case_id"),
+            "use_case_id": api_result.get("use_case_id"),
+            "name": title,
+        }
         print(result)
         return result
 
@@ -566,16 +592,30 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
             tenant_id,
         )
            
-        result = AgentMetadataExporter.get_ai_use_case(
-            use_case_id=use_case_id,
-            title=title,
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if use_case_id:
+                resp = await client.get(
+                    f"{TAVRO_API_URL}/api/v1/use-cases/{use_case_id}",
+                    headers=headers,
+                )
+            else:
+                params: Dict[str, Any] = {
+                    "start_record": start_record,
+                    "record_range": record_range,
+                }
+                if title:
+                    params["title"] = title
+                resp = await client.get(
+                    f"{TAVRO_API_URL}/api/v1/use-cases/",
+                    params=params,
+                    headers=headers,
+                )
+            resp.raise_for_status()
+            result = resp.json()
 
         return result
-    
+
     except ValueError as ve:
         print("Validation error: %s", ve)
         return {"error": "VALIDATION_ERROR", "details": str(ve)}

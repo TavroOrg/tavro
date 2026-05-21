@@ -210,7 +210,7 @@ async def list_use_cases(
                         ROW_NUMBER() OVER (ORDER BY created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records
                     FROM {CORE}.agent_ai_use_cases
-                    {where_sql}
+                    {"WHERE identifier IS NOT NULL AND identifier != '' AND " + where_sql[6:] if where_sql else "WHERE identifier IS NOT NULL AND identifier != ''"}
                     ORDER BY identifier, created_ts DESC
                 ) t
                 WHERE rn BETWEEN :start AND :end
@@ -339,7 +339,8 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     relp.business_process_id,
                     COALESCE(bp.process_name, relp.process_name, relp.business_process_id) AS process_name,
                     bp.process_description AS description,
-                    bp.business_criticality
+                    bp.business_criticality,
+                    LOWER(COALESCE(bp.process_name, relp.process_name, relp.business_process_id)) AS process_sort_key
                 FROM {CORE}.ai_use_case_business_processes relp
                 LEFT JOIN {CORE}.business_processes bp
                     ON bp.business_process_id = relp.business_process_id
@@ -347,7 +348,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND relp.business_process_id IS NOT NULL
                   AND relp.business_process_id <> ''
                   {process_tenant_filter}
-                ORDER BY LOWER(COALESCE(bp.process_name, relp.process_name, relp.business_process_id))
+                ORDER BY process_sort_key
                 """
             ),
             {"uid": normalized_use_case_id, "tid": tenant_id},
@@ -827,7 +828,6 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ---------------------------------------------------------------------------
 # Attachments
