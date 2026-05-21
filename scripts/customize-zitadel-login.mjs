@@ -29,6 +29,14 @@ function replaceInFile(file, replacements) {
   }
 }
 
+function appendIfMissing(file, snippet) {
+  const src = fs.readFileSync(file, "utf8");
+  if (src.includes(snippet.trim())) {
+    return;
+  }
+  fs.writeFileSync(file, `${src}\n${snippet}\n`);
+}
+
 const jsFiles = filesUnder(loginRoot, (file) => file.endsWith(".js"));
 const jsonFiles = filesUnder(loginRoot, (file) => file.endsWith(".json"));
 const cssFiles = filesUnder(path.join(loginRoot, ".next", "static", "chunks"), (file) =>
@@ -39,8 +47,10 @@ for (const file of [...jsFiles, ...jsonFiles]) {
   replaceInFile(file, [
     ['"register":"Register new user"', '"register":""'],
     ['"title":"Sign in to Zitadel"', '"title":"Sign in to Tavro"'],
-    ['"title":"Welcome back!"', '"title":"Welcome back!"'],
+    ['"title":"Welcome back!"', '"title":"Tavro Agent BizOps"'],
     ['"description":"Enter your login details."', '"description":"Enter your username and password."'],
+    ['"/favicon.ico"', '"/ui/v2/login/favicon.png"'],
+    ['"favicon.ico"', '"favicon.png"'],
   ]);
 }
 
@@ -67,6 +77,45 @@ for (const file of jsFiles) {
       '(0,t.jsx)(r,{lightSrc:e?.lightTheme?.logoUrl||"/ui/v2/login/tavro-login-logo.svg",darkSrc:e?.darkTheme?.logoUrl||"/ui/v2/login/tavro-login-logo.svg",height:88,width:180})',
     ],
   ]);
+}
+
+const brandingSnippet = `
+;(function () {
+  if (typeof document === "undefined") return;
+  if (!location.pathname.startsWith("/ui/v2/login")) return;
+
+  const applyBranding = () => {
+    document.title = "Tavro Agent BizOps";
+
+    let link = document.querySelector('link[data-tavro-favicon="true"]');
+    if (!link) {
+      link = document.querySelector('link[rel="icon"]');
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.setAttribute("data-tavro-favicon", "true");
+    }
+
+    link.type = "image/png";
+    link.href = "/ui/v2/login/favicon.png";
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyBranding, { once: true });
+  } else {
+    applyBranding();
+  }
+})();
+`;
+
+const staticJsFiles = filesUnder(path.join(loginRoot, ".next", "static"), (file) =>
+  file.endsWith(".js"),
+);
+
+for (const file of staticJsFiles) {
+  appendIfMissing(file, brandingSnippet);
 }
 
 for (const file of cssFiles) {
