@@ -88,12 +88,6 @@ const TEMPLATES = [
   },
 ];
 
-const US_REGIONS = [
-  'US-AL','US-AK','US-AZ','US-CA','US-CO','US-CT','US-FL','US-GA',
-  'US-IL','US-MA','US-MI','US-MN','US-NJ','US-NY','US-NC','US-OH',
-  'US-PA','US-TX','US-VA','US-WA',
-];
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 const BlueprintSetupPage: React.FC = () => {
@@ -108,7 +102,6 @@ const BlueprintSetupPage: React.FC = () => {
   const [form, setForm] = useState({
     name:         '',
     industry:     '',
-    region:       'US-FL',
     legal_entity: '',
     is_public:    false as boolean | null,   // null = not selected yet
     ticker:       '',
@@ -116,6 +109,7 @@ const BlueprintSetupPage: React.FC = () => {
 
   // ── Research state ─────────────────────────────────────────────────────────
   const [researching,     setResearching]     = useState(false);
+  const [researchStatus,  setResearchStatus]  = useState<string>('');
   const [researchResult,  setResearchResult]  = useState<ResearchResult | null>(null);
   const [researchError,   setResearchError]   = useState<string | null>(null);
   const [selectedNodes,   setSelectedNodes]   = useState<Set<number>>(new Set());
@@ -148,20 +142,30 @@ const BlueprintSetupPage: React.FC = () => {
     setResearching(true);
     setResearchError(null);
     setResearchResult(null);
+    setResearchStatus('Starting…');
     try {
-      // Research doesn't save — it just returns nodes for preview
-      const result = await (blueprintApi as any).researchCompany({
-        company_id:   'preview',   // placeholder — not saved at this point
+      const stream = blueprintApi.researchCompanyStream({
+        company_id:   'preview',
         company_name: form.name,
         ticker:       form.ticker || undefined,
         industry:     form.industry,
-        region:       form.region,
+        is_public:    form.is_public === true,
       });
-      setResearchResult(result);
-      // Pre-select all nodes
-      setSelectedNodes(new Set(result.nodes.map((_: any, i: number) => i)));
+      for await (const event of stream) {
+        if (event.type === 'status') {
+          setResearchStatus(event.message);
+        } else if (event.type === 'result') {
+          setResearchResult(event.data as any);
+          setSelectedNodes(new Set(event.data.nodes.map((_: any, i: number) => i)));
+          setResearching(false);
+        } else if (event.type === 'error') {
+          throw new Error(event.message);
+        }
+        // heartbeat events are silently ignored
+      }
     } catch (err: any) {
       setResearchError(err.message ?? 'Research failed');
+      setResearching(false);
     } finally {
       setResearching(false);
     }
@@ -183,7 +187,6 @@ const BlueprintSetupPage: React.FC = () => {
       const company = await blueprintApi.createCompany({
         name:         form.name.trim(),
         industry:     form.industry.trim(),
-        region:       form.region,
         legal_entity: form.legal_entity?.trim() || undefined,
       });
 
@@ -277,17 +280,6 @@ const BlueprintSetupPage: React.FC = () => {
                   placeholder="e.g. Commercial Banking" className={inputCls} />
               </Field>
 
-              <Field label="Region" required>
-                <select value={form.region} onChange={e => update('region', e.target.value)} className={inputCls}>
-                  {US_REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-                  <option value="UK">United Kingdom</option>
-                  <option value="EU">European Union</option>
-                  <option value="CA">Canada</option>
-                  <option value="AU">Australia</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              </Field>
-
               <Field label="Legal entity name">
                 <input value={form.legal_entity} onChange={e => update('legal_entity', e.target.value)}
                   placeholder="e.g. BankUnited, N.A. (optional)" className={inputCls} />
@@ -364,7 +356,7 @@ const BlueprintSetupPage: React.FC = () => {
                   <div>
                     <p className="text-[11px] font-bold text-blue-700 dark:text-blue-300">AI research will pre-populate your blueprint</p>
                     <p className="text-[11px] text-blue-600/70 dark:text-blue-400/70 mt-0.5">
-                      Tavro will use publicly available information to suggest Profile, Strategy, and Organisation dimensions. You review and confirm before anything is saved.
+                      Tavro will use publicly available information to suggest Profile, Strategy, Organisation, and Finance dimensions. You review and confirm before anything is saved.
                     </p>
                   </div>
                 </div>
@@ -400,7 +392,7 @@ const BlueprintSetupPage: React.FC = () => {
                       {form.ticker && <span className="text-blue-600 dark:text-blue-400"> ({form.ticker})</span>}
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                      Searches public filings, annual reports, and company website to suggest Profile, Strategy, and Organisation dimensions.
+                      Searches public filings, annual reports, and company website to suggest Profile, Strategy, Organisation, and Finance dimensions.
                     </p>
                   </div>
                   {researchError && (
@@ -416,16 +408,19 @@ const BlueprintSetupPage: React.FC = () => {
 
               {/* Researching spinner */}
               {researching && (
-                <div className="flex flex-col items-center gap-4 py-10">
-                  <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
-                      <RefreshCw size={24} className="text-blue-500 animate-spin" />
-                    </div>
+                <div className="flex flex-col items-center gap-5 py-10">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
+                    <RefreshCw size={24} className="text-blue-500 animate-spin" />
                   </div>
-                  <div className="text-center">
-                    <p className="font-bold text-slate-800 dark:text-slate-100">Researching {form.name}…</p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 animate-pulse">
-                      Searching public filings and annual reports
+                  <div className="text-center max-w-sm">
+                    <p className="font-bold text-slate-800 dark:text-slate-100 text-base">
+                      Researching {form.name}…
+                    </p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+                      Please wait a few seconds.
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                      We're scanning SEC filings, annual reports, and public data to build your blueprint.
                     </p>
                   </div>
                 </div>
@@ -619,7 +614,6 @@ const BlueprintSetupPage: React.FC = () => {
                 {[
                   ['Company',      form.name],
                   ['Industry',     form.industry],
-                  ['Region',       form.region],
                   ['Legal entity', form.legal_entity || '—'],
                   ['Type',         form.is_public ? '🌐 Public company' : '🔒 Private company'],
                   ...(form.ticker ? [['Ticker', form.ticker]] : []),
@@ -642,7 +636,7 @@ const BlueprintSetupPage: React.FC = () => {
                     <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg px-3 py-2">
                       <Sparkles size={11} className="text-blue-500" />
                       <span className="font-bold">{selectedNodes.size}</span> AI-researched dimensions
-                      <span className="text-slate-400 dark:text-slate-500">(Profile, Strategy, Organisation)</span>
+                      <span className="text-slate-400 dark:text-slate-500">(Profile, Strategy, Organisation, Finance)</span>
                     </div>
                   )}
                   {selectedTemplate && selectedTemplate.id !== 'blank' && (

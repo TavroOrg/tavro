@@ -38,9 +38,12 @@ SET search_path = twin, ag_catalog, public;
 DO $$ BEGIN
     CREATE TYPE twin.dim_category AS ENUM (
         'profile','strategy','process','application',
-        'organisation','technology','risk','custom'
+        'organisation','technology','risk','finance','custom'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
+
+ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
 
 DO $$ BEGIN
     CREATE TYPE twin.visibility_level AS ENUM (
@@ -344,6 +347,18 @@ CREATE TABLE IF NOT EXISTS twin.compliance_document (
 );
 CREATE INDEX IF NOT EXISTS compliance_doc_item_idx ON twin.compliance_document (compliance_item_id);
 
+CREATE TABLE IF NOT EXISTS public.agent_attachment (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id             TEXT NOT NULL,
+    filename             TEXT NOT NULL,
+    mime_type            TEXT,
+    file_size_bytes      INT NOT NULL,
+    file_data            BYTEA NOT NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx ON public.agent_attachment (agent_id, created_at DESC);
+
 -- Compliance triggers
 DO $$ BEGIN
     CREATE TRIGGER compliance_item_updated_at
@@ -453,6 +468,7 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Organisation', 'organisation', true, 2),
     ('Technology',   'technology',   true, 2),
     ('Risk',         'risk',         true, 3),
+    ('Finance',      'finance',      true, 2),
     ('Custom',       'custom',       false, 2)
 ON CONFLICT (name) DO NOTHING;
 

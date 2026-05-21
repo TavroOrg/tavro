@@ -6,6 +6,7 @@
 # =============================================================
 
 import base64
+import asyncio
 import io
 import json
 import os
@@ -31,6 +32,8 @@ OPENAI_MODEL_DEFAULT = "gpt-4o"
 
 AZURE_OPENAI_API_VERSION_DEFAULT = "2024-02-15-preview"
 AZURE_FOUNDRY_AGENT_API_VERSION_DEFAULT = "v1"
+AZURE_FOUNDRY_USE_AGENT_RUNS_DEFAULT = "false"
+AZURE_FOUNDRY_USE_CHAT_COMPLETIONS_DEFAULT = "false"
 
 # ── In-memory session store ───────────────────────────────────────────────────
 # { session_id: { config, messages, created_at, updated_at } }
@@ -527,6 +530,24 @@ def _azure_foundry_project_settings(config: SessionConfig) -> tuple[str, str, st
     return endpoint, token, api_version, deployment
 
 
+def _azure_foundry_use_agent_runs() -> bool:
+    return (
+        os.getenv("AZURE_AI_FOUNDRY_USE_AGENT_RUNS", AZURE_FOUNDRY_USE_AGENT_RUNS_DEFAULT)
+        .strip()
+        .lower()
+        in ("1", "true", "yes", "on")
+    )
+
+
+def _azure_foundry_use_chat_completions() -> bool:
+    return (
+        os.getenv("AZURE_AI_FOUNDRY_USE_CHAT_COMPLETIONS", AZURE_FOUNDRY_USE_CHAT_COMPLETIONS_DEFAULT)
+        .strip()
+        .lower()
+        in ("1", "true", "yes", "on")
+    )
+
+
 def _azure_agent_resource_name(agent_name: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9-]+", "-", agent_name.strip().lower())
     normalized = re.sub(r"-+", "-", normalized).strip("-")
@@ -544,6 +565,16 @@ def _azure_agent_headers(token_or_key: str) -> dict[str, str]:
     else:
         headers["api-key"] = token_or_key
     return headers
+
+
+def _azure_foundry_auth_hint(status_code: int) -> str:
+    if status_code not in (401, 403):
+        return ""
+    return (
+        " Azure Foundry rejected the configured credential. In the default key-based mode, "
+        "check AZURE_AI_FOUNDRY_KEY and the Foundry project endpoint. If AZURE_AI_FOUNDRY_USE_AGENT_RUNS=true, "
+        "the identity also needs Azure AI User access for Agent thread/run operations."
+    )
 
 
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
@@ -661,6 +692,358 @@ async def _run_azure_openai_chat(
 
     return content or "[No response generated]", tokens_used
 
+
+def _azure_foundry_agent_id(azure_agent: dict | None) -> str | None:
+    """Return the assistant/agent id required by the Foundry thread-run API."""
+    if not azure_agent:
+        return None
+    agent = azure_agent.get("agent") or {}
+    return (
+        agent.get("id")
+        or agent.get("assistant_id")
+        or azure_agent.get("agent_name")
+        or agent.get("name")
+    )
+
+
+def _azure_foundry_message_text(
+    user_message: str,
+    attachments: list["Attachment"] | None = None,
+) -> str:
+    extra_attachment_text = ""
+    if attachments:
+        attachment_chunks = [_openai_attachment_to_text(att) for att in attachments]
+        extra_attachment_text = "\n\n" + "\n\n".join(attachment_chunks)
+    return f"{user_message}{extra_attachment_text}"
+
+
+def _azure_foundry_metadata(config: SessionConfig, session: dict) -> dict[str, str]:
+    return {
+        "source": "tavro-playground",
+        "tavro_session_id": str(session.get("session_id", ""))[:512],
+        "tavro_agent_name": config.agent_name[:512],
+        "tavro_agent_resource": _azure_agent_resource_name(config.agent_name)[:512],
+        "tavro_use_case_id": (config.use_case_id or "")[:512],
+        "tavro_use_case_title": (config.use_case_title or "")[:512],
+    }
+
+
+def _azure_conversation_input_message(role: str, text_value: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": role,
+        "content": text_value,
+    }
+
+
+def _azure_conversation_output_message(
+    config: SessionConfig,
+    text_value: str,
+    item_id: str | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": text_value,
+    }
+    if item_id:
+        item["id"] = item_id
+    return item
+
+
+async def _ensure_azure_foundry_conversation(config: SessionConfig, session: dict) -> str:
+    conversation_id = session.get("azure_foundry_conversation_id")
+    if conversation_id:
+        return conversation_id
+
+    endpoint, token_or_key, _, _ = _azure_foundry_project_settings(config)
+    payload = {"metadata": _azure_foundry_metadata(config, session)}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{endpoint}/openai/v1/conversations",
+            headers=_azure_agent_headers(token_or_key),
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Azure Foundry conversation creation failed {resp.status_code}: {resp.text[:600]}"
+                f"{_azure_foundry_auth_hint(resp.status_code)}"
+            ),
+        )
+
+    data = resp.json()
+    conversation_id = data.get("id")
+    if not conversation_id:
+        raise HTTPException(status_code=502, detail="Azure Foundry conversation did not return an id")
+    session["azure_foundry_conversation_id"] = conversation_id
+    return conversation_id
+
+
+async def _append_azure_foundry_conversation_items(
+    config: SessionConfig,
+    session: dict,
+    items: list[dict[str, Any]],
+) -> None:
+    if not items:
+        return
+
+    endpoint, token_or_key, _, _ = _azure_foundry_project_settings(config)
+    conversation_id = await _ensure_azure_foundry_conversation(config, session)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{endpoint}/openai/v1/conversations/{conversation_id}/items",
+            headers=_azure_agent_headers(token_or_key),
+            json={"items": items[:20]},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Azure Foundry conversation item creation failed {resp.status_code}: {resp.text[:600]}"
+                f"{_azure_foundry_auth_hint(resp.status_code)}"
+            ),
+        )
+
+
+def _extract_azure_foundry_text(message: dict[str, Any]) -> str:
+    """Extract assistant text from the different content shapes returned by Agents."""
+    parts: list[str] = []
+    content = message.get("content", [])
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text_value = block.get("text")
+        if isinstance(text_value, str):
+            parts.append(text_value)
+        elif isinstance(text_value, dict):
+            value = text_value.get("value") or text_value.get("text")
+            if isinstance(value, str):
+                parts.append(value)
+        elif block.get("type") in ("text", "output_text"):
+            value = block.get("value") or block.get("content")
+            if isinstance(value, str):
+                parts.append(value)
+
+    return "\n".join(p.strip() for p in parts if p and p.strip()).strip()
+
+
+def _extract_azure_response_text(response: dict[str, Any]) -> str:
+    output_text = response.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    parts: list[str] = []
+    for item in response.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for block in item.get("content", []) or []:
+            if not isinstance(block, dict):
+                continue
+            value = block.get("text") or block.get("value")
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+    return "\n".join(parts).strip()
+
+
+async def _run_azure_foundry_response(
+    config: SessionConfig,
+    session: dict,
+    user_message: str,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int]:
+    """
+    Invoke the Foundry agent through the Responses API.
+    This matches Foundry Playground behavior: the agent processes the input,
+    appends items to the conversation, and produces traceable responses.
+    """
+    endpoint, token_or_key, _, _ = _azure_foundry_project_settings(config)
+    conversation_id = await _ensure_azure_foundry_conversation(config, session)
+    agent_name = _azure_agent_resource_name(config.agent_name)
+    payload: dict[str, Any] = {
+        "input": _azure_foundry_message_text(user_message, attachments),
+        "conversation": conversation_id,
+        "agent_reference": {
+            "type": "agent_reference",
+            "name": agent_name,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{endpoint}/openai/v1/responses",
+            headers=_azure_agent_headers(token_or_key),
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Azure Foundry response creation failed {resp.status_code}: {resp.text[:600]}"
+                f"{_azure_foundry_auth_hint(resp.status_code)}"
+            ),
+        )
+
+    data = resp.json()
+    session["azure_foundry_conversation_id"] = data.get("conversation", conversation_id)
+    session["azure_foundry_last_response_id"] = data.get("id")
+    usage = data.get("usage") or {}
+    tokens_used = int(
+        usage.get("total_tokens")
+        or (
+            usage.get("input_tokens", 0)
+            + usage.get("output_tokens", 0)
+            + usage.get("prompt_tokens", 0)
+            + usage.get("completion_tokens", 0)
+        )
+        or 0
+    )
+
+    return _extract_azure_response_text(data) or "[No response generated]", tokens_used
+
+
+async def _run_azure_foundry_agent(
+    config: SessionConfig,
+    session: dict,
+    user_message: str,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int]:
+    """
+    Run the provisioned Azure AI Foundry Agent through the Agents thread/run API.
+    This is what creates Foundry-visible thread/run traces for portal interactions.
+    """
+    endpoint, token_or_key, api_version, deployment = _azure_foundry_project_settings(config)
+    headers = _azure_agent_headers(token_or_key)
+    azure_agent = session.get("azure_foundry_agent") or {}
+    assistant_id = _azure_foundry_agent_id(azure_agent)
+    if not assistant_id:
+        provisioned = await _provision_azure_foundry_agent(config)
+        azure_agent = provisioned.model_dump()
+        session["azure_foundry_agent"] = azure_agent
+        assistant_id = _azure_foundry_agent_id(azure_agent)
+
+    if not assistant_id:
+        raise HTTPException(status_code=502, detail="Azure Foundry agent id was not returned by provisioning")
+
+    thread_id = session.get("azure_foundry_thread_id")
+    message_text = _azure_foundry_message_text(user_message, attachments)
+    metadata = {
+        "source": "tavro-playground",
+        "tavro_session_id": session.get("session_id", "")[:512],
+        "tavro_agent_name": config.agent_name[:512],
+        "tavro_use_case_id": (config.use_case_id or "")[:512],
+    }
+
+    run_payload: dict[str, Any] = {
+        "assistant_id": assistant_id,
+        "model": deployment,
+        "instructions": config.system_prompt,
+        "temperature": config.temperature,
+        "max_completion_tokens": max(256, int(config.max_tokens or 2048)),
+        "metadata": metadata,
+    }
+
+    if thread_id:
+        run_payload["additional_messages"] = [{"role": "user", "content": message_text}]
+        create_run_url = f"{endpoint}/threads/{thread_id}/runs?api-version={api_version}"
+    else:
+        run_payload["thread"] = {
+            "messages": [{"role": "user", "content": message_text}],
+            "metadata": metadata,
+        }
+        create_run_url = f"{endpoint}/threads/runs?api-version={api_version}"
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(create_run_url, headers=headers, json=run_payload)
+        if resp.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Azure Foundry run creation failed {resp.status_code}: {resp.text[:600]}"
+                    f"{_azure_foundry_auth_hint(resp.status_code)}"
+                ),
+            )
+
+        run = resp.json()
+        run_id = run.get("id")
+        thread_id = run.get("thread_id") or thread_id
+        if not run_id or not thread_id:
+            raise HTTPException(status_code=502, detail="Azure Foundry run did not return run_id/thread_id")
+
+        session["azure_foundry_thread_id"] = thread_id
+        session["azure_foundry_last_run_id"] = run_id
+
+        terminal_statuses = {"completed", "failed", "cancelled", "expired", "incomplete"}
+        status = run.get("status", "")
+        for _ in range(90):
+            if status in terminal_statuses or status == "requires_action":
+                break
+            await asyncio.sleep(1)
+            poll = await client.get(
+                f"{endpoint}/threads/{thread_id}/runs/{run_id}?api-version={api_version}",
+                headers=headers,
+            )
+            if poll.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Azure Foundry run polling failed {poll.status_code}: {poll.text[:600]}"
+                        f"{_azure_foundry_auth_hint(poll.status_code)}"
+                    ),
+                )
+            run = poll.json()
+            status = run.get("status", "")
+
+        if status != "completed":
+            last_error = run.get("last_error") or run.get("incomplete_details") or {}
+            raise HTTPException(
+                status_code=502,
+                detail=f"Azure Foundry run ended with status '{status}': {json.dumps(last_error)[:600]}",
+            )
+
+        messages_resp = await client.get(
+            f"{endpoint}/threads/{thread_id}/messages?api-version={api_version}&order=desc&limit=20",
+            headers=headers,
+        )
+        if messages_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Azure Foundry message retrieval failed {messages_resp.status_code}: {messages_resp.text[:600]}"
+                    f"{_azure_foundry_auth_hint(messages_resp.status_code)}"
+                ),
+            )
+
+    messages = messages_resp.json().get("data", [])
+    response_text = ""
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        if message.get("run_id") not in (None, run_id):
+            continue
+        response_text = _extract_azure_foundry_text(message)
+        if response_text:
+            break
+
+    usage = run.get("usage") or {}
+    tokens_used = int(
+        usage.get("total_tokens")
+        or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
+        or 0
+    )
+
+    return response_text or "[No response generated]", tokens_used
+
 # =============================================================
 # POST /session — create a new session
 # =============================================================
@@ -686,7 +1069,15 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
         "azure_foundry_agent": azure_agent.model_dump(),
     }
 
-    return {"session_id": session_id, "status": "created", "azure_foundry_agent": azure_agent.model_dump()}
+    if provider in ("azure_foundry", "azure", "azure_openai"):
+        await _ensure_azure_foundry_conversation(config, session_store[session_id])
+
+    return {
+        "session_id": session_id,
+        "status": "created",
+        "azure_foundry_agent": azure_agent.model_dump(),
+        "azure_foundry_conversation_id": session_store[session_id].get("azure_foundry_conversation_id"),
+    }
 
 
 # =============================================================
@@ -728,7 +1119,7 @@ async def send_message(
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     elif provider in ("azure_foundry", "azure", "azure_openai"):
         api_key = ""
-        _azure_openai_settings(config)
+        _azure_foundry_project_settings(config)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported playground provider: {config.provider}")
 
@@ -764,9 +1155,18 @@ async def send_message(
                 config, history, body.content, api_key, attachments=body.attachments
             )
         elif provider in ("azure_foundry", "azure", "azure_openai"):
-            response_text, tokens_used = await _run_azure_openai_chat(
-                config, history, body.content, attachments=body.attachments
-            )
+            if _azure_foundry_use_agent_runs():
+                response_text, tokens_used = await _run_azure_foundry_agent(
+                    config, session, body.content, attachments=body.attachments
+                )
+            elif not _azure_foundry_use_chat_completions():
+                response_text, tokens_used = await _run_azure_foundry_response(
+                    config, session, body.content, attachments=body.attachments
+                )
+            else:
+                response_text, tokens_used = await _run_azure_openai_chat(
+                    config, history, body.content, attachments=body.attachments
+                )
         else:
             response_text, tokens_used = await _run_agent_loop(
                 config, history, body.content, company_dims, api_key,
@@ -789,9 +1189,30 @@ async def send_message(
     session["token_total"] = session.get("token_total", 0) + tokens_used
     session["updated_at"]  = datetime.utcnow().isoformat()
 
+    if provider in ("azure_foundry", "azure", "azure_openai") and _azure_foundry_use_chat_completions():
+        await _append_azure_foundry_conversation_items(
+            config,
+            session,
+            [
+                _azure_conversation_input_message(
+                    "user",
+                    _azure_foundry_message_text(body.content, body.attachments),
+                ),
+                _azure_conversation_output_message(
+                    config,
+                    response_text,
+                    item_id=assistant_msg["id"],
+                )
+            ],
+        )
+
     return {
         "message":     assistant_msg,
         "token_total": session["token_total"],
+        "azure_foundry_conversation_id": session.get("azure_foundry_conversation_id"),
+        "azure_foundry_thread_id": session.get("azure_foundry_thread_id"),
+        "azure_foundry_last_run_id": session.get("azure_foundry_last_run_id"),
+        "azure_foundry_last_response_id": session.get("azure_foundry_last_response_id"),
     }
 
 

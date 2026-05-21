@@ -44,39 +44,13 @@ const Dashboard: React.FC = () => {
         return allAgents.slice(start, start + PAGE_SIZE);
     }, [allAgents, page]);
 
-    const optimisticPending = !isSearching && page === 1
-        ? (() => {
-            const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
-            const pendingMeta = raw ? JSON.parse(raw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
-            return pendingMeta
-                .filter(item => !pagedAgents.some(p => (p.identification?.agent_id || p.name) === (item.agent_id || item.name)))
-                .map(item => ({
-                    name: item.name,
-                    description: item.description,
-                    version: '1.0',
-                    identification: {
-                        agent_id: item.agent_id,
-                        role: null,
-                        instruction: null,
-                        governance_status: 'Risk Assessment is running',
-                    },
-                    configuration: { autonomy_level: null },
-                    tool: [],
-                    data_source: [],
-                    application: [],
-                    business_process: [],
-                    risk_assessment: null,
-                } as AgentData));
-        })()
-        : [];
-
     const displayedAgents = isSearching
         ? allAgents.filter(a =>
             a.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.identification?.agent_id?.toLowerCase().includes(searchTerm.toLowerCase())
         )
-        : [...optimisticPending, ...pagedAgents];
+        : pagedAgents;
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">

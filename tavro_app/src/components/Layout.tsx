@@ -4,19 +4,42 @@ import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, Network
+    AppWindow, BriefcaseBusiness, Paperclip, Network
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
+import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
+const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
 
 import travoLogo from '../assets/travo_logo.png';
 
-type ActivePanel = 'chat' | 'devlog' | null;
+type ActivePanel = 'chat' | 'devlog' | 'attachment' | null;
+
+/** Check if current route is an agent view page */
+function isAgentPage(pathname: string): boolean {
+    return /^\/agent\//.test(pathname);
+}
+
+/** Check if current route is an AI use case view page */
+function isUseCasePage(pathname: string): boolean {
+    return /^\/use-case\//.test(pathname);
+}
+
+/** Check if current route is an application view page */
+function isApplicationPage(pathname: string): boolean {
+    return /^\/applications\/(?!new$)/.test(pathname);
+}
+
+/** Check if current route is a process view page */
+function isProcessPage(pathname: string): boolean {
+    return /^\/processes\/(?!new$)/.test(pathname);
+}
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
@@ -47,43 +70,9 @@ const Layout: React.FC = () => {
     const [showLogs] = useShowLogs();
     const { loading: catalogLoading, lastFetched, refresh, agents } = useCatalog();
     const { loading: ucLoading, refresh: ucRefresh, useCases } = useUseCases();
+    const { activeCompany } = useBlueprint();
     const anyLoading = catalogLoading || ucLoading;
     const timeSince = useTimeSince(lastFetched);
-
-    // ── Cache fallback banner ────────────────────────────────────────────────
-    const [cacheFallbackReason, setCacheFallbackReason] = useState<string | null>(null);
-    const [dismissedCacheMode, setDismissedCacheMode] = useState(false);
-    const [isCacheMode, setIsCacheMode] = useState(
-        () => localStorage.getItem('tavro_cache_mode') === 'true'
-    );
-
-    useEffect(() => {
-        // Listen for remote→local fallback events dispatched by mcpClient
-        const onFallback = (e: Event) => {
-            const reason = (e as CustomEvent<{ reason: string }>).detail?.reason;
-            setCacheFallbackReason(reason || 'Remote cached data unavailable');
-        };
-        window.addEventListener('tavro:cache_fallback', onFallback);
-
-        // Keep isCacheMode in sync with localStorage changes (e.g. settings page)
-        const onStorageChange = () => {
-            const newCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
-            setIsCacheMode(newCacheMode);
-            // Clear banners if cache mode is turned off
-            if (!newCacheMode) {
-                setCacheFallbackReason(null);
-                setDismissedCacheMode(false);
-            }
-        };
-        window.addEventListener('storage', onStorageChange);
-        window.addEventListener('tavro_settings_change', onStorageChange);
-
-        return () => {
-            window.removeEventListener('tavro:cache_fallback', onFallback);
-            window.removeEventListener('storage', onStorageChange);
-            window.removeEventListener('tavro_settings_change', onStorageChange);
-        };
-    }, []);
 
     const handleRefreshAll = () => {
         refresh();
@@ -156,6 +145,11 @@ const Layout: React.FC = () => {
 
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+    const isOnAgentPage = isAgentPage(location.pathname);
+    const isOnUseCasePage = isUseCasePage(location.pathname);
+    const isOnApplicationPage = isApplicationPage(location.pathname);
+    const isOnProcessPage = isProcessPage(location.pathname);
+    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage;
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -337,11 +331,9 @@ const Layout: React.FC = () => {
                                 </div>
                                 {!anyLoading && (
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                        {agents.length > 0 && (
-                                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                                {agents.length} agents
-                                            </span>
-                                        )}
+                                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                            {agents.length} agents
+                                        </span>
                                         {useCases.length > 0 && (
                                             <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                                 {useCases.length} use cases
@@ -403,56 +395,13 @@ const Layout: React.FC = () => {
             {/* ── Main Content Area ─────────────────────────────────────────── */}
             <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
 
-                {/* ── Cached Data Mode Banner ─────────────────────────────── */}
-                {isCacheMode && !dismissedCacheMode && (
-                    <div className="flex items-center gap-3 px-5 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-medium flex-shrink-0">
-                        <Database size={13} className="text-amber-500 flex-shrink-0" />
-                        <span>
-                            <span className="font-bold">Cached Data Mode</span> is active — displaying data from
-                            {cacheFallbackReason ? ' local bundled cache (remote source unavailable)' : ' cached source'}.
-                            {' '}Live MCP calls are disabled.
-                        </span>
-                        <div className="ml-auto flex items-center gap-3">
-                            <button
-                                onClick={() => navigate('/settings')}
-                                className="text-amber-700 underline underline-offset-2 hover:text-amber-900 transition-colors whitespace-nowrap"
-                            >
-                                Settings
-                            </button>
-                            <button
-                                onClick={() => setDismissedCacheMode(true)}
-                                className="text-amber-600 hover:text-amber-900 transition-colors flex-shrink-0"
-                                title="Dismiss"
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ── Remote Cache Fallback Warning Banner ────────────────── */}
-                {cacheFallbackReason && (
-                    <div className="flex items-start gap-3 px-5 py-3 bg-orange-50 border-b border-orange-200 text-orange-800 text-xs flex-shrink-0">
-                        <AlertTriangle size={14} className="text-orange-500 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                            <span className="font-bold">Remote cache unavailable — using local bundled data.</span>
-                            <span className="text-orange-700 ml-1">Reason: {cacheFallbackReason}</span>
-                        </div>
-                        <button
-                            onClick={() => setCacheFallbackReason(null)}
-                            className="ml-2 text-orange-500 hover:text-orange-700 transition-colors flex-shrink-0"
-                            title="Dismiss"
-                        >
-                            <X size={14} />
-                        </button>
-                    </div>
-                )}
-
-                <div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
+<div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
                     <Outlet />
                 </div>
-                <footer className="border-t border-slate-200 dark:border-slate-800 py-6 text-center text-xs text-slate-400 dark:text-slate-500 mt-auto bg-white dark:bg-slate-900 transition-colors">
-                    © 2026 Tavro AI.
+                <footer className="border-t border-slate-200 dark:border-slate-800 py-4 px-6 text-xs text-slate-600 dark:text-slate-400 mt-auto bg-white dark:bg-slate-900 transition-colors flex items-center justify-between">
+                    <span>Tavro {TAVRO_VERSION}</span>
+                    <span>{activeCompany?.name ?? '—'}</span>
+                    <span>© 2026 Tavro AI.</span>
                 </footer>
             </main>
 
@@ -479,6 +428,15 @@ const Layout: React.FC = () => {
                             >
                                 <Terminal size={26} />
                                 <span className="text-[9px] font-semibold leading-none">Logs</span>
+                            </button>
+                        )}
+                        {isOnAttachmentPage && (
+                            <button
+                                onClick={() => setActivePanel('attachment')}
+                                className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
+                                title="Attachments"
+                            >
+                                <Paperclip size={22} />
                             </button>
                         )}
                     </div>
@@ -527,11 +485,24 @@ const Layout: React.FC = () => {
                                     <button
                                         onClick={() => setActivePanel('devlog')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'devlog'
-                                            ? 'border-blue-500 text-blue-600 bg-white'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+                                            ? 'border-blue-500 text-blue-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                                     >
                                         <Terminal size={14} />
                                         Dev Logs
+                                    </button>
+                                )}
+
+                                {/* Attachment tab — show on agent, use case, application, and process pages */}
+                                {isOnAttachmentPage && (
+                                    <button
+                                        onClick={() => setActivePanel('attachment')}
+                                        className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
+                                            ? 'border-amber-500 text-amber-600 bg-white dark:bg-slate-900'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                                    >
+                                        <Paperclip size={14} />
+                                        Attachments
                                     </button>
                                 )}
 
@@ -550,6 +521,19 @@ const Layout: React.FC = () => {
                             <div className="flex-1 overflow-hidden">
                                 {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
+                                {activePanel === 'attachment' && isOnAttachmentPage && (
+                                    <AttachmentPanel
+                                        entityType={
+                                            isOnUseCasePage
+                                                ? 'use_case'
+                                                : isOnApplicationPage
+                                                    ? 'application'
+                                                    : isOnProcessPage
+                                                        ? 'process'
+                                                        : 'agent'
+                                        }
+                                    />
+                                )}
                             </div>
                         </div>
                     </div>

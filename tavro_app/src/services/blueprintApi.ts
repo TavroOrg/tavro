@@ -77,6 +77,12 @@ export interface ResearchResponse {
   notice: string;
 }
 
+export type ResearchStreamEvent =
+  | { type: 'status';    message: string }
+  | { type: 'heartbeat' }
+  | { type: 'result';    data: ResearchResponse }
+  | { type: 'error';     message: string };
+
 // ── BlueprintApiService ───────────────────────────────────────────────────────
 
 class BlueprintApiService {
@@ -193,17 +199,46 @@ class BlueprintApiService {
 
   // ── Research ───────────────────────────────────────────────────────────────
 
-  async researchCompany(params: {
+  async *researchCompanyStream(params: {
     company_id: string;
     company_name: string;
     ticker?: string;
     industry: string;
-    region: string;
-  }): Promise<ResearchResponse> {
-    return req('/blueprint/research', {
+    is_public?: boolean;
+  }): AsyncGenerator<ResearchStreamEvent> {
+    const token = await getValidToken();
+    const response = await fetch(`${V1}/blueprint/research`, {
       method: 'POST',
+      headers: { ...buildHeaders(token) },
       body: JSON.stringify(params),
     });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`API ${response.status}: ${body}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          const line = part.trim();
+          if (line.startsWith('data: ')) {
+            try { yield JSON.parse(line.slice(6)); } catch { /* skip malformed */ }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async saveResearchedNodes(company_id: string, nodes: ResearchedNode[]): Promise<{ saved: number; skipped: number }> {

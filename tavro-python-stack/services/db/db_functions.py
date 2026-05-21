@@ -1719,7 +1719,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
         "defaultOutputModes": ["text"],
         "name": _val(ag, "agent_name"),
         "description": _val(ag, "agent_description"),
-        "preferredTransport": "JSONRPC",
+        "preferredTransport": _val(ag, "preferred_transport"),
         "protocol_version": _val(ag, "protocol_version"),
         "instruction_sets": [],
         "skills": [],
@@ -1733,7 +1733,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
         "security": None,
         "security_schemes": None,
         "signatures": None,
-        "supports_authenticated_extended_card": True,
+        "supports_authenticated_extended_card": _val(ag, "supports_auth_ext_card"),
         "additional_interfaces": None,
         "version": _val(ag, "card_version"),
         "identification": {

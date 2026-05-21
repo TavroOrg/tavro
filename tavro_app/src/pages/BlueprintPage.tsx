@@ -3,13 +3,14 @@
 // Layout: sidebar node list (left) + graph (centre) + detail panel (right).
 // Matches the structural pattern of Dashboard + AgentViewPage.
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, Building2,
   Plus, ChevronDown, Network, Layers, Link2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useBlueprint } from '../context/BlueprintContext';
+import { blueprintApi } from '../services/blueprintApi';
 import BlueprintGraph from '../components/BlueprintGraphRF';
 import BlueprintDimCard, { BlueprintDimRow } from '../components/BlueprintDimCard';
 import BlueprintDimPanel from '../components/BlueprintDimPanel';
@@ -67,6 +68,13 @@ const BlueprintPage: React.FC = () => {
     }, {} as Record<string, number>),
     [nodes]);
 
+  // ── Sync selectedNode with refreshed nodes ──────────────────────────────
+  useEffect(() => {
+    if (!selectedNode) return;
+    const updated = nodes.find(n => n.id === selectedNode.id);
+    if (updated) setSelectedNode(updated);
+  }, [nodes]);
+
   // ── Chat sync — keeps chat context in sync with blueprint state ──────────
   useBlueprintChatSync(
     activeCompany,
@@ -78,6 +86,14 @@ const BlueprintPage: React.FC = () => {
   const handleGraphNodeClick = (nodeId: string) => {
     const found = nodes.find(n => n.id === nodeId);
     if (found) { setSelectedNode(found); setViewMode('grid'); }
+  };
+
+  const handleDeleteNode = async (node: DimNode) => {
+    if (!window.confirm(`Delete "${node.label}"? This cannot be undone.`)) return;
+    await blueprintApi.deleteNode(node.id);
+    if (selectedNode?.id === node.id) setSelectedNode(null);
+    refreshNodes();
+    refreshGraph();
   };
 
   if (error) {
@@ -256,10 +272,12 @@ const BlueprintPage: React.FC = () => {
                     <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Industry</p>
                     <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.industry}</p>
                   </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Region</p>
-                    <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.region}</p>
-                  </div>
+                  {activeCompany.region && (
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Region</p>
+                      <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.region}</p>
+                    </div>
+                  )}
                   {activeCompany.legal_entity && (
                     <div>
                       <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Legal entity</p>
@@ -305,7 +323,7 @@ const BlueprintPage: React.FC = () => {
               ) : (
                 <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
                   {filteredNodes.map(node => (
-                    <BlueprintDimCard key={node.id} node={node} onClick={handleNodeClick} />
+                    <BlueprintDimCard key={node.id} node={node} onClick={handleNodeClick} onDelete={handleDeleteNode} />
                   ))}
                 </div>
               )
@@ -324,7 +342,7 @@ const BlueprintPage: React.FC = () => {
                 ) : filteredNodes.length === 0 ? (
                   <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-sm">No dimensions found</div>
                 ) : filteredNodes.map(node => (
-                  <BlueprintDimRow key={node.id} node={node} onClick={handleNodeClick} />
+                  <BlueprintDimRow key={node.id} node={node} onClick={handleNodeClick} onDelete={handleDeleteNode} />
                 ))}
               </div>
             )}

@@ -21,15 +21,12 @@ AZURE_AI_FOUNDRY_AGENT_API_VERSION=v1
 # Optional. If omitted, the selected playground model is used as the Azure deployment name.
 AZURE_AI_FOUNDRY_DEPLOYMENT=gpt-5.4-mini
 
-# ── pgAdmin ───────────────────────────────────────────────────────────────────
-PGADMIN_DEFAULT_EMAIL=admin@tavro.local
-PGADMIN_DEFAULT_PASSWORD=pgadmin_changeme
-
 TAVRO_PUBLIC_ORIGIN=http://localhost:9000
 VITE_ZITADEL_ISSUER=http://localhost:8080
 VITE_ZITADEL_CLIENT_ID=
 VITE_ZITADEL_REDIRECT_PATH=/auth/callback
 VITE_ZITADEL_SCOPE=openid profile email
+VITE_MCP_URL=http://localhost:9001/zitadel/mcp
 ZITADEL_PROJECT_NAME=tavro-mcp
 ZITADEL_APP_NAME=tavro-mcp
 ZITADEL_APP_REDIRECT_URIS=http://localhost:9000/auth/callback,http://localhost:9001/auth/callback

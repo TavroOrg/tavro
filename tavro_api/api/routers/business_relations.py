@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,9 @@ from api.database import get_db
 router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
+_AGENT_ATTACHMENTS_READY = False
+_APPLICATION_ATTACHMENTS_READY = False
+_PROCESS_ATTACHMENTS_READY = False
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -179,6 +183,117 @@ class ProcessUpdate(Process):
     pass
 
 
+class AgentAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
+class EntityAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
+async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
+    global _AGENT_ATTACHMENTS_READY
+    if _AGENT_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.agent_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                agent_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
+            ON public.agent_attachment (agent_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _AGENT_ATTACHMENTS_READY = True
+
+
+async def _ensure_application_attachments_table(db: AsyncSession) -> None:
+    global _APPLICATION_ATTACHMENTS_READY
+    if _APPLICATION_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.application_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                application_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS application_attachment_application_idx
+            ON public.application_attachment (application_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _APPLICATION_ATTACHMENTS_READY = True
+
+
+async def _ensure_process_attachments_table(db: AsyncSession) -> None:
+    global _PROCESS_ATTACHMENTS_READY
+    if _PROCESS_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.process_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                process_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS process_attachment_process_idx
+            ON public.process_attachment (process_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _PROCESS_ATTACHMENTS_READY = True
+
+
 def _clean(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -209,8 +324,11 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
 def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     related_processes_raw = _json_list(row.get("related_processes"))
+    related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_processes: list[dict[str, Any]] = []
+    normalized_related_use_cases: list[dict[str, Any]] = []
     seen_process_ids: set[str] = set()
+    seen_use_case_ids: set[str] = set()
 
     for rel in related_processes_raw:
         if not isinstance(rel, dict):
@@ -238,6 +356,24 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
         )
 
     row["related_processes"] = normalized_related_processes
+    for rel in related_use_cases_raw:
+        if not isinstance(rel, dict):
+            continue
+        use_case_id = _text_or_none(rel.get("identifier") or rel.get("ai_use_case_id"))
+        if not use_case_id or use_case_id in seen_use_case_ids:
+            continue
+        seen_use_case_ids.add(use_case_id)
+        normalized_related_use_cases.append(
+            {
+                "identifier": use_case_id,
+                "name": _text_or_none(rel.get("name")),
+                "description": _text_or_none(rel.get("description")),
+                "owner": _text_or_none(rel.get("owner")),
+                "priority": _text_or_none(rel.get("priority")),
+                "status": _text_or_none(rel.get("status")),
+            }
+        )
+    row["related_use_cases"] = normalized_related_use_cases
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 
@@ -615,6 +751,7 @@ async def _fetch_processes(
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "proc_rel.related_processes",
+        "uc_rel.related_use_cases",
     ]
 
     has_abp = await _table_exists(db, "core", "agent_business_processes")
@@ -684,6 +821,93 @@ async def _fetch_processes(
         ) proc_rel ON TRUE
     """
 
+    has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
+    has_auc = await _table_exists(db, "core", "agent_ai_use_cases")
+    auc_order_sql = "ORDER BY 1"
+    if has_auc:
+        auc_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        order_parts: list[str] = []
+        if "updated_ts" in auc_cols:
+            order_parts.append("auc.updated_ts DESC NULLS LAST")
+        if "created_ts" in auc_cols:
+            order_parts.append("auc.created_ts DESC NULLS LAST")
+        if "identifier" in auc_cols:
+            order_parts.append("auc.identifier")
+        if order_parts:
+            auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
+    if has_uc_proc_rel and has_auc:
+        uc_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', related.name,
+                            'description', related.description,
+                            'owner', related.owner,
+                            'priority', related.priority,
+                            'status', related.status
+                        )
+                        ORDER BY LOWER(COALESCE(related.name, related.ai_use_case_id))
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT
+                        rel.ai_use_case_id,
+                        latest.name,
+                        latest.description,
+                        latest.owner,
+                        latest.priority,
+                        latest.status
+                    FROM core.ai_use_case_business_processes rel
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            auc.name,
+                            auc.description,
+                            auc.owner,
+                            auc.priority,
+                            auc.status
+                        FROM core.agent_ai_use_cases auc
+                        WHERE auc.identifier = rel.ai_use_case_id
+                        {auc_order_sql}
+                        LIMIT 1
+                    ) latest ON TRUE
+                    WHERE rel.business_process_id = bp.business_process_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    elif has_uc_proc_rel:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', NULL,
+                            'description', NULL,
+                            'owner', NULL,
+                            'priority', NULL,
+                            'status', NULL
+                        )
+                        ORDER BY LOWER(related.ai_use_case_id)
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT rel.ai_use_case_id
+                    FROM core.ai_use_case_business_processes rel
+                    WHERE rel.business_process_id = bp.business_process_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    else:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_use_cases
+            ) uc_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(bp.process_name, bp.business_process_id))"
@@ -718,6 +942,7 @@ async def _fetch_processes(
                 ON parent.business_process_id = bp.parent_process_id
             {rel_join_sql}
             {proc_rel_sql}
+            {uc_rel_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -881,6 +1106,12 @@ async def delete_application(
                 ),
                 {"business_application_id": application_id},
             )
+
+    await _ensure_application_attachments_table(db)
+    await db.execute(
+        text("DELETE FROM public.application_attachment WHERE application_id = :application_id"),
+        {"application_id": application_id},
+    )
 
     result = await db.execute(
         text(
@@ -1082,6 +1313,25 @@ async def delete_process(
                 {"business_process_id": process_id},
             )
 
+    if await _table_exists(db, "core", "ai_use_case_business_processes"):
+        uc_proc_cols = await _table_columns(db, "core", "ai_use_case_business_processes")
+        if "business_process_id" in uc_proc_cols:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM core.ai_use_case_business_processes
+                    WHERE business_process_id = :business_process_id
+                    """
+                ),
+                {"business_process_id": process_id},
+            )
+
+    await _ensure_process_attachments_table(db)
+    await db.execute(
+        text("DELETE FROM public.process_attachment WHERE process_id = :process_id"),
+        {"process_id": process_id},
+    )
+
     process_cols = await _table_columns(db, "core", "business_processes")
     if "parent_process_id" in process_cols:
         await db.execute(
@@ -1111,6 +1361,426 @@ async def delete_process(
         )
     await db.commit()
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.get(
+    "/agents/{agent_id}/attachments",
+    tags=["Agents"],
+    summary="List Agent Attachments",
+)
+async def list_agent_attachments(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.agent_attachment
+            WHERE agent_id = :agent_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"agent_id": agent_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/agents/{agent_id}/attachments",
+    tags=["Agents"],
+    summary="Upload Agent Attachment",
+    status_code=201,
+)
+async def create_agent_attachment(
+    agent_id: str,
+    body: AgentAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.agent_attachment
+                (agent_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "agent_id": agent_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/agents/{agent_id}/attachments/{attachment_id}/download",
+    tags=["Agents"],
+    summary="Download Agent Attachment",
+)
+async def download_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/agents/{agent_id}/attachments/{attachment_id}",
+    tags=["Agents"],
+    summary="Delete Agent Attachment",
+)
+async def delete_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.get(
+    "/applications/{application_id}/attachments",
+    tags=["Applications"],
+    summary="List Application Attachments",
+)
+async def list_application_attachments(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.application_attachment
+            WHERE application_id = :application_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"application_id": application_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/applications/{application_id}/attachments",
+    tags=["Applications"],
+    summary="Upload Application Attachment",
+    status_code=201,
+)
+async def create_application_attachment(
+    application_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.application_attachment
+                (application_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, application_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "application_id": application_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/applications/{application_id}/attachments/{attachment_id}/download",
+    tags=["Applications"],
+    summary="Download Application Attachment",
+)
+async def download_application_attachment(
+    application_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.application_attachment
+            WHERE id = :attachment_id
+              AND application_id = :application_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "application_id": application_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/applications/{application_id}/attachments/{attachment_id}",
+    tags=["Applications"],
+    summary="Delete Application Attachment",
+)
+async def delete_application_attachment(
+    application_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_application_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.application_attachment
+            WHERE id = :attachment_id
+              AND application_id = :application_id
+            """
+        ),
+        {"attachment_id": attachment_id, "application_id": application_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.get(
+    "/processes/{process_id}/attachments",
+    tags=["Processes"],
+    summary="List Process Attachments",
+)
+async def list_process_attachments(
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.process_attachment
+            WHERE process_id = :process_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"process_id": process_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/processes/{process_id}/attachments",
+    tags=["Processes"],
+    summary="Upload Process Attachment",
+    status_code=201,
+)
+async def create_process_attachment(
+    process_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.process_attachment
+                (process_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, process_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "process_id": process_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get(
+    "/processes/{process_id}/attachments/{attachment_id}/download",
+    tags=["Processes"],
+    summary="Download Process Attachment",
+)
+async def download_process_attachment(
+    process_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.process_attachment
+            WHERE id = :attachment_id
+              AND process_id = :process_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "process_id": process_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/processes/{process_id}/attachments/{attachment_id}",
+    tags=["Processes"],
+    summary="Delete Process Attachment",
+)
+async def delete_process_attachment(
+    process_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_process_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.process_attachment
+            WHERE id = :attachment_id
+              AND process_id = :process_id
+            """
+        ),
+        {"attachment_id": attachment_id, "process_id": process_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}
 
 
 @router.get(

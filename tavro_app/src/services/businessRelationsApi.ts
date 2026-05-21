@@ -6,6 +6,36 @@ import type {
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 
+export interface AgentAttachmentRecord {
+  id: string;
+  agent_id: string;
+  filename: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplicationAttachmentRecord {
+  id: string;
+  application_id: string;
+  filename: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProcessAttachmentRecord {
+  id: string;
+  process_id: string;
+  filename: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
@@ -108,6 +138,99 @@ class BusinessRelationsApi {
 
   async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
     return req(`/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
+    return req(`/agents/${encodeURIComponent(agentId)}/attachments`);
+  }
+
+  async uploadAgentAttachment(
+    agentId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<AgentAttachmentRecord> {
+    return req(`/agents/${encodeURIComponent(agentId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteAgentAttachment(agentId: string, attachmentId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async downloadAgentAttachment(agentId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+    }
+    return res.blob();
+  }
+
+  async listApplicationAttachments(applicationId: string): Promise<ApplicationAttachmentRecord[]> {
+    return req(`/applications/${encodeURIComponent(applicationId)}/attachments`);
+  }
+
+  async uploadApplicationAttachment(
+    applicationId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<ApplicationAttachmentRecord> {
+    return req(`/applications/${encodeURIComponent(applicationId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteApplicationAttachment(applicationId: string, attachmentId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async downloadApplicationAttachment(applicationId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/applications/${encodeURIComponent(applicationId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+    }
+    return res.blob();
+  }
+
+  async listProcessAttachments(processId: string): Promise<ProcessAttachmentRecord[]> {
+    return req(`/processes/${encodeURIComponent(processId)}/attachments`);
+  }
+
+  async uploadProcessAttachment(
+    processId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<ProcessAttachmentRecord> {
+    return req(`/processes/${encodeURIComponent(processId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteProcessAttachment(processId: string, attachmentId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async downloadProcessAttachment(processId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/processes/${encodeURIComponent(processId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+    }
+    return res.blob();
   }
 
   async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {

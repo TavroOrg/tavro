@@ -67,6 +67,9 @@ class AgentCreateRequest(BaseModel):
     agent_name: str
     description: str
     instruction: str
+    role: Optional[str] = None
+    environment: Optional[str] = None
+    owner: Optional[str] = None
     tools: Optional[List[Dict[str, str]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
 
@@ -155,13 +158,16 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agent_identifications
                     (tenant_id, agent_internal_id, agent_id, instruction,
-                     governance_status, created_ts, updated_ts, is_current)
+                     role, environment, governance_status, created_ts, updated_ts, is_current)
                 VALUES
                     (:tid, :iid, :aid, :instruction,
-                     'Risk Assessment is running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
+                     :role, :environment, 'Risk Assessment is running',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "instruction": body.instruction},
+             "instruction": body.instruction,
+             "role": body.role or None,
+             "environment": body.environment or None},
         )
 
         for tool in (body.tools or []):

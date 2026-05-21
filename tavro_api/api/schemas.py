@@ -22,7 +22,7 @@ RelType         = str   # depends_on | owned_by | supports | risks | enables | p
 class CompanyBase(BaseModel):
     name:         str
     industry:     str
-    region:       str
+    region:       str = ""
     legal_entity: Optional[str] = None
 
 class CompanyCreate(CompanyBase):
@@ -94,11 +94,12 @@ class DimNodeCreate(DimNodeBase):
     valid_from:  Optional[datetime] = None
 
 class DimNodeUpdate(BaseModel):
-    label:      Optional[str]            = None
-    summary:    Optional[str]            = None
-    tags:       Optional[list[str]]      = None
-    visibility: Optional[VisibilityLevel] = None
-    sensitive:  Optional[bool]           = None
+    label:       Optional[str]            = None
+    summary:     Optional[str]            = None
+    tags:        Optional[list[str]]      = None
+    visibility:  Optional[VisibilityLevel] = None
+    sensitive:   Optional[bool]           = None
+    dim_type_id: Optional[UUID]           = None
 
 class DimNode(DimNodeBase):
     id:           UUID
