@@ -224,10 +224,13 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const lastWorkflowSnapshotRef = useRef('');
 
     const fetchAgents = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current) return;
+        if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
-        setLoading(true);
         setError(null);
+        // Only block the UI if there is no data yet or the user explicitly synced.
+        // Background auto-refreshes should be silent when cached data is already showing.
+        const hasExistingData = Boolean(sessionStorage.getItem(AGENT_CACHE_KEY));
+        if (!hasExistingData || invalidate) setLoading(true);
 
         if (invalidate) {
             mcpClient.invalidateCache();
