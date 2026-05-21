@@ -34,6 +34,26 @@ const formatFileSize = (bytes: number): string => {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 };
 
+const getAttachmentErrorMessage = (error: unknown, fileName?: string): string => {
+    const fallbackMessage = 'Failed to upload attachment.';
+
+    if (!(error instanceof Error)) {
+        return fallbackMessage;
+    }
+
+    if (
+        error.message.includes('API 413') ||
+        error.message.includes('Attachment exceeds 10 MB limit') ||
+        error.message.includes('413 Request Entity Too Large')
+    ) {
+        return fileName
+            ? `"${fileName}" is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`
+            : `The file is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`;
+    }
+
+    return error.message || fallbackMessage;
+};
+
 const AttachmentRow: React.FC<{
     attachment: Attachment;
     onDelete?: () => void;
@@ -228,12 +248,7 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
             }
         } catch (error) {
             console.error('Failed to upload attachment:', error);
-            const message = error instanceof Error ? error.message : 'Failed to upload attachment.';
-            if (message.includes('API 413') || message.includes('413 Request Entity Too Large')) {
-                setError(`"${file.name}" is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`);
-            } else {
-                setError(message);
-            }
+            setError(getAttachmentErrorMessage(error, file.name));
         } finally {
             setIsUploading(false);
             // Reset input
