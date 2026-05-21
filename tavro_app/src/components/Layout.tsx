@@ -26,6 +26,21 @@ function isAgentPage(pathname: string): boolean {
     return /^\/agent\//.test(pathname);
 }
 
+/** Check if current route is an AI use case view page */
+function isUseCasePage(pathname: string): boolean {
+    return /^\/use-case\//.test(pathname);
+}
+
+/** Check if current route is an application view page */
+function isApplicationPage(pathname: string): boolean {
+    return /^\/applications\/(?!new$)/.test(pathname);
+}
+
+/** Check if current route is a process view page */
+function isProcessPage(pathname: string): boolean {
+    return /^\/processes\/(?!new$)/.test(pathname);
+}
+
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
 const MAX_PANEL_WIDTH = 640;
@@ -131,6 +146,10 @@ const Layout: React.FC = () => {
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
     const isOnAgentPage = isAgentPage(location.pathname);
+    const isOnUseCasePage = isUseCasePage(location.pathname);
+    const isOnApplicationPage = isApplicationPage(location.pathname);
+    const isOnProcessPage = isProcessPage(location.pathname);
+    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage;
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -411,7 +430,7 @@ const Layout: React.FC = () => {
                                 <span className="text-[9px] font-semibold leading-none">Logs</span>
                             </button>
                         )}
-                        {isOnAgentPage && (
+                        {isOnAttachmentPage && (
                             <button
                                 onClick={() => setActivePanel('attachment')}
                                 className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
@@ -474,8 +493,8 @@ const Layout: React.FC = () => {
                                     </button>
                                 )}
 
-                                {/* Attachment tab — show only on agent pages */}
-                                {isOnAgentPage && (
+                                {/* Attachment tab — show on agent, use case, application, and process pages */}
+                                {isOnAttachmentPage && (
                                     <button
                                         onClick={() => setActivePanel('attachment')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
@@ -502,7 +521,19 @@ const Layout: React.FC = () => {
                             <div className="flex-1 overflow-hidden">
                                 {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
-                                {activePanel === 'attachment' && isOnAgentPage && <AttachmentPanel />}
+                                {activePanel === 'attachment' && isOnAttachmentPage && (
+                                    <AttachmentPanel
+                                        entityType={
+                                            isOnUseCasePage
+                                                ? 'use_case'
+                                                : isOnApplicationPage
+                                                    ? 'application'
+                                                    : isOnProcessPage
+                                                        ? 'process'
+                                                        : 'agent'
+                                        }
+                                    />
+                                )}
                             </div>
                         </div>
                     </div>
