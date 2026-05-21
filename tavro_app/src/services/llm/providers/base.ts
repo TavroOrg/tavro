@@ -16,6 +16,13 @@ import type { RuntimeMessage, InternalCompletionResult, ToolDefinition, ToolCall
 export interface ILLMProvider {
     readonly name: string;
 
+    /**
+     * Set before calling stream() to enable server-side response caching.
+     * The server associates streamed chunks with this ID so a reconnecting
+     * browser can replay them via GET /chat/resume/:requestId.
+     */
+    requestId?: string;
+
     /** Non-streaming, tool-aware completion — used for every agent loop iteration. */
     complete(messages: RuntimeMessage[], tools: ToolDefinition[]): Promise<InternalCompletionResult>;
 

@@ -8,8 +8,9 @@ import {
   Tag, Link2, Database, Pencil, Check, AlertTriangle, Trash2, Plus, Paperclip, Download,
 } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
-import type { DimNode, DimEdge, SourceRef, SourceRefDetail, DimNodeAttachment } from '../types/blueprint';
+import type { DimNode, DimEdge, SourceRef, SourceRefDetail, DimNodeAttachment, DimCategory } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
+import { useBlueprint } from '../context/BlueprintContext';
 import AddDimEdgeModal from './AddDimEdgeModal';
 
 interface BlueprintDimPanelProps {
@@ -20,6 +21,8 @@ interface BlueprintDimPanelProps {
 }
 
 const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, onNodeUpdated, onEdgeCreated }) => {
+  const { dimTypes } = useBlueprint();
+
   const [edges,       setEdges]       = useState<DimEdge[]>([]);
   const [sourceRefs,  setSourceRefs]  = useState<SourceRef[]>([]);
   const [fetchDetail, setFetchDetail] = useState<Record<string, SourceRefDetail | null>>({});
@@ -27,10 +30,13 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
   const [loading,     setLoading]     = useState(true);
 
   // Inline edit state
-  const [editing,     setEditing]     = useState(false);
-  const [editLabel,   setEditLabel]   = useState(node.label);
-  const [editSummary, setEditSummary] = useState(node.summary ?? '');
-  const [saving,      setSaving]      = useState(false);
+  const [editing,      setEditing]      = useState(false);
+  const [editLabel,    setEditLabel]    = useState(node.label);
+  const [editSummary,  setEditSummary]  = useState(node.summary ?? '');
+  const [editCategory, setEditCategory] = useState<DimCategory>((node.category ?? 'custom') as DimCategory);
+  const [editTags,     setEditTags]     = useState<string[]>(node.tags);
+  const [tagInput,     setTagInput]     = useState('');
+  const [saving,       setSaving]       = useState(false);
   const [showAddEdge,  setShowAddEdge]  = useState(false);
   const [attachments,  setAttachments]  = useState<DimNodeAttachment[]>([]);
   const [uploading,    setUploading]    = useState(false);
@@ -96,16 +102,43 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Tag helpers ──────────────────────────────────────────────────────────
+  const addTag = () => {
+    const t = tagInput.trim().toLowerCase().replace(/\s+/g, '-');
+    if (t && !editTags.includes(t)) setEditTags(p => [...p, t]);
+    setTagInput('');
+  };
+  const removeTag = (tag: string) => setEditTags(p => p.filter(t => t !== tag));
+  const handleTagKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(); }
+    if (e.key === 'Backspace' && !tagInput && editTags.length > 0) setEditTags(p => p.slice(0, -1));
+  };
+
   // ── Inline save ──────────────────────────────────────────────────────────
   const handleSave = async () => {
+    const dimTypeId = dimTypes.find(t => t.category === editCategory)?.id;
     setSaving(true);
     try {
-      await blueprintApi.updateNode(node.id, { label: editLabel, summary: editSummary });
+      await blueprintApi.updateNode(node.id, {
+        label: editLabel,
+        summary: editSummary,
+        tags: editTags,
+        ...(dimTypeId ? { dim_type_id: dimTypeId } : {}),
+      });
       setEditing(false);
       onNodeUpdated();
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCancelEdit = () => {
+    setEditing(false);
+    setEditLabel(node.label);
+    setEditSummary(node.summary ?? '');
+    setEditCategory((node.category ?? 'custom') as DimCategory);
+    setEditTags(node.tags);
+    setTagInput('');
   };
 
   // ── Source ref drill-down ────────────────────────────────────────────────
@@ -131,11 +164,30 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-start justify-between gap-3 flex-shrink-0">
         <div className="flex flex-col gap-2 flex-1 min-w-0">
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border w-fit"
-            style={{ background: palette.bg, color: palette.text, borderColor: palette.badge }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: palette.stroke }} />
-            {CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] ?? 'Custom'}
-          </span>
+          {editing ? (
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(CATEGORY_LABELS) as DimCategory[]).map(c => {
+                const p = CATEGORY_PALETTE[c];
+                const active = editCategory === c;
+                return (
+                  <button key={c} onClick={() => setEditCategory(c)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold transition-all"
+                    style={active
+                      ? { background: p.bg, borderColor: p.stroke, color: p.text }
+                      : { background: 'transparent', borderColor: '#cbd5e1', color: '#94a3b8' }}>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: p.stroke }} />
+                    {CATEGORY_LABELS[c]}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border w-fit"
+              style={{ background: palette.bg, color: palette.text, borderColor: palette.badge }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: palette.stroke }} />
+              {CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] ?? 'Custom'}
+            </span>
+          )}
           {editing ? (
             <input
               value={editLabel}
@@ -169,7 +221,7 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
                 {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
                 Save
               </button>
-              <button onClick={() => { setEditing(false); setEditLabel(node.label); setEditSummary(node.summary ?? ''); }}
+              <button onClick={handleCancelEdit}
                 className="text-[11px] text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 px-2 py-1.5 rounded-lg transition-colors">
                 Cancel
               </button>
@@ -208,19 +260,47 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
         </div>
 
         {/* Tags */}
-        {node.tags.length > 0 && (
+        {(editing || node.tags.length > 0) && (
           <div>
             <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <Tag size={11} /> Tags
             </p>
-            <div className="flex flex-wrap gap-1.5">
-              {node.tags.map(tag => (
-                <span key={tag}
-                  className="text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
-                  {tag}
-                </span>
-              ))}
-            </div>
+            {editing ? (
+              <>
+                <div
+                  className="flex flex-wrap gap-1.5 min-h-[36px] px-2.5 py-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-slate-800 cursor-text focus-within:ring-2 focus-within:ring-blue-200 dark:focus-within:ring-blue-800"
+                  onClick={() => document.getElementById('panel-tag-input')?.focus()}>
+                  {editTags.map(tag => (
+                    <span key={tag}
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-600">
+                      {tag}
+                      <button onClick={() => removeTag(tag)} className="hover:text-rose-500 transition-colors">
+                        <X size={9} />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    id="panel-tag-input"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={handleTagKeyDown}
+                    onBlur={addTag}
+                    placeholder={editTags.length === 0 ? 'Type a tag and press Enter…' : ''}
+                    className="flex-1 min-w-[100px] bg-transparent outline-none text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Lowercase, hyphen-separated. Press Enter or comma to add.</p>
+              </>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {node.tags.map(tag => (
+                  <span key={tag}
+                    className="text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

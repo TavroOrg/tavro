@@ -550,11 +550,11 @@ class McpClientService {
         }));
     }
 
-    async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}): AsyncGenerator<string> {
+    async *chat(userMessage: string, history: ChatMessage[] = [], context: ChatViewContext = {}, requestId?: string): AsyncGenerator<string> {
         const llmCfg = getLLMConfig();
 
         if (llmCfg) {
-            yield* this._llmChatWithTools(userMessage, history, context, llmCfg);
+            yield* this._llmChatWithTools(userMessage, history, context, llmCfg, requestId);
             return;
         }
 
@@ -572,6 +572,7 @@ class McpClientService {
         history: ChatMessage[],
         context: ChatViewContext,
         llmCfg: LLMConfig,
+        requestId?: string,
     ): AsyncGenerator<string> {
         try {
             const mcpTools = await this.fetchMcpTools();
@@ -630,6 +631,7 @@ ${toolSummary}`;
                     [],
                     llmCfg,
                     async () => null,
+                    requestId,
                 );
                 return;
             }
@@ -641,6 +643,7 @@ ${toolSummary}`;
                 toolDefs,
                 llmCfg,
                 (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt),
+                requestId,
             );
 
         } catch (err: any) {

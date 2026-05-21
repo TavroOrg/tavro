@@ -109,6 +109,7 @@ const BlueprintSetupPage: React.FC = () => {
 
   // ── Research state ─────────────────────────────────────────────────────────
   const [researching,     setResearching]     = useState(false);
+  const [researchStatus,  setResearchStatus]  = useState<string>('');
   const [researchResult,  setResearchResult]  = useState<ResearchResult | null>(null);
   const [researchError,   setResearchError]   = useState<string | null>(null);
   const [selectedNodes,   setSelectedNodes]   = useState<Set<number>>(new Set());
@@ -141,19 +142,30 @@ const BlueprintSetupPage: React.FC = () => {
     setResearching(true);
     setResearchError(null);
     setResearchResult(null);
+    setResearchStatus('Starting…');
     try {
-      // Research doesn't save — it just returns nodes for preview
-      const result = await (blueprintApi as any).researchCompany({
-        company_id:   'preview',   // placeholder — not saved at this point
+      const stream = blueprintApi.researchCompanyStream({
+        company_id:   'preview',
         company_name: form.name,
         ticker:       form.ticker || undefined,
         industry:     form.industry,
+        is_public:    form.is_public === true,
       });
-      setResearchResult(result);
-      // Pre-select all nodes
-      setSelectedNodes(new Set(result.nodes.map((_: any, i: number) => i)));
+      for await (const event of stream) {
+        if (event.type === 'status') {
+          setResearchStatus(event.message);
+        } else if (event.type === 'result') {
+          setResearchResult(event.data as any);
+          setSelectedNodes(new Set(event.data.nodes.map((_: any, i: number) => i)));
+          setResearching(false);
+        } else if (event.type === 'error') {
+          throw new Error(event.message);
+        }
+        // heartbeat events are silently ignored
+      }
     } catch (err: any) {
       setResearchError(err.message ?? 'Research failed');
+      setResearching(false);
     } finally {
       setResearching(false);
     }
@@ -396,16 +408,19 @@ const BlueprintSetupPage: React.FC = () => {
 
               {/* Researching spinner */}
               {researching && (
-                <div className="flex flex-col items-center gap-4 py-10">
-                  <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
-                      <RefreshCw size={24} className="text-blue-500 animate-spin" />
-                    </div>
+                <div className="flex flex-col items-center gap-5 py-10">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
+                    <RefreshCw size={24} className="text-blue-500 animate-spin" />
                   </div>
-                  <div className="text-center">
-                    <p className="font-bold text-slate-800 dark:text-slate-100">Researching {form.name}…</p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 animate-pulse">
-                      Searching public filings and annual reports
+                  <div className="text-center max-w-sm">
+                    <p className="font-bold text-slate-800 dark:text-slate-100 text-base">
+                      Researching {form.name}…
+                    </p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+                      Please wait a few seconds.
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                      We're scanning SEC filings, annual reports, and public data to build your blueprint.
                     </p>
                   </div>
                 </div>
