@@ -3,7 +3,7 @@ import type { RuntimeMessage, InternalCompletionResult, ToolDefinition, ToolCall
 import { parseSSE } from './sse';
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
-const SHARED_HEADERS = {
+const DIRECT_HEADERS = {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
     'anthropic-dangerous-direct-browser-access': 'true',
@@ -89,6 +89,7 @@ function extractSystem(messages: RuntimeMessage[]): string {
 
 export class AnthropicProvider implements ILLMProvider {
     readonly name = 'anthropic';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -102,14 +103,14 @@ export class AnthropicProvider implements ILLMProvider {
         const errors: string[] = [];
 
         for (const model of this.modelsToTry()) {
-            const body: any = { model, max_tokens: 2048, system, messages: chatMsgs };
+            const body: any = { model, max_tokens: 8192, system, messages: chatMsgs };
             if (tools.length > 0) {
                 body.tools = toWireTools(tools);
                 body.tool_choice = { type: 'auto' };
             }
             const res = await fetch(ENDPOINT, {
                 method: 'POST',
-                headers: { ...SHARED_HEADERS, 'x-api-key': this.apiKey },
+                headers: { ...DIRECT_HEADERS, 'x-api-key': this.apiKey },
                 body: JSON.stringify(body),
             });
             if (!res.ok) {
@@ -136,25 +137,33 @@ export class AnthropicProvider implements ILLMProvider {
     }
 
     async *stream(messages: RuntimeMessage[]): AsyncGenerator<string> {
+        // Route through the server proxy so the backend continues processing even
+        // if the browser navigates away. The server caches chunks by requestId.
         const system = extractSystem(messages);
         const chatMsgs = toWireMessages(messages);
         const errors: string[] = [];
+        let firstAttempt = true;
 
         for (const model of this.modelsToTry()) {
-            const res = await fetch(ENDPOINT, {
+            // Only attach requestId to the first attempt; if it fails the cache
+            // entry is already marked error and subsequent attempts run uncached.
+            const requestId = firstAttempt ? this.requestId : undefined;
+            firstAttempt = false;
+
+            const res = await fetch('/copilot-api/chat/byok/stream', {
                 method: 'POST',
-                headers: { ...SHARED_HEADERS, 'x-api-key': this.apiKey },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model,
-                    max_tokens: 1024,
-                    system,
-                    messages: chatMsgs,
-                    stream: true,
+                    providerType: 'anthropic',
+                    endpoint: ENDPOINT,
+                    apiKey: this.apiKey,
+                    body: { model, max_tokens: 8192, system, messages: chatMsgs },
+                    ...(requestId ? { requestId } : {}),
                 }),
             });
             if (res.ok) {
                 if (model !== this.model) localStorage.setItem('tavro_llm_model_anthropic', model);
-                yield* parseSSE(res.body!.getReader(), p => p?.delta?.text ?? '');
+                yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
                 return;
             }
             const err = await res.json().catch(() => ({}));
