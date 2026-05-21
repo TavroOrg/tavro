@@ -310,6 +310,15 @@ const AgentViewPage: React.FC = () => {
         framework:   (agent as any).framework,
     } : null);
 
+    useEffect(() => {
+        if (!jsonOpen) return;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [jsonOpen]);
+
     const handleCopyJson = () => {
         if (!agent) return;
         navigator.clipboard.writeText(JSON.stringify(agent, null, 2));
@@ -465,12 +474,18 @@ const AgentViewPage: React.FC = () => {
             <AgentView agent={agent} onBusinessImpactChange={handleBusinessImpactChange} />
 
             {/* JSON Inspector Modal */}
-            {jsonOpen && (
+            {jsonOpen && createPortal(
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                    className="fixed z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm border border-slate-200 shadow-sm"
+                    style={{
+                        top: '24px',
+                        bottom: '56px',
+                        left: 'calc(var(--tavro-left-rail-width, 280px) + 24px)',
+                        right: 'calc(var(--tavro-right-rail-width, 72px) + 24px)',
+                    }}
                     onClick={(e) => { if (e.target === e.currentTarget) setJsonOpen(false); }}
                 >
-                    <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-700">
+                    <div className="relative bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl h-full max-h-[760px] flex flex-col overflow-hidden border border-slate-700">
                         {/* Modal header */}
                         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
                             <div className="flex items-center gap-2">
@@ -509,7 +524,8 @@ const AgentViewPage: React.FC = () => {
                             <span>{(new TextEncoder().encode(prettyJson).length / 1024).toFixed(1)} KB</span>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* Delete confirmation modal */}
