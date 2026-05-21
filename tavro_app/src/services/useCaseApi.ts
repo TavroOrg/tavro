@@ -53,6 +53,16 @@ export interface UseCaseListResponse {
     data: any[];
 }
 
+export interface UseCaseAttachmentRecord {
+    id: string;
+    use_case_id: string;
+    filename: string;
+    mime_type: string | null;
+    file_size_bytes: number;
+    created_at: string;
+    updated_at: string;
+}
+
 class UseCaseApiService {
     async listUseCases(opts?: { title?: string; startRecord?: number; recordRange?: string }): Promise<UseCaseListResponse> {
         const params = new URLSearchParams();
@@ -110,6 +120,42 @@ class UseCaseApiService {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}/processes/${encodeURIComponent(processId)}`, {
             method: 'DELETE',
         });
+    }
+
+    async listUseCaseAttachments(useCaseId: string): Promise<UseCaseAttachmentRecord[]> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/attachments`);
+    }
+
+    async uploadUseCaseAttachment(
+        useCaseId: string,
+        payload: { filename: string; mime_type: string; content_base64: string },
+    ): Promise<UseCaseAttachmentRecord> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/attachments`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {
+        await req(`/use-cases/${encodeURIComponent(useCaseId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async downloadUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<Blob> {
+        const token = await getValidToken();
+        const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
+        const res = await fetch(`${V1}/use-cases/${encodeURIComponent(useCaseId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+            headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+            },
+        });
+        if (!res.ok) {
+            const body = await res.text();
+            throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+        }
+        return res.blob();
     }
 }
 

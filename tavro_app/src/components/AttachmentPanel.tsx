@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { Paperclip, Trash2, Download, Upload } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
 
 export interface Attachment {
     id: string;
@@ -12,8 +13,14 @@ export interface Attachment {
     url?: string;
 }
 
+type AttachmentEntityType = 'agent' | 'use_case' | 'application' | 'process';
+
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_SIZE_LABEL = '10 MB';
+
 interface AttachmentPanelProps {
-    agentId?: string;
+    entityType?: AttachmentEntityType;
+    entityId?: string;
     attachments?: Attachment[];
     onAttachmentAdd?: (file: File) => Promise<void>;
     onAttachmentDelete?: (id: string) => Promise<void>;
@@ -25,6 +32,26 @@ const formatFileSize = (bytes: number): string => {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+};
+
+const getAttachmentErrorMessage = (error: unknown, fileName?: string): string => {
+    const fallbackMessage = 'Failed to upload attachment.';
+
+    if (!(error instanceof Error)) {
+        return fallbackMessage;
+    }
+
+    if (
+        error.message.includes('API 413') ||
+        error.message.includes('Attachment exceeds 10 MB limit') ||
+        error.message.includes('413 Request Entity Too Large')
+    ) {
+        return fileName
+            ? `"${fileName}" is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`
+            : `The file is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`;
+    }
+
+    return error.message || fallbackMessage;
 };
 
 const AttachmentRow: React.FC<{
@@ -83,13 +110,24 @@ const AttachmentRow: React.FC<{
 
 /** Inline Attachment panel — renders as h-full flex column. */
 const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
-    agentId,
+    entityType,
+    entityId,
     attachments,
     onAttachmentAdd,
     onAttachmentDelete,
 }) => {
     const params = useParams<{ id: string }>();
-    const resolvedAgentId = agentId || params.id;
+    const location = useLocation();
+    const resolvedEntityType = entityType ?? (
+        location.pathname.startsWith('/use-case/')
+            ? 'use_case'
+            : location.pathname.startsWith('/applications/')
+                ? 'application'
+                : location.pathname.startsWith('/processes/')
+                    ? 'process'
+                    : 'agent'
+    );
+    const resolvedEntityId = entityId || params.id;
     const [isUploading, setIsUploading] = useState(false);
     const [localAttachments, setLocalAttachments] = useState<Attachment[]>(attachments ?? []);
     const [loading, setLoading] = useState(false);
@@ -97,7 +135,7 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const loadAttachments = async () => {
-        if (!resolvedAgentId) {
+        if (!resolvedEntityId) {
             setLocalAttachments([]);
             return;
         }
@@ -105,7 +143,13 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
         setLoading(true);
         setError(null);
         try {
-            const rows = await businessRelationsApi.listAgentAttachments(resolvedAgentId);
+            const rows = resolvedEntityType === 'use_case'
+                ? await useCaseApi.listUseCaseAttachments(resolvedEntityId)
+                : resolvedEntityType === 'application'
+                    ? await businessRelationsApi.listApplicationAttachments(resolvedEntityId)
+                    : resolvedEntityType === 'process'
+                        ? await businessRelationsApi.listProcessAttachments(resolvedEntityId)
+                        : await businessRelationsApi.listAgentAttachments(resolvedEntityId);
             setLocalAttachments(rows.map(row => ({
                 id: row.id,
                 name: row.filename,
@@ -129,16 +173,25 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
     useEffect(() => {
         if (onAttachmentAdd || onAttachmentDelete) return;
         loadAttachments();
-    }, [resolvedAgentId, onAttachmentAdd, onAttachmentDelete]);
+    }, [resolvedEntityId, resolvedEntityType, onAttachmentAdd, onAttachmentDelete]);
 
     const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.currentTarget.files;
         if (!files || files.length === 0) return;
-        if (!resolvedAgentId && !onAttachmentAdd) return;
+        if (!resolvedEntityId && !onAttachmentAdd) return;
 
         const file = files[0];
         setIsUploading(true);
         setError(null);
+
+        if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+            setError(`"${file.name}" is too large. Please choose a file smaller than ${MAX_ATTACHMENT_SIZE_LABEL}.`);
+            setIsUploading(false);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            return;
+        }
 
         try {
             if (onAttachmentAdd) {
@@ -151,7 +204,7 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     uploadedAt: new Date(),
                 };
                 setLocalAttachments(prev => [newAttachment, ...prev]);
-            } else if (resolvedAgentId) {
+            } else if (resolvedEntityId) {
                 const base64 = await new Promise<string>((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = ev => {
@@ -166,16 +219,36 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     reader.readAsDataURL(file);
                 });
 
-                await businessRelationsApi.uploadAgentAttachment(resolvedAgentId, {
-                    filename: file.name,
-                    mime_type: file.type || 'application/octet-stream',
-                    content_base64: base64,
-                });
+                if (resolvedEntityType === 'use_case') {
+                    await useCaseApi.uploadUseCaseAttachment(resolvedEntityId, {
+                        filename: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        content_base64: base64,
+                    });
+                } else if (resolvedEntityType === 'application') {
+                    await businessRelationsApi.uploadApplicationAttachment(resolvedEntityId, {
+                        filename: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        content_base64: base64,
+                    });
+                } else if (resolvedEntityType === 'process') {
+                    await businessRelationsApi.uploadProcessAttachment(resolvedEntityId, {
+                        filename: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        content_base64: base64,
+                    });
+                } else {
+                    await businessRelationsApi.uploadAgentAttachment(resolvedEntityId, {
+                        filename: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        content_base64: base64,
+                    });
+                }
                 await loadAttachments();
             }
         } catch (error) {
             console.error('Failed to upload attachment:', error);
-            setError(error instanceof Error ? error.message : 'Failed to upload attachment.');
+            setError(getAttachmentErrorMessage(error, file.name));
         } finally {
             setIsUploading(false);
             // Reset input
@@ -191,8 +264,16 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
             if (onAttachmentDelete) {
                 await onAttachmentDelete(id);
                 setLocalAttachments(prev => prev.filter(a => a.id !== id));
-            } else if (resolvedAgentId) {
-                await businessRelationsApi.deleteAgentAttachment(resolvedAgentId, id);
+            } else if (resolvedEntityId) {
+                if (resolvedEntityType === 'use_case') {
+                    await useCaseApi.deleteUseCaseAttachment(resolvedEntityId, id);
+                } else if (resolvedEntityType === 'application') {
+                    await businessRelationsApi.deleteApplicationAttachment(resolvedEntityId, id);
+                } else if (resolvedEntityType === 'process') {
+                    await businessRelationsApi.deleteProcessAttachment(resolvedEntityId, id);
+                } else {
+                    await businessRelationsApi.deleteAgentAttachment(resolvedEntityId, id);
+                }
                 setLocalAttachments(prev => prev.filter(a => a.id !== id));
             }
         } catch (error) {
@@ -211,9 +292,15 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                 link.click();
                 return;
             }
-            if (!resolvedAgentId) return;
+            if (!resolvedEntityId) return;
 
-            const blob = await businessRelationsApi.downloadAgentAttachment(resolvedAgentId, attachment.id);
+            const blob = resolvedEntityType === 'use_case'
+                ? await useCaseApi.downloadUseCaseAttachment(resolvedEntityId, attachment.id)
+                : resolvedEntityType === 'application'
+                    ? await businessRelationsApi.downloadApplicationAttachment(resolvedEntityId, attachment.id)
+                    : resolvedEntityType === 'process'
+                        ? await businessRelationsApi.downloadProcessAttachment(resolvedEntityId, attachment.id)
+                : await businessRelationsApi.downloadAgentAttachment(resolvedEntityId, attachment.id);
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
@@ -250,7 +337,7 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                 />
                 <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading || (!resolvedAgentId && !onAttachmentAdd)}
+                    disabled={isUploading || (!resolvedEntityId && !onAttachmentAdd)}
                     className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium text-slate-600 hover:text-blue-600"
                 >
                     {isUploading ? (
@@ -281,7 +368,15 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-400 p-4">
                         <Paperclip size={32} className="opacity-30" />
                         <p className="text-sm text-center">
-                            {resolvedAgentId ? 'No attachments yet' : 'Open an agent to add attachments'}
+                            {resolvedEntityId
+                                ? 'No attachments yet'
+                                : resolvedEntityType === 'use_case'
+                                    ? 'Open an AI use case to add attachments'
+                                    : resolvedEntityType === 'application'
+                                        ? 'Open an application to add attachments'
+                                        : resolvedEntityType === 'process'
+                                            ? 'Open a process to add attachments'
+                                    : 'Open an agent to add attachments'}
                         </p>
                     </div>
                 ) : (
@@ -307,7 +402,7 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                         )}
                     </span>
                 </div>
-                {resolvedAgentId && (
+                {resolvedEntityId && (
                     <button
                         onClick={loadAttachments}
                         className="text-[10px] text-slate-400 hover:text-blue-400 transition-colors"
