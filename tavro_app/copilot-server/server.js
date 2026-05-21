@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { EventEmitter } from 'events';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
 const PORT = Number(process.env.PORT || 4000);
@@ -18,84 +17,6 @@ app.use(express.json({ limit: '2mb' }));
 let client;
 let clientStarted = false;
 const sessions = new Map();
-
-// ── In-flight response cache ───────────────────────────────────────────────────
-// Keyed by requestId supplied by the browser. Each entry holds an EventEmitter
-// so that a reconnecting browser can replay already-streamed chunks and then
-// tail the live stream — all without restarting the backend request.
-const pendingResponses = new Map();
-const RESPONSE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-setInterval(() => {
-    const cutoff = Date.now() - RESPONSE_TTL_MS;
-    for (const [id, entry] of pendingResponses) {
-        if (entry.createdAt < cutoff) pendingResponses.delete(id);
-    }
-}, 2 * 60 * 1000).unref();
-
-/**
- * Create a new cache entry for a streaming response.
- * The emitter fires: 'chunk' (string), 'done' (), 'error' (string).
- */
-function createResponseEntry() {
-    const emitter = new EventEmitter();
-    emitter.setMaxListeners(50);
-    return { emitter, chunks: [], fullText: '', status: 'streaming', error: null, createdAt: Date.now() };
-}
-
-/**
- * Build disconnect-safe sendEvent / sendDone / sendError helpers.
- *
- * If requestId is provided a cache entry is registered so a reconnecting
- * client can replay all chunks even after the original browser connection drops.
- * The backend fetch continues regardless of whether the browser is still connected.
- */
-function makeCachedSSE(res, req, requestId) {
-    let entry = null;
-    if (requestId) {
-        entry = createResponseEntry();
-        pendingResponses.set(requestId, entry);
-    }
-
-    let clientConnected = true;
-    req.on('close', () => { clientConnected = false; });
-
-    const safeWrite = (payload) => {
-        if (clientConnected && !res.destroyed) {
-            try { res.write(payload); } catch { clientConnected = false; }
-        }
-    };
-
-    const sendEvent = (data) => {
-        if (entry && data.delta) {
-            entry.chunks.push(data.delta);
-            entry.fullText += data.delta;
-            entry.emitter.emit('chunk', data.delta);
-        }
-        safeWrite(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
-    const sendDone = () => {
-        if (entry) {
-            entry.status = 'complete';
-            entry.emitter.emit('done');
-        }
-        safeWrite('data: [DONE]\n\n');
-        if (clientConnected && !res.destroyed) { try { res.end(); } catch {} }
-    };
-
-    const sendError = (message) => {
-        if (entry) {
-            entry.status = 'error';
-            entry.error = message;
-            entry.emitter.emit('error', message);
-        }
-        safeWrite(`data: ${JSON.stringify({ error: message })}\n\n`);
-        if (clientConnected && !res.destroyed) { try { res.end(); } catch {} }
-    };
-
-    return { sendEvent, sendDone, sendError };
-}
 
 function isAuthError(message) {
     return /401|unauthori[sz]ed|Failed to fetch Copilot user info|not created with authentication info|token/i.test(message);
@@ -376,7 +297,7 @@ app.post('/chat/complete', async (req, res) => {
 // ── POST /chat/stream — SSE streaming ─────────────────────────────────────────
 
 app.post('/chat/stream', async (req, res) => {
-    const { model, apiKey, messages, provider, sessionId, mcpToken, mcpTenantId, requestId } = req.body ?? {};
+    const { model, apiKey, messages, provider, sessionId, mcpToken, mcpTenantId } = req.body ?? {};
 
     if (!model || !Array.isArray(messages)) {
         res.status(400).json({ error: 'Missing model or messages' });
@@ -397,11 +318,12 @@ app.post('/chat/stream', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    const { sendEvent, sendDone, sendError } = makeCachedSSE(res, req, requestId || null);
+    const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    const sendDone  = () => { res.write('data: [DONE]\n\n'); res.end(); };
 
     try {
         await ensureClientStarted();
-        console.log(`[copilot-proxy] /chat/stream model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}${mcpConfig ? ' mcp=true' : ''}${requestId ? ` rid=${requestId}` : ''}`);
+        console.log(`[copilot-proxy] /chat/stream model=${model} session=${sessionId || 'default'} messages=${messages.length}${providerCfg ? ` byok=${providerCfg.type}` : ''}${mcpConfig ? ' mcp=true' : ''}`);
 
         const session = await getOrCreateSession({ sessionId, model, authToken, provider: providerCfg, messages, mcpConfig });
 
@@ -431,10 +353,12 @@ app.post('/chat/stream', async (req, res) => {
         const message = err?.message ?? String(err);
         console.error('[copilot-proxy] /chat/stream failed', { message });
         if (providerCfg?.type === 'anthropic' && isAdaptiveThinkingError(message)) {
-            sendError(message);
+            sendEvent({ error: message });
+            res.end();
             return;
         }
-        sendError(message);
+        sendEvent({ error: message });
+        res.end();
     }
 });
 
@@ -473,7 +397,7 @@ async function completeAnthropicDirect({ model, apiKey, messages }) {
         headers: buildUpstreamHeaders('anthropic', apiKey),
         body: JSON.stringify({
             model,
-            max_tokens: 8192,
+            max_tokens: 1024,
             messages: [{ role: 'user', content: prompt }],
         }),
     });
@@ -495,7 +419,7 @@ async function streamAnthropicDirect({ model, apiKey, messages, sendEvent, sendD
         headers: buildUpstreamHeaders('anthropic', apiKey),
         body: JSON.stringify({
             model,
-            max_tokens: 8192,
+            max_tokens: 1024,
             messages: [{ role: 'user', content: prompt }],
             stream: true,
         }),
@@ -584,10 +508,9 @@ app.post('/chat/byok/complete', async (req, res) => {
 // ── POST /chat/byok/stream — server-side BYOK SSE streaming ──────────────────
 //
 // Same as /chat/byok/complete but streams SSE deltas back to the browser.
-// Accepts an optional requestId for response caching and client reconnection.
 
 app.post('/chat/byok/stream', async (req, res) => {
-    const { providerType, endpoint, apiKey, bearerToken, body, requestId } = req.body ?? {};
+    const { providerType, endpoint, apiKey, bearerToken, body } = req.body ?? {};
 
     if (!endpoint || !body) { res.status(400).json({ error: 'Missing endpoint or body' }); return; }
     if (!endpoint.startsWith('https://')) { res.status(400).json({ error: 'Only HTTPS endpoints allowed' }); return; }
@@ -597,9 +520,10 @@ app.post('/chat/byok/stream', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    const { sendEvent, sendDone, sendError } = makeCachedSSE(res, req, requestId || null);
+    const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    const sendDone  = () => { res.write('data: [DONE]\n\n'); res.end(); };
 
-    console.log(`[copilot-byok] /chat/byok/stream type=${providerType} endpoint=${endpoint}${requestId ? ` rid=${requestId}` : ''}`);
+    console.log(`[copilot-byok] /chat/byok/stream type=${providerType} endpoint=${endpoint}`);
 
     try {
         const upstream = await fetch(endpoint, {
@@ -612,7 +536,8 @@ app.post('/chat/byok/stream', async (req, res) => {
             const err = await upstream.json().catch(() => ({}));
             const msg = err?.error?.message ?? err?.error ?? `Upstream ${upstream.status}`;
             console.error(`[copilot-byok] stream upstream error ${upstream.status}`, { msg });
-            sendError(msg);
+            sendEvent({ error: msg });
+            res.end();
             return;
         }
 
@@ -647,124 +572,9 @@ app.post('/chat/byok/stream', async (req, res) => {
         sendDone();
     } catch (err) {
         console.error('[copilot-byok] /chat/byok/stream failed', { error: err.message });
-        sendError(err.message ?? String(err));
+        sendEvent({ error: err.message });
+        res.end();
     }
-});
-
-// ── POST /chat/proxy/gemini — Gemini streaming proxy with response caching ────
-//
-// Proxies SSE streaming requests to the Gemini API. Uses a different endpoint
-// structure and delta extraction path than OpenAI/Anthropic, so it needs its
-// own route. Supports the same requestId-based caching as the other endpoints.
-
-app.post('/chat/proxy/gemini', async (req, res) => {
-    const { model, apiKey, body: geminiBody, requestId } = req.body ?? {};
-
-    if (!model || !apiKey || !geminiBody) {
-        res.status(400).json({ error: 'Missing model, apiKey, or body' });
-        return;
-    }
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?key=${apiKey}&alt=sse`;
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const { sendEvent, sendDone, sendError } = makeCachedSSE(res, req, requestId || null);
-
-    console.log(`[copilot-proxy] /chat/proxy/gemini model=${model}${requestId ? ` rid=${requestId}` : ''}`);
-
-    try {
-        const upstream = await fetch(url, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(geminiBody),
-        });
-
-        if (!upstream.ok) {
-            const err = await upstream.json().catch(() => ({}));
-            const msg = err?.error?.message ?? `Gemini error ${upstream.status}`;
-            console.error('[copilot-proxy] /chat/proxy/gemini upstream error', { msg });
-            sendError(msg);
-            return;
-        }
-
-        const reader  = upstream.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() ?? '';
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith('data:')) continue;
-                const raw = trimmed.slice(5).trim();
-                if (raw === '[DONE]') { sendDone(); return; }
-                try {
-                    const parsed = JSON.parse(raw);
-                    const delta = parsed?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-                    if (delta) sendEvent({ delta });
-                } catch { /* skip malformed */ }
-            }
-        }
-        sendDone();
-    } catch (err) {
-        console.error('[copilot-proxy] /chat/proxy/gemini failed', { error: err.message });
-        sendError(err.message ?? String(err));
-    }
-});
-
-// ── GET /chat/resume/:requestId — reconnect to an in-flight or cached response ─
-//
-// When the browser refreshes or switches tabs mid-stream, the original SSE
-// connection is lost. This endpoint lets the browser reconnect using the same
-// requestId. It replays all chunks already buffered, then tails the live stream
-// if the request is still in progress.
-
-app.get('/chat/resume/:requestId', (req, res) => {
-    const { requestId } = req.params;
-    const entry = pendingResponses.get(requestId);
-
-    if (!entry) {
-        return res.status(404).json({ error: 'not_found' });
-    }
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const write  = (data) => { try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch {} };
-    const finish = () => { try { res.write('data: [DONE]\n\n'); res.end(); } catch {} };
-
-    // Replay all chunks already received before this reconnect
-    for (const chunk of entry.chunks) {
-        write({ delta: chunk });
-    }
-
-    if (entry.status === 'complete') { finish(); return; }
-    if (entry.status === 'error')    { write({ error: entry.error || 'Request failed' }); res.end(); return; }
-
-    // Request is still streaming — tail the live emitter
-    const onChunk = (chunk) => write({ delta: chunk });
-    const onDone  = () => finish();
-    const onError = (msg) => { write({ error: msg }); res.end(); };
-
-    entry.emitter.on('chunk', onChunk);
-    entry.emitter.on('done',  onDone);
-    entry.emitter.on('error', onError);
-
-    req.on('close', () => {
-        entry.emitter.off('chunk', onChunk);
-        entry.emitter.off('done',  onDone);
-        entry.emitter.off('error', onError);
-    });
 });
 
 // ── GET /health ────────────────────────────────────────────────────────────────

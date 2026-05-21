@@ -382,70 +382,6 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
     );
 };
 
-// ── Pending-request helpers ────────────────────────────────────────────────────
-
-const LS_PENDING_REQUEST = 'tavro_pending_ai_request';
-const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-interface PendingRequest {
-    requestId: string;
-    sessionId: string;
-    userMessage: string;
-    timestamp: number;
-}
-
-function generateRequestId(): string {
-    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function savePendingRequest(info: PendingRequest): void {
-    try { localStorage.setItem(LS_PENDING_REQUEST, JSON.stringify(info)); } catch { /* quota */ }
-}
-
-function clearPendingRequest(): void {
-    try { localStorage.removeItem(LS_PENDING_REQUEST); } catch {}
-}
-
-function loadPendingRequest(): PendingRequest | null {
-    try {
-        const raw = localStorage.getItem(LS_PENDING_REQUEST);
-        if (!raw) return null;
-        const p = JSON.parse(raw) as PendingRequest;
-        if (!p.requestId || !p.userMessage || !p.sessionId) { clearPendingRequest(); return null; }
-        if (Date.now() - p.timestamp > PENDING_TTL_MS) { clearPendingRequest(); return null; }
-        return p;
-    } catch { clearPendingRequest(); return null; }
-}
-
-/** Consume a /chat/resume/:requestId SSE response as an async token generator. */
-async function* resumeFromServer(requestId: string): AsyncGenerator<string> {
-    const res = await fetch(`/copilot-api/chat/resume/${requestId}`);
-    if (!res.ok) throw new Error('not_found');
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data:')) continue;
-            const data = trimmed.slice(5).trim();
-            if (data === '[DONE]') return;
-            try {
-                const parsed = JSON.parse(data);
-                if (parsed?.error) throw new Error(typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error));
-                if (parsed?.delta) yield parsed.delta as string;
-            } catch (e: any) {
-                if (e?.message && e.message !== 'not_found') throw e;
-            }
-        }
-    }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function toStoredMessages(msgs: Message[]): StoredMessage[] {
@@ -552,105 +488,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         updateSessionMessages(toStoredMessages(msgs));
     }, [updateSessionMessages]);
 
-    // ── Resume interrupted AI response after page refresh or tab switch ────────
-    // Runs once per session change. If localStorage has a pending request for the
-    // active session whose last persisted message is still a user turn (i.e., no
-    // assistant response was saved before the disconnect), we try to:
-    //   1. Reconnect to the server cache via GET /chat/resume/:requestId, OR
-    //   2. Re-run the original user message through mcpClient.chat() as fallback.
-    useEffect(() => {
-        const pending = loadPendingRequest();
-        if (!pending || pending.sessionId !== activeSessionId) return;
-
-        // Check whether the response was already saved before the disconnect.
-        // activeSession.messages reflects the last-persisted state.
-        const stored = activeSession?.messages ?? [];
-        const lastStored = stored[stored.length - 1];
-        if (lastStored?.role !== 'user') {
-            // Response already exists — just clean up the pending flag.
-            clearPendingRequest();
-            return;
-        }
-
-        const { requestId, userMessage } = pending;
-
-        const doResume = async () => {
-            setLoading(true);
-            const assistantId = `assistant-resume-${Date.now()}`;
-
-            const streamTokens = async (gen: AsyncGenerator<string>) => {
-                let accumulated = '';
-                let firstToken = true;
-                for await (const token of gen) {
-                    accumulated += token;
-                    if (firstToken) {
-                        firstToken = false;
-                        setLoading(false);
-                        setMessages(prev => {
-                            const next = [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: true }];
-                            latestMessages.current = next;
-                            return next;
-                        });
-                    } else {
-                        setMessages(prev => {
-                            const next = prev.map(m => m.id === assistantId ? { ...m, text: accumulated } : m);
-                            latestMessages.current = next;
-                            return next;
-                        });
-                    }
-                }
-                return accumulated;
-            };
-
-            try {
-                let accumulated = '';
-
-                // Try server-side cache first (works for all proxy-routed providers).
-                try {
-                    accumulated = await streamTokens(resumeFromServer(requestId));
-                } catch {
-                    // Cache miss (server restarted, TTL expired, or the original call
-                    // used a direct browser fetch that was cancelled on refresh).
-                    // Re-run the request using the persisted conversation history.
-                    const currentHistory = buildHistory(latestMessages.current);
-                    accumulated = await streamTokens(
-                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData })
-                    );
-                }
-
-                setMessages(prev => {
-                    let next: Message[];
-                    if (accumulated.trim()) {
-                        const hasPlaceholder = prev.some(m => m.id === assistantId);
-                        next = hasPlaceholder
-                            ? prev.map(m => m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m)
-                            : [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: false }];
-                    } else {
-                        next = [...prev.filter(m => m.id !== assistantId),
-                            { id: `err-${Date.now()}`, role: 'assistant' as const, text: 'Reconnection returned no response. Please try again.', timestamp: new Date() }];
-                    }
-                    latestMessages.current = next;
-                    persist(next);
-                    return next;
-                });
-            } catch (err: any) {
-                setMessages(prev => {
-                    const next = [...prev.filter(m => m.id !== assistantId),
-                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: `Reconnection failed: ${err?.message ?? 'unknown error'}. Please try again.`, timestamp: new Date() }];
-                    latestMessages.current = next;
-                    persist(next);
-                    return next;
-                });
-            } finally {
-                setLoading(false);
-                clearPendingRequest();
-            }
-        };
-
-        doResume();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSessionId]);
-
     // ── Handlers ───────────────────────────────────────────────────────────────
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
@@ -728,12 +565,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         setInput('');
         setLoading(true);
 
-        // Persist after adding user message so the session has the user turn
-        // even if the page refreshes before the AI response arrives.
+        // Persist after adding user message
         persist(withUser);
-
-        const requestId = generateRequestId();
-        savePendingRequest({ requestId, sessionId: activeSessionId ?? '', userMessage: text, timestamp: Date.now() });
 
         const assistantId = `assistant-${Date.now()}`;
 
@@ -745,7 +578,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             const effectiveSystemPrompt = exportFormat
                 ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
                 : systemPrompt;
-            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt }, requestId);
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt });
             let firstToken = true;
             let accumulated = '';
 
@@ -825,7 +658,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             persist(withErr);
         } finally {
             setLoading(false);
-            clearPendingRequest();
         }
     };
 
