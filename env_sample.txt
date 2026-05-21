@@ -1,6 +1,7 @@
 # ── ~/Documents/tavro/.env ───────────────────────────────────────────────────
 # Secrets for docker-compose. Never commit this file to git.
 # Add .env to your .gitignore if not already there.
+# adding testing comments to a new branch
 
 # ── Digital Twin PostgreSQL ──────────────────────────────────────────────────
 POSTGRES_USER=tavro_user

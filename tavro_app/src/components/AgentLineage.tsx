@@ -1,8 +1,41 @@
 import React from 'react';
-import { AgentData, AgentDataSource, AgentTool } from '../types/agent';
+import { AgentData } from '../types/agent';
 import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle } from 'lucide-react';
 
 interface AgentLineageProps { agent: AgentData; }
+
+/** Coerce any value to an array. Single objects become [obj]; null/undefined become []. */
+function toArray<T>(v: T | T[] | null | undefined): T[] {
+    if (v == null) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'object') return [v as unknown as T];
+    return [];
+}
+
+/** Normalise a raw tool entry against all known field-name variants. */
+function normTool(raw: any): { name: string; description: string; delegation_possible?: string | null; allowed_delegates?: string | null } {
+    if (!raw || typeof raw !== 'object') return { name: 'Unknown Tool', description: '' };
+    return {
+        name: String(raw.name ?? raw.tool_name ?? raw.label ?? raw.u_name ?? 'Unknown Tool'),
+        description: String(raw.description ?? raw.tool_description ?? raw.summary ?? raw.short_description ?? ''),
+        delegation_possible: raw.delegation_possible != null ? String(raw.delegation_possible) : null,
+        allowed_delegates: raw.allowed_delegates ?? raw.delegates ?? null,
+    };
+}
+
+/** Normalise a raw data-source entry against all known field-name variants. */
+function normDs(raw: any): { source_object_name: string; target_object_name: string; target_object_type: string; access_level?: string | null; uses_pii?: string | null; uses_phi?: string | null; uses_pci?: string | null } {
+    if (!raw || typeof raw !== 'object') return { source_object_name: '', target_object_name: '', target_object_type: 'Other' };
+    return {
+        source_object_name: String(raw.source_object_name ?? raw.source_name ?? raw.from_name ?? raw.source ?? ''),
+        target_object_name: String(raw.target_object_name ?? raw.target_name ?? raw.to_name ?? raw.target ?? ''),
+        target_object_type: String(raw.target_object_type ?? raw.target_type ?? raw.object_type ?? raw.type ?? 'Other'),
+        access_level: raw.access_level ?? raw.access ?? null,
+        uses_pii: raw.uses_pii != null ? String(raw.uses_pii) : null,
+        uses_phi: raw.uses_phi != null ? String(raw.uses_phi) : null,
+        uses_pci: raw.uses_pci != null ? String(raw.uses_pci) : null,
+    };
+}
 
 /** Pill for PII / PHI / PCI flags */
 const DataFlag: React.FC<{ label: string; active: boolean }> = ({ label, active }) =>
@@ -16,46 +49,28 @@ const DataFlag: React.FC<{ label: string; active: boolean }> = ({ label, active 
         </span>
     );
 
-function isYes(value: unknown) {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value === 1;
-    return String(value ?? '').toLowerCase() === 'yes';
-}
-
-function displayText(value: unknown, fallback = 'Unknown') {
-    if (value === null || value === undefined || value === '') return fallback;
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
-    return fallback;
-}
-
-function toArray<T>(value: unknown): T[] {
-    if (Array.isArray(value)) return value.filter(Boolean) as T[];
-    if (!value || typeof value !== 'object') return [];
-
-    const objectValue = value as Record<string, unknown>;
-    const nested = objectValue.data ?? objectValue.items ?? objectValue.results;
-    if (Array.isArray(nested)) return nested.filter(Boolean) as T[];
-
-    return [value as T];
+/** Handle "yes"/"no" strings, booleans, and numbers uniformly. */
+function isYes(v?: string | boolean | number | null) {
+    if (v == null) return false;
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'number') return v > 0;
+    return String(v).toLowerCase().trim() === 'yes';
 }
 
 const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
-    const tools = toArray<AgentTool>((agent as any).tool);
-    const dataSources = toArray<AgentDataSource>((agent as any).data_source);
-    const relationships = dataSources.filter(
-        ds => displayText(ds.target_object_type, '').toLowerCase() !== 'tool'
-    );
+    const tools = toArray(agent.tool).map(normTool);
+    const dataSources = toArray(agent.data_source).map(normDs);
 
     // Group data sources by target object type
-    const grouped: Record<string, AgentDataSource[]> = {};
-    for (const ds of relationships) {
-        const type = displayText(ds.target_object_type, 'Other');
+    const grouped: Record<string, ReturnType<typeof normDs>[]> = {};
+    for (const ds of dataSources) {
+        const type = ds.target_object_type || 'Other';
         if (!grouped[type]) grouped[type] = [];
         grouped[type].push(ds);
     }
     const groupedEntries = Object.entries(grouped);
 
-    const hasPiiConcerns = relationships.some(
+    const hasPiiConcerns = dataSources.some(
         ds => isYes(ds.uses_pii) || isYes(ds.uses_phi) || isYes(ds.uses_pci)
     );
 
@@ -94,7 +109,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                             {tools.map((tool, idx) => (
                                 <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
                                     <div className="flex items-start justify-between gap-2 mb-1">
-                                        <span className="font-bold text-sm text-slate-800 break-words">{displayText(tool.name, '')}</span>
+                                        <span className="font-bold text-sm text-slate-800">{tool.name}</span>
                                         {tool.delegation_possible && (
                                             <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${tool.delegation_possible === 'true'
                                                     ? 'bg-indigo-50 border-indigo-100 text-indigo-700'
@@ -105,10 +120,10 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                                         )}
                                     </div>
                                     {tool.description && (
-                                        <span className="text-xs text-slate-500 leading-relaxed block">{displayText(tool.description, '')}</span>
+                                        <span className="text-xs text-slate-500 leading-relaxed block">{tool.description}</span>
                                     )}
                                     {tool.allowed_delegates && (
-                                        <p className="text-[11px] text-indigo-600 mt-1.5 font-medium">Delegates: {displayText(tool.allowed_delegates, '')}</p>
+                                        <p className="text-[11px] text-indigo-600 mt-1.5 font-medium">Delegates: {tool.allowed_delegates}</p>
                                     )}
                                 </div>
                             ))}
@@ -119,7 +134,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                 {/* ── Data Source Relationships ──────────────────── */}
                 <div className="flex flex-col gap-3">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <Database size={13} /> Relationships ({relationships.length})
+                        <Database size={13} /> Relationships ({dataSources.length})
                     </h3>
                     {groupedEntries.length === 0 ? (
                         <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
@@ -134,26 +149,20 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                                         {sources.map((ds, i) => (
                                             <div key={i} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
                                                 {/* Relationship arrow */}
-                                                <div className="flex flex-wrap items-start gap-x-2 gap-y-1 mb-2 text-xs">
-                                                    <span
-                                                        className="font-semibold text-slate-700 whitespace-normal break-words leading-relaxed"
-                                                        title={displayText(ds.source_object_name, 'Unknown source')}
-                                                    >
-                                                        {displayText(ds.source_object_name, 'Unknown source')}
+                                                <div className="flex items-center gap-2 mb-2 text-xs">
+                                                    <span className="font-semibold text-slate-700 truncate max-w-[130px]" title={ds.source_object_name}>
+                                                        {ds.source_object_name}
                                                     </span>
-                                                    <ArrowRight size={11} className="text-slate-400 shrink-0 mt-0.5" />
-                                                    <span
-                                                        className="font-bold text-indigo-700 whitespace-normal break-words leading-relaxed"
-                                                        title={displayText(ds.target_object_name, 'Unknown target')}
-                                                    >
-                                                        {displayText(ds.target_object_name, 'Unknown target')}
+                                                    <ArrowRight size={11} className="text-slate-400 shrink-0" />
+                                                    <span className="font-bold text-indigo-700 truncate max-w-[130px]" title={ds.target_object_name}>
+                                                        {ds.target_object_name}
                                                     </span>
                                                 </div>
                                                 {/* Access level + data flags */}
                                                 <div className="flex flex-wrap gap-1 items-center">
                                                     {ds.access_level && (
                                                         <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 uppercase">
-                                                            {displayText(ds.access_level, '')}
+                                                            {ds.access_level}
                                                         </span>
                                                     )}
                                                     <DataFlag label="PII" active={isYes(ds.uses_pii)} />
