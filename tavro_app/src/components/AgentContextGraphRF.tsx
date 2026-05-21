@@ -17,6 +17,18 @@ interface ContextGroup {
   leaves: LeafNodeData[];
 }
 
+const hasNonBlankText = (value: unknown): boolean =>
+  typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+
+const normalizedLinkedUseCases = (agent: AgentData): any[] => {
+  if (Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length) {
+    return agent.ai_use_cases;
+  }
+  const fallback = (agent as any).ai_use_case;
+  if (Array.isArray(fallback)) return fallback;
+  return fallback ? [fallback] : [];
+};
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const CAT_RING_R = 220; const LEAF_RING_R = 390;
@@ -48,9 +60,9 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   const id = agent.identification ?? {} as any;
   const cfg = agent.configuration ?? {} as any;
 
-  const linkedUseCases = Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length
-    ? agent.ai_use_cases
-    : (agent.ai_use_case ? [agent.ai_use_case] : []);
+  const linkedUseCases = normalizedLinkedUseCases(agent).filter((u: any) =>
+    hasNonBlankText(u?.identifier ?? u?.use_case_id ?? u?.id ?? u?.name ?? u?.title),
+  );
 
   const toolLeaves: LeafNodeData[] = (agent.tool ?? []).slice(0, 5).map((t, i) => ({
     id: `t-${i}-${t.name ?? 'tool'}`,
@@ -80,7 +92,10 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No data sources', sublabel: 'configured' });
 
   const bizLeaves: LeafNodeData[] = [
-    ...(agent.application ?? []).slice(0, 5).map((a, i) => ({
+    ...(agent.application ?? [])
+      .filter((a) => hasNonBlankText(a?.identifier ?? a?.name))
+      .slice(0, 5)
+      .map((a, i) => ({
       id: `app-${i}-${a.identifier ?? a.name ?? 'unknown'}`,
       label: a.name ?? `Application ${i + 1}`,
       sublabel:'Application',
@@ -88,7 +103,10 @@ function buildGroups(agent: AgentData): ContextGroup[] {
       // badgeText: a.business_criticality ?? undefined,
       // badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
     })),
-    ...(agent.business_process ?? []).slice(0, 3).map((p, i) => ({
+    ...(agent.business_process ?? [])
+      .filter((p) => hasNonBlankText(p?.identifier ?? p?.name))
+      .slice(0, 3)
+      .map((p, i) => ({
       id: `proc-${i}-${p.identifier ?? 'unknown'}`,
       label: p.name ?? `Process ${i + 1}`,
       sublabel:'Process',
@@ -102,7 +120,6 @@ function buildGroups(agent: AgentData): ContextGroup[] {
       };
     }),
   ];
-  if (!bizLeaves.length) bizLeaves.push({ id: 'bz0', label: 'No business context', sublabel: 'recorded' });
 
   const ra = agent.risk_assessment;
   const riskLeaves: LeafNodeData[] = [];

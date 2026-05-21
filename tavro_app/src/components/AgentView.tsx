@@ -5,12 +5,14 @@ import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
 import AgentImpact from './AgentImpact';
 import AgentRelatedTab from './AgentRelatedTab';
+import type { AgentBusinessImpactSnapshot } from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
 
 interface AgentViewProps {
     agent: AgentData;
+    onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
 }
 
 type TabType =
@@ -30,7 +32,7 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'CONTEXT', label: 'Context Graph' },
 ];
 
-const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
+const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange }) => {
     const [activeTab, setActiveTab] = useState<TabType>('IDENTIFICATION');
     const agentId = agent.identification?.agent_id;
 
@@ -72,7 +74,12 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
                 {activeTab === 'IMPACT' && (
                     <div>
                         <AgentImpact agent={agent} hideAssetSections>
-                            <AgentRelatedTab agent={agent} mode="all" embedded />
+                            <AgentRelatedTab
+                                agent={agent}
+                                mode="all"
+                                embedded
+                                onBusinessImpactChange={onBusinessImpactChange}
+                            />
                         </AgentImpact>
                     </div>
                 )}
