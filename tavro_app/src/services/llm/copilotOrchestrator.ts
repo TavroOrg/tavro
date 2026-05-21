@@ -41,10 +41,8 @@ export class CopilotOrchestrator {
         toolDefs: ToolDefinition[],
         cfg: LLMConfig,
         executeTool: ToolExecutorFn,
-        requestId?: string,
     ): AsyncGenerator<string> {
         const provider = createProvider(cfg);
-        if (requestId) provider.requestId = requestId;
 
         // Extend the system prompt with orchestration guidance.
         // The LLM is told its role explicitly: reason and call tools;
