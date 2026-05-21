@@ -89,8 +89,8 @@ services:
       - "8000:8000"
     volumes:
       - ./tavro_api:/app                                       # live reload — tavro_api code
-      - ./services:/opt/services:ro                            # live reload — risk services
-      - ./utils:/opt/utils:ro                                  # live reload — risk utils
+      - ./services:/app/services:ro                            # live reload — risk services
+      - ./utils:/app/utils:ro                                  # live reload — risk utils
       - ${TAVRO_CONFIG_FILE:-./config.yaml}:/config/config.yaml:ro  # risk config
       - ./agent_cards:/data/agent_cards                        # agent card output dir
     healthcheck:
@@ -464,4 +464,3 @@ volumes:
   tavro_pgadmin:
   zitadel-bootstrap:
   tavro_runtime_config:
-
