@@ -288,7 +288,7 @@ async function* streamAnthropic(cfg: LLMConfig, messages: ChatMessage[]): AsyncG
             },
             body: JSON.stringify({
                 model,
-                max_tokens: 8192,
+                max_tokens: 1024,
                 system: systemMsg,
                 messages: chatMsgs,
                 stream: true,
@@ -344,7 +344,7 @@ async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGen
                 providerType: 'azure',
                 endpoint,
                 apiKey: cfg.apiKey,
-                body: { messages, max_tokens: 8192 },
+                body: { messages, max_tokens: 1024 },
             }),
         });
         if (!res.ok) {
@@ -370,7 +370,7 @@ async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGen
                     providerType: 'anthropic',
                     endpoint: `${base}/v1/messages`,
                     apiKey: cfg.apiKey,
-                    body: { model, max_tokens: 8192, system: systemMsg, messages: chatMsgs },
+                    body: { model, max_tokens: 1024, system: systemMsg, messages: chatMsgs },
                 }),
             });
             if (res.ok) {
@@ -453,7 +453,7 @@ async function completeChatAnthropic(cfg: LLMConfig, messages: ChatMessage[], to
     ].filter(Boolean)));
     const errors: string[] = [];
     for (const model of modelsToTry) {
-        const body: any = { model, max_tokens: 8192, system: systemMsg, messages: chatMsgs };
+        const body: any = { model, max_tokens: 2048, system: systemMsg, messages: chatMsgs };
         if (tools.length > 0) {
             body.tools = tools;
             body.tool_choice = { type: 'auto' };
@@ -561,7 +561,7 @@ async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tool
         const base = (byok.baseUrl || '').replace(/\/$/, '');
         const apiVersion = byok.azureApiVersion || '2024-10-21';
         const endpoint = `${base}/openai/deployments/${cfg.model}/chat/completions?api-version=${apiVersion}`;
-        const body: any = { messages, max_tokens: 8192 };
+        const body: any = { messages, max_tokens: 2048 };
         if (tools.length > 0) { body.tools = tools; body.tool_choice = 'auto'; }
         const res = await fetch('/copilot-api/chat/byok/complete', {
             method: 'POST',
@@ -596,7 +596,7 @@ async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tool
         const modelsToTry = Array.from(new Set([cfg.model, 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'].filter(Boolean)));
         const errors: string[] = [];
         for (const model of modelsToTry) {
-            const body: any = { model, max_tokens: 8192, system: systemMsg, messages: chatMsgs };
+            const body: any = { model, max_tokens: 2048, system: systemMsg, messages: chatMsgs };
             if (tools.length > 0) { body.tools = tools; body.tool_choice = { type: 'auto' }; }
             const res = await fetch('/copilot-api/chat/byok/complete', {
                 method: 'POST',

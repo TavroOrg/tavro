@@ -138,7 +138,6 @@ interface ByokPayload {
     apiKey: string;
     bearerToken?: string;
     body: Record<string, any>;
-    requestId?: string;
 }
 
 function toProxyProvider(byok: CopilotBYOKConfig | undefined, apiKey: string, model: string): Record<string, any> | undefined {
@@ -203,7 +202,6 @@ async function byokStream(payload: ByokPayload): Promise<Response> {
  */
 export class CopilotProvider implements ILLMProvider {
     readonly name = 'copilot';
-    requestId?: string;
 
     constructor(
         private model: string,
@@ -321,7 +319,7 @@ export class CopilotProvider implements ILLMProvider {
     private async completeAzure(messages: RuntimeMessage[], tools: ToolDefinition[]): Promise<InternalCompletionResult> {
         const body: any = {
             messages: toWireMessagesOpenAI(messages),
-            max_tokens: 8192,
+            max_tokens: 2048,
         };
         if (tools.length > 0) {
             body.tools = toWireToolsOpenAI(tools);
@@ -364,7 +362,7 @@ export class CopilotProvider implements ILLMProvider {
             apiKey: this.apiKey,
             body: {
                 messages: toWireMessagesOpenAI(messages),
-                max_tokens: 8192,
+                max_tokens: 1024,
             },
         });
         if (!res.ok) {
@@ -398,7 +396,7 @@ export class CopilotProvider implements ILLMProvider {
         const errors: string[] = [];
 
         for (const model of this.anthropicModels()) {
-            const body: any = { model, max_tokens: 8192, system, messages: chatMsgs };
+            const body: any = { model, max_tokens: 2048, system, messages: chatMsgs };
             if (tools.length > 0) {
                 body.tools = toWireToolsAnthropic(tools);
                 body.tool_choice = { type: 'auto' };
@@ -436,17 +434,13 @@ export class CopilotProvider implements ILLMProvider {
         const system   = extractSystemAnthropic(messages);
         const chatMsgs = toWireMessagesAnthropic(messages);
         const errors: string[] = [];
-        let firstAttempt = true;
 
         for (const model of this.anthropicModels()) {
-            const requestId = firstAttempt ? this.requestId : undefined;
-            firstAttempt = false;
             const res = await byokStream({
                 providerType: 'anthropic',
                 endpoint: this.anthropicEndpoint(),
                 apiKey: this.apiKey,
-                body: { model, max_tokens: 8192, system, messages: chatMsgs },
-                ...(requestId ? { requestId } : {}),
+                body: { model, max_tokens: 1024, system, messages: chatMsgs },
             });
             if (res.ok) {
                 yield* parseSSE(res.body!.getReader(), extractProxyDelta);
@@ -498,7 +492,6 @@ export class CopilotProvider implements ILLMProvider {
                 sessionId: getCopilotSessionId(),
                 mcpToken,
                 mcpTenantId,
-                ...(this.requestId ? { requestId: this.requestId } : {}),
             }),
         });
         if (!res.ok) {
