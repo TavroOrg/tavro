@@ -47,6 +47,7 @@ function toWireTools(defs: ToolDefinition[]): any[] {
 
 export class OpenAIProvider implements ILLMProvider {
     readonly name = 'openai';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -86,21 +87,29 @@ export class OpenAIProvider implements ILLMProvider {
     }
 
     async *stream(messages: RuntimeMessage[]): AsyncGenerator<string> {
-        const res = await fetch(ENDPOINT, {
+        // Route through the server proxy so the backend continues processing even
+        // if the browser navigates away. The server caches chunks by requestId,
+        // enabling reconnect via GET /chat/resume/:requestId.
+        const res = await fetch('/copilot-api/chat/byok/stream', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: this.model,
-                messages: toWireMessages(messages),
-                stream: true,
-                [maxTokensKey(this.model)]: 1024,
+                providerType: 'openai',
+                endpoint: ENDPOINT,
+                apiKey: this.apiKey,
+                body: {
+                    model: this.model,
+                    messages: toWireMessages(messages),
+                    [maxTokensKey(this.model)]: 1024,
+                },
+                ...(this.requestId ? { requestId: this.requestId } : {}),
             }),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.error?.message ?? `OpenAI stream error ${res.status}`);
         }
-        yield* parseSSE(res.body!.getReader(), p => p?.choices?.[0]?.delta?.content ?? '');
+        yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
     }
 
     buildToolCallMessage(toolCalls: ToolCallRecord[]): RuntimeMessage {

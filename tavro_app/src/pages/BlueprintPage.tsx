@@ -3,7 +3,7 @@
 // Layout: sidebar node list (left) + graph (centre) + detail panel (right).
 // Matches the structural pattern of Dashboard + AgentViewPage.
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, Building2,
   Plus, ChevronDown, Network, Layers, Link2,
@@ -67,6 +67,13 @@ const BlueprintPage: React.FC = () => {
       return acc;
     }, {} as Record<string, number>),
     [nodes]);
+
+  // ── Sync selectedNode with refreshed nodes ──────────────────────────────
+  useEffect(() => {
+    if (!selectedNode) return;
+    const updated = nodes.find(n => n.id === selectedNode.id);
+    if (updated) setSelectedNode(updated);
+  }, [nodes]);
 
   // ── Chat sync — keeps chat context in sync with blueprint state ──────────
   useBlueprintChatSync(
