@@ -825,8 +825,7 @@ ${toolSummary}`;
     async getAgentDetails(id: string): Promise<AgentData | undefined> {
         if (this._agentDetailCache.has(id)) return this._agentDetailCache.get(id);
         try {
-            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
-            const data = await this.callTool('get_agent_card', isId ? { agent_id: id } : { agent_name: id });
+            const data = await this.callTool('get_agent_card', { agent_id: id });
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
@@ -1050,8 +1049,10 @@ ${toolSummary}`;
         if (!forceRefresh && this._useCaseDetailCache.has(id)) return this._useCaseDetailCache.get(id);
         if (forceRefresh) this._useCaseDetailCache.delete(id);
         try {
-            const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
-            const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
+            // The previous approach seems to be searching for ServiceNow specific IDs or titles
+            // const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
+            // const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
+            const data = await this.callTool('get_ai_use_case', { use_case_id: id });
             const unwrapped = unwrapToolResponse(data, ['ai_use_case_agent_card', 'use_case_card', 'ai_use_case', 'data']);
             if (unwrapped) {
                 const detail = normaliseUseCase(unwrapped);

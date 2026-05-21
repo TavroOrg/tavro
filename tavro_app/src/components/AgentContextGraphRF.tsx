@@ -54,10 +54,12 @@ function buildGroups(agent: AgentData): ContextGroup[] {
     cfg.reasoning_model && { id: 'llm', label: 'LLM Model', sublabel: cfg.reasoning_model },
   ].filter(Boolean) as LeafNodeData[];
 
+  const toolArr = Array.isArray(agent.tool) ? agent.tool : (agent.tool && typeof agent.tool === 'object' ? [agent.tool] : []);
+  const dsArr = Array.isArray(agent.data_source) ? agent.data_source : (agent.data_source && typeof agent.data_source === 'object' ? [agent.data_source] : []);
   const funcLeaves: LeafNodeData[] = [
-    ...(agent.tool ?? []).slice(0, 5).map(t => ({ id: `t-${t.name}`, label: t.name, sublabel: 'Tool' })),
-    ...(agent.data_source ?? []).slice(0, 4).map((ds, i) => ({
-      id: `ds-${i}`, label: ds.source_object_name ?? 'Data Source', sublabel: ds.source_object_type,
+    ...toolArr.slice(0, 5).map((t: any) => ({ id: `t-${t.name ?? t.tool_name ?? 'tool'}`, label: String(t.name ?? t.tool_name ?? 'Tool'), sublabel: 'Tool' })),
+    ...dsArr.slice(0, 4).map((ds: any, i: number) => ({
+      id: `ds-${i}`, label: String(ds.source_object_name ?? ds.source_name ?? ds.source ?? 'Data Source'), sublabel: String(ds.source_object_type ?? ds.type ?? ''),
     })),
   ];
   if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No tools/sources', sublabel: 'configured' });

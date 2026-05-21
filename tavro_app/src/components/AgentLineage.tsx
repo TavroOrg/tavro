@@ -4,6 +4,39 @@ import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangl
 
 interface AgentLineageProps { agent: AgentData; }
 
+/** Coerce any value to an array. Single objects become [obj]; null/undefined become []. */
+function toArray<T>(v: T | T[] | null | undefined): T[] {
+    if (v == null) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'object') return [v as unknown as T];
+    return [];
+}
+
+/** Normalise a raw tool entry against all known field-name variants. */
+function normTool(raw: any): { name: string; description: string; delegation_possible?: string | null; allowed_delegates?: string | null } {
+    if (!raw || typeof raw !== 'object') return { name: 'Unknown Tool', description: '' };
+    return {
+        name: String(raw.name ?? raw.tool_name ?? raw.label ?? raw.u_name ?? 'Unknown Tool'),
+        description: String(raw.description ?? raw.tool_description ?? raw.summary ?? raw.short_description ?? ''),
+        delegation_possible: raw.delegation_possible != null ? String(raw.delegation_possible) : null,
+        allowed_delegates: raw.allowed_delegates ?? raw.delegates ?? null,
+    };
+}
+
+/** Normalise a raw data-source entry against all known field-name variants. */
+function normDs(raw: any): { source_object_name: string; target_object_name: string; target_object_type: string; access_level?: string | null; uses_pii?: string | null; uses_phi?: string | null; uses_pci?: string | null } {
+    if (!raw || typeof raw !== 'object') return { source_object_name: '', target_object_name: '', target_object_type: 'Other' };
+    return {
+        source_object_name: String(raw.source_object_name ?? raw.source_name ?? raw.from_name ?? raw.source ?? ''),
+        target_object_name: String(raw.target_object_name ?? raw.target_name ?? raw.to_name ?? raw.target ?? ''),
+        target_object_type: String(raw.target_object_type ?? raw.target_type ?? raw.object_type ?? raw.type ?? 'Other'),
+        access_level: raw.access_level ?? raw.access ?? null,
+        uses_pii: raw.uses_pii != null ? String(raw.uses_pii) : null,
+        uses_phi: raw.uses_phi != null ? String(raw.uses_phi) : null,
+        uses_pci: raw.uses_pci != null ? String(raw.uses_pci) : null,
+    };
+}
+
 /** Pill for PII / PHI / PCI flags */
 const DataFlag: React.FC<{ label: string; active: boolean }> = ({ label, active }) =>
     active ? (
@@ -16,19 +49,28 @@ const DataFlag: React.FC<{ label: string; active: boolean }> = ({ label, active 
         </span>
     );
 
-function isYes(v?: string | null) { return (v ?? '').toLowerCase() === 'yes'; }
+/** Handle "yes"/"no" strings, booleans, and numbers uniformly. */
+function isYes(v?: string | boolean | number | null) {
+    if (v == null) return false;
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'number') return v > 0;
+    return String(v).toLowerCase().trim() === 'yes';
+}
 
 const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
+    const tools = toArray(agent.tool).map(normTool);
+    const dataSources = toArray(agent.data_source).map(normDs);
+
     // Group data sources by target object type
-    const grouped: Record<string, typeof agent.data_source> = {};
-    for (const ds of agent.data_source ?? []) {
+    const grouped: Record<string, ReturnType<typeof normDs>[]> = {};
+    for (const ds of dataSources) {
         const type = ds.target_object_type || 'Other';
         if (!grouped[type]) grouped[type] = [];
         grouped[type].push(ds);
     }
     const groupedEntries = Object.entries(grouped);
 
-    const hasPiiConcerns = (agent.data_source ?? []).some(
+    const hasPiiConcerns = dataSources.some(
         ds => isYes(ds.uses_pii) || isYes(ds.uses_phi) || isYes(ds.uses_pci)
     );
 
@@ -56,15 +98,15 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                 {/* ── Tools ─────────────────────────────────────── */}
                 <div className="flex flex-col gap-3">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <Wrench size={13} /> Attached Capabilities ({(agent.tool ?? []).length})
+                        <Wrench size={13} /> Attached Capabilities ({tools.length})
                     </h3>
-                    {(agent.tool ?? []).length === 0 ? (
+                    {tools.length === 0 ? (
                         <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                             No capabilities configured.
                         </div>
                     ) : (
                         <div className="flex flex-col gap-3">
-                            {(agent.tool ?? []).map((tool, idx) => (
+                            {tools.map((tool, idx) => (
                                 <div key={idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
                                     <div className="flex items-start justify-between gap-2 mb-1">
                                         <span className="font-bold text-sm text-slate-800">{tool.name}</span>
@@ -92,7 +134,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                 {/* ── Data Source Relationships ──────────────────── */}
                 <div className="flex flex-col gap-3">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <Database size={13} /> Relationships ({(agent.data_source ?? []).length})
+                        <Database size={13} /> Relationships ({dataSources.length})
                     </h3>
                     {groupedEntries.length === 0 ? (
                         <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">

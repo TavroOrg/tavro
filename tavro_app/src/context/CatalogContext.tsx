@@ -80,7 +80,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const fetchingRef = useRef(false);
 
     const fetchAgents = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current) return;
+        if (fetchingRef.current && !invalidate) return;
         fetchingRef.current = true;
         setLoading(true);
         setError(null);
