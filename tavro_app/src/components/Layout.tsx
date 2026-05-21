@@ -153,11 +153,14 @@ const Layout: React.FC = () => {
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
+        const leftRailWidth = isLeftPanelOpen ? 280 : 72;
+        document.documentElement.style.setProperty('--tavro-left-rail-width', `${leftRailWidth}px`);
         document.documentElement.style.setProperty('--tavro-right-rail-width', `${rightRailWidth}px`);
         return () => {
+            document.documentElement.style.setProperty('--tavro-left-rail-width', '280px');
             document.documentElement.style.setProperty('--tavro-right-rail-width', '72px');
         };
-    }, [isPanelOpen, panelWidth]);
+    }, [isLeftPanelOpen, isPanelOpen, panelWidth]);
 
     return (
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
