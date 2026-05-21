@@ -75,6 +75,7 @@ export interface DimNodeUpdate {
   tags?: string[];
   visibility?: VisibilityLevel;
   sensitive?: boolean;
+  dim_type_id?: string;
 }
 
 // ── Dimension Edge ────────────────────────────────────────────────────────────

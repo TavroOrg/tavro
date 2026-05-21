@@ -126,14 +126,14 @@ async def update_dim_node(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    if "dim_type_id" in updates:
+        updates["dim_type_id"] = str(updates["dim_type_id"])
     if "tags" in updates:
         updates["tags"] = json.dumps(updates["tags"])
-        set_parts = [
-            f"{k} = cast(:{k} as jsonb)" if k == "tags" else f"{k} = :{k}"
-            for k in updates
-        ]
-    else:
-        set_parts = [f"{k} = :{k}" for k in updates]
+    set_parts = [
+        f"{k} = cast(:{k} as jsonb)" if k == "tags" else f"{k} = :{k}"
+        for k in updates
+    ]
 
     updates["id"] = str(node_id)
     set_clause = ", ".join(set_parts)
