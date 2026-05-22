@@ -500,7 +500,7 @@ class McpClientService {
                 id: 'list_tools',
                 method: 'tools/list',
                 params: {}
-            })
+            }),
         });
 
         const rawText = await res.text();
