@@ -103,7 +103,6 @@ const AuthCallback: React.FC = () => {
                             // The MCP server now accepts ZITADEL JWTs directly (see zitadel_provider.py).
                             // No second OAuth redirect needed — reuse the same token for MCP.
                             localStorage.setItem('tavro_mcp_access_token', data.access_token);
-                            localStorage.setItem('tavro_cache_mode', 'false');
                             sessionStorage.removeItem('tavro_catalog_agents_cache');
                             sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
                             sessionStorage.removeItem('tavro_catalog_usecases_cache');
@@ -111,7 +110,6 @@ const AuthCallback: React.FC = () => {
                             window.dispatchEvent(new CustomEvent('tavro_settings_change'));
                         } else if (origin === 'settings') {
                             localStorage.removeItem('tavro_mcp_access_token');
-                            localStorage.setItem('tavro_cache_mode', 'false');
                             sessionStorage.removeItem('tavro_catalog_agents_cache');
                             sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
                             sessionStorage.removeItem('tavro_catalog_usecases_cache');
@@ -187,7 +185,6 @@ const AuthCallback: React.FC = () => {
                     if (primaryToken) {
                         localStorage.setItem('tavro_mcp_access_token', primaryToken);
                         localStorage.setItem('tavro_access_token', primaryToken);
-                        localStorage.setItem('tavro_cache_mode', 'false');
                         if (data.id_token) localStorage.setItem('tavro_id_token', data.id_token);
                         if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
                         localStorage.removeItem('tavro_pkce_verifier');

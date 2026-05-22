@@ -44,9 +44,6 @@ const CreateUseCasePage: React.FC = () => {
         if (!form.name.trim()) return;
         setSaving(true);
         setError(null);
-        // Ensure live mode before write call so connect() establishes a real MCP session.
-        localStorage.setItem('tavro_cache_mode', 'false');
-        window.dispatchEvent(new Event('tavro_settings_change'));
         try {
             const created = await mcpClient.createAiUseCase({
                 title: form.name.trim(),

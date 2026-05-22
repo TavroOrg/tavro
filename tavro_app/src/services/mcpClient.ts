@@ -155,6 +155,36 @@ function normaliseUseCase(raw: any): any {
     });
 }
 
+function isLikelyUseCaseRecord(raw: any, normalized: any): boolean {
+    if (!raw || !normalized) return false;
+
+    const id = String(normalized.identifier ?? normalized.id ?? '').trim();
+    const name = String(normalized.name ?? '').trim();
+    const lowerName = name.toLowerCase();
+
+    // Guard against accidental risk-summary rows leaking into use-case catalog.
+    if (!id && lowerName.includes('risk assessment summary')) return false;
+
+    const hasUseCaseSignals = Boolean(
+        raw.use_case_id ||
+        raw.identifier ||
+        raw.number ||
+        raw.id ||
+        raw.use_case_name ||
+        raw.problem_statement ||
+        raw.business_problem_statement ||
+        raw.expected_benefits ||
+        raw.priority ||
+        raw.use_case_owner ||
+        raw.use_case_type ||
+        raw.workflow_state ||
+        raw.status
+    );
+
+    // Accept records with stable id, or with clear use-case semantics.
+    return Boolean((id && name) || (name && hasUseCaseSignals));
+}
+
 function extractLabeledValue(text: string, labels: string[]): string | undefined {
     const escaped = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const match = text.match(new RegExp(`(?:^|\\n|[,;])\\s*(?:${escaped})\\s*[:=-]\\s*([^\\n;]+)`, 'i'));
@@ -219,8 +249,9 @@ class McpClientService {
     private _agentDetailCache = new Map<string, AgentData>();
     private _riskSummaryCache = new Map<string, any>();
     private _useCaseDetailCache = new Map<string, UseCaseDetail>();
-    private _pendingRequests = new Map<string, Promise<any>>();
-    private _cachedDataStore: any = null;
+    private _agentCacheGen = 0;
+    private _useCaseCacheGen = 0;
+    private _connectPromise: Promise<void> | null = null;
     private _mcpTools: Array<{ name: string; description?: string; inputSchema?: any }> | null = null;
 
     private getMcpUrl(): string {
@@ -236,41 +267,47 @@ class McpClientService {
     }
 
     private async ensureValidToken(): Promise<string> {
-        // If a dedicated MCP OAuth token exists, use it directly —
-        // its lifecycle is managed by the MCP OAuth flow, not Zitadel.
+        // If the access token is expired, attempt a silent refresh before using
+        // any stored token. This keeps tavro_mcp_access_token in sync for
+        // Zitadel-flow sessions where both keys hold the same JWT.
+        if (isAccessTokenExpired()) {
+            const ok = await refreshAccessToken();
+            if (ok) {
+                const refreshed = localStorage.getItem('tavro_access_token');
+                if (refreshed) localStorage.setItem('tavro_mcp_access_token', refreshed);
+            }
+        }
+
         const mcpToken = localStorage.getItem('tavro_mcp_access_token');
         if (mcpToken) return mcpToken;
 
-        // Fall back to Zitadel token with silent refresh
-        if (isAccessTokenExpired()) {
-            const ok = await refreshAccessToken();
-            if (!ok) {
-                throw new Error('Token refresh failed. Please log in again.');
-            }
-        }
         const token = this.getToken();
         if (!token) throw new Error('No auth token. Please log in again.');
         return token;
     }
 
-    private handleUnauthorized(bodyText?: string) {
+    private handleUnauthorized(bodyText?: string): never {
         appLogger.warn('401 Unauthorized from MCP server', { body: bodyText });
         this.disconnect();
-        throw new Error('MCP request unauthorized. Please check your credentials.');
+        const e: any = new Error('MCP request unauthorized. Please check your credentials.');
+        e.code = 'MCP_UNAUTHORIZED';
+        throw e;
     }
 
     /** Manual connect via fetch to capture mcp-session-id and tenant_id */
     async connect(): Promise<void> {
         if (this.initialized) return;
+        // Coalesce concurrent connect() calls into a single in-flight request.
+        if (this._connectPromise) return this._connectPromise;
+        this._connectPromise = this._doConnect().finally(() => { this._connectPromise = null; });
+        return this._connectPromise;
+    }
+
+    private async _doConnect(): Promise<void> {
+        if (this.initialized) return;
 
         const mcpUrl = this.getMcpUrl();
         const savedTenantId = localStorage.getItem('tavro_tenant_id');
-
-        if (localStorage.getItem('tavro_cache_mode') === 'true') {
-            this.initialized = true;
-            return;
-        }
-
         const token = await this.ensureValidToken();
 
         try {
@@ -339,22 +376,7 @@ class McpClientService {
         }
     }
 
-    // Write tools always execute live — cache mode only applies to reads.
-    private static readonly WRITE_TOOLS = new Set([
-        'create_agent',
-        'create_ai_use_case',
-        'create_ai_use_case_agent_relationship',
-        'remove_ai_use_case_agent_relationship',
-        'create_risk_assessment',
-
-    ]);
-
-    private async callTool(name: string, args: any = {}): Promise<any> {
-        const isCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
-        if (isCacheMode && !McpClientService.WRITE_TOOLS.has(name)) {
-            return await this._getCachedToolResult(name, args);
-        }
-
+    private async callTool(name: string, args: any = {}, _authRetried = false): Promise<any> {
         const token = await this.ensureValidToken();
         if (!this.sessionId) this.initialized = false;
         if (!this.initialized) await this.connect();
@@ -390,6 +412,7 @@ class McpClientService {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 60_000);
             let res: Response;
+            let rawText: string;
             try {
                 res = await fetch(mcpUrl, {
                     method: 'POST',
@@ -397,13 +420,15 @@ class McpClientService {
                     body: JSON.stringify(requestBody),
                     signal: controller.signal,
                 });
+                // Keep controller alive through body read — a server that sends headers
+                // then hangs mid-stream would otherwise block res.text() indefinitely.
+                rawText = await res.text();
             } catch (err: any) {
                 if (err.name === 'AbortError') throw new Error(`MCP tool call timed out (60s): ${name}`);
                 throw err;
             } finally {
                 clearTimeout(timeoutId);
             }
-            const rawText = await res.text();
 
             if (!res.ok) {
                 if (res.status === 401) this.handleUnauthorized(rawText);
@@ -463,6 +488,16 @@ class McpClientService {
                     this.initialized = false;
                     await this.connect();
                     result = await executeToolCall();
+                } else if (err?.code === 'MCP_UNAUTHORIZED' && !_authRetried) {
+                    appLogger.warn(`MCP 401 for ${name}; refreshing token and retrying once.`);
+                    const refreshed = await refreshAccessToken();
+                    if (refreshed) {
+                        const newToken = localStorage.getItem('tavro_access_token');
+                        if (newToken) localStorage.setItem('tavro_mcp_access_token', newToken);
+                        this.disconnect();
+                        return await this.callTool(name, args, true);
+                    }
+                    throw err;
                 } else {
                     throw err;
                 }
@@ -476,13 +511,6 @@ class McpClientService {
     }
 
     async listTools(): Promise<{ name: string; description?: string; inputSchema?: any }[]> {
-        if (localStorage.getItem('tavro_cache_mode') === 'true') {
-            return [
-                { name: 'get_agent_catalog', description: 'Get agent catalog' },
-                { name: 'get_agent_card', description: 'Get agent details' },
-                { name: 'get_ai_use_case', description: 'Get AI use cases or details' }
-            ];
-        }
         await this.connect();
         const mcpUrl = this.getMcpUrl();
         const res = await fetch(mcpUrl, {
@@ -527,10 +555,6 @@ class McpClientService {
     /** Fetch MCP tool definitions (with schema) and cache them for the session. */
     async fetchMcpTools(): Promise<{ name: string; description?: string; inputSchema?: any }[]> {
         if (this._mcpTools !== null) return this._mcpTools;
-        if (localStorage.getItem('tavro_cache_mode') === 'true') {
-            this._mcpTools = [];
-            return this._mcpTools;
-        }
         try {
             this._mcpTools = await this.listTools();
             appLogger.info('MCP tools loaded', { count: this._mcpTools.length, names: this._mcpTools.map(t => t.name) });
@@ -899,6 +923,7 @@ ${toolSummary}`;
 
     async getAllAgents(): Promise<AgentData[]> {
         if (this._agentCache) return this._agentCache;
+        const capturedGen = this._agentCacheGen;
         const first = await this.getCatalogPage(1);
         const all = [...first.agents];
         const total = first.totalRecords;
@@ -910,139 +935,19 @@ ${toolSummary}`;
             start += 10;
             pages++;
         }
-        this._agentCache = all;
+        if (capturedGen === this._agentCacheGen) this._agentCache = all;
         return all;
     }
 
     invalidateCache(): void {
         this._agentCache = null;
         this._useCaseCache = null;
+        this._agentCacheGen++;
+        this._useCaseCacheGen++;
         this._agentDetailCache.clear();
         this._riskSummaryCache.clear();
         this._useCaseDetailCache.clear();
-        this._pendingRequests.clear();
-        this._cachedDataStore = null;
         this._mcpTools = null;
-    }
-
-    private async _loadCachedData(): Promise<void> {
-        const remoteUrl = localStorage.getItem('tavro_cached_data_url');
-        const localPath = localStorage.getItem('tavro_cached_data_local_path');
-        if (remoteUrl) {
-            try {
-                const res = await fetch(remoteUrl);
-                if (res.ok) { this._cachedDataStore = await res.json(); return; }
-            } catch { }
-        }
-        if (localPath) {
-            try {
-                const res = await fetch(new URL(localPath, window.location.origin).toString());
-                if (res.ok) { this._cachedDataStore = await res.json(); return; }
-            } catch { }
-        }
-        try {
-            const localData = await import('../data/mcpCachedData.json');
-            this._cachedDataStore = (localData as any).default ?? localData;
-        } catch { this._cachedDataStore = { tools: {} }; }
-    }
-
-    private async _getCachedToolResult(name: string, args: any): Promise<any> {
-        if (!this._cachedDataStore) await this._loadCachedData();
-        const tools = (this._cachedDataStore?.tools as Record<string, any>) ?? {};
-        const exact = tools[`${name}:${JSON.stringify(args)}`];
-        if (exact) return exact;
-        if (name === 'get_agent_card') return this._getCachedAgentDetail(args);
-        if (name === 'get_ai_use_case') return this._getCachedUseCaseDetail(args);
-        return null;
-    }
-
-    private _getCachedToolPages(prefix: string): any[] {
-        const tools = (this._cachedDataStore?.tools as Record<string, any>) ?? {};
-        return Object.entries(tools)
-            .filter(([key]) => key.startsWith(prefix))
-            .flatMap(([, value]) => {
-                if (Array.isArray(value)) return value;
-                if (Array.isArray(value?.data)) return value.data;
-                if (Array.isArray(value?.results)) return value.results;
-                if (Array.isArray(value?.items)) return value.items;
-                if (Array.isArray(value?.agent_card)) return value.agent_card;
-                if (Array.isArray(value?.ai_use_case_agent_card)) return value.ai_use_case_agent_card;
-                return [];
-            });
-    }
-
-    private _normaliseCachedAgent(raw: any): AgentData {
-        return {
-            ...raw,
-            name: raw.name || raw.agent_name || 'Unnamed Agent',
-            description: raw.description || raw.agent_description || raw.summary || '',
-            version: raw.version || '1.0',
-            identification: {
-                ...(raw.identification ?? {}),
-                agent_id: raw.identification?.agent_id || raw.agent_id || raw.agent_internal_id || raw.id || raw.name || raw.agent_name || 'Unknown',
-                owner: raw.identification?.owner || raw.owner || raw.agent_owner || raw.agent_owner_name,
-                instruction: raw.identification?.instruction || raw.instruction || raw.agent_description || raw.summary,
-                environment: raw.identification?.environment || raw.environment,
-                role: raw.identification?.role || raw.role || undefined,
-            },
-            capabilities: raw.capabilities ?? {},
-            application: raw.application ?? [],
-            risk_assessment: normalizeRiskAssessment(raw),
-            risk_summary:
-                raw.risk_summary ??
-                raw.summary ??
-                raw.risk_assessment?.summary ??
-                raw.risk_assessment_summary ??
-                raw.ai_risk_summary ??
-                '',
-        } as AgentData;
-    }
-
-    private _getCachedAgentDetail(args: any): any {
-        const target = String(args.agent_id || args.agent_name || '').toLowerCase();
-        if (!target) return null;
-        const found = this._getCachedToolPages('get_agent_catalog:').find(raw => {
-            const values = [
-                raw.agent_id,
-                raw.agent_internal_id,
-                raw.id,
-                raw.name,
-                raw.agent_name,
-                raw.identification?.agent_id,
-            ];
-            return values.some(value => String(value || '').toLowerCase() === target);
-        });
-        return found ? { agent_card: this._normaliseCachedAgent(found) } : null;
-    }
-
-    private _getCachedUseCaseDetail(args: any): any {
-        const target = String(args.use_case_id || args.title || '').toLowerCase();
-        if (!target) return null;
-        const found = this._getCachedToolPages('get_ai_use_case:').find(raw => {
-            const values = [
-                raw.use_case_id,
-                raw.identifier,
-                raw.number,
-                raw.id,
-                raw.title,
-                raw.name,
-                raw.use_case_name,
-            ];
-            return values.some(value => String(value || '').toLowerCase().trim() === target.trim());
-        });
-        return found ? { ai_use_case_agent_card: found } : null;
-    }
-
-    async generateCachedData(): Promise<string> {
-        localStorage.setItem('tavro_cache_mode', 'false');
-        try {
-            const tools: Record<string, any> = {};
-            const res = await this.callTool('get_agent_catalog', { start_record: 1, record_range: '1-10' });
-            tools[`get_agent_catalog:{"start_record":1,"record_range":"1-10"}`] = res;
-            return JSON.stringify({ tools }, null, 2);
-        } finally {
-            localStorage.setItem('tavro_cache_mode', 'true');
-        }
     }
 
     async getUseCaseCatalogPage(startRecord = 1): Promise<{ useCases: UseCaseSummary[]; totalRecords: number }> {
@@ -1058,13 +963,17 @@ ${toolSummary}`;
                 const candidates = [data.ai_use_case_agent_card, data.use_cases, data.ai_use_cases, data.useCases, data.items, data.results, data.data];
                 for (const c of candidates) { if (Array.isArray(c)) { rawList = c; break; } }
             }
-            const useCases = rawList.map(normaliseUseCase);
+            const useCases = rawList
+                .map(item => ({ raw: item, normalized: normaliseUseCase(item) }))
+                .filter(({ raw, normalized }) => isLikelyUseCaseRecord(raw, normalized))
+                .map(({ normalized }) => normalized);
             return { useCases, totalRecords: data?.total_records ?? useCases.length };
         } catch (err) { throw err; }
     }
 
     async getAllUseCases(): Promise<UseCaseSummary[]> {
         if (this._useCaseCache) return this._useCaseCache;
+        const capturedGen = this._useCaseCacheGen;
         const first = await this.getUseCaseCatalogPage(1);
         const all = [...first.useCases];
         const total = first.totalRecords;
@@ -1093,7 +1002,7 @@ ${toolSummary}`;
             }
             return true;
         });
-        this._useCaseCache = deduped;
+        if (capturedGen === this._useCaseCacheGen) this._useCaseCache = deduped;
         return deduped;
     }
 
