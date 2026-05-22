@@ -84,8 +84,38 @@ const brandingSnippet = `
   if (typeof document === "undefined") return;
   if (!location.pathname.startsWith("/ui/v2/login")) return;
 
+  const TITLE = "Tavro Agent BizOps";
+  let headObserver = null;
+  let watchdog = null;
+
+  function enforceBranding() {
+    if (document.title !== TITLE) {
+      document.title = TITLE;
+    }
+  }
+
+  function ensureWatchers() {
+    if (document.head && !headObserver) {
+      headObserver = new MutationObserver(enforceBranding);
+      headObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+    }
+
+    if (!watchdog) {
+      let attempts = 0;
+      watchdog = window.setInterval(() => {
+        attempts += 1;
+        enforceBranding();
+        if (attempts >= 40) {
+          window.clearInterval(watchdog);
+          watchdog = null;
+        }
+      }, 250);
+    }
+  }
+
   const applyBranding = () => {
-    document.title = "Tavro Agent BizOps";
+    enforceBranding();
+    ensureWatchers();
 
     let link = document.querySelector('link[data-tavro-favicon="true"]');
     if (!link) {

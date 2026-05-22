@@ -91,6 +91,11 @@ const Layout: React.FC = () => {
     // ── Drag-to-resize ───────────────────────────────────────────────────────
     const isDragging = useRef(false);
 
+    // Once the Chat tab is opened, keep ChatPanel mounted (hidden) on tab
+    // switches so that in-progress streams keep updating state normally.
+    const chatEverOpenedRef = useRef(false);
+    if (activePanel === 'chat') chatEverOpenedRef.current = true;
+
     const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         isDragging.current = true;
@@ -166,22 +171,23 @@ const Layout: React.FC = () => {
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
-            <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col justify-between sticky top-0 h-screen z-40 flex-shrink-0 transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
-                <div className={`w-full h-full flex flex-col justify-between overflow-hidden transition-all duration-300`}>
-                    <div className="flex flex-col">
-                        {/* Logo */}
-                        <div
-                            className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
-                            onClick={() => navigate('/')}
-                        >
-                            <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
-                                <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
-                            </div>
-                            <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
-                                Tavro Agent <span className="text-blue-600">BizOps</span>
-                            </span>
+            <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
+                {/* Logo */}
+                <div
+                    className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
+                    onClick={() => navigate('/')}
+                >
+                        <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
+                            <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
                         </div>
+                        <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
+                            Tavro Agent <span className="text-blue-600">BizOps</span>
+                        </span>
+                </div>
 
+                <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden transition-all duration-300`}>
+                    {/* Scrollable nav area */}
+                    <div className="flex flex-col">
                         {/* Nav links */}
                         <div className="flex flex-col p-4 gap-2">
                             <button
@@ -318,8 +324,10 @@ const Layout: React.FC = () => {
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
                             </button>
                         </div>
-                        {/* Catalog Sync Widget */}
-                        <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
+                    </div>{/* end scrollable nav */}
+
+                    {/* Catalog Sync Widget - pinned */}
+                    <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -360,10 +368,9 @@ const Layout: React.FC = () => {
                                 <span className="whitespace-nowrap">{anyLoading ? 'Syncing…' : 'Refresh Catalog'}</span>
                             </button>
                         </div>
-                    </div>
 
                     {/* Bottom Actions */}
-                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
                         <button
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
@@ -388,7 +395,7 @@ const Layout: React.FC = () => {
                 {/* Left Panel Toggle Button */}
                 <button
                     onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
-                    className="absolute -right-3.5 top-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-blue-600 rounded-full p-1 shadow-sm z-50 transition-colors outline-none"
+                    className="absolute -right-3.5 top-7 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-blue-600 rounded-full p-1.5 shadow-md z-[60] transition-colors outline-none"
                     title={isLeftPanelOpen ? "Collapse sidebar" : "Expand sidebar"}
                 >
                     {isLeftPanelOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
@@ -522,7 +529,15 @@ const Layout: React.FC = () => {
 
                             {/* Panel body */}
                             <div className="flex-1 overflow-hidden">
-                                {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
+                                {/* Keep ChatPanel mounted (hidden) once opened so that
+                                    in-progress streams keep updating state when the user
+                                    switches to Dev Logs. Avoid mounting before chat is ever
+                                    opened so the resume effect doesn't fire prematurely. */}
+                                {(activePanel === 'chat' || chatEverOpenedRef.current) && isPanelOpen && (
+                                    <div className={`h-full flex flex-col ${activePanel !== 'chat' ? 'hidden' : ''}`}>
+                                        <ChatPanel onClose={() => setActivePanel(null)} />
+                                    </div>
+                                )}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
                                 {activePanel === 'attachment' && isOnAttachmentPage && (
                                     <AttachmentPanel

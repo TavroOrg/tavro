@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, Building2,
-  Plus, ChevronDown, Network, Layers, Link2,
+  Plus, ChevronDown, Network, Layers, Link2, Trash2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -32,7 +32,7 @@ const BlueprintPage: React.FC = () => {
   const {
     companies, activeCompany, dimTypes, nodes, graph,
     loading, graphLoading, error, lastFetched,
-    selectCompany, refresh, refreshNodes, refreshGraph
+    selectCompany, removeCompany, refresh, refreshNodes, refreshGraph
   } = useBlueprint();
 
   // ── Local UI state ───────────────────────────────────────────────────────
@@ -86,6 +86,13 @@ const BlueprintPage: React.FC = () => {
   const handleGraphNodeClick = (nodeId: string) => {
     const found = nodes.find(n => n.id === nodeId);
     if (found) { setSelectedNode(found); setViewMode('grid'); }
+  };
+
+  const handleDeleteCompany = async (c: { id: string; name: string }) => {
+    if (!window.confirm(`Delete "${c.name}" and all its dimensions? This cannot be undone.`)) return;
+    await blueprintApi.deleteCompany(c.id);
+    removeCompany(c.id);
+    setCompanyDropdown(false);
   };
 
   const handleDeleteNode = async (node: DimNode) => {
@@ -143,15 +150,23 @@ const BlueprintPage: React.FC = () => {
             {companyDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 min-w-[220px] py-1">
                 {companies.map(c => (
-                  <button key={c.id}
-                    onClick={() => { selectCompany(c); setCompanyDropdown(false); setSelectedNode(null); }}
-                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${c.id === activeCompany?.id
-                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
-                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
-                      }`}>
-                    <div className="font-semibold">{c.name}</div>
-                    <div className="text-[11px] text-slate-400 dark:text-slate-500">{c.industry} · {c.region}</div>
-                  </button>
+                  <div key={c.id} className="flex items-center group">
+                    <button
+                      onClick={() => { selectCompany(c); setCompanyDropdown(false); setSelectedNode(null); }}
+                      className={`flex-1 text-left px-4 py-2.5 text-sm transition-colors ${c.id === activeCompany?.id
+                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        }`}>
+                      <div className="font-semibold">{c.name}</div>
+                      <div className="text-[11px] text-slate-400 dark:text-slate-500">{c.industry} · {c.region}</div>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCompany(c)}
+                      className="opacity-0 group-hover:opacity-100 mr-2 p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all flex-shrink-0"
+                      title={`Delete ${c.name}`}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 ))}
                 <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1 px-2 pb-1">
                   <button onClick={() => { navigate('/blueprint/setup'); setCompanyDropdown(false); }}

@@ -25,6 +25,8 @@ interface BlueprintState {
   lastFetched: Date | null;
   /** Switch the active company and reload nodes + graph. */
   selectCompany: (company: Company) => void;
+  /** Remove a company from the list and clear state if it was active. */
+  removeCompany: (id: string) => void;
   /** Hard refresh — invalidates nodes and graph. */
   refresh: () => void;
   /** Reload just the graph (e.g. after adding an edge). */
@@ -38,7 +40,7 @@ interface BlueprintState {
 const BlueprintContext = createContext<BlueprintState>({
   companies: [], activeCompany: null, dimTypes: [], nodes: [], graph: null,
   loading: false, graphLoading: false, error: null, lastFetched: null,
-  selectCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {},
+  selectCompany: () => {}, removeCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -123,6 +125,17 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveCompany(company);
   }, []);
 
+  const removeCompany = useCallback((id: string) => {
+    setCompanies(prev => prev.filter(c => c.id !== id));
+    setActiveCompany(curr => {
+      if (curr?.id !== id) return curr;
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    });
+    setNodes([]);
+    setGraph(null);
+  }, []);
+
   const refresh = useCallback(() => {
     if (activeCompany) {
       fetchNodes(activeCompany);
@@ -142,7 +155,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <BlueprintContext.Provider value={{
       companies, activeCompany, dimTypes, nodes, graph,
       loading, graphLoading, error, lastFetched,
-      selectCompany, refresh, refreshGraph, refreshNodes,
+      selectCompany, removeCompany, refresh, refreshGraph, refreshNodes,
     }}>
       {children}
     </BlueprintContext.Provider>

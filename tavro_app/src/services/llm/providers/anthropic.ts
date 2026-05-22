@@ -9,6 +9,7 @@ const DIRECT_HEADERS = {
     'anthropic-dangerous-direct-browser-access': 'true',
 };
 const FALLBACK_MODELS = [
+    'claude-sonnet-4-6',
     'claude-sonnet-4-5',
     'claude-3-5-sonnet-20241022',
     'claude-3-5-haiku-20241022',
@@ -137,33 +138,20 @@ export class AnthropicProvider implements ILLMProvider {
     }
 
     async *stream(messages: RuntimeMessage[]): AsyncGenerator<string> {
-        // Route through the server proxy so the backend continues processing even
-        // if the browser navigates away. The server caches chunks by requestId.
         const system = extractSystem(messages);
         const chatMsgs = toWireMessages(messages);
         const errors: string[] = [];
-        let firstAttempt = true;
 
         for (const model of this.modelsToTry()) {
-            // Only attach requestId to the first attempt; if it fails the cache
-            // entry is already marked error and subsequent attempts run uncached.
-            const requestId = firstAttempt ? this.requestId : undefined;
-            firstAttempt = false;
-
-            const res = await fetch('/copilot-api/chat/byok/stream', {
+            const res = await fetch(ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    providerType: 'anthropic',
-                    endpoint: ENDPOINT,
-                    apiKey: this.apiKey,
-                    body: { model, max_tokens: 8192, system, messages: chatMsgs },
-                    ...(requestId ? { requestId } : {}),
-                }),
+                headers: { ...DIRECT_HEADERS, 'x-api-key': this.apiKey },
+                body: JSON.stringify({ model, max_tokens: 8192, system, messages: chatMsgs, stream: true }),
             });
             if (res.ok) {
                 if (model !== this.model) localStorage.setItem('tavro_llm_model_anthropic', model);
-                yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
+                // Native Anthropic SSE: content_block_delta events carry delta.text
+                yield* parseSSE(res.body!.getReader(), p => p?.delta?.text ?? '');
                 return;
             }
             const err = await res.json().catch(() => ({}));

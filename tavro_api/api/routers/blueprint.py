@@ -410,14 +410,154 @@ async def _search_sec_by_name(company_name: str) -> dict:
 
 
 # =============================================================
-# Research system prompt
+# Private company fallback — used when all Anthropic retries fail
+# so the research step never errors out for private companies.
 # =============================================================
 
-RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
+def _private_company_fallback(company_name: str, industry: str) -> dict:
+    ind = industry.strip() or "the industry"
+    slug = ind.lower().replace(" ", "-")
+    return {
+        "nodes": [
+            {
+                "category": "profile",
+                "label": f"{company_name} – Company Overview",
+                "summary": (
+                    f"{company_name} is a privately held company operating in the {ind} sector. "
+                    f"As a private organisation it focuses on delivering value to its stakeholders "
+                    f"without the reporting obligations of a publicly listed company."
+                ),
+                "tags": ["private-company", slug, "overview"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "strategy",
+                "label": "Market Growth and Client Acquisition",
+                "summary": (
+                    f"Expanding market share within the {ind} sector through organic growth, "
+                    f"targeted client acquisition, and strategic partnerships. "
+                    f"Priority is placed on deepening existing client relationships."
+                ),
+                "tags": ["growth", "client-acquisition", slug],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "strategy",
+                "label": "Operational Excellence",
+                "summary": (
+                    f"Continuous improvement of core {ind} processes to reduce cost, "
+                    f"increase throughput, and improve quality. "
+                    f"Investment in technology and talent underpins this priority."
+                ),
+                "tags": ["operations", "efficiency", "process-improvement"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "strategy",
+                "label": "Technology and Innovation",
+                "summary": (
+                    f"Adopting modern tooling and data-driven practices to stay competitive "
+                    f"in the {ind} space. Digital initiatives are prioritised at board level."
+                ),
+                "tags": ["technology", "innovation", "digital"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "organisation",
+                "label": "Core Business Operations",
+                "summary": (
+                    f"The primary revenue-generating function delivering {ind} products or services "
+                    f"to customers. This unit owns end-to-end service delivery and client satisfaction."
+                ),
+                "tags": ["operations", "revenue", slug],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "organisation",
+                "label": "Sales and Business Development",
+                "summary": (
+                    f"Responsible for pipeline generation, client relationships, and revenue growth. "
+                    f"Works closely with operations to convert opportunities into delivered engagements."
+                ),
+                "tags": ["sales", "business-development", "revenue"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "organisation",
+                "label": "Finance and Corporate Functions",
+                "summary": (
+                    f"Provides financial planning, reporting, compliance, HR, and legal support "
+                    f"across the organisation. Ensures regulatory obligations are met and capital "
+                    f"is allocated effectively."
+                ),
+                "tags": ["finance", "hr", "legal", "compliance"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "finance",
+                "label": "Revenue Model",
+                "summary": (
+                    f"Revenue is generated through {ind}-sector products or services sold to clients. "
+                    f"The mix of recurring vs. project-based income depends on the specific business model."
+                ),
+                "tags": ["revenue-model", "recurring-revenue", slug],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "finance",
+                "label": "Cost Structure",
+                "summary": (
+                    f"Primary cost drivers include personnel, technology, and operational overhead "
+                    f"typical of a {ind} business. Managing cost-to-income ratio is a key financial discipline."
+                ),
+                "tags": ["cost-structure", "opex", "margins"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+            {
+                "category": "finance",
+                "label": "Capital and Liquidity",
+                "summary": (
+                    f"As a private company, capital is sourced from owners, retained earnings, or "
+                    f"private debt facilities. Liquidity management and reinvestment decisions are made "
+                    f"by the ownership group."
+                ),
+                "tags": ["capital", "liquidity", "private-equity"],
+                "visibility": "internal",
+                "sensitive": False,
+            },
+        ],
+        "sources": ["Template baseline (AI unavailable — please update with actual data)"],
+        "notice": (
+            "These are template-based baseline dimensions generated without AI because the "
+            "AI service was temporarily unavailable. Please review and update with actual company data."
+        ),
+    }
+
+
+# =============================================================
+# Research system prompts (one per company type)
+# =============================================================
+
+
+PRIVATE_RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
 for an enterprise AI governance platform called Tavro.
 
-Your task: Research the given company using web search, then return ONLY a JSON object
-(no prose, no markdown fences, no explanation) with this exact structure:
+This is a PRIVATE company (not publicly listed). You do NOT have access to SEC filings or
+public disclosures. Generate plausible, well-structured baseline dimension suggestions based
+solely on the company name and industry provided. Do not fabricate specific financial figures
+or cite sources you cannot verify — use representative ranges and qualitative descriptions
+appropriate for a typical company in this industry.
+
+Return ONLY a JSON object (no prose, no markdown fences, no explanation):
 
 {
   "nodes": [
@@ -430,23 +570,23 @@ Your task: Research the given company using web search, then return ONLY a JSON 
       "sensitive": false
     }
   ],
-  "sources": ["10-K 2024", "Company website"],
-  "notice": "One sentence noting this is AI-generated from public sources."
+  "sources": ["AI-generated baseline"],
+  "notice": "One sentence noting this is AI-generated and should be reviewed and updated with actual company data."
 }
 
 Categories to include:
-- "profile": exactly 1 node — identity, HQ, size, founding, key markets
-- "strategy": 3-5 nodes — one per major strategic priority from recent communications
-- "organisation": 3-6 nodes — one per major business segment or division
-- "finance": 3-5 nodes — revenue figures, profitability, balance sheet highlights,
-  capital allocation, and financial performance trends
+- "profile": exactly 1 node — company overview, HQ region, size/stage, key markets
+- "strategy": exactly 3 nodes — one per major strategic priority for this industry
+- "organisation": exactly 3 nodes — one per major business unit or functional area
+- "finance": exactly 3 nodes — revenue model, cost structure, key financial metrics
 
 Rules:
-- Only use publicly available information
-- Summaries: 2-5 sentences, plain text, no bullet points
-- Tags: lowercase, hyphen-separated, max 8 per node
+- Do NOT invent specific revenue figures, employee counts, or named executives
+- Use qualitative descriptions and industry-typical ranges where appropriate
+- Summaries: 2-3 sentences maximum, plain text, no bullet points, no line breaks inside a summary
+- Tags: lowercase, hyphen-separated, max 5 per node
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
-Do not write ```json or ``` anywhere. Start your response with { and end with }."""
+Start your response with { and end with }."""
 
 
 PUBLIC_RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
@@ -539,9 +679,18 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 return
 
             is_public = body.is_public or bool(body.ticker)
-            log(f"START company={body.company_name!r} ticker={body.ticker!r} "
-                f"is_public={is_public} provider={provider} "
-                f"max_turns={RESEARCH_MAX_SEARCH_TURNS} max_tokens={RESEARCH_MAX_OUTPUT_TOKENS}")
+
+            # ── Request banner ───────────────────────────────────────────────
+            log("=" * 60)
+            log("RESEARCH REQUEST")
+            log(f"  company_name : {body.company_name!r}")
+            log(f"  industry     : {body.industry!r}")
+            log(f"  ticker       : {body.ticker!r}")
+            log(f"  is_public    : {is_public}  (body.is_public={body.is_public}, ticker={'yes' if body.ticker else 'no'})")
+            log(f"  provider     : {provider}")
+            log(f"  max_tokens   : {RESEARCH_MAX_OUTPUT_TOKENS}")
+            log(f"  max_turns    : {RESEARCH_MAX_SEARCH_TURNS}")
+            log("=" * 60)
             await emit({"type": "status", "message": "Starting research…"})
 
             # ── SEC EDGAR fetch (public companies only) ──────────────────────
@@ -614,42 +763,89 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 system_prompt = PUBLIC_RESEARCH_SYSTEM
             else:
                 user_prompt = (
-                    f"Research this company and return the Blueprint JSON:\n\n"
-                    f"Company: {body.company_name}\n"
+                    f"Generate baseline Blueprint dimensions for this PRIVATE company:\n\n"
+                    f"Company : {body.company_name}\n"
                     f"Industry: {body.industry}\n\n"
-                    f"Use web search to find accurate public information, "
-                    f"then return ONLY the JSON object — no other text."
+                    f"Do NOT use web search. Use your knowledge of this industry to generate "
+                    f"plausible Profile, Strategy, Organisation, and Finance dimensions. "
+                    f"Return ONLY the JSON object — no other text."
                 )
-                system_prompt = RESEARCH_SYSTEM
+                system_prompt = PRIVATE_RESEARCH_SYSTEM
 
             messages: list[dict] = [{"role": "user", "content": user_prompt}]
+            # Web search only for public companies — private companies use pure generation
+            # Private: no web search, no SEC, single Anthropic call at 2000 tokens
+            #          → fast, cheap, zero external dependencies = never fails
+            # Public:  SEC EDGAR + web search up to RESEARCH_MAX_SEARCH_TURNS + full tokens
+            max_turns  = RESEARCH_MAX_SEARCH_TURNS if is_public else 0
+            max_tokens = RESEARCH_MAX_OUTPUT_TOKENS if is_public else min(RESEARCH_MAX_OUTPUT_TOKENS, 2500)
             tools = [{"type": "web_search_20250305", "name": "web_search"}] \
-                    if (provider == "anthropic" and RESEARCH_MAX_SEARCH_TURNS > 0) else None
+                    if (is_public and provider == "anthropic" and max_turns > 0) else None
 
-            # ── Turn 1 ───────────────────────────────────────────────────────
+            # ── Prompt/tools banner ──────────────────────────────────────────
+            log("-" * 60)
+            log(f"SYSTEM PROMPT    : {'PUBLIC_RESEARCH_SYSTEM' if is_public else 'PRIVATE_RESEARCH_SYSTEM'}")
+            log(f"WEB SEARCH TOOLS : {'ENABLED' if tools else 'DISABLED (private — pure generation)'}")
+            log(f"MAX SEARCH TURNS : {max_turns}")
+            log(f"MAX TOKENS       : {max_tokens}")
+            log(f"SEC PATH         : {'YES — ticker lookup + EDGAR' if is_public else 'NO — private company, skipped'}")
+            log(f"USER PROMPT:\n{user_prompt}")
+            log("-" * 60)
+
+            # ── Turn 1 (with retry for reliability) ─────────────────────────
             log("Calling AI — turn 1")
             await emit({"type": "status", "message": "Sending request to AI model…"})
-            if provider == "openai":
-                data = await _call_openai(api_key, messages, system_prompt, RESEARCH_MAX_OUTPUT_TOKENS)
-            else:
-                data = await _call_anthropic(api_key, messages, system_prompt, tools)
+            last_exc: Exception | None = None
+            data: dict = {}
+            for attempt in range(1, 4):  # up to 3 attempts
+                try:
+                    if provider == "openai":
+                        data = await _call_openai(api_key, messages, system_prompt, max_tokens)
+                    else:
+                        data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    log(f"Turn 1 attempt {attempt} failed — {type(exc).__name__}: {exc}")
+                    if attempt < 3:
+                        await asyncio.sleep(2 ** attempt)  # 2s then 4s back-off
+
+            # Private company: if all retries failed, use the Python fallback so the
+            # research step never errors out — user gets template dimensions instead.
+            if last_exc:
+                if not is_public:
+                    log(f"All retries failed for private company — using template fallback")
+                    await emit({"type": "status", "message": "AI unavailable — using baseline template…"})
+                    fallback = _private_company_fallback(body.company_name, body.industry)
+                    result = ResearchResponse(
+                        nodes=[ResearchedNode(**n) for n in fallback["nodes"]],
+                        sources=fallback["sources"],
+                        notice=fallback["notice"],
+                        turns_used=0,
+                        tokens_cap=0,
+                    )
+                    log(f"Fallback result — {len(result.nodes)} template nodes")
+                    await queue.put({"type": "result", "data": result.model_dump()})
+                    return
+                raise last_exc  # public company — still surface the error
             log(f"Turn 1 done — stop_reason={data.get('stop_reason')} usage={data.get('usage',{})}")
             turns_used = 0
 
             # ── Follow-up web-search turns ───────────────────────────────────
             while (provider == "anthropic"
                    and data.get("stop_reason") == "tool_use"
-                   and turns_used < RESEARCH_MAX_SEARCH_TURNS):
+                   and turns_used < max_turns):
                 tool_results = _collect_tool_results(data)
                 if not tool_results:
                     break
                 turns_used += 1
-                log(f"Web-search turn {turns_used}/{RESEARCH_MAX_SEARCH_TURNS}")
+                log(f"Web-search turn {turns_used}/{max_turns}")
                 await emit({"type": "status",
-                            "message": f"AI searching the web (pass {turns_used} of {RESEARCH_MAX_SEARCH_TURNS})…"})
+                            "message": f"AI searching the web (pass {turns_used} of {max_turns})…"})
                 messages.append({"role": "assistant", "content": data["content"]})
                 messages.append({"role": "user",      "content": tool_results})
-                data = await _call_anthropic(api_key, messages, system_prompt, tools)
+                data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
                 log(f"Search turn {turns_used} done — stop_reason={data.get('stop_reason')}")
 
             # ── Force answer if turn cap hit ─────────────────────────────────
@@ -673,7 +869,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     data = await _call_anthropic(
                         api_key, messages, system_prompt,
                         tools=None,
-                        max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
+                        max_tokens=max_tokens,
                     )
                     log(f"Final forced answer — stop_reason={data.get('stop_reason')}")
 
@@ -714,23 +910,27 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     )})
                     if provider == "openai":
                         cont_data = await _call_openai(
-                            api_key, messages, system_prompt, RESEARCH_MAX_OUTPUT_TOKENS
+                            api_key, messages, system_prompt, max_tokens
                         )
                     else:
                         cont_data = await _call_anthropic(
                             api_key, messages, system_prompt,
                             tools=None,
-                            max_tokens=RESEARCH_MAX_OUTPUT_TOKENS,
+                            max_tokens=max_tokens,
                         )
                     continuation = _collect_text(cont_data).strip()
                     log(f"Continuation length: {len(continuation)} chars")
                     merged = raw_text.rstrip() + continuation
                     extracted = _extract_json(merged)
 
+            # Strip invalid control characters (raw newlines/tabs inside string values)
+            # that Claude occasionally emits in long summaries, causing JSONDecodeError.
+            sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', extracted)
+
             try:
-                parsed = json.loads(extracted)
+                parsed = json.loads(sanitized)
             except json.JSONDecodeError as e:
-                log(f"ERROR — JSON parse failed: {e} | snippet: {extracted[:300]!r}")
+                log(f"ERROR — JSON parse failed: {e} | snippet: {sanitized[:300]!r}")
                 await queue.put({"type": "error",
                                  "message": f"JSON parse error: {str(e)[:200]}"})
                 return
@@ -742,8 +942,17 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 turns_used=turns_used,
                 tokens_cap=RESEARCH_MAX_OUTPUT_TOKENS,
             )
-            log(f"SUCCESS — {len(result.nodes)} nodes | {turns_used} search turns | "
-                f"total time {time.monotonic()-t0:.1f}s")
+            log("=" * 60)
+            log(f"RESEARCH RESULT — {'PUBLIC' if is_public else 'PRIVATE'} company: {body.company_name!r}")
+            log(f"  nodes        : {len(result.nodes)}")
+            log(f"  search turns : {turns_used}")
+            log(f"  sources      : {result.sources}")
+            log(f"  notice       : {result.notice}")
+            log(f"  total time   : {time.monotonic()-t0:.1f}s")
+            log("  nodes breakdown:")
+            for i, n in enumerate(result.nodes):
+                log(f"    [{i}] category={n.category!r:14s} sensitive={n.sensitive}  label={n.label!r}")
+            log("=" * 60)
             await queue.put({"type": "result", "data": result.model_dump()})
 
         except Exception as e:

@@ -18,6 +18,7 @@ from api.routers import business_relations
 from api.routers import agents
 from api.routers import agent_upload
 from api.routers import use_cases
+from api.routers import use_case_upload
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -105,7 +106,8 @@ app.include_router(audit.router,       prefix="/api/v1/audit",       tags=["Audi
 app.include_router(business_relations.router, prefix="/api/v1")
 app.include_router(agents.router,        prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
-app.include_router(use_cases.router,     prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
+app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
+app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])

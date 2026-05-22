@@ -105,6 +105,10 @@ class BlueprintApiService {
     return req(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
   }
 
+  async deleteCompany(id: string): Promise<void> {
+    return req(`/companies/${id}`, { method: 'DELETE' });
+  }
+
   // ── Dimension Types ────────────────────────────────────────────────────────
 
   async listDimTypes(): Promise<DimType[]> {
