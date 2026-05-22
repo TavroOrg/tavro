@@ -85,42 +85,16 @@ const brandingSnippet = `
   if (!location.pathname.startsWith("/ui/v2/login")) return;
 
   const TITLE = "Tavro Agent BizOps";
-  const TEXT_REPLACEMENTS = new Map([
-    ["Welcome back!", TITLE],
-    ["Enter your login details.", "Enter your username and password."],
-  ]);
-  let bodyObserver = null;
   let headObserver = null;
   let watchdog = null;
-
-  function replaceTextNodes(root) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const text = node.nodeValue;
-      if (!text) continue;
-      const replacement = TEXT_REPLACEMENTS.get(text.trim());
-      if (replacement) {
-        node.nodeValue = text.replace(text.trim(), replacement);
-      }
-    }
-  }
 
   function enforceBranding() {
     if (document.title !== TITLE) {
       document.title = TITLE;
     }
-    if (document.body) {
-      replaceTextNodes(document.body);
-    }
   }
 
   function ensureWatchers() {
-    if (document.body && !bodyObserver) {
-      bodyObserver = new MutationObserver(enforceBranding);
-      bodyObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
-    }
-
     if (document.head && !headObserver) {
       headObserver = new MutationObserver(enforceBranding);
       headObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
