@@ -5,7 +5,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShieldCheck, RefreshCw, ChevronRight, AlertTriangle, CheckCircle2,
-  Clock, XCircle, Loader2, TrendingUp, BarChart3, FileText, Scale,
+  Clock, XCircle, Loader2, TrendingUp, BarChart3, FileText, Scale, LayoutGrid, List,
 } from 'lucide-react';
 import { auditApi } from '../services/auditApi';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -55,6 +55,7 @@ const AuditCenterPage: React.FC = () => {
   const [loading,     setLoading]     = useState(true);
   const [modalOpen,   setModalOpen]   = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [viewMode,    setViewMode]    = useState<'grid' | 'list'>('list');
 
   // Live run state — keyed by run_id
   const [liveProgress, setLiveProgress] = useState<Record<string, {
@@ -163,6 +164,19 @@ const AuditCenterPage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* View toggle */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+            <button onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+              title="Grid view">
+              <LayoutGrid size={15} />
+            </button>
+            <button onClick={() => setViewMode('list')}
+              className={`p-1.5 rounded-lg transition-all ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+              title="List view">
+              <List size={15} />
+            </button>
+          </div>
           <button onClick={loadRuns} disabled={loading}
             className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
@@ -220,6 +234,55 @@ const AuditCenterPage: React.FC = () => {
               className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-colors">
               <ShieldCheck size={14} /> Start first audit
             </button>
+          </div>
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+            {runs.map(run => {
+              const live = liveProgress[run.id];
+              const isLive = live && live.status === 'running';
+              const pct  = live?.pct ?? (run.status === 'completed' ? 100 : 0);
+              const risk = (live?.overall_risk ?? run.overall_risk) as RiskLevel | null;
+              const status = live?.status ?? run.status;
+              return (
+                <div key={run.id}
+                  className={`bg-white dark:bg-slate-900 rounded-xl border transition-all cursor-pointer hover:shadow-md flex flex-col gap-3 p-4 ${
+                    run.id === activeRunId
+                      ? 'border-indigo-300 dark:border-indigo-700 shadow-sm'
+                      : 'border-slate-200 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800'
+                  }`}
+                  onClick={() => navigate(`/audit/${run.id}`)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <StatusIcon status={status} />
+                    {risk && <RiskBadge level={risk} />}
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-snug">
+                      {run.use_case_name ?? run.agent_name ?? 'Full catalog'}
+                    </p>
+                    {run.compliance_item_name && (
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">vs {run.compliance_item_name}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 dark:text-slate-500">
+                    <span className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full font-bold capitalize">
+                      {run.scope_type.replace(/_/g,' ')}
+                    </span>
+                    <span>{new Date(run.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-auto pt-1 border-t border-slate-100 dark:border-slate-800">
+                    <ProgressBar pct={pct} risk={risk} />
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 flex-shrink-0">
+                      {live?.completed ?? run.completed_pairs}/{live?.total ?? run.total_pairs}
+                    </span>
+                  </div>
+                  {isLive && (
+                    <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold animate-pulse">
+                      {live?.findings?.length ?? 0} findings so far
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="flex flex-col gap-3">
