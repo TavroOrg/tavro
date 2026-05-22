@@ -196,6 +196,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
     const applications = uc.applications?.filter(Boolean) ?? [];
     const controls = uc.controls?.filter(Boolean) ?? [];
     const riskAssessments = uc.risk_assessments?.filter(Boolean) ?? [];
+    const linkedAgents = ((uc as any).agents ?? (uc as any).of_associated_agents ?? []).filter(Boolean);
+    const linkedAgentCount = linkedAgents.length;
 
     const statusLabel = uc.status || 'Proposed';
     const priorityValue = uc.priority ?? null;
@@ -205,7 +207,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
     const tabs = [
         { id: 'business_case', label: 'Business Case', icon: FileText },
         { id: 'business_impact', label: 'Business Impact', icon: Building2 },
-        { id: 'ai_agents', label: 'AI Agents', icon: Bot },
+        { id: 'ai_agents', label: `AI Agents (${linkedAgentCount})`, icon: Bot },
         { id: 'risk_assessments', label: 'Risk Assessments', icon: ShieldAlert },
         { id: 'controls', label: 'Controls', icon: ShieldCheck }
     ];

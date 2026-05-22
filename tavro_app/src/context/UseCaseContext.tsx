@@ -43,6 +43,7 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     const fetchingRef = useRef(false);
+    const pendingInvalidateRef = useRef(false);
     // identifiers of optimistically added use cases not yet confirmed by server
     const pendingAddIds = useRef<Set<string>>(new Set());
     // identifier → lowercase name, for name-based dedup during carry-over
@@ -51,13 +52,19 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const pendingDeleteIds = useRef<Set<string>>(new Set());
 
     const fetchUseCases = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current && !invalidate) return;
+        if (fetchingRef.current) {
+            if (invalidate) pendingInvalidateRef.current = true;
+            return;
+        }
+
+        const shouldInvalidate = invalidate || pendingInvalidateRef.current;
+        pendingInvalidateRef.current = false;
         fetchingRef.current = true;
         setError(null);
         // Only block the UI if there is no data yet or the user explicitly synced.
         const hasExistingData = Boolean(sessionStorage.getItem(USECASE_CACHE_KEY));
-        if (!hasExistingData || invalidate) setLoading(true);
-        if (invalidate) mcpClient.invalidateCache();
+        if (!hasExistingData || shouldInvalidate) setLoading(true);
+        if (shouldInvalidate) mcpClient.invalidateCache();
 
         try {
             const fresh = await mcpClient.getAllUseCases();
@@ -103,6 +110,10 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         } finally {
             setLoading(false);
             fetchingRef.current = false;
+            if (pendingInvalidateRef.current) {
+                pendingInvalidateRef.current = false;
+                fetchUseCases(true);
+            }
         }
     }, []);
 

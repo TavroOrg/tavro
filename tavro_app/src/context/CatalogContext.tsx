@@ -224,20 +224,24 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     const fetchingRef = useRef(false);
+    const pendingInvalidateRef = useRef(false);
     const lastWorkflowSnapshotRef = useRef('');
 
     const fetchAgents = useCallback(async (invalidate = false) => {
-        if (fetchingRef.current && !invalidate) return;
+        if (fetchingRef.current) {
+            if (invalidate) pendingInvalidateRef.current = true;
+            return;
+        }
+
+        const shouldInvalidate = invalidate || pendingInvalidateRef.current;
+        pendingInvalidateRef.current = false;
         fetchingRef.current = true;
         setError(null);
         // Only block the UI if there is no data yet or the user explicitly synced.
         // Background auto-refreshes should be silent when cached data is already showing.
         const hasExistingData = Boolean(sessionStorage.getItem(AGENT_CACHE_KEY));
-        if (!hasExistingData || invalidate) setLoading(true);
-
-        if (invalidate) {
-            mcpClient.invalidateCache();
-        }
+        if (!hasExistingData || shouldInvalidate) setLoading(true);
+        if (shouldInvalidate) mcpClient.invalidateCache();
 
         try {
             const data = await mcpClient.getAllAgents();
@@ -294,6 +298,10 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         } finally {
             setLoading(false);
             fetchingRef.current = false;
+            if (pendingInvalidateRef.current) {
+                pendingInvalidateRef.current = false;
+                fetchAgents(true);
+            }
         }
     }, []);
 
@@ -358,9 +366,13 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             for (const wf of workflows) {
                 const wfKey = `${wf.workflow_id}:${wf.agent_id}`;
+                const wasHandled = handled.has(wfKey);
                 const hasMeta = nextMeta.some(item =>
                     norm(item.agent_id) === norm(wf.agent_id) ||
                     norm(item.name) === norm(wf.name)
+                );
+                const hadPendingId = nextIds.some(id =>
+                    norm(id) === norm(wf.agent_id) || norm(id) === norm(wf.name)
                 );
                 if (wf.status === 'running') {
                     if (!hasMeta) {
@@ -383,9 +395,11 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     norm(id) !== norm(wf.agent_id) &&
                     norm(id) !== norm(wf.name)
                 );
-                shouldRefresh = true;
+                // Refresh only when a terminal workflow is newly observed or when
+                // we actually cleared a running/pending marker from local state.
+                if (!wasHandled || hasMeta || hadPendingId) shouldRefresh = true;
 
-                if (handled.has(wfKey)) continue;
+                if (wasHandled) continue;
                 handled.add(wfKey);
 
                 if (wf.status === 'failed') {
