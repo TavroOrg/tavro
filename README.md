@@ -3,9 +3,13 @@
   <!-- LOGO: upload travo_logo.png to your repo and update the src below -->
   <img src="assets\images\travo_logo.png" alt="Tavro Logo" width="80" />
 
-  <h1>Tavro Agent Catalog</h1>
+  <h1>Tavro Agent BizOps</h1>
 
-  <p><em>Unify, govern, and observe your AI agent ecosystem with enterprise metadata with open source system.</em></p>
+  <p><em>Accelerating enterprise agent adoption through metadata-driven BizOps.</em></p>
+  
+  <div align="center">
+  <img src="agentbizops3.png" alt="Agent BizOps" width="400">
+</div>
 
   <p>
     <a href="https://www.tavro.ai/tavro/"><strong> Free Cloud Trial</strong></a>
