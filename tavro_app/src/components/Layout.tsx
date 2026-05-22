@@ -91,6 +91,11 @@ const Layout: React.FC = () => {
     // ── Drag-to-resize ───────────────────────────────────────────────────────
     const isDragging = useRef(false);
 
+    // Once the Chat tab is opened, keep ChatPanel mounted (hidden) on tab
+    // switches so that in-progress streams keep updating state normally.
+    const chatEverOpenedRef = useRef(false);
+    if (activePanel === 'chat') chatEverOpenedRef.current = true;
+
     const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         isDragging.current = true;
@@ -522,7 +527,15 @@ const Layout: React.FC = () => {
 
                             {/* Panel body */}
                             <div className="flex-1 overflow-hidden">
-                                {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
+                                {/* Keep ChatPanel mounted (hidden) once opened so that
+                                    in-progress streams keep updating state when the user
+                                    switches to Dev Logs. Avoid mounting before chat is ever
+                                    opened so the resume effect doesn't fire prematurely. */}
+                                {(activePanel === 'chat' || chatEverOpenedRef.current) && isPanelOpen && (
+                                    <div className={`h-full flex flex-col ${activePanel !== 'chat' ? 'hidden' : ''}`}>
+                                        <ChatPanel onClose={() => setActivePanel(null)} />
+                                    </div>
+                                )}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
                                 {activePanel === 'attachment' && isOnAttachmentPage && (
                                     <AttachmentPanel
