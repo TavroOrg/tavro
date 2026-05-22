@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import UseCaseCatalog from '../components/UseCaseCatalog';
+import LoadAIUseCaseModal from '../components/LoadAIUseCaseModal';
 import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 
@@ -13,6 +14,7 @@ const UseCasePage: React.FC = () => {
 
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
+    const [showLoadModal, setShowLoadModal] = useState(false);
     const { useCases: allUseCases, loading, error, refresh } = useUseCases();
 
     const navigate = useNavigate();
@@ -58,6 +60,7 @@ const UseCasePage: React.FC = () => {
         : pagedUseCases;
 
     return (
+        <>
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
             <TimedInfoToast storageKey="tavro_use_case_notice" />
 
@@ -76,6 +79,12 @@ const UseCasePage: React.FC = () => {
 
                 {!isSearching && (
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowLoadModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-all"
+                        >
+                            <FolderUp size={16} /> Load AI Use Case
+                        </button>
                         <button
                             onClick={() => navigate('/use-cases/new')}
                             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
@@ -144,6 +153,17 @@ const UseCasePage: React.FC = () => {
                 </div>
             )}
         </div>
+
+        {showLoadModal && (
+            <LoadAIUseCaseModal
+                onClose={() => setShowLoadModal(false)}
+                onSuccess={() => {
+                    refresh();
+                    setTimeout(() => setShowLoadModal(false), 3000);
+                }}
+            />
+        )}
+        </>
     );
 };
 

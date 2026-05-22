@@ -1,6 +1,6 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { mcpClient } from '../services/mcpClient';
-import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff } from 'lucide-react';
 
 interface AgentRiskSummaryProps {
     agentId: string;
@@ -71,76 +71,37 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState(false);
-    const requestedRef = useRef(false);
+    const [noAssessment, setNoAssessment] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
-        let pollTimer: number | null = null;
-
-        const fetchSummary = async () => {
-            try {
-                const res = await mcpClient.getAgentRiskSummary(agentId);
-                if (cancelled) return false;
-                const normalized = normalizeRiskSummaryPayload(res, agentId);
-                if (normalized) {
-                    setData(normalized);
-                    setError(null);
-                    setLoading(false);
-                    return true;
-                }
-                return false;
-            } catch {
-                if (cancelled) return false;
-                return false;
-            }
-        };
 
         const start = async () => {
             setLoading(true);
             setError(null);
             setData(null);
             setExpanded(false);
-            requestedRef.current = false;
-
-            const hasSummary = await fetchSummary();
-            if (hasSummary || cancelled) return;
+            setNoAssessment(false);
 
             try {
-                await mcpClient.createRiskAssessment(agentId);
-                requestedRef.current = true;
-            } catch {
-                if (!cancelled) {
-                    setError('Unable to request risk assessment right now.');
-                    setLoading(false);
-                }
-                return;
-            }
-
-            pollTimer = window.setInterval(async () => {
-                const done = await fetchSummary();
-                if (done && pollTimer) {
-                    window.clearInterval(pollTimer);
-                    pollTimer = null;
-                }
-            }, 5000);
-
-            window.setTimeout(() => {
+                const res = await mcpClient.getAgentRiskSummary(agentId);
                 if (cancelled) return;
-                if (pollTimer) {
-                    window.clearInterval(pollTimer);
-                    pollTimer = null;
+                const normalized = normalizeRiskSummaryPayload(res, agentId);
+                if (normalized) {
+                    setData(normalized);
+                } else {
+                    setNoAssessment(true);
                 }
-                setLoading(false);
-                setError(prev => prev ?? 'Risk assessment is still running. Please refresh this tab in a few moments.');
-            }, 60000);
+            } catch {
+                if (!cancelled) setNoAssessment(true);
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
         };
 
         start();
 
-        return () => {
-            cancelled = true;
-            if (pollTimer) window.clearInterval(pollTimer);
-        };
+        return () => { cancelled = true; };
     }, [agentId]);
 
     const headline = data ? extractHeadline(data.risk_summary) : null;
@@ -166,7 +127,19 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
             <div className="p-5">
                 {loading && (
                     <div className="flex items-center gap-2 text-slate-400 text-sm">
-                        <RefreshCw size={14} className="animate-spin" /> Generating risk summary...
+                        <RefreshCw size={14} className="animate-spin" /> Checking for risk assessment...
+                    </div>
+                )}
+
+                {!loading && noAssessment && (
+                    <div className="flex flex-col items-center gap-3 py-6 text-center">
+                        <div className="p-3 bg-slate-100 rounded-xl">
+                            <ShieldOff size={22} className="text-slate-400" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-700">No risk assessment found</p>
+                            <p className="text-xs text-slate-400 mt-1">Use the <span className="font-medium text-slate-500">Risk Assessment</span> button above to initiate one.</p>
+                        </div>
                     </div>
                 )}
 

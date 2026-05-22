@@ -3,6 +3,24 @@ import { getValidToken } from './auth';
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
+async function reqFormData<T>(path: string, formData: FormData): Promise<T> {
+    const token = await getValidToken();
+    const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
+    const res = await fetch(`${V1}${path}`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+        },
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+    }
+    return res.json();
+}
+
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = await getValidToken();
     const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
@@ -134,6 +152,14 @@ class UseCaseApiService {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+    }
+
+    async uploadUseCases(files: File[]): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
+        const formData = new FormData();
+        for (const file of files) {
+            formData.append('files', file, file.name);
+        }
+        return reqFormData('/use-cases/upload', formData);
     }
 
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {
