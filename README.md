@@ -8,7 +8,7 @@
   <p><em>Accelerating enterprise agent adoption through metadata-driven BizOps.</em></p>
   
   <div align="center">
-  <img src="agentbizops3.png" alt="Agent BizOps" width="400">
+  <img src="assets\images\agentbizops3.png" alt="Agent BizOps" width="400">
 </div>
 
   <p>
