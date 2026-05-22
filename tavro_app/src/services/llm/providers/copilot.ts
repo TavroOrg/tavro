@@ -288,10 +288,6 @@ export class CopilotProvider implements ILLMProvider {
     }
 
     private async *streamOpenAI(messages: RuntimeMessage[]): AsyncGenerator<string> {
-        yield* this.streamViaProxy(messages);
-    }
-
-    private async *streamOpenAIRaw(messages: RuntimeMessage[]): AsyncGenerator<string> {
         const res = await byokStream({
             providerType: 'openai',
             endpoint: this.openAIEndpoint(),
@@ -302,12 +298,13 @@ export class CopilotProvider implements ILLMProvider {
                 messages: toWireMessagesOpenAI(messages),
                 [maxTokensKey(this.model)]: 1024,
             },
+            ...(this.requestId ? { requestId: this.requestId } : {}),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.error?.message ?? err?.error ?? `Copilot OpenAI BYOK stream error ${res.status}`);
         }
-        yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
+        yield* parseSSE(res.body!.getReader(), extractProxyDelta);
     }
 
     // ── Azure OpenAI BYOK (via proxy) ─────────────────────────────────────────
@@ -354,10 +351,6 @@ export class CopilotProvider implements ILLMProvider {
     }
 
     private async *streamAzure(messages: RuntimeMessage[]): AsyncGenerator<string> {
-        yield* this.streamViaProxy(messages);
-    }
-
-    private async *streamAzureRaw(messages: RuntimeMessage[]): AsyncGenerator<string> {
         const res = await byokStream({
             providerType: 'azure',
             endpoint: this.azureEndpoint(),
@@ -366,12 +359,13 @@ export class CopilotProvider implements ILLMProvider {
                 messages: toWireMessagesOpenAI(messages),
                 max_tokens: 8192,
             },
+            ...(this.requestId ? { requestId: this.requestId } : {}),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.error?.message ?? err?.error ?? `Copilot Azure BYOK stream error ${res.status}`);
         }
-        yield* parseSSE(res.body!.getReader(), p => p?.delta ?? '');
+        yield* parseSSE(res.body!.getReader(), extractProxyDelta);
     }
 
     // ── Anthropic BYOK (via proxy) ────────────────────────────────────────────
