@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import { AgentData } from '../types/agent';
 import { useCatalog } from '../context/CatalogContext';
 import AgentCatalog from '../components/AgentCatalog';
+import LoadAgentsModal from '../components/LoadAgentsModal';
 import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 
@@ -14,6 +15,7 @@ const Dashboard: React.FC = () => {
 
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
+    const [showLoadModal, setShowLoadModal] = useState(false);
     const { agents: allAgents, loading, error, refresh } = useCatalog();
 
     const navigate = useNavigate();
@@ -44,41 +46,16 @@ const Dashboard: React.FC = () => {
         return allAgents.slice(start, start + PAGE_SIZE);
     }, [allAgents, page]);
 
-    const optimisticPending = !isSearching && page === 1
-        ? (() => {
-            const raw = localStorage.getItem('tavro_pending_assessment_agent_meta');
-            const pendingMeta = raw ? JSON.parse(raw) as Array<{ agent_id: string; name: string; description: string; created_at: string; }> : [];
-            return pendingMeta
-                .filter(item => !pagedAgents.some(p => (p.identification?.agent_id || p.name) === (item.agent_id || item.name)))
-                .map(item => ({
-                    name: item.name,
-                    description: item.description,
-                    version: '1.0',
-                    identification: {
-                        agent_id: item.agent_id,
-                        role: null,
-                        instruction: null,
-                        governance_status: 'Risk Assessment is running',
-                    },
-                    configuration: { autonomy_level: null },
-                    tool: [],
-                    data_source: [],
-                    application: [],
-                    business_process: [],
-                    risk_assessment: null,
-                } as AgentData));
-        })()
-        : [];
-
     const displayedAgents = isSearching
         ? allAgents.filter(a =>
             a.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             a.identification?.agent_id?.toLowerCase().includes(searchTerm.toLowerCase())
         )
-        : [...optimisticPending, ...pagedAgents];
+        : pagedAgents;
 
     return (
+        <>
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
             <TimedInfoToast storageKey="tavro_catalog_notice" />
 
@@ -97,6 +74,12 @@ const Dashboard: React.FC = () => {
 
                 {!isSearching && (
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowLoadModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-all"
+                        >
+                            <FolderUp size={16} /> Load Agents
+                        </button>
                         <button
                             onClick={() => navigate('/agents/new')}
                             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
@@ -165,6 +148,17 @@ const Dashboard: React.FC = () => {
                 </div>
             )}
         </div>
+
+        {showLoadModal && (
+            <LoadAgentsModal
+                onClose={() => setShowLoadModal(false)}
+                onSuccess={() => {
+                    refresh();
+                    setTimeout(() => setShowLoadModal(false), 3000);
+                }}
+            />
+        )}
+        </>
     );
 };
 

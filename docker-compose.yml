@@ -1,3 +1,5 @@
+﻿name: tavro
+
 x-risk-worker-base: &risk_worker_base
   image: tavro-risk-worker:local
   build:
@@ -12,6 +14,7 @@ services:
       context: .
       dockerfile: tavro_Dockerfile
       args:
+        AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
     container_name: tavro-postgres
     restart: unless-stopped
@@ -21,7 +24,7 @@ services:
       POSTGRES_DB:                       tavro
       POSTGRES_SHARED_PRELOAD_LIBRARIES: "age"
     ports:
-      - "5432:5432"       # keep open for Postico access on your Mac
+      - "5433:5432"       # keep open for Postico access on your Mac
     volumes:
       - tavro_pgdata:/var/lib/postgresql/data
       - ./sql:/sql:ro
@@ -59,8 +62,6 @@ services:
     environment:
       # Digital Twin DB (asyncpg)
       DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-      PYTHONPATH:                 /app:/opt
-      CATALOG_CONFIG_PATH:        /config/config.yaml
       # AI keys
       ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
       AZURE_AI_FOUNDRY_AGENT_API_VERSION: '${AZURE_AI_FOUNDRY_AGENT_API_VERSION:-v1}'
@@ -79,22 +80,42 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB:       tavro
       # Risk schema names
-      CORE_GLUE_DB_NAME:            core
-      CURATED_GLUE_DB_NAME:         curated
-      RISK_MANAGEMENT_GLUE_DB_NAME: risk_management
+      CORE_DB_NAME:            core
+      CURATED_DB_NAME:         curated
+      RISK_MANAGEMENT_DB_NAME: risk_management
       # Temporal
       TEMPORAL_ADDRESS:     risk-temporal:7233
-      LOCAL_AGENT_CARD_DIR: /data/agent_cards
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
     ports:
       - "8000:8000"
     volumes:
-      - ./tavro_api:/app                                       # live reload — tavro_api code
-      - ./services:/app/services:ro                            # live reload — risk services
-      - ./utils:/app/utils:ro                                  # live reload — risk utils
-      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/config/config.yaml:ro  # risk config
-      - ./agent_cards:/data/agent_cards                        # agent card output dir
+      - ./tavro_api:/app                    # live reload — tavro_api code
+      - ./services:/app/services:ro         # live reload — risk services
+      - ./utils:/app/utils:ro               # live reload — risk utils
+      - ./config.yaml:/app/config.yaml:ro   # risk config
+      - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  copilot-sdk:
+    build:
+      context: ./tavro_app/copilot-server
+      dockerfile: Dockerfile
+    container_name: tavro-copilot-sdk
+    restart: unless-stopped
+    environment:
+      # Docker-internal URL for the Tavro MCP server.
+      # The copilot-server registers this with each Copilot SDK session so the
+      # SDK can automatically route tool calls to Tavro's MCP backend.
+      MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
+    ports:
+      - "4001:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -111,10 +132,13 @@ services:
         VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
         VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
         VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+        VITE_MCP_URL: ${VITE_MCP_URL:-http://localhost:9001/zitadel/mcp}
     container_name: tavro-app
     restart: unless-stopped
     depends_on:
       tavro-api:
+        condition: service_healthy
+      copilot-sdk:
         condition: service_healthy
     ports:
       - "9000:80"
@@ -126,22 +150,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
-  # ── pgAdmin 4 — database browser ────────────────────────────────────────────
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: tavro-pgadmin
-    restart: unless-stopped
-    depends_on:
-      tavro-postgres:
-        condition: service_healthy
-    environment:
-      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-    ports:
-      - "5050:80"
-    volumes:
-      - tavro_pgadmin:/var/lib/pgadmin
 
   proxy:
     image: ${TRAEFIK_IMAGE}
@@ -375,7 +383,7 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
 
-  # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────
+# ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────  
   risk-mcp-server:
     build:
       context: .
@@ -394,20 +402,32 @@ services:
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
-      DB_NAME:           ${POSTGRES_DB:-tavro}
-      DB_USER:           ${POSTGRES_USER}
-      DB_PASSWORD:       ${POSTGRES_PASSWORD}
-      DB_HOST:           tavro-postgres
-      DB_PORT:           "5432"
-      DB_SSLMODE:        disable
+      ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      ZITADEL_CONFIG_URL: http://proxy
+      ZITADEL_INTERNAL_BASE_URL: http://proxy
+      ZITADEL_INTERNAL_HOST_HEADER: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      TAVRO_RUNTIME_CONFIG_FILE: /app/runtime/tavro-runtime-config.json
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
+      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
+      TAVRO_API_URL: http://tavro-api:8000
     volumes:
-      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
-      - ./agent_cards:/app/agent_cards
+      - ./config.yaml:/app/config.yaml:ro
+      - ./tavro_api/agent_cards:/app/agent_cards
+      - tavro_runtime_config:/app/runtime:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      zitadel-api:
+        condition: service_healthy
       tavro-api:
         condition: service_healthy
+      proxy:
+        condition: service_started
+      zitadel-configure-app:
+        condition: service_started
 
   # ── Risk Worker — idle container for manual commands ─────────────────────────
   risk-worker:
@@ -425,7 +445,7 @@ services:
       tavro-postgres:
         condition: service_healthy
 
-  # ── Sample Loader — one-shot: load sample agent cards ────────────────────────
+# ── Sample Loader — one-shot: load sample agent cards ────────────────────────  
   risk-sample-loader:
     <<: *risk_worker_base
     container_name: risk-sample-loader
@@ -452,7 +472,7 @@ services:
     environment:
       PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
     volumes:
-      - ${TAVRO_CONFIG_FILE:-./config.yaml}:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy
@@ -461,6 +481,8 @@ services:
 
 volumes:
   tavro_pgdata:
-  tavro_pgadmin:
   zitadel-bootstrap:
   tavro_runtime_config:
+
+
+

@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
-import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider } from '../services/llmService';
+import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
@@ -11,6 +13,7 @@ import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../serv
 import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSessions } from '../context/ChatSessionContext';
 import type { StoredMessage } from '../store/chatSessionStore';
+import { useUseCases } from '../context/UseCaseContext';
 
 interface Message {
     id: string;
@@ -75,9 +78,133 @@ function saveTextAsPdf(title: string, text: string, filename: string): void {
     doc.save(filename);
 }
 
-function isPdfRequest(text: string): boolean {
+// ── Export / download helpers ──────────────────────────────────────────────────
+
+type ExportFormat = 'pdf' | 'csv' | 'xlsx' | 'json' | 'docx' | 'txt' | 'md';
+
+const EXPORT_LABELS: Record<ExportFormat, string> = {
+    pdf:  'PDF',
+    csv:  'CSV file',
+    xlsx: 'Excel file',
+    json: 'JSON file',
+    docx: 'Word document',
+    txt:  'text file',
+    md:   'Markdown file',
+};
+
+const EXPORT_INSTRUCTIONS: Record<ExportFormat, string> = {
+    pdf:  '\n\nThe user wants the response as a downloadable PDF. Provide a comprehensive, well-structured answer with all relevant data.',
+    csv:  '\n\nThe user wants tabular data as a CSV file. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row.',
+    xlsx: '\n\nThe user wants data as a spreadsheet. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row (will be downloaded as an Excel-compatible file).',
+    json: '\n\nThe user wants data as a JSON file. Use available tools to fetch the relevant data, then output it inside a ```json code block.',
+    docx: '\n\nThe user wants the response as a Word document. Structure your response with clear headings (## for sections) and well-formatted paragraphs.',
+    txt:  '\n\nThe user wants the response as a plain text file. Write clean, well-structured prose without markdown symbols.',
+    md:   '\n\nThe user wants the response as a Markdown document. Use proper Markdown with headers, bullet lists, and code blocks where appropriate.',
+};
+
+/** Detect which download format (if any) the user is asking for. */
+function detectExportFormat(text: string): ExportFormat | null {
     const msg = text.toLowerCase();
-    return msg.includes('pdf') && (msg.includes('generate') || msg.includes('create') || msg.includes('download') || msg.includes('export'));
+    const hasAction = ['generate', 'create', 'download', 'export', 'give', 'provide',
+        'get', 'make', 'produce', 'output', 'save', 'report'].some(w => msg.includes(w));
+    if (!hasAction) return null;
+
+    if (msg.includes('docx') || (msg.includes('word') && (msg.includes('document') || msg.includes('file') || msg.includes('doc')))) return 'docx';
+    if (msg.includes('excel') || msg.includes('xlsx') || msg.includes('.xls')) return 'xlsx';
+    if (msg.includes('csv') || msg.includes('comma-separated') || msg.includes('comma separated')) return 'csv';
+    if (msg.includes('json')) return 'json';
+    if (msg.includes('markdown') || msg.includes('.md')) return 'md';
+    if (msg.includes('.txt') || msg.includes('text file') || msg.includes('plain text')) return 'txt';
+    if (msg.includes('pdf')) return 'pdf';
+    return null;
+}
+
+function downloadBlob(content: string, filename: string, mimeType: string): void {
+    const blob = new Blob([content], { type: mimeType });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/** Extract the first matching fenced code block from an LLM response. */
+function extractCodeBlock(text: string, ...patterns: string[]): string | null {
+    const pat = patterns.length ? patterns.join('|') : '[a-z]*';
+    const m = text.match(new RegExp('```(?:' + pat + ')?\\n([\\s\\S]+?)\\n```', 'i'));
+    return m ? m[1].trim() : null;
+}
+
+/** Wrap markdown content in a minimal HTML structure that Word can open. */
+function markdownToWordHtml(text: string): string {
+    const body = text
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
+        .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>');
+    return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+  xmlns:w='urn:schemas-microsoft-com:office:word'
+  xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset='utf-8'><title>Tavro AI Export</title></head>
+<body><p>${body}</p></body></html>`;
+}
+
+/**
+ * Trigger the appropriate file download for the given export format.
+ * Returns true when a file was successfully created and downloaded.
+ */
+function handleExport(format: ExportFormat, content: string, title: string, basename: string): boolean {
+    switch (format) {
+        case 'pdf': {
+            saveTextAsPdf(title, content, `${basename}.pdf`);
+            return true;
+        }
+        case 'csv':
+        case 'xlsx': {
+            const data = extractCodeBlock(content, 'csv', 'tsv', 'text', 'plain');
+            if (data && data.includes(',') && data.split('\n').length >= 2) {
+                downloadBlob(data, `${basename}.csv`, 'text/csv;charset=utf-8;');
+                return true;
+            }
+            return false;
+        }
+        case 'json': {
+            const data = extractCodeBlock(content, 'json');
+            if (data) {
+                downloadBlob(data, `${basename}.json`, 'application/json');
+                return true;
+            }
+            return false;
+        }
+        case 'md': {
+            downloadBlob(content, `${basename}.md`, 'text/markdown;charset=utf-8;');
+            return true;
+        }
+        case 'txt': {
+            const plain = content
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/^#{1,6}\s+/gm, '')
+                .replace(/[*_`]/g, '')
+                .trim();
+            downloadBlob(plain, `${basename}.txt`, 'text/plain;charset=utf-8;');
+            return true;
+        }
+        case 'docx': {
+            downloadBlob(markdownToWordHtml(content), `${basename}.doc`, 'application/msword');
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/** @deprecated kept for any external callers — use detectExportFormat instead */
+function isPdfRequest(text: string): boolean {
+    return detectExportFormat(text) === 'pdf';
 }
 
 /** Render a line with **bold** and _italic_ support. */
@@ -117,20 +244,90 @@ function renderMarkdown(text: string, isUser: boolean): React.ReactNode {
     );
 }
 
-const TypingIndicator: React.FC = () => (
-    <div className="flex items-end gap-2 mb-4">
-        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
-            <Bot size={14} className="text-white" />
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+/** Full markdown renderer using react-markdown + remark-gfm (tables, headers, code, etc.) */
+const MarkdownContent: React.FC<{ text: string }> = ({ text }) => (
+    <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+            p: ({ children }) => <p className="my-1 leading-relaxed">{children}</p>,
+            h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mt-3 mb-1 border-b border-slate-200 pb-1">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-sm font-bold text-slate-800 mt-3 mb-1">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-700 mt-2 mb-1">{children}</h3>,
+            strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+            em: ({ children }) => <em className="italic text-slate-700">{children}</em>,
+            ul: ({ children }) => <ul className="list-disc list-outside ml-4 space-y-0.5 my-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-outside ml-4 space-y-0.5 my-1">{children}</ol>,
+            li: ({ children }) => <li className="text-slate-700 leading-relaxed">{children}</li>,
+            blockquote: ({ children }) => (
+                <blockquote className="border-l-2 border-blue-400 pl-3 text-slate-500 italic my-2">{children}</blockquote>
+            ),
+            hr: () => <hr className="my-3 border-slate-200" />,
+            pre: ({ children }) => <>{children}</>,
+            code({ children, className }) {
+                if (className) {
+                    return (
+                        <pre className="bg-slate-800 text-slate-100 rounded-lg p-3 overflow-x-auto text-[11px] font-mono my-2 whitespace-pre">
+                            <code className={className}>{children}</code>
+                        </pre>
+                    );
+                }
+                return (
+                    <code className="bg-slate-100 text-slate-800 border border-slate-200 px-1 py-0.5 rounded text-[11px] font-mono">{children}</code>
+                );
+            },
+            table: ({ children }) => (
+                <div className="overflow-x-auto my-2 rounded-lg border border-slate-200">
+                    <table className="min-w-full border-collapse text-xs">{children}</table>
+                </div>
+            ),
+            thead: ({ children }) => <thead className="bg-slate-50 border-b border-slate-200">{children}</thead>,
+            tbody: ({ children }) => <tbody className="divide-y divide-slate-100">{children}</tbody>,
+            tr: ({ children }) => <tr className="hover:bg-slate-50 transition-colors">{children}</tr>,
+            th: ({ children }) => (
+                <th className="text-left px-3 py-2 font-semibold text-slate-700 text-[11px] uppercase tracking-wider whitespace-nowrap">{children}</th>
+            ),
+            td: ({ children }) => <td className="px-3 py-2 text-slate-600 leading-snug">{children}</td>,
+            a: ({ children, href }) => (
+                <a href={href} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>
+            ),
+        }}
+    >
+        {text}
+    </ReactMarkdown>
+);
+
+const TypingIndicator: React.FC = () => {
+    const messages = [
+        'Thinking…',
+        'Analyzing your request…',
+        'Gathering information…',
+        'Formulating response…',
+    ];
+    const [idx, setIdx] = useState(0);
+
+    useEffect(() => {
+        const t = setInterval(() => setIdx(i => (i + 1) % messages.length), 2200);
+        return () => clearInterval(t);
+    }, []);
+
+    return (
+        <div className="flex items-end gap-2 mb-4">
+            <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
+                <Bot size={14} className="text-white" />
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <div className="text-sm text-slate-700 font-medium">{messages[idx]}</div>
+                    <div className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-);
+    );
+};
 
 const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => void }> = ({ message, onDownloadPDF }) => {
     const isUser = message.role === 'user';
@@ -150,7 +347,7 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
                 </div>
                 <div className={`group relative max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm break-words ${isUser ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'
                     }`}>
-                    {renderMarkdown(message.text, isUser)}
+                    <MarkdownContent text={message.text} />
                     {message.streaming && (
                         <span className="inline-block w-0.5 h-3.5 bg-blue-500 ml-0.5 animate-pulse align-middle rounded" />
                     )}
@@ -185,6 +382,70 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
     );
 };
 
+// ── Pending-request helpers ────────────────────────────────────────────────────
+
+const LS_PENDING_REQUEST = 'tavro_pending_ai_request';
+const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+interface PendingRequest {
+    requestId: string;
+    sessionId: string;
+    userMessage: string;
+    timestamp: number;
+}
+
+function generateRequestId(): string {
+    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function savePendingRequest(info: PendingRequest): void {
+    try { localStorage.setItem(LS_PENDING_REQUEST, JSON.stringify(info)); } catch { /* quota */ }
+}
+
+function clearPendingRequest(): void {
+    try { localStorage.removeItem(LS_PENDING_REQUEST); } catch {}
+}
+
+function loadPendingRequest(): PendingRequest | null {
+    try {
+        const raw = localStorage.getItem(LS_PENDING_REQUEST);
+        if (!raw) return null;
+        const p = JSON.parse(raw) as PendingRequest;
+        if (!p.requestId || !p.userMessage || !p.sessionId) { clearPendingRequest(); return null; }
+        if (Date.now() - p.timestamp > PENDING_TTL_MS) { clearPendingRequest(); return null; }
+        return p;
+    } catch { clearPendingRequest(); return null; }
+}
+
+/** Consume a /chat/resume/:requestId SSE response as an async token generator. */
+async function* resumeFromServer(requestId: string): AsyncGenerator<string> {
+    const res = await fetch(`/copilot-api/chat/resume/${requestId}`);
+    if (!res.ok) throw new Error('not_found');
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === '[DONE]') return;
+            try {
+                const parsed = JSON.parse(data);
+                if (parsed?.error) throw new Error(typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error));
+                if (parsed?.delta) yield parsed.delta as string;
+            } catch (e: any) {
+                if (e?.message && e.message !== 'not_found') throw e;
+            }
+        }
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function toStoredMessages(msgs: Message[]): StoredMessage[] {
@@ -211,6 +472,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const { viewType, viewData } = useChatContext();
     const { activeCompany, nodes } = useBlueprint();
     const { sessions, activeSession, activeSessionId, createSession, switchSession, deleteSession, updateSessionMessages, updateSessionProvider } = useChatSessions();
+    const { upsertUseCase, refresh: refreshUseCases } = useUseCases();
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
     const blueprintCtx: BlueprintContext | null = activeCompany ? {
@@ -232,20 +494,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const [configuredProviders, setConfiguredProviders] = useState<{ provider: LLMProvider; label: string }[]>([]);
 
     useEffect(() => {
-        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
         const configured = providers
             .map(p => ({ provider: p, cfg: getProviderConfig(p) }))
             .filter(x => x.cfg !== null)
             .map(x => ({
                 provider: x.provider,
-                label: `${x.provider === 'openai' ? 'OpenAI' : x.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${x.cfg!.model}`,
+                label: `${PROVIDER_LABELS[x.provider]} · ${x.cfg!.model}`,
             }));
         setConfiguredProviders(configured);
     }, []);
 
     const llmCfg = activeProviderState ? getProviderConfig(activeProviderState) : null;
     const modelLabel = llmCfg
-        ? `${llmCfg.provider === 'openai' ? 'OpenAI' : llmCfg.provider === 'gemini' ? 'Gemini' : 'Claude'} · ${llmCfg.model}`
+        ? `${PROVIDER_LABELS[llmCfg.provider]} · ${llmCfg.model}`
         : null;
 
     // ── Messages state (per-session) ───────────────────────────────────────────
@@ -290,6 +552,105 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         updateSessionMessages(toStoredMessages(msgs));
     }, [updateSessionMessages]);
 
+    // ── Resume interrupted AI response after page refresh or tab switch ────────
+    // Runs once per session change. If localStorage has a pending request for the
+    // active session whose last persisted message is still a user turn (i.e., no
+    // assistant response was saved before the disconnect), we try to:
+    //   1. Reconnect to the server cache via GET /chat/resume/:requestId, OR
+    //   2. Re-run the original user message through mcpClient.chat() as fallback.
+    useEffect(() => {
+        const pending = loadPendingRequest();
+        if (!pending || pending.sessionId !== activeSessionId) return;
+
+        // Check whether the response was already saved before the disconnect.
+        // activeSession.messages reflects the last-persisted state.
+        const stored = activeSession?.messages ?? [];
+        const lastStored = stored[stored.length - 1];
+        if (lastStored?.role !== 'user') {
+            // Response already exists — just clean up the pending flag.
+            clearPendingRequest();
+            return;
+        }
+
+        const { requestId, userMessage } = pending;
+
+        const doResume = async () => {
+            setLoading(true);
+            const assistantId = `assistant-resume-${Date.now()}`;
+
+            const streamTokens = async (gen: AsyncGenerator<string>) => {
+                let accumulated = '';
+                let firstToken = true;
+                for await (const token of gen) {
+                    accumulated += token;
+                    if (firstToken) {
+                        firstToken = false;
+                        setLoading(false);
+                        setMessages(prev => {
+                            const next = [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: true }];
+                            latestMessages.current = next;
+                            return next;
+                        });
+                    } else {
+                        setMessages(prev => {
+                            const next = prev.map(m => m.id === assistantId ? { ...m, text: accumulated } : m);
+                            latestMessages.current = next;
+                            return next;
+                        });
+                    }
+                }
+                return accumulated;
+            };
+
+            try {
+                let accumulated = '';
+
+                // Try server-side cache first (works for all proxy-routed providers).
+                try {
+                    accumulated = await streamTokens(resumeFromServer(requestId));
+                } catch {
+                    // Cache miss (server restarted, TTL expired, or the original call
+                    // used a direct browser fetch that was cancelled on refresh).
+                    // Re-run the request using the persisted conversation history.
+                    const currentHistory = buildHistory(latestMessages.current);
+                    accumulated = await streamTokens(
+                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData })
+                    );
+                }
+
+                setMessages(prev => {
+                    let next: Message[];
+                    if (accumulated.trim()) {
+                        const hasPlaceholder = prev.some(m => m.id === assistantId);
+                        next = hasPlaceholder
+                            ? prev.map(m => m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m)
+                            : [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: false }];
+                    } else {
+                        next = [...prev.filter(m => m.id !== assistantId),
+                            { id: `err-${Date.now()}`, role: 'assistant' as const, text: 'Reconnection returned no response. Please try again.', timestamp: new Date() }];
+                    }
+                    latestMessages.current = next;
+                    persist(next);
+                    return next;
+                });
+            } catch (err: any) {
+                setMessages(prev => {
+                    const next = [...prev.filter(m => m.id !== assistantId),
+                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: `Reconnection failed: ${err?.message ?? 'unknown error'}. Please try again.`, timestamp: new Date() }];
+                    latestMessages.current = next;
+                    persist(next);
+                    return next;
+                });
+            } finally {
+                setLoading(false);
+                clearPendingRequest();
+            }
+        };
+
+        doResume();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSessionId]);
+
     // ── Handlers ───────────────────────────────────────────────────────────────
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
@@ -301,10 +662,37 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const buildHistory = (msgs: Message[]): ChatMessage[] => {
-        return msgs
-            .filter(m => m.id !== 'welcome' && !m.streaming)
-            .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
+        const filtered = msgs.filter(m => m.id !== 'welcome' && !m.streaming);
+        // Drop trailing user messages — if the previous response failed, the history
+        // would end with a user turn, and adding the new user message creates
+        // consecutive user roles which Anthropic rejects with HTTP 400.
+        let end = filtered.length;
+        while (end > 0 && filtered[end - 1].role === 'user') end--;
+        return filtered.slice(0, end).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text } as ChatMessage));
     };
+
+    const syncUseCaseFromAssistantResponse = useCallback((assistantText: string, userPrompt: string) => {
+        const requestedCreateUseCase = /\b(create|add|register)\b[\s\S]{0,120}\b(ai\s+)?use\s*case\b/i.test(userPrompt);
+        if (!requestedCreateUseCase) return;
+
+        // Always refresh after a create-use-case request so catalog pills update
+        // even when the assistant response format varies.
+        refreshUseCases();
+
+        const idMatch = assistantText.match(/Identifier:\s*([^\n\r]+)/i);
+        const nameMatch = assistantText.match(/Name:\s*([^\n\r]+)/i);
+        const statusMatch = assistantText.match(/Status:\s*([^\n\r]+)/i);
+
+        const identifier = idMatch?.[1]?.trim();
+        const name = nameMatch?.[1]?.trim();
+        if (!identifier || !name) return;
+
+        upsertUseCase({
+            identifier,
+            name,
+            status: statusMatch?.[1]?.trim() || 'Proposed',
+        });
+    }, [refreshUseCases, upsertUseCase]);
 
     const copyConversation = () => {
         const transcript = buildTranscript(messages, activeSession?.title, modelLabel);
@@ -340,30 +728,24 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         setInput('');
         setLoading(true);
 
-        // Persist after adding user message
+        // Persist after adding user message so the session has the user turn
+        // even if the page refreshes before the AI response arrives.
         persist(withUser);
+
+        const requestId = generateRequestId();
+        savePendingRequest({ requestId, sessionId: activeSessionId ?? '', userMessage: text, timestamp: Date.now() });
 
         const assistantId = `assistant-${Date.now()}`;
 
         try {
-            if (isPdfRequest(text)) {
-                const transcript = buildTranscript(withUser, activeSession?.title, modelLabel);
-                saveTextAsPdf(activeSession?.title ?? 'Tavro AI Assistant Chat', transcript, `tavro-chat-${Date.now()}.pdf`);
-                const confirmMsg: Message = {
-                    id: assistantId,
-                    role: 'assistant',
-                    text: 'I generated a PDF from the current chat and started the download.',
-                    timestamp: new Date(),
-                };
-                const withConfirm = [...withUser, confirmMsg];
-                setMessages(withConfirm);
-                setLoading(false);
-                persist(withConfirm);
-                return;
-            }
-
+            const exportFormat = detectExportFormat(text);
             const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            const stream = mcpClient.chat(text, buildHistory(withUser), { viewType, viewData, systemPrompt });
+            // Append a format instruction so the LLM generates content in the
+            // requested output format (CSV, JSON, DOCX, PDF, etc.).
+            const effectiveSystemPrompt = exportFormat
+                ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
+                : systemPrompt;
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt }, requestId);
             let firstToken = true;
             let accumulated = '';
 
@@ -386,12 +768,50 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 }
             }
 
-            // Streaming complete — finalize and persist
-            const finalMsgs = latestMessages.current.map(m =>
-                m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m
-            );
-            setMessages(finalMsgs);
-            persist(finalMsgs);
+            // Trigger file download once streaming is finished (synchronous, before
+            // setMessages so the download happens exactly once outside a React updater).
+            let exportDownloaded = false;
+            if (exportFormat && accumulated.trim()) {
+                exportDownloaded = handleExport(
+                    exportFormat,
+                    accumulated,
+                    activeSession?.title ?? 'Tavro AI Response',
+                    `tavro-export-${Date.now()}`,
+                );
+                if (exportDownloaded) {
+                    accumulated += `\n\n---\n*Your ${EXPORT_LABELS[exportFormat]} has been downloaded.*`;
+                }
+            }
+
+            // Streaming complete — finalize and persist.
+            // Use a functional update so we always operate on the actual current
+            // state, not the potentially-stale latestMessages ref. When the
+            // orchestrator yields the whole response as one chunk (complete() path),
+            // the loop runs once and ends immediately — React may not have flushed
+            // the earlier functional setMessages that added the streaming placeholder,
+            // so latestMessages.current can be stale. A direct setMessages(array)
+            // computed from the stale ref would overwrite the pending update.
+            setMessages(prev => {
+                let next: Message[];
+                if (accumulated.trim()) {
+                    const hasPlaceholder = prev.some(m => m.id === assistantId);
+                    next = hasPlaceholder
+                        ? prev.map(m => m.id === assistantId ? { ...m, text: accumulated, streaming: false } : m)
+                        : [...prev, { id: assistantId, role: 'assistant' as const, text: accumulated, timestamp: new Date(), streaming: false }];
+                } else {
+                    next = [
+                        ...prev.filter(m => m.id !== assistantId),
+                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: 'I did not receive a response from the configured LLM. Please check the Copilot SDK proxy logs and token configuration.', timestamp: new Date() },
+                    ];
+                }
+                latestMessages.current = next;
+                persist(next);
+                return next;
+            });
+
+            if (accumulated.trim()) {
+                syncUseCaseFromAssistantResponse(accumulated, text);
+            }
 
         } catch (err: any) {
             const errMsg: Message = {
@@ -405,6 +825,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             persist(withErr);
         } finally {
             setLoading(false);
+            clearPendingRequest();
         }
     };
 

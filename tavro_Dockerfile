@@ -4,7 +4,7 @@ ARG PG_MAJOR=16
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ── Build dependencies ────────────────────────────────────────
+# Build dependencies
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -19,7 +19,7 @@ RUN apt-get update -qq && \
         "postgresql-server-dev-${PG_MAJOR}" \
     && rm -rf /var/lib/apt/lists/*
 
-# ── pgvector ──────────────────────────────────────────────────
+# pgvector
 RUN curl -fsSL \
         "https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.0.tar.gz" \
         -o /tmp/pgvector.tar.gz \
@@ -29,7 +29,7 @@ RUN curl -fsSL \
     && make && make install \
     && rm -rf /tmp/pgvector-src /tmp/pgvector.tar.gz
 
-# ── Apache AGE (clone from GitHub — pinned to PG16 release) ──
+# Apache AGE (pinned to PG16 release)
 RUN git clone \
         --branch PG16/v1.5.0-rc0 \
         --depth 1 \
@@ -40,31 +40,29 @@ RUN git clone \
     && make install PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
     && rm -rf /tmp/age-src
 
-# ── shared_preload_libraries ──────────────────────────────────
+# shared_preload_libraries
 ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
 
-# ── Init script ───────────────────────────────────────────────
-COPY tavro_init_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
-
-# ── Risk stack schemas and tables ─────────────────────────────
-# Creates core, curated, raw, risk_management schemas then runs DDL
-COPY sql/01_create_schemas.sql /docker-entrypoint-initdb.d/10_risk_schemas.sql
-COPY sql/core/            /docker-entrypoint-initdb.d/risk/core/
-COPY sql/curated/         /docker-entrypoint-initdb.d/risk/curated/
-COPY sql/raw/             /docker-entrypoint-initdb.d/risk/raw/
-COPY sql/risk_management/ /docker-entrypoint-initdb.d/risk/risk_management/
+# SQL bootstrap: copy and execute every SQL file under sql/ on first DB init
+COPY sql/ /docker-entrypoint-initdb.d/sql/
 
 RUN printf '#!/bin/sh\n\
 set -eu\n\
-echo "Running risk DDL scripts from subfolders..."\n\
-for sql in $(find /docker-entrypoint-initdb.d/risk -name "*.sql" | sort); do\n\
+SQL_ROOT="/docker-entrypoint-initdb.d/sql"\n\
+echo "Running SQL scripts from ${SQL_ROOT}..."\n\
+if [ -f "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+  echo "Executing ${SQL_ROOT}/tavro_init_extensions.sql"\n\
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "${SQL_ROOT}/tavro_init_extensions.sql"\n\
+fi\n\
+for sql in $(find "${SQL_ROOT}" -type f -name "*.sql" | sort); do\n\
+  if [ "$sql" = "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+    continue\n\
+  fi\n\
   echo "Executing $sql"\n\
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$sql"\n\
 done\n\
-echo "All risk DDL scripts completed."\n' \
-> /docker-entrypoint-initdb.d/20_run_risk_tables.sh \
-&& chmod +x /docker-entrypoint-initdb.d/20_run_risk_tables.sh
-
-COPY sql/tavro_setup_all.sql /docker-entrypoint-initdb.d/30_tavro_setup_all.sql
+echo "All SQL scripts completed."\n' \
+> /docker-entrypoint-initdb.d/20_run_all_sql.sh \
+&& chmod +x /docker-entrypoint-initdb.d/20_run_all_sql.sh
 
 EXPOSE 5432

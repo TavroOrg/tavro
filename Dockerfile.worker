@@ -18,8 +18,8 @@ RUN python -c "from tavro_agent_card import TavroAgentCard; print('TavroAgentCar
 
 COPY worker.py .
 COPY run_connectors.py .
+COPY config.yaml .
 COPY config.yaml.example .
-RUN cp config.yaml.example config.yaml
 COPY catalog_connector ./catalog_connector
 COPY utils ./utils
 

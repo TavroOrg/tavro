@@ -12,6 +12,8 @@ import AttachmentPanel from './AttachmentPanel';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
+const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
 
@@ -22,6 +24,21 @@ type ActivePanel = 'chat' | 'devlog' | 'attachment' | null;
 /** Check if current route is an agent view page */
 function isAgentPage(pathname: string): boolean {
     return /^\/agent\//.test(pathname);
+}
+
+/** Check if current route is an AI use case view page */
+function isUseCasePage(pathname: string): boolean {
+    return /^\/use-case\//.test(pathname);
+}
+
+/** Check if current route is an application view page */
+function isApplicationPage(pathname: string): boolean {
+    return /^\/applications\/(?!new$)/.test(pathname);
+}
+
+/** Check if current route is a process view page */
+function isProcessPage(pathname: string): boolean {
+    return /^\/processes\/(?!new$)/.test(pathname);
 }
 
 const DEFAULT_PANEL_WIDTH = 400;
@@ -53,43 +70,9 @@ const Layout: React.FC = () => {
     const [showLogs] = useShowLogs();
     const { loading: catalogLoading, lastFetched, refresh, agents } = useCatalog();
     const { loading: ucLoading, refresh: ucRefresh, useCases } = useUseCases();
+    const { activeCompany } = useBlueprint();
     const anyLoading = catalogLoading || ucLoading;
     const timeSince = useTimeSince(lastFetched);
-
-    // ── Cache fallback banner ────────────────────────────────────────────────
-    const [cacheFallbackReason, setCacheFallbackReason] = useState<string | null>(null);
-    const [dismissedCacheMode, setDismissedCacheMode] = useState(false);
-    const [isCacheMode, setIsCacheMode] = useState(
-        () => localStorage.getItem('tavro_cache_mode') === 'true'
-    );
-
-    useEffect(() => {
-        // Listen for remote→local fallback events dispatched by mcpClient
-        const onFallback = (e: Event) => {
-            const reason = (e as CustomEvent<{ reason: string }>).detail?.reason;
-            setCacheFallbackReason(reason || 'Remote cached data unavailable');
-        };
-        window.addEventListener('tavro:cache_fallback', onFallback);
-
-        // Keep isCacheMode in sync with localStorage changes (e.g. settings page)
-        const onStorageChange = () => {
-            const newCacheMode = localStorage.getItem('tavro_cache_mode') === 'true';
-            setIsCacheMode(newCacheMode);
-            // Clear banners if cache mode is turned off
-            if (!newCacheMode) {
-                setCacheFallbackReason(null);
-                setDismissedCacheMode(false);
-            }
-        };
-        window.addEventListener('storage', onStorageChange);
-        window.addEventListener('tavro_settings_change', onStorageChange);
-
-        return () => {
-            window.removeEventListener('tavro:cache_fallback', onFallback);
-            window.removeEventListener('storage', onStorageChange);
-            window.removeEventListener('tavro_settings_change', onStorageChange);
-        };
-    }, []);
 
     const handleRefreshAll = () => {
         refresh();
@@ -107,6 +90,11 @@ const Layout: React.FC = () => {
 
     // ── Drag-to-resize ───────────────────────────────────────────────────────
     const isDragging = useRef(false);
+
+    // Once the Chat tab is opened, keep ChatPanel mounted (hidden) on tab
+    // switches so that in-progress streams keep updating state normally.
+    const chatEverOpenedRef = useRef(false);
+    if (activePanel === 'chat') chatEverOpenedRef.current = true;
 
     const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
@@ -163,35 +151,43 @@ const Layout: React.FC = () => {
     const isPanelOpen = activePanel !== null;
     const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
     const isOnAgentPage = isAgentPage(location.pathname);
+    const isOnUseCasePage = isUseCasePage(location.pathname);
+    const isOnApplicationPage = isApplicationPage(location.pathname);
+    const isOnProcessPage = isProcessPage(location.pathname);
+    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage;
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
+        const leftRailWidth = isLeftPanelOpen ? 280 : 72;
+        document.documentElement.style.setProperty('--tavro-left-rail-width', `${leftRailWidth}px`);
         document.documentElement.style.setProperty('--tavro-right-rail-width', `${rightRailWidth}px`);
         return () => {
+            document.documentElement.style.setProperty('--tavro-left-rail-width', '280px');
             document.documentElement.style.setProperty('--tavro-right-rail-width', '72px');
         };
-    }, [isPanelOpen, panelWidth]);
+    }, [isLeftPanelOpen, isPanelOpen, panelWidth]);
 
     return (
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
-            <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col justify-between sticky top-0 h-screen z-40 flex-shrink-0 transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
-                <div className={`w-full h-full flex flex-col justify-between overflow-hidden transition-all duration-300`}>
-                    <div className="flex flex-col">
-                        {/* Logo */}
-                        <div
-                            className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300`}
-                            onClick={() => navigate('/')}
-                        >
-                            <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
-                                <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
-                            </div>
-                            <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
-                                Tavro Agent <span className="text-blue-600">BizOps</span>
-                            </span>
+            <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
+                {/* Logo */}
+                <div
+                    className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
+                    onClick={() => navigate('/')}
+                >
+                        <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
+                            <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
                         </div>
+                        <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
+                            Tavro Agent <span className="text-blue-600">BizOps</span>
+                        </span>
+                </div>
 
+                <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden transition-all duration-300`}>
+                    {/* Scrollable nav area */}
+                    <div className="flex flex-col">
                         {/* Nav links */}
                         <div className="flex flex-col p-4 gap-2">
                             <button
@@ -328,8 +324,10 @@ const Layout: React.FC = () => {
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
                             </button>
                         </div>
-                        {/* Catalog Sync Widget */}
-                        <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
+                    </div>{/* end scrollable nav */}
+
+                    {/* Catalog Sync Widget - pinned */}
+                    <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -344,11 +342,9 @@ const Layout: React.FC = () => {
                                 </div>
                                 {!anyLoading && (
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                        {agents.length > 0 && (
-                                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                                {agents.length} agents
-                                            </span>
-                                        )}
+                                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                            {agents.length} agents
+                                        </span>
                                         {useCases.length > 0 && (
                                             <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                                 {useCases.length} use cases
@@ -372,10 +368,9 @@ const Layout: React.FC = () => {
                                 <span className="whitespace-nowrap">{anyLoading ? 'Syncing…' : 'Refresh Catalog'}</span>
                             </button>
                         </div>
-                    </div>
 
                     {/* Bottom Actions */}
-                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
                         <button
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
@@ -400,7 +395,7 @@ const Layout: React.FC = () => {
                 {/* Left Panel Toggle Button */}
                 <button
                     onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
-                    className="absolute -right-3.5 top-6 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-blue-600 rounded-full p-1 shadow-sm z-50 transition-colors outline-none"
+                    className="absolute -right-3.5 top-7 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-blue-600 rounded-full p-1.5 shadow-md z-[60] transition-colors outline-none"
                     title={isLeftPanelOpen ? "Collapse sidebar" : "Expand sidebar"}
                 >
                     {isLeftPanelOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
@@ -410,56 +405,13 @@ const Layout: React.FC = () => {
             {/* ── Main Content Area ─────────────────────────────────────────── */}
             <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
 
-                {/* ── Cached Data Mode Banner ─────────────────────────────── */}
-                {isCacheMode && !dismissedCacheMode && (
-                    <div className="flex items-center gap-3 px-5 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-medium flex-shrink-0">
-                        <Database size={13} className="text-amber-500 flex-shrink-0" />
-                        <span>
-                            <span className="font-bold">Cached Data Mode</span> is active — displaying data from
-                            {cacheFallbackReason ? ' local bundled cache (remote source unavailable)' : ' cached source'}.
-                            {' '}Live MCP calls are disabled.
-                        </span>
-                        <div className="ml-auto flex items-center gap-3">
-                            <button
-                                onClick={() => navigate('/settings')}
-                                className="text-amber-700 underline underline-offset-2 hover:text-amber-900 transition-colors whitespace-nowrap"
-                            >
-                                Settings
-                            </button>
-                            <button
-                                onClick={() => setDismissedCacheMode(true)}
-                                className="text-amber-600 hover:text-amber-900 transition-colors flex-shrink-0"
-                                title="Dismiss"
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ── Remote Cache Fallback Warning Banner ────────────────── */}
-                {cacheFallbackReason && (
-                    <div className="flex items-start gap-3 px-5 py-3 bg-orange-50 border-b border-orange-200 text-orange-800 text-xs flex-shrink-0">
-                        <AlertTriangle size={14} className="text-orange-500 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                            <span className="font-bold">Remote cache unavailable — using local bundled data.</span>
-                            <span className="text-orange-700 ml-1">Reason: {cacheFallbackReason}</span>
-                        </div>
-                        <button
-                            onClick={() => setCacheFallbackReason(null)}
-                            className="ml-2 text-orange-500 hover:text-orange-700 transition-colors flex-shrink-0"
-                            title="Dismiss"
-                        >
-                            <X size={14} />
-                        </button>
-                    </div>
-                )}
-
-                <div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
+<div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
                     <Outlet />
                 </div>
-                <footer className="border-t border-slate-200 dark:border-slate-800 py-6 text-center text-xs text-slate-400 dark:text-slate-500 mt-auto bg-white dark:bg-slate-900 transition-colors">
-                    © 2026 Tavro AI.
+                <footer className="border-t border-slate-200 dark:border-slate-800 py-4 px-6 text-xs text-slate-600 dark:text-slate-400 mt-auto bg-white dark:bg-slate-900 transition-colors flex items-center justify-between">
+                    <span>Tavro {TAVRO_VERSION}</span>
+                    <span>{activeCompany?.name ?? '—'}</span>
+                    <span>© 2026 Tavro AI.</span>
                 </footer>
             </main>
 
@@ -488,7 +440,7 @@ const Layout: React.FC = () => {
                                 <span className="text-[9px] font-semibold leading-none">Logs</span>
                             </button>
                         )}
-                        {isOnAgentPage && (
+                        {isOnAttachmentPage && (
                             <button
                                 onClick={() => setActivePanel('attachment')}
                                 className="p-3 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-transparent hover:border-amber-100 dark:hover:border-slate-700 outline-none"
@@ -551,8 +503,8 @@ const Layout: React.FC = () => {
                                     </button>
                                 )}
 
-                                {/* Attachment tab — show only on agent pages */}
-                                {isOnAgentPage && (
+                                {/* Attachment tab — show on agent, use case, application, and process pages */}
+                                {isOnAttachmentPage && (
                                     <button
                                         onClick={() => setActivePanel('attachment')}
                                         className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-colors ${activePanel === 'attachment'
@@ -577,9 +529,29 @@ const Layout: React.FC = () => {
 
                             {/* Panel body */}
                             <div className="flex-1 overflow-hidden">
-                                {activePanel === 'chat' && <ChatPanel onClose={() => setActivePanel(null)} />}
+                                {/* Keep ChatPanel mounted (hidden) once opened so that
+                                    in-progress streams keep updating state when the user
+                                    switches to Dev Logs. Avoid mounting before chat is ever
+                                    opened so the resume effect doesn't fire prematurely. */}
+                                {(activePanel === 'chat' || chatEverOpenedRef.current) && isPanelOpen && (
+                                    <div className={`h-full flex flex-col ${activePanel !== 'chat' ? 'hidden' : ''}`}>
+                                        <ChatPanel onClose={() => setActivePanel(null)} />
+                                    </div>
+                                )}
                                 {activePanel === 'devlog' && showLogs && <DevLogPanel />}
-                                {activePanel === 'attachment' && isOnAgentPage && <AttachmentPanel />}
+                                {activePanel === 'attachment' && isOnAttachmentPage && (
+                                    <AttachmentPanel
+                                        entityType={
+                                            isOnUseCasePage
+                                                ? 'use_case'
+                                                : isOnApplicationPage
+                                                    ? 'application'
+                                                    : isOnProcessPage
+                                                        ? 'process'
+                                                        : 'agent'
+                                        }
+                                    />
+                                )}
                             </div>
                         </div>
                     </div>

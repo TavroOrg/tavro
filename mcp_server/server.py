@@ -1,6 +1,9 @@
 import os
 import json
+import time
+from pathlib import Path
 import uvicorn
+import httpx
 from typing import Dict, Any, Optional, List
 from fastmcp import FastMCP
 from starlette.routing import Route, Mount
@@ -9,15 +12,16 @@ from starlette.responses import JSONResponse
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from fastmcp.server.auth.providers.google import GoogleProvider
-from fastmcp.server.auth.providers.aws import AWSCognitoProvider, AWSCognitoTokenVerifier
+# from fastmcp.server.auth.providers.aws import AWSCognitoProvider, AWSCognitoTokenVerifier
+from mcp_server.zitadel_provider import TavroZitadelTokenVerifier, ZitadelProvider
 from fastmcp.server.auth.auth import AccessToken    
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.auth.providers.jwt import JWTVerifier  
 from starlette.applications import Starlette
 from contextlib import asynccontextmanager
 
-from agent_catalog.agent_extractor import AgentMetadataExporter
-from agent_catalog.users import get_approved_user
+from tavro_library.agent_library import AgentMetadataExporter
+from tavro_library.users import get_approved_user
 
 from utils.set_environment import set_environment
 
@@ -28,22 +32,58 @@ set_environment("oAuth")
 set_environment("secrets")
 set_environment("fastapi")
 
+TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
+
+
+def _load_zitadel_client_id_from_runtime_config() -> str:
+    runtime_config_path = os.getenv(
+        "TAVRO_RUNTIME_CONFIG_FILE",
+        "/app/runtime/tavro-runtime-config.json",
+    )
+    should_wait = bool(os.getenv("TAVRO_RUNTIME_CONFIG_FILE"))
+    attempts = 60 if should_wait else 1
+    path = Path(runtime_config_path)
+
+    for attempt in range(attempts):
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    config = json.load(f)
+                client_id = str(config.get("zitadelClientId", "")).strip()
+                if client_id:
+                    return client_id
+        except Exception as exc:
+            print(f"Failed to read ZITADEL runtime config from {path}: {exc}")
+
+        if attempt < attempts - 1:
+            time.sleep(1)
+
+    return ""
+
+
+_runtime_zitadel_client_id = _load_zitadel_client_id_from_runtime_config()
+if _runtime_zitadel_client_id:
+    os.environ["ZITADEL_CLIENT_ID"] = _runtime_zitadel_client_id
+    print("ZITADEL_CLIENT_ID loaded from runtime config")
+
 # ---------------------------
 # Constants / deployment URLs
 # ---------------------------
 # Priority: mcp_root_url from config.yaml → fallback to http://localhost:<port>
 _root_url_override = os.getenv("mcp_root_url", "").strip()
-ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9001')}"
+ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9000')}"
 
 GOOGLE_PREFIX = "/google"
-COGNITO_PREFIX = "/cognito"
+# COGNITO_PREFIX = "/cognito"
+ZITADEL_PREFIX = "/zitadel"
 # GITHUB_PREFIX = "/github"
 # AZURE_PREFIX  = "/azure"
 
 # GITHUB_BASE_URL = f"{ROOT_URL}{GITHUB_PREFIX}"
 # AZURE_BASE_URL  = f"{ROOT_URL}{AZURE_PREFIX}"
 GOOGLE_BASE_URL = f"{ROOT_URL}{GOOGLE_PREFIX}"
-COGNITO_BASE_URL = f"{ROOT_URL}{COGNITO_PREFIX}"
+# COGNITO_BASE_URL = f"{ROOT_URL}{COGNITO_PREFIX}"
+ZITADEL_BASE_URL = f"{ROOT_URL}{ZITADEL_PREFIX}"
 
 
 MCP_PATH = "/mcp"
@@ -64,99 +104,90 @@ middleware = [
     )
 ]
 
-# -----------------------------------------------------------------------
-#  NEW: Custom Cognito token verifier — preserves email from JWT claims
-# -----------------------------------------------------------------------
-class TavroCognitoTokenVerifier(AWSCognitoTokenVerifier):    
-    async def verify_token(self, token: str) -> AccessToken | None:
-        import httpx
+# # -----------------------------------------------------------------------
+# #  NEW: Custom Cognito token verifier — preserves email from JWT claims
+# # -----------------------------------------------------------------------
+# class TavroCognitoTokenVerifier(AWSCognitoTokenVerifier):    
+#     async def verify_token(self, token: str) -> AccessToken | None:
+#         import httpx
 
-        access_token = await super().verify_token(token)
-        if access_token is None:
-            return None
+#         access_token = await super().verify_token(token)
+#         if access_token is None:
+#             return None
     
-        email = None
-        email_verified = None
-        try:
-            userinfo_url = f"{os.getenv('COGNITO_HOSTED_UI')}/oauth2/userInfo"
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    userinfo_url,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=5.0,
-                )                
-                if resp.status_code == 200:
-                    userinfo = resp.json()
-                    email = userinfo.get("email")
-                    email_verified = userinfo.get("email_verified")
-                else:
-                    print(f"[DEBUG] UserInfo returned {resp.status_code}: {resp.text}")
-        except Exception as e:
-            print(f"[DEBUG] UserInfo fetch failed: {e}")
+#         email = None
+#         email_verified = None
+#         try:
+#             userinfo_url = f"{os.getenv('COGNITO_HOSTED_UI')}/oauth2/userInfo"
+#             async with httpx.AsyncClient() as client:
+#                 resp = await client.get(
+#                     userinfo_url,
+#                     headers={"Authorization": f"Bearer {token}"},
+#                     timeout=5.0,
+#                 )                
+#                 if resp.status_code == 200:
+#                     userinfo = resp.json()
+#                     email = userinfo.get("email")
+#                     email_verified = userinfo.get("email_verified")
+#                 else:
+#                     print(f"[DEBUG] UserInfo returned {resp.status_code}: {resp.text}")
+#         except Exception as e:
+#             print(f"[DEBUG] UserInfo fetch failed: {e}")
 
-        # Fallback identity if userinfo endpoint doesn't return email.
-        if not email:
-            email = (
-                (access_token.claims or {}).get("email")
-                or (access_token.claims or {}).get("username")
-            )
-            if email:
-                print(f"[DEBUG] Falling back to token claim identity: {email}")
-
-        # Resolve tenant and enrich claims.
-        approved_user = await get_approved_user(email)       
+#         # Resolve tenant and enrich claims.
+#         approved_user = await get_approved_user(email)       
         
-        if approved_user is None:
-            return None
+#         if approved_user is None:
+#             return None
         
-        enriched_claims = {
-            **(access_token.claims or {}),
-            "email": email,
-            "email_verified": email_verified,
-            "tenant_id": approved_user.tenant_id,
-        }
-        print(f"[DEBUG] ===== AUTH SUCCESS =====")
-        print(f"  sub     : {enriched_claims.get('sub')}")
-        print(f"  username: {enriched_claims.get('username')}")
-        print(f"  email   : {enriched_claims.get('email')}")
-        print(f"  tenant_id: {enriched_claims.get('tenant_id')}")
-        return AccessToken(
-            token=access_token.token,
-            client_id=access_token.client_id,
-            scopes=access_token.scopes,
-            expires_at=access_token.expires_at,
-            claims=enriched_claims,            
-        )
+#         enriched_claims = {
+#             **(access_token.claims or {}),
+#             "email": email,
+#             "email_verified": email_verified,
+#             "tenant_id": approved_user.tenant_id,
+#         }
+#         print(f"[DEBUG] ===== AUTH SUCCESS =====")
+#         print(f"  sub     : {enriched_claims.get('sub')}")
+#         print(f"  username: {enriched_claims.get('username')}")
+#         print(f"  email   : {enriched_claims.get('email')}")
+#         print(f"  tenant_id: {enriched_claims.get('tenant_id')}")
+#         return AccessToken(
+#             token=access_token.token,
+#             client_id=access_token.client_id,
+#             scopes=access_token.scopes,
+#             expires_at=access_token.expires_at,
+#             claims=enriched_claims,            
+#         )
 
 
-# -----------------------------------------------------------------------
-# Custom Cognito provider — fixes audience + wires in our verifier
-# -----------------------------------------------------------------------
-class TavroCognitoProvider(AWSCognitoProvider):
-    def debug_oidc_config(self):
-        """Call this once to inspect what endpoints Cognito OIDC exposes."""
-        cfg = self.oidc_config
-        print("[OIDC CONFIG]")
-        print(f"  issuer        : {cfg.issuer}")
-        print(f"  userinfo_url  : {cfg.userinfo_endpoint}")
-        print(f"  jwks_uri      : {cfg.jwks_uri}")
-        print(f"  token_endpoint: {cfg.token_endpoint}")
+# # -----------------------------------------------------------------------
+# # Custom Cognito provider — fixes audience + wires in our verifier
+# # -----------------------------------------------------------------------
+# class TavroCognitoProvider(AWSCognitoProvider):
+#     def debug_oidc_config(self):
+#         """Call this once to inspect what endpoints Cognito OIDC exposes."""
+#         cfg = self.oidc_config
+#         print("[OIDC CONFIG]")
+#         print(f"  issuer        : {cfg.issuer}")
+#         print(f"  userinfo_url  : {cfg.userinfo_endpoint}")
+#         print(f"  jwks_uri      : {cfg.jwks_uri}")
+#         print(f"  token_endpoint: {cfg.token_endpoint}")
 
-    def get_token_verifier(
-        self,
-        *,
-        algorithm=None,
-        audience=None,
-        required_scopes=None,
-        timeout_seconds=None,
-    ) -> TavroCognitoTokenVerifier:
-        return TavroCognitoTokenVerifier(
-            issuer=str(self.oidc_config.issuer),            
-            audience=audience or self.client_id,
-            algorithm=algorithm,
-            jwks_uri=str(self.oidc_config.jwks_uri),
-            required_scopes=required_scopes,
-        )
+#     def get_token_verifier(
+#         self,
+#         *,
+#         algorithm=None,
+#         audience=None,
+#         required_scopes=None,
+#         timeout_seconds=None,
+#     ) -> TavroCognitoTokenVerifier:
+#         return TavroCognitoTokenVerifier(
+#             issuer=str(self.oidc_config.issuer),            
+#             audience=audience or self.client_id,
+#             algorithm=algorithm,
+#             jwks_uri=str(self.oidc_config.jwks_uri),
+#             required_scopes=required_scopes,
+#         )
 
 # ---------------------------
 # Shared tools (define once)
@@ -291,11 +322,15 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
             tenant_id,
         )
 
-        result = AgentMetadataExporter.get_agent_catalog(
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/agents/",
+                params={"start_record": start_record, "record_range": record_range},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            result = resp.json()
 
         return result
 
@@ -469,21 +504,40 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
             tenant_id,
         )
         
-        print(f"Received title: '{title}', description: '{description}', business_problem_statement: '{business_problem_statement}', expected_benefits: '{expected_benefits}', priority: '{priority}', regulatory_impact: '{regulatory_impact}', solution_approach: '{solution_approach}', use_case_owner: '{use_case_owner}', impacted_business_applications: '{impacted_business_applications}', impacted_business_processes: '{impacted_business_processes}'")
+        payload: Dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "business_problem_statement": business_problem_statement,
+            "expected_benefits": expected_benefits,
+            "priority": priority,
+        }
+        if regulatory_impact is not None:
+            payload["regulatory_impact"] = regulatory_impact
+        if solution_approach is not None:
+            payload["solution_approach"] = solution_approach
+        if use_case_owner is not None:
+            payload["use_case_owner"] = use_case_owner
+        if impacted_business_applications is not None:
+            payload["impacted_business_applications"] = impacted_business_applications
+        if impacted_business_processes is not None:
+            payload["impacted_business_processes"] = impacted_business_processes
 
-        result = AgentMetadataExporter.create_ai_use_case(
-            title=title,
-            description=description,
-            business_problem_statement=business_problem_statement,
-            expected_benefits=expected_benefits,
-            priority=priority,
-            regulatory_impact=regulatory_impact,
-            solution_approach=solution_approach,
-            use_case_owner=use_case_owner,
-            impacted_business_applications=impacted_business_applications,
-            impacted_business_processes=impacted_business_processes,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/use-cases/",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            api_result = resp.json()
+
+        result = {
+            "message": api_result.get("message", "AI Use Case created successfully."),
+            "identifier": api_result.get("use_case_id"),
+            "use_case_id": api_result.get("use_case_id"),
+            "name": title,
+        }
         print(result)
         return result
 
@@ -538,16 +592,30 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
             tenant_id,
         )
            
-        result = AgentMetadataExporter.get_ai_use_case(
-            use_case_id=use_case_id,
-            title=title,
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if use_case_id:
+                resp = await client.get(
+                    f"{TAVRO_API_URL}/api/v1/use-cases/{use_case_id}",
+                    headers=headers,
+                )
+            else:
+                params: Dict[str, Any] = {
+                    "start_record": start_record,
+                    "record_range": record_range,
+                }
+                if title:
+                    params["title"] = title
+                resp = await client.get(
+                    f"{TAVRO_API_URL}/api/v1/use-cases/",
+                    params=params,
+                    headers=headers,
+                )
+            resp.raise_for_status()
+            result = resp.json()
 
         return result
-    
+
     except ValueError as ve:
         print("Validation error: %s", ve)
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
@@ -1067,33 +1135,67 @@ google_app = google_mcp.http_app(path=MCP_PATH)
 
 # azure_app = azure_mcp.http_app(path=MCP_PATH)
 
+# # ---------------------------
+# # AWS Cognito Auth + MCP — now uses TavroCognitoProvider
+# # ---------------------------
+# cognito_auth = TavroCognitoProvider(
+#     user_pool_id=os.getenv("COGNITO_USER_POOL_ID"),
+#     client_id=os.getenv("COGNITO_CLIENT_ID"),
+#     client_secret=os.getenv("COGNITO_CLIENT_SECRET"),
+#     base_url=COGNITO_BASE_URL,
+#     aws_region=os.getenv("COGNITO_AWS_REGION", "us-east-2"),
+#     jwt_signing_key=os.getenv("JWT_SIGNING_KEY"),
+# )
+
+# cognito_auth_wrapped = MultiAuth(
+#     server=cognito_auth,
+#     verifiers=[jwt_verifier],
+# )
+
+# cognito_mcp = FastMCP("Tavro MCP Server (AWS Cognito)", auth=cognito_auth_wrapped)
+# cognito_mcp.mount(core)
+# cognito_app = cognito_mcp.http_app(path=MCP_PATH)
+
 # ---------------------------
-# AWS Cognito Auth + MCP — now uses TavroCognitoProvider
+# Zitadel Auth + MCP — now uses ZitadelProvider
 # ---------------------------
-cognito_auth = TavroCognitoProvider(
-    user_pool_id=os.getenv("COGNITO_USER_POOL_ID"),
-    client_id=os.getenv("COGNITO_CLIENT_ID"),
-    client_secret=os.getenv("COGNITO_CLIENT_SECRET"),
-    base_url=COGNITO_BASE_URL,
-    aws_region=os.getenv("COGNITO_AWS_REGION", "us-east-2"),
+zitadel_auth = ZitadelProvider(
+    issuer=os.getenv("ZITADEL_ISSUER", ""),
+    client_id=os.getenv("ZITADEL_CLIENT_ID", ""),
+    client_secret=os.getenv("ZITADEL_CLIENT_SECRET") or None,
+    base_url=ZITADEL_BASE_URL,
+    config_url=os.getenv("ZITADEL_CONFIG_URL") or None,
     jwt_signing_key=os.getenv("JWT_SIGNING_KEY"),
+    required_scopes=os.getenv("ZITADEL_SCOPES", "openid profile email"),
+    prompt=os.getenv("ZITADEL_PROMPT") or None,
+    require_authorization_consent="external",
 )
 
-cognito_auth_wrapped = MultiAuth(
-    server=cognito_auth,
-    verifiers=[jwt_verifier],
+zitadel_auth_wrapped = MultiAuth(
+    server=zitadel_auth,
+    verifiers=[
+        TavroZitadelTokenVerifier(
+            provider=zitadel_auth,
+            required_scopes=os.getenv("ZITADEL_SCOPES", "openid profile email").split(),
+        )
+    ],
 )
 
-cognito_mcp = FastMCP("Tavro MCP Server (AWS Cognito)", auth=cognito_auth_wrapped)
-cognito_mcp.mount(core)
-cognito_app = cognito_mcp.http_app(path=MCP_PATH)
+zitadel_mcp = FastMCP(
+    "Tavro MCP Server (ZITADEL)",
+    auth=zitadel_auth_wrapped,
+)
+
+zitadel_mcp.mount(core)
+
+zitadel_app = zitadel_mcp.http_app(path=MCP_PATH)
 
 # ---------------------------
 # Parent lifespan
 # ---------------------------
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    async with (google_app.lifespan(app), cognito_app.lifespan(app)):
+    async with (google_app.lifespan(app), zitadel_app.lifespan(app)):
         yield
 
 # ---------------------------
@@ -1104,10 +1206,11 @@ async def root_health(request):
 
 routes = [
     Route("/health", root_health, methods=["GET"]),
-    Mount(COGNITO_PREFIX, app=cognito_app),
+    # Mount(COGNITO_PREFIX, app=cognito_app),
     # Mount(GITHUB_PREFIX, app=github_app),
     Mount(GOOGLE_PREFIX, app=google_app),
     # Mount(AZURE_PREFIX, app=azure_app),
+    Mount(ZITADEL_PREFIX, app=zitadel_app),
 ]
 
 app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
@@ -1121,7 +1224,10 @@ for r in google_auth.get_well_known_routes(mcp_path=MCP_PATH):
 # for r in azure_auth.get_well_known_routes(mcp_path=MCP_PATH):
 #     app.router.routes.append(r)
 
-for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
+# for r in cognito_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
+#     app.router.routes.append(r)
+
+for r in zitadel_auth_wrapped.get_well_known_routes(mcp_path=MCP_PATH):
     app.router.routes.append(r)
 
 # ---------------------------

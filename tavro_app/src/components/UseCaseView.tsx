@@ -1,8 +1,8 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import {
     Building2,
-    GitBranch,
     ShieldCheck,
     ClipboardList,
     ShieldAlert,
@@ -20,6 +20,7 @@ import {
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
+    businessImpactComponent?: React.ReactNode;
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -189,13 +190,14 @@ function getId(item: any): string | undefined {
     return item?.sys_id ?? item?.id ?? item?.identifier ?? item?.value ?? item?.agent_id;
 }
 
-const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent }) => {
+const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent, businessImpactComponent }) => {
     const [activeTab, setActiveTab] = React.useState('business_case');
 
     const applications = uc.applications?.filter(Boolean) ?? [];
-    const bizProcesses = uc.business_processes?.filter(Boolean) ?? [];
     const controls = uc.controls?.filter(Boolean) ?? [];
     const riskAssessments = uc.risk_assessments?.filter(Boolean) ?? [];
+    const linkedAgents = ((uc as any).agents ?? (uc as any).of_associated_agents ?? []).filter(Boolean);
+    const linkedAgentCount = linkedAgents.length;
 
     const statusLabel = uc.status || 'Proposed';
     const priorityValue = uc.priority ?? null;
@@ -205,7 +207,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
     const tabs = [
         { id: 'business_case', label: 'Business Case', icon: FileText },
         { id: 'business_impact', label: 'Business Impact', icon: Building2 },
-        { id: 'ai_agents', label: 'AI Agents', icon: Bot },
+        { id: 'ai_agents', label: `AI Agents (${linkedAgentCount})`, icon: Bot },
         { id: 'risk_assessments', label: 'Risk Assessments', icon: ShieldAlert },
         { id: 'controls', label: 'Controls', icon: ShieldCheck }
     ];
@@ -311,49 +313,42 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent 
                 )}
 
                 {activeTab === 'business_impact' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
-                        {applications.length > 0 ? (
-                            <SectionCard icon={<Building2 size={16} />} title="Applications" count={applications.length}>
-                                <div className="flex flex-col divide-y divide-slate-100">
-                                    {applications.map((app: any, i: number) => (
-                                        <div key={getId(app) ?? i} className="py-3 first:pt-0 last:pb-0">
-                                            <div className="flex items-center justify-between mb-0.5">
-                                                <p className="text-sm font-semibold text-slate-800">
-                                                    {getLabel(app)}
-                                                </p>
-                                                {getLabel(app.business_criticality ?? app.u_business_criticality, '') && (
-                                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">
-                                                        {getLabel(app.business_criticality ?? app.u_business_criticality, '')}
-                                                    </span>
+                    <div className="animate-fade-in flex flex-col gap-6">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {applications.length > 0 ? (
+                                <SectionCard icon={<Building2 size={16} />} title="Applications" count={applications.length}>
+                                    <div className="flex flex-col divide-y divide-slate-100">
+                                        {applications.map((app: any, i: number) => (
+                                            <div key={getId(app) ?? i} className="py-3 first:pt-0 last:pb-0">
+                                                <div className="flex items-center justify-between mb-0.5">
+                                                    {getId(app) ? (
+                                                        <Link
+                                                            to={`/applications/${encodeURIComponent(String(getId(app)))}`}
+                                                            className="text-sm font-semibold text-blue-600 hover:underline"
+                                                        >
+                                                            {getLabel(app)}
+                                                        </Link>
+                                                    ) : (
+                                                        <p className="text-sm font-semibold text-slate-800">
+                                                            {getLabel(app)}
+                                                        </p>
+                                                    )}
+                                                    {getLabel(app.business_criticality ?? app.u_business_criticality, '') && (
+                                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">
+                                                            {getLabel(app.business_criticality ?? app.u_business_criticality, '')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {(app.description ?? app.short_description) && (
+                                                    <p className="text-xs text-slate-400 mt-0.5">{app.description ?? app.short_description}</p>
                                                 )}
                                             </div>
-                                            {(app.description ?? app.short_description) && (
-                                                <p className="text-xs text-slate-400 mt-0.5">{app.description ?? app.short_description}</p>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            </SectionCard>
-                        ) : (
-                            <div className="col-span-1 text-center py-12 text-slate-400 text-sm bg-white rounded-2xl border border-slate-200 border-dashed">No applications linked.</div>
-                        )}
-
-                        {bizProcesses.length > 0 ? (
-                            <SectionCard icon={<GitBranch size={16} />} title="Business Processes" count={bizProcesses.length}>
-                                <div className="flex flex-col divide-y divide-slate-100">
-                                    {bizProcesses.map((proc: any, i: number) => (
-                                        <div key={getId(proc) ?? i} className="py-3 first:pt-0 last:pb-0">
-                                            <p className="text-sm font-semibold text-slate-800">{getLabel(proc)}</p>
-                                            {(proc.description ?? proc.short_description) && (
-                                                <p className="text-xs text-slate-400 mt-0.5">{proc.description ?? proc.short_description}</p>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            </SectionCard>
-                        ) : (
-                            <div className="col-span-1 text-center py-12 text-slate-400 text-sm bg-white rounded-2xl border border-slate-200 border-dashed">No business processes linked.</div>
-                        )}
+                                        ))}
+                                    </div>
+                                </SectionCard>
+                            ) : null}
+                        </div>
+                        {businessImpactComponent}
                     </div>
                 )}
 

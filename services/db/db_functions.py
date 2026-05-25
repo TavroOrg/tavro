@@ -18,9 +18,9 @@ DB_USER   = os.getenv("POSTGRES_USER")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_HOST   = os.getenv("POSTGRES_HOST")
 DB_PORT   = os.getenv("POSTGRES_PORT", "5432")
-CORE_SCHEMA             = os.getenv("CORE_GLUE_DB_NAME",            "core")
-RISK_MANAGEMENT_SCHEMA  = os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME", "risk_management")
-CURATED_SCHEMA          = os.getenv("CURATED_GLUE_DB_NAME",         "curated")
+CORE_SCHEMA             = os.getenv("CORE_DB_NAME",            "core")
+RISK_MANAGEMENT_SCHEMA  = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
+CURATED_SCHEMA          = os.getenv("CURATED_DB_NAME",         "curated")
 
 ALL_RISK_STATES    = ["Ready to take", "In progress", "Ready to finalize", "Completed", "Failed", "Cancelled"]
 ACTIVE_RISK_STATES = ["Ready to take", "In progress", "Ready to finalize"]
@@ -1719,7 +1719,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
         "defaultOutputModes": ["text"],
         "name": _val(ag, "agent_name"),
         "description": _val(ag, "agent_description"),
-        "preferredTransport": "JSONRPC",
+        "preferredTransport": _val(ag, "preferred_transport"),
         "protocol_version": _val(ag, "protocol_version"),
         "instruction_sets": [],
         "skills": [],
@@ -1733,7 +1733,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
         "security": None,
         "security_schemes": None,
         "signatures": None,
-        "supports_authenticated_extended_card": True,
+        "supports_authenticated_extended_card": _val(ag, "supports_auth_ext_card"),
         "additional_interfaces": None,
         "version": _val(ag, "card_version"),
         "identification": {

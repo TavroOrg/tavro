@@ -22,9 +22,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY mcp_server ./mcp_server
-COPY agent_catalog ./agent_catalog
+COPY tavro_library ./tavro_library
 COPY utils ./utils
-COPY config.yaml.example ./config.yaml.example
-RUN cp config.yaml.example config.yaml
+COPY config.yaml ./config.yaml
 
 CMD ["python", "-m", "mcp_server.server"]

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import {
@@ -28,8 +28,92 @@ interface AgentRelatedTabProps {
   agent: AgentData;
   mode?: 'applications' | 'processes' | 'use_cases' | 'all';
   onCountsChange?: (counts: { applications: number; processes: number; useCases?: number }) => void;
+  onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
   embedded?: boolean;
 }
+
+export interface AgentBusinessImpactSnapshot {
+  applications: AgentData['application'];
+  processes: AgentData['business_process'];
+  useCases: NonNullable<AgentData['ai_use_cases']>;
+}
+
+const hasNonBlankText = (value: unknown): boolean =>
+  typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+
+const isLinkedApplicationLike = (app: any): boolean =>
+  hasNonBlankText(app?.business_application_id ?? app?.identifier ?? app?.name ?? app?.application_name);
+
+const isLinkedProcessLike = (proc: any): boolean =>
+  hasNonBlankText(proc?.business_process_id ?? proc?.identifier ?? proc?.name ?? proc?.process_name);
+
+const toApplicationImpact = (app: any): AgentData['application'][number] => ({
+  identifier: app.business_application_id ?? app.identifier ?? app.name ?? null,
+  name: app.application_name ?? app.name ?? app.business_application_id ?? null,
+  description: app.application_description ?? app.description ?? null,
+  business_criticality: app.business_criticality ?? null,
+  emergency_tier: app.emergency_tier ?? null,
+});
+
+const toProcessImpact = (proc: any): AgentData['business_process'][number] => ({
+  identifier: proc.business_process_id ?? proc.identifier ?? proc.name ?? '',
+  name: proc.process_name ?? proc.name ?? proc.business_process_id ?? '',
+  description: proc.process_description ?? proc.description ?? null,
+  business_criticality: proc.business_criticality ?? '',
+});
+
+const toUseCaseImpact = (uc: UseCaseSummary): NonNullable<AgentData['ai_use_cases']>[number] => ({
+  identifier: uc.identifier,
+  name: uc.name ?? null,
+  description: uc.description ?? null,
+  owner: uc.owner ?? null,
+  function: uc.function ?? (uc as any).business_function ?? null,
+  problem_statement: uc.problem_statement ?? null,
+  expected_benefits: uc.expected_benefits ?? null,
+  priority: uc.priority ?? null,
+  status: uc.status ?? null,
+  proposed_by: uc.proposed_by ?? null,
+});
+
+const normalizeLinkedUseCasesFromAgent = (agent: AgentData): UseCaseSummary[] => {
+  const rawLinked = (agent as any).ai_use_cases;
+  if (Array.isArray(rawLinked)) {
+    return rawLinked
+      .filter(Boolean)
+      .map((u: any) => ({
+        identifier: u.identifier ?? u.use_case_id ?? u.id ?? '',
+        name: u.name ?? u.title ?? 'Unnamed Use Case',
+        description: u.description ?? null,
+        owner: u.owner ?? u.use_case_owner ?? null,
+        priority: u.priority ?? null,
+        status: u.status ?? null,
+        function: u.function ?? u.business_function ?? null,
+        problem_statement: u.problem_statement ?? null,
+        expected_benefits: u.expected_benefits ?? null,
+        proposed_by: u.proposed_by ?? null,
+      }))
+      .filter((u: UseCaseSummary) => !!u.identifier);
+  }
+  const fallback = (agent as any).ai_use_case;
+  const fallbackArr = Array.isArray(fallback) ? fallback : (fallback ? [fallback] : []);
+  if (fallbackArr.length) {
+    return fallbackArr
+      .filter((u: any) => hasNonBlankText(u?.identifier ?? u?.use_case_id ?? u?.id))
+      .map((u: any) => ({
+        identifier: u.identifier ?? u.use_case_id ?? u.id ?? '',
+        name: u.name ?? u.title ?? 'Unnamed Use Case',
+        description: u.description ?? null,
+        owner: u.owner ?? u.use_case_owner ?? null,
+        priority: u.priority ?? null,
+        status: u.status ?? null,
+        function: u.function ?? u.business_function ?? null,
+        problem_statement: u.problem_statement ?? null,
+        expected_benefits: u.expected_benefits ?? null,
+        proposed_by: u.proposed_by ?? null,
+      }));
+  }
+  return [];
+};
 
 const getRiskBadge = (level: string | null | undefined) => {
   const normalized = (level ?? '').toLowerCase();
@@ -58,6 +142,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   agent,
   mode = 'all',
   onCountsChange,
+  onBusinessImpactChange,
   embedded = false,
 }) => {
   const agentId = agent.identification?.agent_id;
@@ -75,7 +160,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       ? 'Manage application links'
       : mode === 'processes'
         ? 'Manage process links'
-        : 'Manage application and process links';
+        : 'Manage application, process, and AI use case links';
   const [relations, setRelations] = useState<AgentRelationsPayload | null>(null);
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
@@ -86,10 +171,19 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [applicationSearch, setApplicationSearch] = useState('');
   const [processSearch, setProcessSearch] = useState('');
   const [useCaseSearch, setUseCaseSearch] = useState('');
-  const [linkedUseCases, setLinkedUseCases] = useState<UseCaseSummary[]>([]);
+  const [linkedUseCases, setLinkedUseCases] = useState<UseCaseSummary[]>(
+    () => normalizeLinkedUseCasesFromAgent(agent),
+  );
+  const lastBusinessImpactSignatureRef = useRef<string>('');
   const { useCases: allUseCases } = useUseCases();
-  const fallbackApplicationCount = (agent.application ?? []).length;
-  const fallbackProcessCount = (agent.business_process ?? []).length;
+  const fallbackApplicationCount = useMemo(
+    () => (agent.application ?? []).filter(isLinkedApplicationLike).length,
+    [agent.application],
+  );
+  const fallbackProcessCount = useMemo(
+    () => (agent.business_process ?? []).filter(isLinkedProcessLike).length,
+    [agent.business_process],
+  );
   const createApplicationHref = agentId
     ? `/applications/new?linkAgentId=${encodeURIComponent(agentId)}`
     : '/applications/new';
@@ -101,43 +195,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     : '/use-cases/new';
 
   useEffect(() => {
-    const rawLinked = (agent as any).ai_use_cases;
-    if (Array.isArray(rawLinked)) {
-      const normalized = rawLinked
-        .filter(Boolean)
-        .map((u: any) => ({
-          identifier: u.identifier ?? u.use_case_id ?? u.id ?? '',
-          name: u.name ?? u.title ?? 'Unnamed Use Case',
-          description: u.description ?? null,
-          owner: u.owner ?? u.use_case_owner ?? null,
-          priority: u.priority ?? null,
-          status: u.status ?? null,
-          function: u.function ?? null,
-          problem_statement: u.problem_statement ?? null,
-          expected_benefits: u.expected_benefits ?? null,
-          proposed_by: u.proposed_by ?? null,
-        }))
-        .filter((u: any) => !!u.identifier);
-      setLinkedUseCases(normalized);
-      return;
-    }
-    const fallback = (agent as any).ai_use_case;
-    if (fallback?.identifier) {
-      setLinkedUseCases([{
-        identifier: fallback.identifier,
-        name: fallback.name ?? 'Unnamed Use Case',
-        description: fallback.description ?? null,
-        owner: fallback.owner ?? null,
-        priority: fallback.priority ?? null,
-        status: fallback.status ?? null,
-        function: fallback.function ?? null,
-        problem_statement: fallback.problem_statement ?? null,
-        expected_benefits: fallback.expected_benefits ?? null,
-        proposed_by: fallback.proposed_by ?? null,
-      }]);
-      return;
-    }
-    setLinkedUseCases([]);
+    setLinkedUseCases(normalizeLinkedUseCasesFromAgent(agent));
   }, [agent]);
 
   const refreshRelations = async () => {
@@ -161,8 +219,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
       onCountsChange?.({
-        applications: agentRelations.applications.length,
-        processes: agentRelations.business_processes.length,
+        applications: agentRelations.applications.filter(isLinkedApplicationLike).length,
+        processes: agentRelations.business_processes.filter(isLinkedProcessLike).length,
         useCases: linkedUseCases.length,
       });
     } catch (err: any) {
@@ -185,32 +243,61 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const liveProcesses = relations?.business_processes ?? [];
   const showingLiveData = !!relations && !relationError;
 
-  const displayedApplications = showingLiveData
-    ? liveApplications
-    : (agent.application ?? []).map(app => ({
-        business_application_id: app.identifier ?? app.name ?? 'N/A',
-        application_name: app.name,
-        application_description: app.description,
-        business_criticality: app.business_criticality,
-        emergency_tier: app.emergency_tier,
-      }));
+  const displayedApplications = useMemo(
+    () =>
+      showingLiveData
+        ? liveApplications.filter(isLinkedApplicationLike)
+        : (agent.application ?? []).map(app => ({
+            business_application_id: app.identifier ?? app.name ?? 'N/A',
+            application_name: app.name,
+            application_description: app.description,
+            business_criticality: app.business_criticality,
+            emergency_tier: app.emergency_tier,
+          })).filter(isLinkedApplicationLike),
+    [showingLiveData, liveApplications, agent.application],
+  );
 
-  const displayedProcesses = showingLiveData
-    ? liveProcesses
-    : (agent.business_process ?? []).map(proc => ({
-        business_process_id: proc.identifier,
-        process_name: proc.name,
-        process_description: proc.description,
-        business_criticality: proc.business_criticality,
-        related_processes: [],
-      }));
+  const displayedProcesses = useMemo(
+    () =>
+      showingLiveData
+        ? liveProcesses.filter(isLinkedProcessLike)
+        : (agent.business_process ?? []).map(proc => ({
+            business_process_id: proc.identifier,
+            process_name: proc.name,
+            process_description: proc.description,
+            business_criticality: proc.business_criticality,
+            related_processes: [],
+          })).filter(isLinkedProcessLike),
+    [showingLiveData, liveProcesses, agent.business_process],
+  );
+
+  useEffect(() => {
+    if (!onBusinessImpactChange) return;
+    const snapshot: AgentBusinessImpactSnapshot = {
+      applications: displayedApplications.map(toApplicationImpact),
+      processes: displayedProcesses.map(toProcessImpact),
+      useCases: linkedUseCases.map(toUseCaseImpact),
+    };
+    const signature = JSON.stringify(snapshot);
+    if (signature === lastBusinessImpactSignatureRef.current) return;
+    lastBusinessImpactSignatureRef.current = signature;
+    onBusinessImpactChange(snapshot);
+  }, [displayedApplications, displayedProcesses, linkedUseCases, onBusinessImpactChange]);
 
   const linkedApplicationIds = useMemo(() => {
-    return new Set(liveApplications.map(app => app.business_application_id));
+    return new Set(
+      liveApplications
+        .map((app) => app.business_application_id)
+        .filter((value) => hasNonBlankText(value)),
+    );
   }, [liveApplications]);
 
   const linkedProcessIds = useMemo(() => {
-    return new Set(liveProcesses.map(proc => proc.business_process_id));
+    return new Set(
+      liveProcesses
+        .map((proc) => proc.business_process_id)
+        .filter((value) => hasNonBlankText(value)),
+    );
   }, [liveProcesses]);
 
   const availableApplications = useMemo(() => {

@@ -14,9 +14,9 @@ from api.database import get_db
 
 router = APIRouter()
 
-CORE    = os.getenv("CORE_GLUE_DB_NAME",       "core")
-CURATED = os.getenv("CURATED_GLUE_DB_NAME",    "curated")
-RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME", "risk_management"))
+CORE    = os.getenv("CORE_DB_NAME",       "core")
+CURATED = os.getenv("CURATED_DB_NAME",    "curated")
+RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
 _RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
 
 
@@ -67,6 +67,9 @@ class AgentCreateRequest(BaseModel):
     agent_name: str
     description: str
     instruction: str
+    role: Optional[str] = None
+    environment: Optional[str] = None
+    owner: Optional[str] = None
     tools: Optional[List[Dict[str, str]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
 
@@ -155,13 +158,16 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agent_identifications
                     (tenant_id, agent_internal_id, agent_id, instruction,
-                     governance_status, created_ts, updated_ts, is_current)
+                     role, environment, governance_status, created_ts, updated_ts, is_current)
                 VALUES
                     (:tid, :iid, :aid, :instruction,
-                     'Risk Assessment is running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
+                     :role, :environment, 'Risk Assessment is running',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "instruction": body.instruction},
+             "instruction": body.instruction,
+             "role": body.role or None,
+             "environment": body.environment or None},
         )
 
         for tool in (body.tools or []):

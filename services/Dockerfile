@@ -18,9 +18,8 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 COPY services/requirements.txt /app/requirements.txt
-COPY services/requirements-postgres.txt /app/requirements-postgres.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=120 --retries 10 -r /app/requirements.txt -r /app/requirements-postgres.txt
+    pip install --default-timeout=120 --retries 10 -r /app/requirements.txt
 
 COPY services /app/services
 COPY utils /app/utils

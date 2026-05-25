@@ -77,6 +77,7 @@ function toWireTools(defs: ToolDefinition[]): any[] {
 
 export class GeminiProvider implements ILLMProvider {
     readonly name = 'gemini';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -119,15 +120,14 @@ export class GeminiProvider implements ILLMProvider {
 
     async *stream(messages: RuntimeMessage[]): AsyncGenerator<string> {
         const si = systemInstruction(messages);
-        // Only enable googleSearch grounding when we are NOT in synthesis mode
-        // (i.e., no tool results in context). Having function responses in the
-        // message history while also requesting googleSearch causes API errors.
         const hasFunctionResults = messages.some(m => m.role === 'tool');
         const body: any = {
             contents: toWireMessages(messages),
             generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
         };
         if (si) body.systemInstruction = si;
+        // Google Search grounding is mutually exclusive with function calling;
+        // only add it when there are no injected tool results in context.
         if (!hasFunctionResults) body.tools = [{ googleSearch: {} }];
 
         const res = await fetch(apiUrl(this.model, this.apiKey, true), {
@@ -139,10 +139,8 @@ export class GeminiProvider implements ILLMProvider {
             const err = await res.json().catch(() => ({}));
             throw new Error(err?.error?.message ?? `Gemini stream error ${res.status}`);
         }
-        yield* parseSSE(
-            res.body!.getReader(),
-            p => p?.candidates?.[0]?.content?.parts?.[0]?.text ?? '',
-        );
+        // Native Gemini SSE: each data chunk carries candidates[0].content.parts[0].text
+        yield* parseSSE(res.body!.getReader(), p => p?.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
     }
 
     buildToolCallMessage(toolCalls: ToolCallRecord[]): RuntimeMessage {

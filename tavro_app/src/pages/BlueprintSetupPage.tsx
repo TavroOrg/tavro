@@ -88,12 +88,6 @@ const TEMPLATES = [
   },
 ];
 
-const US_REGIONS = [
-  'US-AL','US-AK','US-AZ','US-CA','US-CO','US-CT','US-FL','US-GA',
-  'US-IL','US-MA','US-MI','US-MN','US-NJ','US-NY','US-NC','US-OH',
-  'US-PA','US-TX','US-VA','US-WA',
-];
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 const BlueprintSetupPage: React.FC = () => {
@@ -108,7 +102,6 @@ const BlueprintSetupPage: React.FC = () => {
   const [form, setForm] = useState({
     name:         '',
     industry:     '',
-    region:       'US-FL',
     legal_entity: '',
     is_public:    false as boolean | null,   // null = not selected yet
     ticker:       '',
@@ -116,6 +109,7 @@ const BlueprintSetupPage: React.FC = () => {
 
   // ── Research state ─────────────────────────────────────────────────────────
   const [researching,     setResearching]     = useState(false);
+  const [researchStatus,  setResearchStatus]  = useState<string>('');
   const [researchResult,  setResearchResult]  = useState<ResearchResult | null>(null);
   const [researchError,   setResearchError]   = useState<string | null>(null);
   const [selectedNodes,   setSelectedNodes]   = useState<Set<number>>(new Set());
@@ -130,11 +124,9 @@ const BlueprintSetupPage: React.FC = () => {
   const update = (field: string, value: any) =>
     setForm(p => ({ ...p, [field]: value }));
 
-  // ── Step 1 → 2 / 3 ────────────────────────────────────────────────────────
+  // ── Step 1 → 2 ────────────────────────────────────────────────────────────
   const handleStep1Continue = () => {
-    // Public company → go to research step
-    // Private company → skip to template step
-    setStep(form.is_public ? 2 : 3);
+    setStep(2);
   };
 
   // ── Research ───────────────────────────────────────────────────────────────
@@ -148,21 +140,50 @@ const BlueprintSetupPage: React.FC = () => {
     setResearching(true);
     setResearchError(null);
     setResearchResult(null);
+    setResearchStatus('Starting…');
+
+    const requestParams = {
+      company_id:   'preview',
+      company_name: form.name,
+      ticker:       form.ticker || undefined,
+      industry:     form.industry,
+      is_public:    form.is_public === true,
+    };
+
+    console.group(`[Blueprint Research] ${form.name} — ${form.is_public ? 'PUBLIC' : 'PRIVATE'}`);
+    console.log('[Request] params sent to /blueprint/research:', requestParams);
+
     try {
-      // Research doesn't save — it just returns nodes for preview
-      const result = await (blueprintApi as any).researchCompany({
-        company_id:   'preview',   // placeholder — not saved at this point
-        company_name: form.name,
-        ticker:       form.ticker || undefined,
-        industry:     form.industry,
-        region:       form.region,
-      });
-      setResearchResult(result);
-      // Pre-select all nodes
-      setSelectedNodes(new Set(result.nodes.map((_: any, i: number) => i)));
+      const stream = blueprintApi.researchCompanyStream(requestParams);
+      for await (const event of stream) {
+        console.log(`[SSE event] type="${event.type}"`, event);
+        if (event.type === 'status') {
+          setResearchStatus(event.message);
+        } else if (event.type === 'result') {
+          console.log('[Result] nodes count:', event.data.nodes.length);
+          console.log('[Result] sources:', event.data.sources);
+          console.log('[Result] notice:', event.data.notice);
+          console.table(event.data.nodes.map((n: any) => ({
+            category: n.category,
+            label:    n.label,
+            sensitive: n.sensitive,
+            tags:     n.tags.join(', '),
+          })));
+          setResearchResult(event.data as any);
+          setSelectedNodes(new Set(event.data.nodes.map((_: any, i: number) => i)));
+          setResearching(false);
+        } else if (event.type === 'error') {
+          console.error('[Error event]', event.message);
+          throw new Error(event.message);
+        }
+        // heartbeat events logged above, no other action needed
+      }
     } catch (err: any) {
+      console.error('[Research failed]', err);
       setResearchError(err.message ?? 'Research failed');
+      setResearching(false);
     } finally {
+      console.groupEnd();
       setResearching(false);
     }
   };
@@ -183,7 +204,6 @@ const BlueprintSetupPage: React.FC = () => {
       const company = await blueprintApi.createCompany({
         name:         form.name.trim(),
         industry:     form.industry.trim(),
-        region:       form.region,
         legal_entity: form.legal_entity?.trim() || undefined,
       });
 
@@ -209,11 +229,8 @@ const BlueprintSetupPage: React.FC = () => {
   };
 
   // ── Step labels ────────────────────────────────────────────────────────────
-  const steps = form.is_public
-    ? ['Identity', 'AI Research', 'Template', 'Confirm']
-    : ['Identity', 'Template', 'Confirm'];
-
-  const displayStep = form.is_public ? step : step < 3 ? step : step - 1;
+  const steps = ['Identity', 'AI Research', 'Template', 'Confirm'];
+  const displayStep = step;
 
   const selectedTemplate = TEMPLATES.find(t => t.id === template);
 
@@ -275,17 +292,6 @@ const BlueprintSetupPage: React.FC = () => {
               <Field label="Industry" required>
                 <input value={form.industry} onChange={e => update('industry', e.target.value)}
                   placeholder="e.g. Commercial Banking" className={inputCls} />
-              </Field>
-
-              <Field label="Region" required>
-                <select value={form.region} onChange={e => update('region', e.target.value)} className={inputCls}>
-                  {US_REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-                  <option value="UK">United Kingdom</option>
-                  <option value="EU">European Union</option>
-                  <option value="CA">Canada</option>
-                  <option value="AU">Australia</option>
-                  <option value="OTHER">Other</option>
-                </select>
               </Field>
 
               <Field label="Legal entity name">
@@ -364,13 +370,27 @@ const BlueprintSetupPage: React.FC = () => {
                   <div>
                     <p className="text-[11px] font-bold text-blue-700 dark:text-blue-300">AI research will pre-populate your blueprint</p>
                     <p className="text-[11px] text-blue-600/70 dark:text-blue-400/70 mt-0.5">
-                      Tavro will use publicly available information to suggest Profile, Strategy, and Organisation dimensions. You review and confirm before anything is saved.
+                      Tavro will use publicly available information to suggest Profile, Strategy, Organisation, and Finance dimensions. You review and confirm before anything is saved.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {form.is_public === false && (
+                <div className="flex items-start gap-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3">
+                  <Sparkles size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200">AI will suggest baseline dimensions</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Tavro will use AI to generate Profile, Strategy, Organisation, and Finance dimension suggestions based on your company info. You review and confirm before anything is saved.
                     </p>
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-between pt-2">
+                <button onClick={() => navigate('/blueprint')} className={btnSecondary}>
+                  Cancel
+                </button>
                 <button onClick={handleStep1Continue}
                   disabled={!form.name.trim() || !form.industry.trim() || form.is_public === null}
                   className={btnPrimary + " disabled:opacity-40 disabled:cursor-not-allowed"}>
@@ -381,18 +401,22 @@ const BlueprintSetupPage: React.FC = () => {
           )}
 
           {/* ════════════════════════════════════════════════════════════════
-              STEP 2 — AI Research (public companies only)
+              STEP 2 — AI Research (public + private)
           ════════════════════════════════════════════════════════════════ */}
-          {step === 2 && form.is_public && (
+          {step === 2 && (
             <Card icon={<Sparkles size={18} className="text-blue-600 dark:text-blue-400" />}
               title="AI research preview"
-              desc="Tavro researches public filings and suggests dimensions for your review">
+              desc={form.is_public
+                ? "Tavro researches public filings and suggests dimensions for your review"
+                : "Tavro uses AI to generate baseline dimension suggestions for your review"}>
 
               {/* Research trigger */}
               {!researchResult && !researching && (
                 <div className="flex flex-col items-center gap-4 py-6">
-                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800">
-                    <Globe size={32} className="text-blue-500 dark:text-blue-400" />
+                  <div className={`p-4 rounded-2xl border ${form.is_public ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-100 dark:border-blue-800' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                    {form.is_public
+                      ? <Globe size={32} className="text-blue-500 dark:text-blue-400" />
+                      : <Lock size={32} className="text-slate-500 dark:text-slate-400" />}
                   </div>
                   <div className="text-center">
                     <p className="font-bold text-slate-800 dark:text-slate-100">
@@ -400,7 +424,9 @@ const BlueprintSetupPage: React.FC = () => {
                       {form.ticker && <span className="text-blue-600 dark:text-blue-400"> ({form.ticker})</span>}
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                      Searches public filings, annual reports, and company website to suggest Profile, Strategy, and Organisation dimensions.
+                      {form.is_public
+                        ? 'Searches public filings, annual reports, and company website to suggest Profile, Strategy, Organisation, and Finance dimensions.'
+                        : 'Uses AI to generate baseline Profile, Strategy, Organisation, and Finance dimension suggestions based on the company name and industry you provided.'}
                     </p>
                   </div>
                   {researchError && (
@@ -416,16 +442,21 @@ const BlueprintSetupPage: React.FC = () => {
 
               {/* Researching spinner */}
               {researching && (
-                <div className="flex flex-col items-center gap-4 py-10">
-                  <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
-                      <RefreshCw size={24} className="text-blue-500 animate-spin" />
-                    </div>
+                <div className="flex flex-col items-center gap-5 py-10">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 flex items-center justify-center">
+                    <RefreshCw size={24} className="text-blue-500 animate-spin" />
                   </div>
-                  <div className="text-center">
-                    <p className="font-bold text-slate-800 dark:text-slate-100">Researching {form.name}…</p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 animate-pulse">
-                      Searching public filings and annual reports
+                  <div className="text-center max-w-sm">
+                    <p className="font-bold text-slate-800 dark:text-slate-100 text-base">
+                      Researching {form.name}…
+                    </p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+                      Please wait a few seconds.
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                      {form.is_public
+                        ? "We're scanning SEC filings, annual reports, and public data to build your blueprint."
+                        : "We're generating AI-powered dimension suggestions based on your company profile."}
                     </p>
                   </div>
                 </div>
@@ -596,7 +627,7 @@ const BlueprintSetupPage: React.FC = () => {
               </div>
 
               <div className="flex justify-between pt-2">
-                <button onClick={() => setStep(form.is_public ? 2 : 1)} className={btnSecondary}>
+                <button onClick={() => setStep(2)} className={btnSecondary}>
                   <ChevronLeft size={16} /> Back
                 </button>
                 <button onClick={() => setStep(4)} disabled={!template} className={btnPrimary + " disabled:opacity-40 disabled:cursor-not-allowed"}>
@@ -619,7 +650,6 @@ const BlueprintSetupPage: React.FC = () => {
                 {[
                   ['Company',      form.name],
                   ['Industry',     form.industry],
-                  ['Region',       form.region],
                   ['Legal entity', form.legal_entity || '—'],
                   ['Type',         form.is_public ? '🌐 Public company' : '🔒 Private company'],
                   ...(form.ticker ? [['Ticker', form.ticker]] : []),
@@ -642,7 +672,7 @@ const BlueprintSetupPage: React.FC = () => {
                     <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg px-3 py-2">
                       <Sparkles size={11} className="text-blue-500" />
                       <span className="font-bold">{selectedNodes.size}</span> AI-researched dimensions
-                      <span className="text-slate-400 dark:text-slate-500">(Profile, Strategy, Organisation)</span>
+                      <span className="text-slate-400 dark:text-slate-500">(Profile, Strategy, Organisation, Finance)</span>
                     </div>
                   )}
                   {selectedTemplate && selectedTemplate.id !== 'blank' && (

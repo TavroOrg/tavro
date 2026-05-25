@@ -3,12 +3,13 @@ import type { RuntimeMessage, InternalCompletionResult, ToolDefinition, ToolCall
 import { parseSSE } from './sse';
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
-const SHARED_HEADERS = {
+const DIRECT_HEADERS = {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
     'anthropic-dangerous-direct-browser-access': 'true',
 };
 const FALLBACK_MODELS = [
+    'claude-sonnet-4-6',
     'claude-sonnet-4-5',
     'claude-3-5-sonnet-20241022',
     'claude-3-5-haiku-20241022',
@@ -89,6 +90,7 @@ function extractSystem(messages: RuntimeMessage[]): string {
 
 export class AnthropicProvider implements ILLMProvider {
     readonly name = 'anthropic';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -102,14 +104,14 @@ export class AnthropicProvider implements ILLMProvider {
         const errors: string[] = [];
 
         for (const model of this.modelsToTry()) {
-            const body: any = { model, max_tokens: 2048, system, messages: chatMsgs };
+            const body: any = { model, max_tokens: 8192, system, messages: chatMsgs };
             if (tools.length > 0) {
                 body.tools = toWireTools(tools);
                 body.tool_choice = { type: 'auto' };
             }
             const res = await fetch(ENDPOINT, {
                 method: 'POST',
-                headers: { ...SHARED_HEADERS, 'x-api-key': this.apiKey },
+                headers: { ...DIRECT_HEADERS, 'x-api-key': this.apiKey },
                 body: JSON.stringify(body),
             });
             if (!res.ok) {
@@ -143,17 +145,12 @@ export class AnthropicProvider implements ILLMProvider {
         for (const model of this.modelsToTry()) {
             const res = await fetch(ENDPOINT, {
                 method: 'POST',
-                headers: { ...SHARED_HEADERS, 'x-api-key': this.apiKey },
-                body: JSON.stringify({
-                    model,
-                    max_tokens: 1024,
-                    system,
-                    messages: chatMsgs,
-                    stream: true,
-                }),
+                headers: { ...DIRECT_HEADERS, 'x-api-key': this.apiKey },
+                body: JSON.stringify({ model, max_tokens: 8192, system, messages: chatMsgs, stream: true }),
             });
             if (res.ok) {
                 if (model !== this.model) localStorage.setItem('tavro_llm_model_anthropic', model);
+                // Native Anthropic SSE: content_block_delta events carry delta.text
                 yield* parseSSE(res.body!.getReader(), p => p?.delta?.text ?? '');
                 return;
             }

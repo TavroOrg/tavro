@@ -5,12 +5,14 @@ import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
 import AgentImpact from './AgentImpact';
 import AgentRelatedTab from './AgentRelatedTab';
+import type { AgentBusinessImpactSnapshot } from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
 
 interface AgentViewProps {
     agent: AgentData;
+    onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
 }
 
 type TabType =
@@ -30,7 +32,7 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'CONTEXT', label: 'Context Graph' },
 ];
 
-const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
+const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange }) => {
     const [activeTab, setActiveTab] = useState<TabType>('IDENTIFICATION');
     const agentId = agent.identification?.agent_id;
 
@@ -38,7 +40,7 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
     useEffect(() => setActiveTab('IDENTIFICATION'), [agentId]);
 
     return (
-        <div className="flex flex-col gap-6 animate-fade-in w-full max-w-[1400px] mx-auto">
+        <div className="flex flex-col gap-4 animate-fade-in w-full max-w-[1400px] mx-auto">
             {/* Top accent bar */}
             <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
 
@@ -64,34 +66,39 @@ const AgentView: React.FC<AgentViewProps> = ({ agent }) => {
             </div>
 
             {/* Tab Content */}
-            <div className="min-h-[400px]">
+            <div>
                 {activeTab === 'IDENTIFICATION' && <AgentIdentificationTab agent={agent} />}
 
                 {activeTab === 'CONFIG' && <AgentTechConfigTab agent={agent} />}
 
                 {activeTab === 'IMPACT' && (
-                    <div className="mt-4">
+                    <div>
                         <AgentImpact agent={agent} hideAssetSections>
-                            <AgentRelatedTab agent={agent} mode="all" embedded />
+                            <AgentRelatedTab
+                                agent={agent}
+                                mode="all"
+                                embedded
+                                onBusinessImpactChange={onBusinessImpactChange}
+                            />
                         </AgentImpact>
                     </div>
                 )}
 
                 {activeTab === 'LINEAGE' && (
-                    <div className="mt-4"><AgentLineage agent={agent} /></div>
+                    <div><AgentLineage agent={agent} /></div>
                 )}
 
                 {activeTab === 'RISK' && agentId && (
-                    <div className="mt-4"><AgentRiskSummary agentId={agentId} /></div>
+                    <div><AgentRiskSummary agentId={agentId} /></div>
                 )}
                 {activeTab === 'RISK' && !agentId && (
-                    <div className="mt-4 p-6 bg-slate-50 text-slate-500 text-sm rounded-xl text-center">
+                    <div className="p-6 bg-slate-50 text-slate-500 text-sm rounded-xl text-center">
                         Agent ID required for Risk Assessment.
                     </div>
                 )}
 
                 {activeTab === 'CONTEXT' && (
-                    <div className="mt-4"><AgentContextGraph agent={agent} /></div>
+                    <div><AgentContextGraph agent={agent} /></div>
                 )}
             </div>
         </div>

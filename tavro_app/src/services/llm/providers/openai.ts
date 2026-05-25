@@ -47,6 +47,7 @@ function toWireTools(defs: ToolDefinition[]): any[] {
 
 export class OpenAIProvider implements ILLMProvider {
     readonly name = 'openai';
+    requestId?: string;
 
     constructor(private model: string, private apiKey: string) {}
 
@@ -92,8 +93,8 @@ export class OpenAIProvider implements ILLMProvider {
             body: JSON.stringify({
                 model: this.model,
                 messages: toWireMessages(messages),
-                stream: true,
                 [maxTokensKey(this.model)]: 1024,
+                stream: true,
             }),
         });
         if (!res.ok) {

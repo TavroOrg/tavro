@@ -1,0 +1,13 @@
+{
+  "name": "tavro-copilot-sdk-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^1.0.0-beta.4",
+    "cors": "^2.8.5",
+    "express": "^4.18.3"
+  }
+}

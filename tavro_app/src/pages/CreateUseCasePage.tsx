@@ -19,6 +19,7 @@ const CreateUseCasePage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const { refresh } = useUseCases();
     const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
+    const linkProcessId = searchParams.get('linkProcessId')?.trim() || '';
 
     const [form, setForm] = useState({
         name: '',
@@ -43,9 +44,6 @@ const CreateUseCasePage: React.FC = () => {
         if (!form.name.trim()) return;
         setSaving(true);
         setError(null);
-        // Ensure live mode before write call so connect() establishes a real MCP session.
-        localStorage.setItem('tavro_cache_mode', 'false');
-        window.dispatchEvent(new Event('tavro_settings_change'));
         try {
             const created = await mcpClient.createAiUseCase({
                 title: form.name.trim(),
@@ -58,17 +56,28 @@ const CreateUseCasePage: React.FC = () => {
             if (linkAgentId && created?.use_case_id) {
                 await useCaseApi.linkAgent(created.use_case_id, linkAgentId);
             }
+            if (linkProcessId && created?.use_case_id) {
+                await useCaseApi.linkProcess(created.use_case_id, linkProcessId);
+            }
             setSuccess(true);
             sessionStorage.setItem(
                 'tavro_use_case_notice',
-                linkAgentId
-                    ? 'AI Use Case created and linked to agent successfully.'
-                    : 'AI Use Case created successfully. It will appear in the catalog shortly.'
+                linkAgentId && linkProcessId
+                    ? 'AI Use Case created and linked to agent and process successfully.'
+                    : linkAgentId
+                        ? 'AI Use Case created and linked to agent successfully.'
+                        : linkProcessId
+                            ? 'AI Use Case created and linked to process successfully.'
+                            : 'AI Use Case created successfully. It will appear in the catalog shortly.'
             );
             refresh();
             setTimeout(() => {
                 if (linkAgentId) {
                     navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                    return;
+                }
+                if (linkProcessId) {
+                    navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
                     return;
                 }
                 navigate('/use-cases');
@@ -95,11 +104,15 @@ const CreateUseCasePage: React.FC = () => {
                             navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
                             return;
                         }
+                        if (linkProcessId) {
+                            navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+                            return;
+                        }
                         navigate('/use-cases');
                     }}
                     className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
                 >
-                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : 'Back to Use Cases'}
+                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : linkProcessId ? 'Back to Process' : 'Back to Use Cases'}
                 </button>
             </div>
 
@@ -114,6 +127,8 @@ const CreateUseCasePage: React.FC = () => {
                         <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
                             {linkAgentId
                                 ? 'Register a new AI use case and link it to this agent'
+                                : linkProcessId
+                                    ? 'Register a new AI use case and link it to this process'
                                 : 'Register a new AI use case in the Agent Biz Ops catalog'}
                         </p>
                     </div>
@@ -236,6 +251,10 @@ const CreateUseCasePage: React.FC = () => {
                         <button type="button" onClick={() => {
                             if (linkAgentId) {
                                 navigate(`/agent/${encodeURIComponent(linkAgentId)}`);
+                                return;
+                            }
+                            if (linkProcessId) {
+                                navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
                                 return;
                             }
                             navigate('/use-cases');

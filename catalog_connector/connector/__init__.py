@@ -6,14 +6,3 @@ from .salesforce_connector import SalesforceConnector as salesforceConnector
 from .servicenow_connector import ServiceNowConnector as servicenowConnector
 from .snowflake_connector import SnowflakeConnector as snowflakeConnector
 from .mcp_connector import githubConnector
-
-__all__ = [
-    "copilotConnector",
-    "bedrockConnector",
-    "databricksConnector",
-    "geminiConnector",
-    "salesforceConnector",
-    "servicenowConnector",
-    "snowflakeConnector",
-    "githubConnector",
-]

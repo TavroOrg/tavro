@@ -50,15 +50,15 @@ secrets:
   OPENAI_API_KEY: ""
 
 fastapi:
-  fast_api_host: "tavro-api"
-  fast_api_port: "8000"
+  fast_api_host: "localhost"
+  fast_api_port: "80"
 
 mcp:
   mcp_host: "localhost"
   mcp_port: "9001"
   # Optional: set to your public ngrok URL when exposing the MCP server remotely.
   # Example: "https://abc123.ngrok-free.app"
-  # Leave empty to default to http://localhost:9001
+  # Leave empty to default to http://localhost:9000
   mcp_root_url: ""
 
 crewai:
@@ -79,24 +79,28 @@ oAuth:
   AZURE_CLIENT_ID: ""
   AZURE_CLIENT_SECRET: ""
   AZURE_TENANT_ID: ""
+  ZITADEL_ISSUER: "http://localhost:8080"
+  ZITADEL_CLIENT_ID: ""
+  ZITADEL_CLIENT_SECRET: ""
+  ZITADEL_REDIRECT_PATH: "/auth/callback"
+  ZITADEL_SCOPES: "openid profile email"
   JWT_SIGNING_KEY: "super_secret_random_string_change_this"
 
 databases:
-  CORE_GLUE_DB_NAME: "core"
-  CURATED_GLUE_DB_NAME: "curated"
-  RISK_MANAGEMENT_GLUE_DB_NAME: "risk_management"
+  CORE_DB_NAME: "core"
+  CURATED_DB_NAME: "curated"
+  RISK_MANAGEMENT_DB_NAME: "risk_management"
 
 postgres:
   POSTGRES_HOST: "tavro-postgres"
   POSTGRES_PORT: "5432"
-  POSTGRES_USER: "tavro_user"
-  POSTGRES_PASSWORD: "tavro_secret_changeme"
-  POSTGRES_DB: "tavro"
+  POSTGRES_USER: "admin"
+  POSTGRES_PASSWORD: "admin"
+  POSTGRES_DB: "agent_db"
 
 db:
-  DB_NAME: "tavro"
-  DB_USER: "tavro_user"
-  DB_PASSWORD: "tavro_secret_changeme"
+  DB_Name: ""
+  DB_USER: ""
+  DB_PASSWORD: ""
   DB_HOST: "tavro-postgres"
   DB_PORT: "5432"
-  DB_SSLMODE: "disable"

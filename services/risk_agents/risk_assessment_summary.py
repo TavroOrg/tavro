@@ -16,8 +16,8 @@ DB_USER = os.getenv("POSTGRES_USER")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_HOST = os.getenv("POSTGRES_HOST")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-CORE_SCHEMA = os.getenv("CORE_GLUE_DB_NAME", "core")
-RISK_MANAGEMENT_SCHEMA = os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME", "risk_management")
+CORE_SCHEMA = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT_SCHEMA = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 # ---------------------------------------------------------------------------
 # Connection helper (Identical to db_functions.py for consistency)

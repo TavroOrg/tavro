@@ -10,6 +10,15 @@ export interface RelatedProcessReference {
   relationship_type: string | null;
 }
 
+export interface RelatedUseCaseReference {
+  identifier: string;
+  name: string | null;
+  description: string | null;
+  owner: string | null;
+  priority: string | null;
+  status: string | null;
+}
+
 export interface BusinessApplicationRecord {
   tenant_id: string | null;
   business_application_id: string;
@@ -79,6 +88,7 @@ export interface BusinessProcessRecord {
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
   related_processes: RelatedProcessReference[];
+  related_use_cases: RelatedUseCaseReference[];
 }
 
 export interface AgentRelationsPayload {

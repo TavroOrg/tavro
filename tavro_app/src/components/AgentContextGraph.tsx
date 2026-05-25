@@ -48,6 +48,16 @@ function buildGroups(agent: AgentData): ContextGroup[] {
     const id = agent.identification ?? {} as any;
     const cfg = agent.configuration ?? {} as any;
 
+    const linkedUseCases = Array.isArray(agent.ai_use_cases) && agent.ai_use_cases.length
+        ? agent.ai_use_cases
+        : (agent.ai_use_case ? [agent.ai_use_case] : []);
+
+    const toolLeaves: LeafNode[] = (agent.tool ?? []).slice(0, 5).map((t, i) => ({
+        id: `t-${i}-${t.name ?? 'tool'}`,
+        label: t.name ?? `Tool ${i + 1}`,
+        sublabel: 'Tool',
+    }));
+
     const techLeaves: LeafNode[] = [
         id.role && { id: 'role', label: 'Role', sublabel: id.role },
         id.environment && { id: 'env', label: 'Environment', sublabel: id.environment },
@@ -56,15 +66,15 @@ function buildGroups(agent: AgentData): ContextGroup[] {
         cfg.access_scope && { id: 'scope', label: 'Access Scope', sublabel: cfg.access_scope },
         cfg.memory_type && { id: 'mem', label: 'Memory', sublabel: cfg.memory_type },
         cfg.reasoning_model && { id: 'llm', label: 'LLM Model', sublabel: cfg.reasoning_model },
+        ...toolLeaves,
     ].filter(Boolean) as LeafNode[];
 
     const funcLeaves: LeafNode[] = [
-        ...(agent.tool ?? []).slice(0, 5).map(t => ({ id: `t-${t.name}`, label: t.name, sublabel: 'Tool' })),
         ...(agent.data_source ?? []).slice(0, 4).map((ds, i) => ({
             id: `ds-${i}`, label: ds.source_object_name ?? 'Data Source', sublabel: ds.source_object_type,
         })),
     ];
-    if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No tools/sources', sublabel: 'configured' });
+    if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No data sources', sublabel: 'configured' });
 
     const bizLeaves: LeafNode[] = [
         ...(agent.application ?? []).slice(0, 5).map((a, i) => ({
@@ -81,6 +91,14 @@ function buildGroups(agent: AgentData): ContextGroup[] {
             label: p.name ?? `Process ${i + 1}`,
             sublabel: 'Process',
         })),
+        ...linkedUseCases.slice(0, 3).map((u, i) => {
+            const uc = u as any;
+            return {
+                id: `uc-${i}-${uc.identifier ?? uc.use_case_id ?? uc.id ?? 'unknown'}`,
+                label: uc.name ?? uc.title ?? `AI Use Case ${i + 1}`,
+                sublabel: 'AI Use Case',
+            };
+        }),
     ];
     if (!bizLeaves.length) bizLeaves.push({ id: 'bz0', label: 'No business context', sublabel: 'recorded' });
 
