@@ -68,6 +68,7 @@ export interface AgentCatalogResponse {
 export interface RiskWorkflowStatus {
     workflow_id: string;
     run_id?: string | null;
+    tenant_id?: string | null;
     agent_internal_id: string;
     agent_id: string;
     agent_name: string;

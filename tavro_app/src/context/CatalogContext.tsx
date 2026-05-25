@@ -354,6 +354,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const workflows = readTemporalRecords();
             const handled = readHandledWorkflowIds();
             let shouldRefresh = false;
+            let shouldFetchAgents = false;
 
             const pendingMetaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
             const pendingMeta = pendingMetaRaw
@@ -367,14 +368,19 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             for (const wf of workflows) {
                 const wfKey = `${wf.workflow_id}:${wf.agent_id}`;
                 const wasHandled = handled.has(wfKey);
+                const workflowIds = [wf.agent_internal_id, wf.agent_id, wf.name].map(norm).filter(Boolean);
                 const hasMeta = nextMeta.some(item =>
-                    norm(item.agent_id) === norm(wf.agent_id) ||
-                    norm(item.name) === norm(wf.name)
+                    workflowIds.includes(norm(item.agent_id)) ||
+                    workflowIds.includes(norm(item.name))
                 );
                 const hadPendingId = nextIds.some(id =>
-                    norm(id) === norm(wf.agent_id) || norm(id) === norm(wf.name)
+                    workflowIds.includes(norm(id))
                 );
+                const isLocallyPending = hasMeta || hadPendingId;
+
                 if (wf.status === 'running') {
+                    if (!isLocallyPending) continue;
+                    shouldFetchAgents = true;
                     if (!hasMeta) {
                         nextMeta.unshift({
                             agent_id: wf.agent_id,
@@ -388,16 +394,22 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 }
 
                 nextMeta = nextMeta.filter(item =>
-                    norm(item.agent_id) !== norm(wf.agent_id) &&
-                    norm(item.name) !== norm(wf.name)
+                    !workflowIds.includes(norm(item.agent_id)) &&
+                    !workflowIds.includes(norm(item.name))
                 );
                 nextIds = nextIds.filter(id =>
-                    norm(id) !== norm(wf.agent_id) &&
-                    norm(id) !== norm(wf.name)
+                    !workflowIds.includes(norm(id))
                 );
-                // Refresh only when a terminal workflow is newly observed or when
-                // we actually cleared a running/pending marker from local state.
-                if (!wasHandled || hasMeta || hadPendingId) shouldRefresh = true;
+                // Refresh only when this browser/session had a local pending marker
+                // for the workflow. Polling alone must not make another user's
+                // workflow completion invalidate this catalog.
+                if (isLocallyPending) shouldRefresh = true;
+                if (isLocallyPending) shouldFetchAgents = true;
+
+                if (!isLocallyPending) {
+                    handled.add(wfKey);
+                    continue;
+                }
 
                 if (wasHandled) continue;
                 handled.add(wfKey);
@@ -423,7 +435,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(nextIds));
             persistHandledWorkflowIds(handled);
 
-            fetchAgents(shouldRefresh);
+            if (shouldFetchAgents) fetchAgents(shouldRefresh);
         };
 
         const onStorage = (event: StorageEvent) => {
