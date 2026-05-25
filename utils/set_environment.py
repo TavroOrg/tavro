@@ -7,6 +7,9 @@ def set_environment(attribute):
         secrets = config.get(attribute, {})
 
         for key, value in secrets.items():
+            if key in os.environ:
+                print(f"Environment variable already set, skipping: {key}")
+                continue
             os.environ[key] = value
             print(f"Environment variable set for: {key}")
 

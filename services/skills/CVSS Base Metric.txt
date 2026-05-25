@@ -1,0 +1,57 @@
+CVSS 4.0 Base Metrics
+The 11 CVSS 4.0 Base Metrics along with the allowable values for each metric are listed below:
+
+Attack Vector (AV)
+Network (N) - The vulnerable component is bound to the network stack and the attacker's path is through OSI layer 3 (the network layer). If the attacker would need to traverse multiple hops across the Internet, the AV would be Network (N)
+Adjacent (A) - The vulnerable component is bound to the network stack, but the attack is limited at the protocol level to a logically adjacent topology. The component is network-bound but the exploit is limited to a nearby topology, which corresponds to Adjacent (A) in the baseline. This means the attacker must be within the same local network segment or within a restricted administrative domain (e.g., same local subnet, Bluetooth/802.11 proximity, or a secured VPN segment) to reach the vulnerability.
+Local (L) - The vulnerable component is not bound to the network stack and the attacker's path is via read/write/execute capabilities.
+Physical (P) - The attack requires the attacker to physically touch or manipulate the vulnerable system. Physical interaction may be brief (e.g., evil maid attack) or persistent.
+
+Attack Complexity (AC)
+Low (L) - Specialized access conditions or extenuating circumstances do not exist. An attacker can expect repeatable success when attacking the vulnerable component.
+High (H) - A successful attack depends on conditions beyond the attacker's control. That is, a successful attack cannot be accomplished at will.
+
+Attack Requirements (AT)
+None (N) - The vulnerable component is in a state that is ready to be attacked.
+Present (P) - The attacker must first attain a specific, standard configuration of the vulnerable component before an attack can be attempted.
+
+Privileges Required (PR)
+None (N) - The attacker is unauthorized prior to attack, and therefore does not require any access to settings or files of the vulnerable system to carry out an attack.
+Low (L) - The attacker requires privileges that provide basic user capabilities that could normally affect only settings and files owned by a user.
+High (H) - The attacker requires privileges that provide significant (e.g., administrative) control over the vulnerable component.
+
+User Interaction (UI)
+None (N) - The vulnerable system can be exploited without interaction from any human user.
+Passive (P) - Successful exploitation of this vulnerability requires limited interaction by the user associated with the vulnerable component.
+Active (A) - Successful exploitation of this vulnerability requires specific, conscious user interaction with the vulnerable component.
+
+Vulnerable System - Confidentiality (VC)
+High (H) - There is a total loss of confidentiality, resulting in all information within the vulnerable component being divulged to the attacker.
+Low (L) - There is some loss of confidentiality. Access to some restricted information is obtained, but the attacker does not have control over what information is obtained.
+None (N) - There is no loss of confidentiality within the vulnerable component.
+
+Vulnerable System - Integrity (VI)
+High (H) - There is a total loss of integrity, or a complete loss of protection. The attacker is able to modify any/all files protected by the vulnerable component.
+Low (L) - Modification of data is possible, but the attacker does not have control over the consequence of a modification, or the amount of modification is limited.
+None (N) - There is no loss of integrity within the vulnerable component.
+
+Vulnerable System - Availability (VA)
+High (H) - There is a total loss of availability, resulting in the attacker being able to fully deny access to resources in the vulnerable component.
+Low (L) - Performance is reduced or there are interruptions in resource availability.
+None (N) - There is no impact to availability within the vulnerable component.
+
+Subsequent System - Confidentiality (SC)
+High (H) - There is a total loss of confidentiality, resulting in all information within the subsequent system being divulged to the attacker.
+Low (L) - There is some loss of confidentiality. Access to some restricted information is obtained, but the attacker does not have control over what information is obtained.
+None (N) - There is no loss of confidentiality within the subsequent system.
+
+Subsequent System - Integrity (SI)
+High (H) - There is a total loss of integrity, or a complete loss of protection. The attacker is able to modify any/all files protected by the subsequent system.
+Low (L) - Modification of data is possible, but the attacker does not have control over the consequence of a modification, or the amount of modification is limited.
+None (N) - There is no loss of integrity within the subsequent system.
+
+Subsequent System - Availability (SA)
+High (H) - There is a total loss of availability, resulting in the attacker being able to fully deny access to resources in the subsequent system.
+Low (L) - Performance is reduced or there are interruptions in resource availability in the subsequent system.
+None (N) - There is no impact to availability within the subsequent system.
+

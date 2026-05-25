@@ -2,7 +2,10 @@ psycopg2-binary
 watchdog
 a2a-sdk
 fastmcp
+httpx
 uvicorn
 requests
 rapidfuzz
 pyyaml
+boto3
+google-auth-oauthlib
