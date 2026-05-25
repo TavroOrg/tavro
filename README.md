@@ -66,22 +66,6 @@ Git is used to download this project.
 | macOS | Run `xcode-select --install` in Terminal |
 | Linux (Debian/Ubuntu) | Run `sudo apt install git` in Terminal |
 
-### 3. ngrok (optional, for remote MCP access)
-
-Use ngrok only if you want Claude/ChatGPT cloud sessions to call your local MCP server.
-
-| OS | Steps |
-|----|-------|
-| Windows | Download from https://ngrok.com/download and install |
-| macOS | `brew install ngrok/ngrok/ngrok` |
-| Linux | Follow https://ngrok.com/download |
-
-Authenticate once:
-
-```bash
-ngrok config add-authtoken <your-token>
-```
-
 ---
 
 ## Getting Started
@@ -89,8 +73,8 @@ ngrok config add-authtoken <your-token>
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/TavroOrg/tavro.git
-cd tavro_open_source
+https://github.com/TavroOrg/tavro.git
+cd tavro
 ```
 
 ### 2. Install Python dependencies
@@ -136,27 +120,6 @@ Optional `config.yaml` fields:
 - `docker-compose.yml` is the source of truth for local service wiring.
 - Postgres host port is `5433` on your machine (`5432` inside Docker).
 - On first database initialization, the Postgres image executes all SQL files under `sql/`.
-
----
-
-## Pre-Deployment (Optional)
-
-### Start ngrok for remote MCP access
-
-In a new terminal:
-
-```bash
-ngrok http 9000
-```
-
-Copy the `https://...ngrok-free.app` URL and place it in `config.yaml`:
-
-```yaml
-mcp:
-  mcp_root_url: "https://abc123.ngrok-free.app"
-```
-
-Keep ngrok running while using remote MCP clients.
 
 ---
 
@@ -224,23 +187,16 @@ MCP auth behavior check:
 docker compose --profile manual run --rm risk-sample-loader
 ```
 
+If you need more sample agents or AI Use Case examples, please reach out at info@tavro.ai.
+
 ### Run connector ingestion (optional)
 
 ```bash
 docker compose --profile manual run --rm risk-connector
 ```
 
----
 
-## Connect MCP to Cloud AI Tools (Optional)
 
-When using ngrok, use this endpoint format:
-
-```text
-https://<your-ngrok-id>.ngrok-free.app/zitadel/mcp
-```
-
-Most MCP clients will open an auth flow automatically. Complete login/consent in browser and return to the client.
 
 ---
 
