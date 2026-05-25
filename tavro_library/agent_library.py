@@ -318,22 +318,25 @@ class AgentMetadataExporter:
                 try:
                     use_case_rows = cls.execute_select(
                         f"""
-                        SELECT DISTINCT ON (u.identifier)
-                            u.identifier,
-                            u.name,
-                            u.description,
-                            u.proposed_by,
-                            u.owner,
-                            u.function,
-                            u.problem_statement,
-                            u.expected_benefits,
-                            u.priority,
-                            u.status,
-                            u.updated_ts,
-                            u.created_ts
+                        SELECT DISTINCT ON (u.ai_use_case_id)
+                            u.ai_use_case_id AS identifier,
+                            COALESCE(uc.name, u.ai_use_case_name) AS name,
+                            uc.description,
+                            uc.proposed_by,
+                            uc.owner,
+                            uc.function,
+                            uc.problem_statement,
+                            uc.expected_benefits,
+                            uc.priority,
+                            uc.status,
+                            COALESCE(uc.updated_ts, u.updated_ts) AS updated_ts,
+                            COALESCE(uc.created_ts, u.created_ts) AS created_ts
                         FROM {cls.CORE_DB_NAME}.agent_ai_use_cases u
+                        LEFT JOIN {cls.CORE_DB_NAME}.ai_use_cases uc
+                          ON uc.ai_use_case_id = u.ai_use_case_id
+                         AND COALESCE(uc.tenant_id, '') = COALESCE(u.tenant_id, '')
                         WHERE u.agent_id = %s
-                        ORDER BY u.identifier, u.updated_ts DESC NULLS LAST, u.created_ts DESC NULLS LAST
+                        ORDER BY u.ai_use_case_id, uc.updated_ts DESC NULLS LAST, uc.created_ts DESC NULLS LAST, u.updated_ts DESC NULLS LAST
                         """,
                         (agent_id_clean,),
                     )
@@ -921,9 +924,9 @@ class AgentMetadataExporter:
         if tenant_id and str(tenant_id).strip():
             tenant_id_clean = cls.sanitize(str(tenant_id).strip())
         query = f"""
-        INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
+        INSERT INTO {cls.CORE_DB_NAME}.ai_use_cases (
             tenant_id,
-            identifier,
+            ai_use_case_id,
             name,
             description,
             owner,
@@ -982,6 +985,7 @@ class AgentMetadataExporter:
 
         # ---------- 2. Filters ----------
         where_clauses = []
+        rel_tenant_where = ""
 
         # ---------- 2. Normalize tenant ----------
         if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
@@ -997,12 +1001,20 @@ class AgentMetadataExporter:
             # Apply tenant filter only in TENANT mode
             if tenant_mode == "TENANT":
                 where_clauses.append(f"""(
-                    tenant_id = '{tenant_id}'
-                    OR tenant_id IS NULL
-                    OR tenant_id = ''
-                    OR tenant_id = 'None'
+                    u.tenant_id = '{tenant_id}'
+                    OR u.tenant_id IS NULL
+                    OR u.tenant_id = ''
+                    OR u.tenant_id = 'None'
                 )""")
-            where_clauses.append(f"identifier = '{use_case_id}'")
+                rel_tenant_where = f"""
+                    AND (
+                        rel.tenant_id = '{tenant_id}'
+                        OR rel.tenant_id IS NULL
+                        OR rel.tenant_id = ''
+                        OR rel.tenant_id = 'None'
+                    )
+                """
+            where_clauses.append(f"u.ai_use_case_id = '{use_case_id}'")
             start, end = 1, 1
         else:
             # ---------- 4. GLOBAL MODE ----------
@@ -1012,15 +1024,23 @@ class AgentMetadataExporter:
             # ---------- 5. TENANT MODE ----------
             else:
                 where_clauses.append(f"""(
-                    tenant_id = '{tenant_id}'
-                    OR tenant_id IS NULL
-                    OR tenant_id = ''
-                    OR tenant_id = 'None'
+                    u.tenant_id = '{tenant_id}'
+                    OR u.tenant_id IS NULL
+                    OR u.tenant_id = ''
+                    OR u.tenant_id = 'None'
                 )""")
+                rel_tenant_where = f"""
+                    AND (
+                        rel.tenant_id = '{tenant_id}'
+                        OR rel.tenant_id IS NULL
+                        OR rel.tenant_id = ''
+                        OR rel.tenant_id = 'None'
+                    )
+                """
 
         if title:
             title = cls.sanitize(title)
-            where_clauses.append(f"LOWER(name) LIKE LOWER('%{title}%')")
+            where_clauses.append(f"LOWER(u.name) LIKE LOWER('%{title}%')")
 
         where_sql = ""
         if where_clauses:
@@ -1030,7 +1050,8 @@ class AgentMetadataExporter:
         if use_case_id:
             detail_query = f"""
                 SELECT
-                    u.identifier,
+                    u.ai_use_case_id AS identifier,
+                    u.ai_use_case_id,
                     u.name,
                     u.description,
                     u.owner,
@@ -1061,7 +1082,7 @@ class AgentMetadataExporter:
                             FROM (
                                 SELECT DISTINCT
                                     rel.agent_id AS agent_id,
-                                    ag.agent_name AS agent_name,
+                                    COALESCE(ag.agent_name, rel.agent_name) AS agent_name,
                                     ai.environment AS environment
                                 FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
                                 LEFT JOIN {cls.CORE_DB_NAME}.agents ag
@@ -1070,14 +1091,15 @@ class AgentMetadataExporter:
                                 LEFT JOIN {cls.CORE_DB_NAME}.agent_identifications ai
                                     ON ai.agent_internal_id = rel.agent_internal_id
                                    AND COALESCE(ai.is_current, true) = true
-                                WHERE rel.identifier = u.identifier
+                                WHERE rel.ai_use_case_id = u.ai_use_case_id
                                   AND rel.agent_id IS NOT NULL
                                   AND rel.agent_id <> ''
+                                  {rel_tenant_where}
                             ) agent_rows
                         ),
                         '[]'::json
                     ) AS of_associated_agents
-                FROM {cls.CORE_DB_NAME}.agent_ai_use_cases u
+                FROM {cls.CORE_DB_NAME}.ai_use_cases u
                 {where_sql}
                 ORDER BY u.updated_ts DESC NULLS LAST, u.created_ts DESC
                 LIMIT 1
@@ -1100,7 +1122,8 @@ class AgentMetadataExporter:
                 "record_count": 1,
                 "total_records": 1,
                 "data": [{
-                    "use_case_id": row.get("identifier"),
+                    "use_case_id": row.get("ai_use_case_id"),
+                    "identifier": row.get("ai_use_case_id"),
                     "title": row.get("name"),
                     "description": row.get("description"),
                     "owner": row.get("owner"),
@@ -1127,19 +1150,20 @@ class AgentMetadataExporter:
             SELECT *
             FROM (
                 SELECT 
-                    identifier,
-                    name,
-                    description,
-                    owner,
-                    problem_statement,
-                    expected_benefits,
-                    priority,
-                    status,
-                    solution_approach,
-                    created_ts,
-                    ROW_NUMBER() OVER (ORDER BY created_ts DESC) AS rn,
+                    u.ai_use_case_id AS use_case_id,
+                    u.ai_use_case_id AS identifier,
+                    u.name,
+                    u.description,
+                    u.owner,
+                    u.problem_statement,
+                    u.expected_benefits,
+                    u.priority,
+                    u.status,
+                    u.solution_approach,
+                    u.created_ts,
+                    ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                     COUNT(*) OVER () AS total_records
-                FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
+                FROM {cls.CORE_DB_NAME}.ai_use_cases u
                 {where_sql}
             ) AS use_case_page
             WHERE rn BETWEEN {start} AND {end}
@@ -1159,7 +1183,8 @@ class AgentMetadataExporter:
             row_dict.pop("total_records", None)
 
             rows.append({
-                "use_case_id": row_dict.get("identifier"),
+                "use_case_id": row_dict.get("use_case_id"),
+                "identifier": row_dict.get("identifier"),
                 "title": row_dict.get("name"),
                 "description": row_dict.get("description"),
                 "owner": row_dict.get("owner"),
@@ -1195,206 +1220,29 @@ class AgentMetadataExporter:
         if not risk_classification:
             return 0.0
         return mapping.get(risk_classification, 1.0)
-    
     @classmethod
-    def create_ai_use_case_agent_relationship(
+    def _sync_ai_use_case_risk_summary(
         cls,
-        agent_catalog_id: int,
-        ai_use_case_id: int,
-        tenant_id: Optional[str] = None
-    ):
-        # 1. Validation & Sanitization
-        if not agent_catalog_id or not ai_use_case_id:
-            raise ValueError("Both IDs are required.")
-
-        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
-        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
-            tenant_id = None
-
-        agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
-        ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # 2. Check for existing relationship (Prevent duplicate rows)
-        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
-        check_q = f"SELECT 1 FROM {cls.CORE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}' AND agent_id = '{agent_catalog_id}' {tenant_where} LIMIT 1"
-        is_duplicate = len(cls.execute_select(check_q)) > 0
-
-        # 3. Fetch Target Agent Details
-        # Use COALESCE(is_current, true) so imported agents with NULL is_current are included.
-        agent_q = f"""
-            SELECT agent_id, agent_internal_id
-            FROM {cls.CORE_DB_NAME}.agents
-            WHERE agent_id = '{agent_catalog_id}'
-              AND COALESCE(is_current, true) = true
-            LIMIT 1
-        """
-        agent_res = cls.execute_select(agent_q)
-        # Fall back to curated.agent_360 for externally-imported agents not in core.agents
-        if not agent_res:
-            agent_res = cls.execute_select(
-                f"SELECT agent_id, agent_internal_id FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
-            )
-        if not agent_res:
-            raise ValueError(f"Agent {agent_catalog_id} not found.")
-        target_internal_id = agent_res[0].get("agent_internal_id")
-
-        # 4. Metrics & Metadata: Calculate current family stats + the target agent
-        metrics_q = f"""
-            WITH current_agents AS (
-                SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agent_ai_use_cases WHERE identifier = '{ai_use_case_id}'  {tenant_where}
-                UNION
-                SELECT '{target_internal_id}'
-            ),
-            risk_metrics AS (
-                SELECT 
-                    MAX(blended_risk_score) as max_score,
-                    (SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                     WHERE agent_internal_id IN (SELECT agent_internal_id FROM current_agents)
-                     ORDER BY blended_risk_score DESC LIMIT 1) as worst_agent_id,
-                    (SELECT COUNT(DISTINCT agent_internal_id) FROM current_agents) as total_agents
-                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                WHERE agent_internal_id IN (SELECT agent_internal_id FROM current_agents)
-                AND is_current = true
-            )
-            SELECT m.*, uc.* FROM {cls.CORE_DB_NAME}.agent_ai_use_cases uc, risk_metrics m
-            WHERE uc.identifier = '{ai_use_case_id}' {tenant_where} LIMIT 1
-        """
-        metrics_res = cls.execute_select(metrics_q)
-        if not metrics_res:
-            raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
-        
-        data = metrics_res[0]
-        worst_agent_id = data.get("worst_agent_id") or target_internal_id
-        blended_score = float(data.get("max_score") or 0.0)
-        total_associated = int(data.get("total_agents") or 1)
-
-        # 5. Fetch Risk Details for the Worst Agent in the group
-        risk_detail_q = f"""
-            SELECT type_of_risk, risk_classification FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
-            WHERE agent_internal_id = '{worst_agent_id}' AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
-            ORDER BY created_ts DESC
-        """
-        risk_rows = cls.execute_select(risk_detail_q)
-        
-        inherent_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Inherent Risk'), "")
-        residual_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Residual Risk'), "")
-
-        # 6. Calculations
-        inherent_score = cls._regulatory_risk_score(inherent_class)
-        residual_score = cls._regulatory_risk_score(residual_class)
-        risk_tier = cls._get_risk_tier(blended_score)
-
-        # 7. Step One: Physical Record Management
-        if not is_duplicate:
-            is_placeholder = not data.get("agent_id") or data.get("agent_id").strip() == ""
-            if is_placeholder:
-                action_q = f"UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases SET agent_id = '{agent_catalog_id}', agent_internal_id = '{target_internal_id}', updated_ts = TIMESTAMP '{now}' WHERE identifier = '{ai_use_case_id}'"
-            else:
-                action_q = f"""
-                    INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
-                        agent_id, agent_internal_id, identifier, name, description, proposed_by, owner, 
-                        function, problem_statement, expected_benefits, priority, status, 
-                        created_ts, updated_ts, solution_approach
-                        {', tenant_id' if tenant_id else ''}
-                    ) VALUES (
-                        '{agent_catalog_id}', '{target_internal_id}', '{ai_use_case_id}',
-                        '{cls.sanitize(data.get("name"))}', '{cls.sanitize(data.get("description"))}',
-                        '{cls.sanitize(data.get("proposed_by") or "")}', '{cls.sanitize(data.get("owner") or "")}',
-                        '{cls.sanitize(data.get("function") or "")}', '{cls.sanitize(data.get("problem_statement") or "")}',
-                        '{cls.sanitize(data.get("expected_benefits") or "")}', '{cls.sanitize(data.get("priority") or "")}',
-                        '{cls.sanitize(data.get("status") or "ACTIVE")}', TIMESTAMP '{now}', TIMESTAMP '{now}',
-                        '{cls.sanitize(data.get("solution_approach") or "")}'
-                        {f", '{cls.sanitize(tenant_id)}'" if tenant_id else ''}
-                    )
-                """
-            cls.execute_dml(action_q)
-
-        # 8. Step Two: GLOBAL SYNC (Updates all siblings to match aggregate data)
-        sync_q = f"""
-            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
-            SET agent_risk_exposure_are = {blended_score}, blended_risk_score = {blended_score},
-                no_of_associated_agents = {total_associated}, inherent_risk_classification = '{inherent_class}',
-                residual_risk_classification = '{residual_class}', inherent_risk_classification_score = {inherent_score},
-                residual_risk_classification_score = {residual_score}, agent_risk_tier_art = '{risk_tier}',
-                updated_ts = TIMESTAMP '{now}'
-            WHERE identifier = '{ai_use_case_id}'{tenant_where}
-        """
-        cls.execute_dml(sync_q)
-
-        return {"message": "Relationship synchronized", "associated_count": total_associated}
-
-    @classmethod
-    def remove_ai_use_case_agent_relationship(
-        cls,
-        agent_catalog_id: str,
         ai_use_case_id: str,
-        tenant_id: Optional[str] = None
-    ):
-        if not agent_catalog_id or not ai_use_case_id:
-            raise ValueError("Both IDs are required.")
-
-        # Normalize tenant_id: treat "None", "null", "" as no-tenant (global mode)
-        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
-            tenant_id = None
-
-        agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
-        ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        tenant_where = f"AND (tenant_id = '{cls.sanitize(tenant_id)}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')" if tenant_id else ""
-
-        rows_q = f"""
-            SELECT *
-            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
-            WHERE identifier = '{ai_use_case_id}' {tenant_where}
-        """
-        all_rows = cls.execute_select(rows_q)
-        if not all_rows:
-            raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
-
-        matching_rows = [r for r in all_rows if (r.get("agent_id") or "").strip() == agent_catalog_id]
-        if not matching_rows:
-            return {"message": "Relationship not found", "associated_count": len([r for r in all_rows if (r.get("agent_id") or "").strip()])}
-
-        linked_rows = [r for r in all_rows if (r.get("agent_id") or "").strip()]
-
-        if len(linked_rows) == 1 and (linked_rows[0].get("agent_id") or "").strip() == agent_catalog_id:
-            clear_q = f"""
-                UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
-                SET
-                    agent_id = NULL,
-                    agent_internal_id = NULL,
-                    agent_risk_exposure_are = 0,
-                    blended_risk_score = 0,
-                    no_of_associated_agents = 0,
-                    inherent_risk_classification = '',
-                    residual_risk_classification = '',
-                    inherent_risk_classification_score = 0,
-                    residual_risk_classification_score = 0,
-                    agent_risk_tier_art = 'Low',
-                    updated_ts = TIMESTAMP '{now}'
-                WHERE identifier = '{ai_use_case_id}'
-                  AND agent_id = '{agent_catalog_id}'
-                  {tenant_where}
-            """
-            cls.execute_dml(clear_q)
-            return {"message": "Relationship removed", "associated_count": 0}
-
-        delete_q = f"""
-            DELETE FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
-            WHERE identifier = '{ai_use_case_id}'
-              AND agent_id = '{agent_catalog_id}'
-              {tenant_where}
-        """
-        cls.execute_dml(delete_q)
+        tenant_id: Optional[str],
+        now: str
+    ) -> int:
+        tenant_clean = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+        tenant_rel_where = (
+            f"AND (rel.tenant_id = '{tenant_clean}' OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+            if tenant_clean else ""
+        )
+        tenant_uc_where = (
+            f"AND (tenant_id = '{tenant_clean}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+            if tenant_clean else ""
+        )
 
         remaining_agents_q = f"""
-            SELECT DISTINCT agent_internal_id
-            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
-            WHERE identifier = '{ai_use_case_id}'
-              AND COALESCE(agent_internal_id, '') <> ''
-              {tenant_where}
+            SELECT DISTINCT rel.agent_internal_id
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+            WHERE rel.ai_use_case_id = '{ai_use_case_id}'
+              AND COALESCE(rel.agent_internal_id, '') <> ''
+              {tenant_rel_where}
         """
         remaining_rows = cls.execute_select(remaining_agents_q)
         remaining_ids = [r.get("agent_internal_id") for r in remaining_rows if r.get("agent_internal_id")]
@@ -1402,7 +1250,7 @@ class AgentMetadataExporter:
 
         if associated_count == 0:
             reset_q = f"""
-                UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
+                UPDATE {cls.CORE_DB_NAME}.ai_use_cases
                 SET
                     agent_risk_exposure_are = 0,
                     blended_risk_score = 0,
@@ -1413,10 +1261,11 @@ class AgentMetadataExporter:
                     residual_risk_classification_score = 0,
                     agent_risk_tier_art = 'Low',
                     updated_ts = TIMESTAMP '{now}'
-                WHERE identifier = '{ai_use_case_id}' {tenant_where}
+                WHERE ai_use_case_id = '{ai_use_case_id}'
+                  {tenant_uc_where}
             """
             cls.execute_dml(reset_q)
-            return {"message": "Relationship removed", "associated_count": 0}
+            return 0
 
         ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
         metrics_q = f"""
@@ -1443,7 +1292,7 @@ class AgentMetadataExporter:
 
         inherent_class = ""
         residual_class = ""
-        if worst_agent_id:
+        if worst_agent_id and cls.RISK_MANAGEMENT_DB_NAME:
             risk_detail_q = f"""
                 SELECT type_of_risk, risk_classification
                 FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
@@ -1460,7 +1309,7 @@ class AgentMetadataExporter:
         risk_tier = cls._get_risk_tier(blended_score)
 
         sync_q = f"""
-            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.ai_use_cases
             SET
                 agent_risk_exposure_are = {blended_score},
                 blended_risk_score = {blended_score},
@@ -1471,10 +1320,175 @@ class AgentMetadataExporter:
                 residual_risk_classification_score = {residual_score},
                 agent_risk_tier_art = '{risk_tier}',
                 updated_ts = TIMESTAMP '{now}'
-            WHERE identifier = '{ai_use_case_id}' {tenant_where}
+            WHERE ai_use_case_id = '{ai_use_case_id}'
+              {tenant_uc_where}
         """
         cls.execute_dml(sync_q)
+        return associated_count
 
+    @classmethod
+    def create_ai_use_case_agent_relationship(
+        cls,
+        agent_catalog_id: int,
+        ai_use_case_id: int,
+        tenant_id: Optional[str] = None
+    ):
+        if not agent_catalog_id or not ai_use_case_id:
+            raise ValueError("Both IDs are required.")
+
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
+        agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
+        ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        tenant_clean = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+
+        tenant_where_rel = (
+            f"AND (rel.tenant_id = '{tenant_clean}' OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+            if tenant_clean else ""
+        )
+        tenant_where_uc = (
+            f"AND (u.tenant_id = '{tenant_clean}' OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+            if tenant_clean else ""
+        )
+
+        use_case_q = f"""
+            SELECT u.ai_use_case_id, u.name
+            FROM {cls.CORE_DB_NAME}.ai_use_cases u
+            WHERE u.ai_use_case_id = '{ai_use_case_id}'
+              {tenant_where_uc}
+            LIMIT 1
+        """
+        use_case_rows = cls.execute_select(use_case_q)
+        if not use_case_rows:
+            raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
+        use_case_name = cls.sanitize(str(use_case_rows[0].get("name") or ai_use_case_id))
+
+        check_q = f"""
+            SELECT 1
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+            WHERE rel.ai_use_case_id = '{ai_use_case_id}'
+              AND rel.agent_id = '{agent_catalog_id}'
+              {tenant_where_rel}
+            LIMIT 1
+        """
+        is_duplicate = len(cls.execute_select(check_q)) > 0
+
+        agent_q = f"""
+            SELECT agent_id, agent_internal_id, agent_name
+            FROM {cls.CORE_DB_NAME}.agents
+            WHERE agent_id = '{agent_catalog_id}'
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+        """
+        agent_res = cls.execute_select(agent_q)
+        if not agent_res:
+            agent_res = cls.execute_select(
+                f"SELECT agent_id, agent_internal_id, agent_name FROM {cls.CURATED_DB_NAME}.agent_360 WHERE agent_id = '{agent_catalog_id}' LIMIT 1"
+            )
+        if not agent_res:
+            raise ValueError(f"Agent {agent_catalog_id} not found.")
+        target_internal_id = agent_res[0].get("agent_internal_id")
+        target_agent_name = cls.sanitize(str(agent_res[0].get("agent_name") or agent_catalog_id))
+
+        if not is_duplicate:
+            action_q = f"""
+                INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
+                    tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
+                    agent_internal_id, created_ts, updated_ts
+                ) VALUES (
+                    {f"'{tenant_clean}'" if tenant_clean else "NULL"},
+                    '{ai_use_case_id}',
+                    '{use_case_name}',
+                    '{agent_catalog_id}',
+                    '{target_agent_name}',
+                    '{target_internal_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
+                DO UPDATE SET
+                    ai_use_case_name = EXCLUDED.ai_use_case_name,
+                    agent_name = EXCLUDED.agent_name,
+                    agent_internal_id = EXCLUDED.agent_internal_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """
+            cls.execute_dml(action_q)
+
+        associated_count = cls._sync_ai_use_case_risk_summary(
+            ai_use_case_id=ai_use_case_id,
+            tenant_id=tenant_id,
+            now=now,
+        )
+        return {"message": "Relationship synchronized", "associated_count": associated_count}
+
+    @classmethod
+    def remove_ai_use_case_agent_relationship(
+        cls,
+        agent_catalog_id: str,
+        ai_use_case_id: str,
+        tenant_id: Optional[str] = None
+    ):
+        if not agent_catalog_id or not ai_use_case_id:
+            raise ValueError("Both IDs are required.")
+
+        if not tenant_id or str(tenant_id).strip().lower() in ("none", "null", ""):
+            tenant_id = None
+
+        agent_catalog_id = cls.sanitize(str(agent_catalog_id).strip())
+        ai_use_case_id = cls.sanitize(str(ai_use_case_id).strip())
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        tenant_clean = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+
+        tenant_where_rel = (
+            f"AND (rel.tenant_id = '{tenant_clean}' OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+            if tenant_clean else ""
+        )
+        tenant_where_uc = (
+            f"AND (u.tenant_id = '{tenant_clean}' OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+            if tenant_clean else ""
+        )
+
+        use_case_q = f"""
+            SELECT 1
+            FROM {cls.CORE_DB_NAME}.ai_use_cases u
+            WHERE u.ai_use_case_id = '{ai_use_case_id}'
+              {tenant_where_uc}
+            LIMIT 1
+        """
+        if not cls.execute_select(use_case_q):
+            raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
+
+        check_rel_q = f"""
+            SELECT 1
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+            WHERE rel.ai_use_case_id = '{ai_use_case_id}'
+              AND rel.agent_id = '{agent_catalog_id}'
+              {tenant_where_rel}
+            LIMIT 1
+        """
+        if not cls.execute_select(check_rel_q):
+            associated_count = cls._sync_ai_use_case_risk_summary(
+                ai_use_case_id=ai_use_case_id,
+                tenant_id=tenant_id,
+                now=now,
+            )
+            return {"message": "Relationship not found", "associated_count": associated_count}
+
+        delete_q = f"""
+            DELETE FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+            WHERE rel.ai_use_case_id = '{ai_use_case_id}'
+              AND rel.agent_id = '{agent_catalog_id}'
+              {tenant_where_rel}
+        """
+        cls.execute_dml(delete_q)
+
+        associated_count = cls._sync_ai_use_case_risk_summary(
+            ai_use_case_id=ai_use_case_id,
+            tenant_id=tenant_id,
+            now=now,
+        )
         return {"message": "Relationship removed", "associated_count": associated_count}
 
     @classmethod
@@ -1564,12 +1578,35 @@ class AgentMetadataExporter:
             raise ValueError(f"Agent {agent_id} not found.")
         agent_internal_id = cls.sanitize(str(rows[0]["agent_internal_id"]))
 
-        # 1. Clear agent references on linked use cases (don't delete the use case itself)
+        # 1. Remove agent relationships and refresh association counts on impacted use cases.
         cls.execute_dml(f"""
-            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
-            SET agent_id = NULL, agent_internal_id = NULL,
-                no_of_associated_agents = GREATEST(COALESCE(no_of_associated_agents, 1) - 1, 0)
-            WHERE agent_id = '{agent_id}'
+            WITH deleted_rel AS (
+                DELETE FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
+                WHERE agent_id = '{agent_id}'
+                RETURNING ai_use_case_id
+            ),
+            affected AS (
+                SELECT DISTINCT ai_use_case_id
+                FROM deleted_rel
+                WHERE ai_use_case_id IS NOT NULL AND ai_use_case_id <> ''
+            ),
+            counts AS (
+                SELECT
+                    a.ai_use_case_id,
+                    COUNT(DISTINCT rel.agent_id) AS associated_count
+                FROM affected a
+                LEFT JOIN {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                  ON rel.ai_use_case_id = a.ai_use_case_id
+                 AND rel.agent_id IS NOT NULL
+                 AND rel.agent_id <> ''
+                GROUP BY a.ai_use_case_id
+            )
+            UPDATE {cls.CORE_DB_NAME}.ai_use_cases uc
+            SET
+                no_of_associated_agents = c.associated_count,
+                updated_ts = CURRENT_TIMESTAMP
+            FROM counts c
+            WHERE uc.ai_use_case_id = c.ai_use_case_id
         """)
 
         # 2. Core tables — all keyed on agent_id or agent_internal_id
@@ -1639,8 +1676,8 @@ class AgentMetadataExporter:
         # ---------- 3. Fetch Existing Record ----------
         query = f"""
             SELECT *
-            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases
-            WHERE identifier = '{use_case_id_clean}'
+            FROM {cls.CORE_DB_NAME}.ai_use_cases
+            WHERE ai_use_case_id = '{use_case_id_clean}'
             {tenant_where}
             LIMIT 1
         """
@@ -1657,7 +1694,7 @@ class AgentMetadataExporter:
             SELECT column_name
             FROM information_schema.columns
             WHERE table_schema = '{cls.sanitize(cls.CORE_DB_NAME)}'
-              AND table_name = 'agent_ai_use_cases'
+              AND table_name = 'ai_use_cases'
             """
         )
         existing_cols = {str(r.get("column_name", "")).strip() for r in existing_cols_rows}
@@ -1749,10 +1786,10 @@ class AgentMetadataExporter:
 
         # ---------- 8. Execute Update ----------
         update_query = f"""
-            UPDATE {cls.CORE_DB_NAME}.agent_ai_use_cases
+            UPDATE {cls.CORE_DB_NAME}.ai_use_cases
             SET
                 {", ".join(updates)}
-            WHERE identifier = '{use_case_id_clean}'
+            WHERE ai_use_case_id = '{use_case_id_clean}'
             {tenant_where}
         """
 
@@ -2030,3 +2067,4 @@ class AgentMetadataExporter:
 
         except requests.RequestException as e:
             raise ValueError(f"Company API request failed: {str(e)}")
+

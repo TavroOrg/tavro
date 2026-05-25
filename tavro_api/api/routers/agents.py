@@ -394,10 +394,33 @@ async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
 
         await db.execute(
             text(f"""
-                UPDATE {CORE}.agent_ai_use_cases
-                SET agent_id = NULL, agent_internal_id = NULL,
-                    no_of_associated_agents = GREATEST(COALESCE(no_of_associated_agents, 1) - 1, 0)
-                WHERE agent_id = :aid
+                WITH deleted_rel AS (
+                    DELETE FROM {CORE}.agent_ai_use_cases
+                    WHERE agent_id = :aid
+                    RETURNING ai_use_case_id
+                ),
+                affected AS (
+                    SELECT DISTINCT ai_use_case_id
+                    FROM deleted_rel
+                    WHERE ai_use_case_id IS NOT NULL AND ai_use_case_id <> ''
+                ),
+                counts AS (
+                    SELECT
+                        a.ai_use_case_id,
+                        COUNT(DISTINCT rel.agent_id) AS associated_count
+                    FROM affected a
+                    LEFT JOIN {CORE}.agent_ai_use_cases rel
+                      ON rel.ai_use_case_id = a.ai_use_case_id
+                     AND rel.agent_id IS NOT NULL
+                     AND rel.agent_id <> ''
+                    GROUP BY a.ai_use_case_id
+                )
+                UPDATE {CORE}.ai_use_cases uc
+                SET
+                    no_of_associated_agents = c.associated_count,
+                    updated_ts = CURRENT_TIMESTAMP
+                FROM counts c
+                WHERE uc.ai_use_case_id = c.ai_use_case_id
             """),
             {"aid": agent_id},
         )

@@ -184,7 +184,7 @@ def get_current_agent_source_hash(agent_id: str):
 #   CREATE UNIQUE INDEX ON core.agent_controls (agent_internal_id, name);
 #   CREATE UNIQUE INDEX ON core.agent_knowledge_sources (agent_internal_id);
 #   CREATE UNIQUE INDEX ON core.agent_llm_models (agent_internal_id, name);
-#   CREATE UNIQUE INDEX ON core.agent_ai_use_cases (agent_internal_id, name);
+#   CREATE UNIQUE INDEX ON core.agent_ai_use_cases (tenant_id, ai_use_case_id, agent_id);
 #   CREATE UNIQUE INDEX ON core.agent_business_processes (agent_internal_id, business_process_id);
 #   CREATE UNIQUE INDEX ON core.agent_business_applications (agent_internal_id, business_application_id);
 #   CREATE UNIQUE INDEX ON core.agent_guardrails (agent_internal_id, name);
@@ -537,24 +537,29 @@ def upsert_agent_llm_models(card: dict, agent_internal_id: str, now_str: str):
 
 
 def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
-    ident        = card.get("identification", {})
+    ident = card.get("identification", {})
     ai_use_cases = card.get("ai_use_case", []) or []
     if not has_meaningful_data(ai_use_cases):
         print("Skipping ai_use_case: all values are null/empty.")
         return
 
-    tenant_id   = ident.get("tenant_id")
-    agent_id    = ident.get("agent_id")
+    tenant_id = ident.get("tenant_id") or ""
+    agent_id = ident.get("agent_id")
+    agent_name = ident.get("agent_name") or card.get("name")
     select_rows = []
 
     for uc in ai_use_cases:
+        use_case_id = uc.get("identifier") or uc.get("ai_use_case_id")
+        if not _clean_text(use_case_id):
+            continue
         select_rows.append(f"""
             SELECT
                 {_sq(agent_internal_id)}                  AS agent_internal_id,
                 {_sq(tenant_id)}                          AS tenant_id,
                 {_sq(agent_id)}                           AS agent_id,
-                {_sq(uc.get('identifier'))}               AS identifier,
-                {_sq(uc.get('name'))}                     AS name,
+                {_sq(agent_name)}                         AS agent_name,
+                {_sq(use_case_id)}                        AS ai_use_case_id,
+                {_sq(uc.get('name'))}                     AS ai_use_case_name,
                 {_sq(uc.get('description'))}              AS description,
                 {_sq(uc.get('proposed_by'))}              AS proposed_by,
                 {_sq(uc.get('owner'))}                    AS owner,
@@ -575,44 +580,41 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
                 TIMESTAMP '{now_str}'                     AS now_ts
         """.strip())
 
+    if not select_rows:
+        print("Skipping ai_use_case: missing identifiers.")
+        return
+
     union_all = "\nUNION ALL\n".join(select_rows)
 
-    sql = f"""
-        INSERT INTO core.agent_ai_use_cases (
-            agent_internal_id, tenant_id, agent_id, identifier, name, description,
-            proposed_by, owner, function, problem_statement,
-            expected_benefits, priority, status,
-            agent_risk_exposure_are, no_of_associated_agents,
-            inherent_risk_classification, residual_risk_classification,
-            agent_risk_tier_art, blended_risk_score,
+    use_case_sql = f"""
+        INSERT INTO core.ai_use_cases (
+            tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
+            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
+            residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
-            solution_approach,
-            created_ts, updated_ts
+            solution_approach, created_ts, updated_ts
         )
         SELECT
-            agent_internal_id, tenant_id, agent_id, identifier, name, description,
-            proposed_by, owner, function, problem_statement,
-            expected_benefits, priority, status,
-            agent_risk_exposure_are, no_of_associated_agents,
-            inherent_risk_classification, residual_risk_classification,
-            agent_risk_tier_art, blended_risk_score,
+            tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
+            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
+            residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
-            solution_approach,
-            now_ts, now_ts
+            solution_approach, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, name)
+        ON CONFLICT (tenant_id, ai_use_case_id)
         DO UPDATE SET
-            tenant_id         = EXCLUDED.tenant_id,
-            agent_id          = EXCLUDED.agent_id,
-            identifier        = EXCLUDED.identifier,
-            description       = EXCLUDED.description,
-            proposed_by       = EXCLUDED.proposed_by,
-            owner             = EXCLUDED.owner,
-            function          = EXCLUDED.function,
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            proposed_by = EXCLUDED.proposed_by,
+            owner = EXCLUDED.owner,
+            function = EXCLUDED.function,
             problem_statement = EXCLUDED.problem_statement,
             expected_benefits = EXCLUDED.expected_benefits,
-            priority          = EXCLUDED.priority,
-            status            = EXCLUDED.status,
+            priority = EXCLUDED.priority,
+            status = EXCLUDED.status,
+            agent_internal_id = EXCLUDED.agent_internal_id,
             agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
             no_of_associated_agents = EXCLUDED.no_of_associated_agents,
             inherent_risk_classification = EXCLUDED.inherent_risk_classification,
@@ -622,10 +624,55 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             inherent_risk_classification_score = EXCLUDED.inherent_risk_classification_score,
             residual_risk_classification_score = EXCLUDED.residual_risk_classification_score,
             solution_approach = EXCLUDED.solution_approach,
-            updated_ts        = EXCLUDED.updated_ts
+            updated_ts = EXCLUDED.updated_ts
     """
-    print(f"  Upserting {len(ai_use_cases)} AI use cases …")
-    execute_dml(sql, label="agent_ai_use_cases BULK INSERT ON CONFLICT")
+    execute_dml(use_case_sql, label="ai_use_cases BULK INSERT ON CONFLICT")
+
+    relation_sql = f"""
+        INSERT INTO core.agent_ai_use_cases (
+            tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts
+        )
+        SELECT
+            tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, now_ts, now_ts
+        FROM ({union_all}) AS s
+        WHERE agent_id IS NOT NULL AND agent_id <> ''
+        ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
+        DO UPDATE SET
+            ai_use_case_name = EXCLUDED.ai_use_case_name,
+            agent_name = EXCLUDED.agent_name,
+            agent_internal_id = EXCLUDED.agent_internal_id,
+            updated_ts = EXCLUDED.updated_ts
+    """
+    execute_dml(relation_sql, label="agent_ai_use_cases BULK INSERT ON CONFLICT")
+
+    sync_count_sql = f"""
+        WITH affected AS (
+            SELECT DISTINCT tenant_id, ai_use_case_id
+            FROM ({union_all}) AS s
+        ),
+        counts AS (
+            SELECT
+                a.tenant_id,
+                a.ai_use_case_id,
+                COUNT(DISTINCT rel.agent_id) AS associated_count
+            FROM affected a
+            LEFT JOIN core.agent_ai_use_cases rel
+              ON rel.ai_use_case_id = a.ai_use_case_id
+             AND COALESCE(rel.tenant_id, '') = COALESCE(a.tenant_id, '')
+             AND rel.agent_id IS NOT NULL
+             AND rel.agent_id <> ''
+            GROUP BY a.tenant_id, a.ai_use_case_id
+        )
+        UPDATE core.ai_use_cases uc
+        SET
+            no_of_associated_agents = c.associated_count,
+            updated_ts = TIMESTAMP '{now_str}'
+        FROM counts c
+        WHERE uc.ai_use_case_id = c.ai_use_case_id
+          AND COALESCE(uc.tenant_id, '') = COALESCE(c.tenant_id, '')
+    """
+    execute_dml(sync_count_sql, label="ai_use_cases associated-count sync")
+    print(f"  Upserting {len(select_rows)} AI use cases …")
 
 
 def _clean_text(value):
