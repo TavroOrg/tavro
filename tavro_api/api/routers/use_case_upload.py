@@ -249,6 +249,65 @@ async def upload_use_cases(
                     "art": fields["agent_risk_tier_art"],
                 },
             )
+
+            # Insert business processes if present in the card
+            raw_processes = card.get("business_process") or card.get("business_processes") or []
+            for proc in raw_processes:
+                if not isinstance(proc, dict):
+                    continue
+                proc_id = (proc.get("identifier") or "").strip()
+                proc_name = (proc.get("name") or "").strip()
+                if not proc_id and not proc_name:
+                    continue
+                if not proc_id:
+                    proc_id = proc_name  # fall back to name as ID if no identifier
+
+                # Ensure the process exists in business_processes (FK parent) before linking
+                bp_exists = await db.execute(
+                    text(f"SELECT 1 FROM {CORE}.business_processes WHERE business_process_id = :pid LIMIT 1"),
+                    {"pid": proc_id},
+                )
+                if not bp_exists.first():
+                    await db.execute(
+                        text(f"""
+                            INSERT INTO {CORE}.business_processes
+                                (tenant_id, business_process_id, process_name, process_description,
+                                 business_criticality, created_ts, updated_ts)
+                            VALUES
+                                (:tid, :pid, :pname, :pdesc, :bcrit,
+                                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """),
+                        {
+                            "tid": tenant_id,
+                            "pid": proc_id,
+                            "pname": proc_name or proc_id,
+                            "pdesc": proc.get("description") or None,
+                            "bcrit": proc.get("business_criticality") or None,
+                        },
+                    )
+
+                # Link process to use case if not already linked
+                rel_exists = await db.execute(
+                    text(f"""
+                        SELECT 1 FROM {CORE}.ai_use_case_business_processes
+                        WHERE ai_use_case_id = :uid AND business_process_id = :pid
+                        LIMIT 1
+                    """),
+                    {"uid": use_case_id, "pid": proc_id},
+                )
+                if not rel_exists.first():
+                    await db.execute(
+                        text(f"""
+                            INSERT INTO {CORE}.ai_use_case_business_processes
+                                (tenant_id, ai_use_case_id, business_process_id, process_name,
+                                 created_ts, updated_ts)
+                            VALUES
+                                (:tid, :uid, :pid, :pname,
+                                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """),
+                        {"tid": tenant_id, "uid": use_case_id, "pid": proc_id, "pname": proc_name or proc_id},
+                    )
+
             await db.commit()
             uploaded_count += 1
         except Exception as e:
