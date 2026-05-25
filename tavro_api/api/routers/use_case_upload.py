@@ -271,8 +271,4 @@ async def upload_use_cases(
             f"{uploaded_count} AI Use Case{'s' if uploaded_count != 1 else ''} "
             f"{'have' if uploaded_count != 1 else 'has'} been uploaded successfully."
         ),
-<<<<<<< HEAD
     }
-=======
-    }
->>>>>>> origin/main
