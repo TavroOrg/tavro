@@ -1,0 +1,24 @@
+# ── Digital Twin API ──────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+asyncpg
+sqlalchemy[asyncio]
+pydantic
+httpx
+python-dotenv
+pandas
+openpyxl
+
+# ── Risk Stack ────────────────────────────────────────────────────────────────
+temporalio
+crewai
+crewai_tools
+psycopg2-binary
+cvss
+rapidfuzz
+PyYAML
+python-jose[cryptography]
+PyJWT
+google-auth
+requests
+boto3

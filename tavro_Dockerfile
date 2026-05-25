@@ -1,0 +1,68 @@
+FROM postgres:16-bookworm
+
+ARG PG_MAJOR=16
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build dependencies
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        curl \
+        ca-certificates \
+        flex \
+        bison \
+        libreadline-dev \
+        zlib1g-dev \
+        pkg-config \
+        "postgresql-server-dev-${PG_MAJOR}" \
+    && rm -rf /var/lib/apt/lists/*
+
+# pgvector
+RUN curl -fsSL \
+        "https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.0.tar.gz" \
+        -o /tmp/pgvector.tar.gz \
+    && mkdir -p /tmp/pgvector-src \
+    && tar -xzf /tmp/pgvector.tar.gz -C /tmp/pgvector-src --strip-components=1 \
+    && cd /tmp/pgvector-src \
+    && make && make install \
+    && rm -rf /tmp/pgvector-src /tmp/pgvector.tar.gz
+
+# Apache AGE (pinned to PG16 release)
+RUN git clone \
+        --branch PG16/v1.5.0-rc0 \
+        --depth 1 \
+        https://github.com/apache/age.git \
+        /tmp/age-src \
+    && cd /tmp/age-src \
+    && make PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
+    && make install PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
+    && rm -rf /tmp/age-src
+
+# shared_preload_libraries
+ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
+
+# SQL bootstrap: copy and execute every SQL file under sql/ on first DB init
+COPY sql/ /docker-entrypoint-initdb.d/sql/
+
+RUN printf '#!/bin/sh\n\
+set -eu\n\
+SQL_ROOT="/docker-entrypoint-initdb.d/sql"\n\
+echo "Running SQL scripts from ${SQL_ROOT}..."\n\
+if [ -f "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+  echo "Executing ${SQL_ROOT}/tavro_init_extensions.sql"\n\
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "${SQL_ROOT}/tavro_init_extensions.sql"\n\
+fi\n\
+for sql in $(find "${SQL_ROOT}" -type f -name "*.sql" | sort); do\n\
+  if [ "$sql" = "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+    continue\n\
+  fi\n\
+  echo "Executing $sql"\n\
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$sql"\n\
+done\n\
+echo "All SQL scripts completed."\n' \
+> /docker-entrypoint-initdb.d/20_run_all_sql.sh \
+&& chmod +x /docker-entrypoint-initdb.d/20_run_all_sql.sh
+
+EXPOSE 5432

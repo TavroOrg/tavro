@@ -1,130 +1,488 @@
-x-worker-base: &worker_base
-    image: tavro-worker:local
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
+﻿name: tavro
+
+x-risk-worker-base: &risk_worker_base
+  image: tavro-risk-worker:local
+  build:
+    context: .
+    dockerfile: Dockerfile.worker
 
 services:
 
-  postgres:
+  # ── PostgreSQL 16 + AGE + pgvector + Risk schemas ────────────────────────────
+  tavro-postgres:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: postgres-setup
+      dockerfile: tavro_Dockerfile
+      args:
+        AGE_VERSION: "1.5.0"
+        PG_MAJOR: "16"
+    container_name: tavro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:                     ${POSTGRES_USER}
+      POSTGRES_PASSWORD:                 ${POSTGRES_PASSWORD}
+      POSTGRES_DB:                       tavro
+      POSTGRES_SHARED_PRELOAD_LIBRARIES: "age"
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: agent_db
+      - "5433:5432"       # keep open for Postico access on your Mac
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - tavro_pgdata:/var/lib/postgresql/data
+      - ./sql:/sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d tavro"]
+      interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 5
+      start_period: 30s
 
-  worker:
-    <<: *worker_base
-    container_name: worker
-    command: tail -f /dev/null
-    environment:
-      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
-      DROP_DIR: /app/sample-data
-      API_URL: http://fastapi:80/classify-risk
-    volumes:
-      - ./sample-data:/app/sample-data
-    depends_on:
-      postgres:
-        condition: service_healthy   # ← waits for healthcheck to pass
+  # ── Temporal — Workflow Engine ───────────────────────────────────────────────
+  risk-temporal:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    container_name: risk-temporal
+    restart: unless-stopped
+    command: temporal server start-dev --ip 0.0.0.0 --ui-public-path /temporal --ui-port 8233
+    ports:
+      - "7233:7233"   # Temporal gRPC
+      - "8233:8233"   # Temporal web UI → http://localhost:8233/temporal
 
-  sample-loader:
-    <<: *worker_base
-    container_name: sample-loader
-    profiles: ["manual"]
-    command: python -u worker.py
-    environment:
-      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
-      DROP_DIR: /app/sample-data
-      API_URL: http://fastapi:80/classify-risk
-    volumes:
-      - ./sample-data:/app/sample-data
+  # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
+  tavro-api:
+    build:
+      context: .
+      dockerfile: tavro_api/Dockerfile
+    container_name: tavro-api
+    restart: unless-stopped
     depends_on:
-      postgres:
+      tavro-postgres:
         condition: service_healthy
-      fastapi:
+      risk-temporal:
+        condition: service_started
+    environment:
+      # Digital Twin DB (asyncpg)
+      DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      # AI keys
+      ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
+      AZURE_AI_FOUNDRY_AGENT_API_VERSION: '${AZURE_AI_FOUNDRY_AGENT_API_VERSION:-v1}'
+      AZURE_AI_FOUNDRY_AGENT_TOKEN: '${AZURE_AI_FOUNDRY_AGENT_TOKEN:-}'
+      AZURE_AI_FOUNDRY_API_VERSION: '${AZURE_AI_FOUNDRY_API_VERSION:-2024-02-15-preview}'
+      AZURE_AI_FOUNDRY_DEPLOYMENT: '${AZURE_AI_FOUNDRY_DEPLOYMENT:-}'
+      AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
+      AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
+      OPENAI_API_KEY:             ${OPENAI_API_KEY}
+      RESEARCH_MAX_OUTPUT_TOKENS: "4096"
+      RESEARCH_MAX_SEARCH_TURNS:  "3"
+      # Risk DB (psycopg2 — same postgres instance, different schemas)
+      POSTGRES_HOST:     tavro-postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       tavro
+      # Risk schema names
+      CORE_DB_NAME:            core
+      CURATED_DB_NAME:         curated
+      RISK_MANAGEMENT_DB_NAME: risk_management
+      # Temporal
+      TEMPORAL_ADDRESS:     risk-temporal:7233
+      LOCAL_AGENT_CARD_DIR: /app/agent_cards
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./tavro_api:/app                    # live reload — tavro_api code
+      - ./services:/app/services:ro         # live reload — risk services
+      - ./utils:/app/utils:ro               # live reload — risk utils
+      - ./config.yaml:/app/config.yaml:ro   # risk config
+      - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  copilot-sdk:
+    build:
+      context: ./tavro_app/copilot-server
+      dockerfile: Dockerfile
+    container_name: tavro-copilot-sdk
+    restart: unless-stopped
+    environment:
+      # Docker-internal URL for the Tavro MCP server.
+      # The copilot-server registers this with each Copilot SDK session so the
+      # SDK can automatically route tool calls to Tavro's MCP backend.
+      MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
+    ports:
+      - "4001:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── React App — served by Nginx ──────────────────────────────────────────────
+  tavro-app:
+    build:
+      context: ./tavro_app
+      dockerfile: Dockerfile
+      args:
+        VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
+        VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+        VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
+        VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
+        VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+        VITE_MCP_URL: ${VITE_MCP_URL:-http://localhost:9001/zitadel/mcp}
+    container_name: tavro-app
+    restart: unless-stopped
+    depends_on:
+      tavro-api:
+        condition: service_healthy
+      copilot-sdk:
+        condition: service_healthy
+    ports:
+      - "9000:80"
+    volumes:
+      - tavro_runtime_config:/usr/share/nginx/html/runtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  proxy:
+    image: ${TRAEFIK_IMAGE}
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.forwardedHeaders.insecure=true
+      - --entrypoints.websecure.address=:443
+      - --api.dashboard=${TRAEFIK_DASHBOARD_ENABLED}
+      - --api.insecure=false
+      - --ping=true
+      - --ping.entrypoint=web
+      - --log.level=${TRAEFIK_LOG_LEVEL}
+      - --accesslog=${TRAEFIK_ACCESSLOG_ENABLED}
+    ports:
+      - "8080:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      zitadel-api:
+        condition: service_started
+      zitadel-login:
         condition: service_started
 
-  mcp-server:
+  zitadel-api:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION}
+    restart: unless-stopped
+    user: "0"
+    command: start-from-init --masterkey "${ZITADEL_MASTERKEY}"
+    environment:
+      ZITADEL_PORT: 8080
+      ZITADEL_EXTERNALDOMAIN: ${ZITADEL_DOMAIN}
+      ZITADEL_EXTERNALPORT: ${ZITADEL_EXTERNALPORT}
+      ZITADEL_EXTERNALSECURE: ${ZITADEL_EXTERNALSECURE}
+      ZITADEL_TLS_ENABLED: false
+
+      ZITADEL_DATABASE_POSTGRES_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro?sslmode=disable
+
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /zitadel/bootstrap/login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Automatically Initialized IAM_LOGIN_CLIENT
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${LOGIN_CLIENT_PAT_EXPIRATION}
+      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/bootstrap/admin.pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: tavro-zitadel-admin
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Tavro ZITADEL bootstrap admin
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_ADMIN_PAT_EXPIRATION}
+
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: true
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: ${ZITADEL_PUBLIC_SCHEME}://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: ${ZITADEL_PUBLIC_SCHEME}://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: ${ZITADEL_PUBLIC_SCHEME}://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: ${ZITADEL_PUBLIC_SCHEME}://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/login?samlRequest=
+
+      ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: ${ZITADEL_ACCESS_LOG_STDOUT_ENABLED}
+
+      ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_TYPE: ${ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_TYPE}
+      ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_ENDPOINT: ${ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_ENDPOINT}
+      ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_INSECURE: ${ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_INSECURE}
+      ZITADEL_INSTRUMENTATION_SERVICENAME: ${ZITADEL_INSTRUMENTATION_SERVICENAME}
+
+      ZITADEL_CACHES_CONNECTORS_REDIS_ENABLED: ${ZITADEL_CACHES_CONNECTORS_REDIS_ENABLED}
+      ZITADEL_CACHES_CONNECTORS_REDIS_URL: ${ZITADEL_CACHES_CONNECTORS_REDIS_URL}
+      ZITADEL_CACHES_INSTANCE_CONNECTOR: ${ZITADEL_CACHES_INSTANCE_CONNECTOR}
+      ZITADEL_CACHES_MILESTONES_CONNECTOR: ${ZITADEL_CACHES_MILESTONES_CONNECTOR}
+      ZITADEL_CACHES_ORGANIZATION_CONNECTOR: ${ZITADEL_CACHES_ORGANIZATION_CONNECTOR}
+
+    healthcheck:
+      test:
+        - CMD
+        - /app/zitadel
+        - ready
+      interval: 15s
+      timeout: 30s
+      retries: 20
+      start_period: 90s
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap:rw
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+
+      - traefik.http.services.zitadel-api.loadbalancer.server.port=8080
+      - traefik.http.services.zitadel-api.loadbalancer.server.scheme=h2c
+
+      - traefik.http.middlewares.zitadel-strip-api.stripprefix.prefixes=/api
+      - traefik.http.middlewares.zitadel-strip-api.stripprefix.forceSlash=false
+
+      # Note: no dedicated gRPC router needed. All gRPC and Connect-RPC traffic
+      # is handled by the catch-all router below since the backend already uses h2c.
+
+      - traefik.http.routers.zitadel-api-alias-web.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.zitadel-api-alias-web.entrypoints=web
+      - traefik.http.routers.zitadel-api-alias-web.middlewares=zitadel-strip-api
+      - traefik.http.routers.zitadel-api-alias-web.service=zitadel-api
+      - traefik.http.routers.zitadel-api-alias-web.priority=200
+
+      - traefik.http.routers.zitadel-api-alias-websecure.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.zitadel-api-alias-websecure.entrypoints=websecure
+      - traefik.http.routers.zitadel-api-alias-websecure.tls=true
+      - traefik.http.routers.zitadel-api-alias-websecure.middlewares=zitadel-strip-api
+      - traefik.http.routers.zitadel-api-alias-websecure.service=zitadel-api
+      - traefik.http.routers.zitadel-api-alias-websecure.priority=200
+
+      - traefik.http.routers.zitadel-canonical-web.rule=Host(`${ZITADEL_DOMAIN}`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/api`) && !Path(`/`)
+      - traefik.http.routers.zitadel-canonical-web.entrypoints=web
+      - traefik.http.routers.zitadel-canonical-web.service=zitadel-api
+      - traefik.http.routers.zitadel-canonical-web.priority=100
+
+      - traefik.http.routers.zitadel-canonical-websecure.rule=Host(`${ZITADEL_DOMAIN}`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/api`) && !Path(`/`)
+      - traefik.http.routers.zitadel-canonical-websecure.entrypoints=websecure
+      - traefik.http.routers.zitadel-canonical-websecure.tls=true
+      - traefik.http.routers.zitadel-canonical-websecure.service=zitadel-api
+      - traefik.http.routers.zitadel-canonical-websecure.priority=100
+
+  zitadel-login:
+    build:
+      context: .
+      dockerfile: tavro_zitadel_login.Dockerfile
+      args:
+        ZITADEL_VERSION: ${ZITADEL_VERSION}
+    image: tavro-zitadel-login:${ZITADEL_VERSION}
+    restart: unless-stopped
+    user: "0"
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /zitadel/bootstrap/login-client.pat
+      CUSTOM_REQUEST_HEADERS: Host:localhost:8080,X-Forwarded-Proto:http
+
+      # Future-ready placeholders for upcoming Login OTEL support.
+      OTEL_SERVICE_NAME: ${LOGIN_OTEL_SERVICE_NAME}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${LOGIN_OTEL_EXPORTER_OTLP_ENDPOINT}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${LOGIN_OTEL_EXPORTER_OTLP_PROTOCOL}
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+    depends_on:
+      zitadel-api:
+        condition: service_started
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.zitadel-login.loadbalancer.server.port=3000
+
+      - traefik.http.middlewares.zitadel-root-rewrite.replacepath.path=/ui/v2/login/
+
+      - traefik.http.routers.zitadel-root-web.rule=Host(`${ZITADEL_DOMAIN}`) && Path(`/`)
+      - traefik.http.routers.zitadel-root-web.entrypoints=web
+      - traefik.http.routers.zitadel-root-web.middlewares=zitadel-root-rewrite
+      - traefik.http.routers.zitadel-root-web.service=zitadel-login
+      - traefik.http.routers.zitadel-root-web.priority=400
+
+      - traefik.http.routers.zitadel-root-websecure.rule=Host(`${ZITADEL_DOMAIN}`) && Path(`/`)
+      - traefik.http.routers.zitadel-root-websecure.entrypoints=websecure
+      - traefik.http.routers.zitadel-root-websecure.tls=true
+      - traefik.http.routers.zitadel-root-websecure.middlewares=zitadel-root-rewrite
+      - traefik.http.routers.zitadel-root-websecure.service=zitadel-login
+      - traefik.http.routers.zitadel-root-websecure.priority=400
+
+      - traefik.http.routers.zitadel-login-web.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/ui/v2/login`)
+      - traefik.http.routers.zitadel-login-web.entrypoints=web
+      - traefik.http.routers.zitadel-login-web.service=zitadel-login
+      - traefik.http.routers.zitadel-login-web.priority=250
+
+      - traefik.http.routers.zitadel-login-websecure.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/ui/v2/login`)
+      - traefik.http.routers.zitadel-login-websecure.entrypoints=websecure
+      - traefik.http.routers.zitadel-login-websecure.tls=true
+      - traefik.http.routers.zitadel-login-websecure.service=zitadel-login
+      - traefik.http.routers.zitadel-login-websecure.priority=250
+
+  zitadel-configure-app:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /work
+    command:
+      - /bin/sh
+      - -c
+      - node /work/iam/configure-zitadel-app.mjs && tail -f /dev/null
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      ZITADEL_REQUEST_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      ZITADEL_REQUEST_PROTO: ${ZITADEL_PUBLIC_SCHEME}
+      ZITADEL_ADMIN_TOKEN_FILE: /zitadel/bootstrap/admin.pat
+      TAVRO_RUNTIME_CONFIG_FILE: /runtime/tavro-runtime-config.json
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_REDIRECT_PATH: ${VITE_ZITADEL_REDIRECT_PATH:-/auth/callback}
+      VITE_ZITADEL_SCOPE: ${VITE_ZITADEL_SCOPE:-openid profile email}
+      ZITADEL_PROJECT_NAME: ${ZITADEL_PROJECT_NAME:-tavro-mcp}
+      ZITADEL_APP_NAME: ${ZITADEL_APP_NAME:-tavro-mcp}
+      ZITADEL_APP_REDIRECT_URIS: ${ZITADEL_APP_REDIRECT_URIS}
+      ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS: ${ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS}
+    volumes:
+      - ./iam:/work/iam:ro
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+      - tavro_runtime_config:/runtime:rw
+    depends_on:
+      zitadel-api:
+        condition: service_started
+
+  redis:
+    image: ${REDIS_IMAGE}
+    restart: unless-stopped
+    profiles:
+      - cache
+    command:
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+
+  otel-collector:
+    image: ${OTEL_COLLECTOR_IMAGE}
+    restart: unless-stopped
+    profiles:
+      - observability
+    command:
+      - --config=/etc/otelcol/config.yaml
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+
+# ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────  
+  risk-mcp-server:
     build:
       context: .
       dockerfile: Dockerfile.mcp
-    container_name: mcp-server
+    container_name: risk-mcp-server
+    restart: unless-stopped
     ports:
-      - "9000:9000"
+      - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
-      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: agent_db
+      PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      POSTGRES_HOST:     tavro-postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       tavro
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
-      mcp_host: 0.0.0.0
-      mcp_port: "9000"
+      mcp_host:          localhost
+      mcp_port:          "9001"
+      ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      ZITADEL_CONFIG_URL: http://proxy
+      ZITADEL_INTERNAL_BASE_URL: http://proxy
+      ZITADEL_INTERNAL_HOST_HEADER: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      TAVRO_RUNTIME_CONFIG_FILE: /app/runtime/tavro-runtime-config.json
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_REDIRECT_PATH: ${ZITADEL_REDIRECT_PATH:-/auth/callback}
+      ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
+      VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
+      VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
+      TAVRO_API_URL: http://tavro-api:8000
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./agent_cards:/app/agent_cards
+      - ./tavro_api/agent_cards:/app/agent_cards
+      - tavro_runtime_config:/app/runtime:ro
     depends_on:
-      postgres:
+      tavro-postgres:
+        condition: service_healthy
+      zitadel-api:
+        condition: service_healthy
+      tavro-api:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+      zitadel-configure-app:
+        condition: service_started
+
+  # ── Risk Worker — idle container for manual commands ─────────────────────────
+  risk-worker:
+    <<: *risk_worker_base
+    container_name: risk-worker
+    restart: unless-stopped
+    command: tail -f /dev/null
+    environment:
+      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DROP_DIR: /app/sample-data
+      API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
+    volumes:
+      - ./sample-data:/app/sample-data
+    depends_on:
+      tavro-postgres:
         condition: service_healthy
 
-  connector:
-    profiles: ["manual"]        # never starts automatically
-    <<: *worker_base
-    container_name: connector
+# ── Sample Loader — one-shot: load sample agent cards ────────────────────────  
+  risk-sample-loader:
+    <<: *risk_worker_base
+    container_name: risk-sample-loader
+    profiles: ["manual"]
+    command: python -u worker.py
+    environment:
+      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DROP_DIR: /app/sample-data
+      API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
+    volumes:
+      - ./sample-data:/app/sample-data
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+      tavro-api:
+        condition: service_healthy
+
+  # ── Connector — one-shot: pull agent cards from external sources ──────────────
+  risk-connector:
+    profiles: ["manual"]
+    <<: *risk_worker_base
+    container_name: risk-connector
     command: python -u run_connectors.py
     environment:
-      PG_DSN: postgresql://admin:admin@postgres:5432/agent_db
+      PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     depends_on:
-      postgres:
+      tavro-postgres:
         condition: service_healthy
-      fastapi:
-        condition: service_started
-
-  temporal:
-    build:
-      context: .
-      dockerfile: services/Dockerfile
-    container_name: temporal
-    command: temporal server start-dev --ip 0.0.0.0 --ui-public-path /temporal --ui-port 8233
-    ports:
-      - "7233:7233"
-      - "8233:8233"
-
-  fastapi:
-    build:
-      context: .
-      dockerfile: services/Dockerfile
-    container_name: fastapi
-    command: python -m services.app
-    environment:
-      TEMPORAL_ADDRESS: temporal:7233
-      LOCAL_AGENT_CARD_DIR: /app/agent_cards
-    ports:
-      - "80:80"
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./agent_cards:/app/agent_cards
-    depends_on:
-      postgres:
+      tavro-api:
         condition: service_healthy
-      temporal:
-        condition: service_started
 
 volumes:
-  postgres_data:
+  tavro_pgdata:
+  zitadel-bootstrap:
+  tavro_runtime_config:
+
+
+

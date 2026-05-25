@@ -7,40 +7,66 @@ from pathlib import Path
 
 import psycopg2
 from psycopg2 import sql
+from cvss import CVSS4
 from utils.set_environment import set_environment
 
 set_environment("postgres")
 set_environment("databases")
 
-DB_NAME = os.getenv("POSTGRES_DB")
-DB_USER = os.getenv("POSTGRES_USER")
+DB_NAME   = os.getenv("POSTGRES_DB")
+DB_USER   = os.getenv("POSTGRES_USER")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB_HOST = os.getenv("POSTGRES_HOST")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-CORE_SCHEMA = os.getenv("CORE_GLUE_DB_NAME", "core")
-RISK_MANAGEMENT_SCHEMA = os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME", "risk_management")
-CURATED_SCHEMA = os.getenv("CURATED_GLUE_DB_NAME", "curated")
+DB_HOST   = os.getenv("POSTGRES_HOST")
+DB_PORT   = os.getenv("POSTGRES_PORT", "5432")
+CORE_SCHEMA             = os.getenv("CORE_DB_NAME",            "core")
+RISK_MANAGEMENT_SCHEMA  = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
+CURATED_SCHEMA          = os.getenv("CURATED_DB_NAME",         "curated")
 
-ALL_RISK_STATES = [
-    "Ready to take",
-    "In progress",
-    "Ready to finalize",
-    "Completed",
-    "Failed",
-    "Cancelled",
-]
+ALL_RISK_STATES    = ["Ready to take", "In progress", "Ready to finalize", "Completed", "Failed", "Cancelled"]
 ACTIVE_RISK_STATES = ["Ready to take", "In progress", "Ready to finalize"]
 
+# Ordered list of the 11 CVSS parameter column names (matches DB schema)
+CVSS_PARAM_COLS = [
+    "attack_vector_av",
+    "attack_complexity_ac",
+    "attack_requirements_at",
+    "privileges_required_pr",
+    "user_interaction_ui",
+    "vulnerable_system_confidentiality_vc",
+    "vulnerable_system_integrity_vi",
+    "vulnerable_system_availability_va",
+    "subsequent_system_confidentiality_sc",
+    "subsequent_system_integrity_si",
+    "subsequent_system_availability_sa",
+]
+
+SCENARIO_KEY_TO_DISPLAY = {
+    "agentic_ai_tool_misuse":                           "Agentic AI Tool Misuse",
+    "agent_access_control_violation":                   "Agent Access Control Violation",
+    "agent_cascading_failures":                         "Agent Cascading Failures",
+    "agent_orchestration_and_multi_agent_exploitation": "Agent Orchestration and Multi-Agent Exploitation",
+    "agent_identity_impersonation":                     "Agent Identity Impersonation",
+    "insecure_agent_critical_systems_interaction":      "Insecure Agent Critical Systems Interaction",
+    "agent_memory_and_context_manipulation":            "Agent Memory and Context Manipulation",
+    "agent_supply_chain_and_dependency_attacks":        "Agent Supply Chain and Dependency Attacks",
+    "agent_untraceability":                             "Agent Untraceability",
+    "agent_goal_and_instruction_manipulation":          "Agent Goal and Instruction Manipulation",
+}
+
+
+# ---------------------------------------------------------------------------
+# Connection helper
+# ---------------------------------------------------------------------------
 
 @contextmanager
 def _db_connection():
     missing = [
         name
         for name, value in {
-            "POSTGRES_DB": DB_NAME,
-            "POSTGRES_USER": DB_USER,
+            "POSTGRES_DB":       DB_NAME,
+            "POSTGRES_USER":     DB_USER,
             "POSTGRES_PASSWORD": DB_PASSWORD,
-            "POSTGRES_HOST": DB_HOST,
+            "POSTGRES_HOST":     DB_HOST,
         }.items()
         if not value
     ]
@@ -64,21 +90,153 @@ def _db_connection():
         connection.close()
 
 
+# ---------------------------------------------------------------------------
+# SQL identifier helper
+# ---------------------------------------------------------------------------
+
 def _table(schema_name: str, table_name: str) -> sql.Composed:
     return sql.SQL("{}.{}").format(sql.Identifier(schema_name), sql.Identifier(table_name))
 
 
+def _lock_agent_assessment(cursor, agent_internal_id: str, tenant_id: str = None) -> None:
+    """Serialize risk-assessment creation/update for one logical tenant+agent."""
+    lock_key = f"risk-assessment:{tenant_id or '__default__'}:{agent_internal_id}"
+    cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python helpers  (no DB interaction)
+# ---------------------------------------------------------------------------
+
+def _normalize_tenant_id(value):
+    """
+    Normalise tenant_id so that whitespace-only / empty strings are treated
+    as None rather than as meaningful identifiers.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    return str(value).strip() or None
+
+
+def _parse_aars_score(fmt_string) -> float:
+    """
+    Parse the formatted AARS factor string produced by aars_risk_evaluation,
+    e.g. 'Full (1.0)' -> 1.0, 'Partial (0.5)' -> 0.5, 'None (0.0)' -> 0.0.
+    Falls back to 0.0 on any parse error.
+    """
+    try:
+        return float(fmt_string.split("(")[-1].rstrip(")").strip())
+    except Exception:
+        return 0.0
+
+
+def _extract_aars_data(response_data: dict) -> dict:
+    """
+    Extract and parse all AARS factor scores and rationales from response_data.
+    Returns a flat dict ready to be used as SQL parameters.
+    """
+    aars_factors    = response_data.get("aars_factors",    {})
+    aars_rationales = response_data.get("aars_rationales", {})
+    return {
+        "aars_score":               float(response_data.get("aars_total_score", 0)),
+        "autonomy_of_action":       _parse_aars_score(aars_factors.get("autonomy_of_action",       "None (0.0)")),
+        "tool_use":                 _parse_aars_score(aars_factors.get("tool_use",                 "None (0.0)")),
+        "memory_use":               _parse_aars_score(aars_factors.get("memory_use",               "None (0.0)")),
+        "dynamic_identity":         _parse_aars_score(aars_factors.get("dynamic_identity",         "None (0.0)")),
+        "multi_agent_interactions": _parse_aars_score(aars_factors.get("multi_agent_interactions", "None (0.0)")),
+        "non_determinism":          _parse_aars_score(aars_factors.get("non_determinism",          "None (0.0)")),
+        "self_modification":        _parse_aars_score(aars_factors.get("self_modification",        "None (0.0)")),
+        "goal_driven_planning":     _parse_aars_score(aars_factors.get("goal_driven_planning",     "None (0.0)")),
+        "contextual_awareness":     _parse_aars_score(aars_factors.get("contextual_awareness",     "None (0.0)")),
+        "opacity_reflexivity":      _parse_aars_score(aars_factors.get("opacity_reflexivity",      "None (0.0)")),
+        "r_autonomy":        aars_rationales.get("autonomy_of_action_rationale",       ""),
+        "r_tool_use":        aars_rationales.get("dynamic_tool_use_rationale",         ""),
+        "r_memory":          aars_rationales.get("memory_use_rationale",               ""),
+        "r_identity":        aars_rationales.get("dynamic_identity_rationale",         ""),
+        "r_multi_agent":     aars_rationales.get("multi_agent_interactions_rationale", ""),
+        "r_non_determinism": aars_rationales.get("non_determinism_rationale",          ""),
+        "r_self_mod":        aars_rationales.get("self_modification_rationale",        ""),
+        "r_goal":            aars_rationales.get("goal_driven_planning_rationale",     ""),
+        "r_context":         aars_rationales.get("contextual_awareness_rationale",     ""),
+        "r_opacity":         aars_rationales.get("opacity_reflexivity_rationale",      ""),
+    }
+
+
 def _regulatory_risk_score(risk_classification: str) -> float:
+    """Map EU AI Act risk classification → numeric score."""
     mapping = {
         "Prohibited": 10.0,
-        "High Risk": 7.0,
+        "High Risk":   7.0,
     }
     return mapping.get(risk_classification, 1.0)
 
 
-def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts: datetime, type_of_risk: str, response_data: dict) -> None:
-    article_5 = json.dumps(response_data["article_5"])
-    article_6 = json.dumps(response_data["article_6"])
+def _blended_risk_class(score: float) -> str:
+    if score >= 7:
+        return "High"
+    elif score >= 3:
+        return "Medium"
+    return "Low"
+
+
+def _aivss_class(score: float) -> str:
+    """Same banding as blended_risk_class."""
+    return _blended_risk_class(score)
+
+
+# ---------------------------------------------------------------------------
+# CVSS helpers
+# ---------------------------------------------------------------------------
+
+def generate_cvss_vector(
+    attack_vector_av, attack_complexity_ac, attack_requirements_at,
+    privileges_required_pr, user_interaction_ui,
+    vulnerable_system_confidentiality_vc, vulnerable_system_integrity_vi,
+    vulnerable_system_availability_va,
+    subsequent_system_confidentiality_sc, subsequent_system_integrity_si,
+    subsequent_system_availability_sa,
+) -> str:
+    """Build a CVSS 4.0 vector string from component values."""
+    return (
+        f"CVSS:4.0"
+        f"/AV:{attack_vector_av}/AC:{attack_complexity_ac}/AT:{attack_requirements_at}"
+        f"/PR:{privileges_required_pr}/UI:{user_interaction_ui}"
+        f"/VC:{vulnerable_system_confidentiality_vc}/VI:{vulnerable_system_integrity_vi}"
+        f"/VA:{vulnerable_system_availability_va}"
+        f"/SC:{subsequent_system_confidentiality_sc}"
+        f"/SI:{subsequent_system_integrity_si}/SA:{subsequent_system_availability_sa}"
+    )
+
+
+def calculate_cvss_score(cvss_vector: str) -> float:
+    """Return the CVSS 4.0 base score for the given vector string."""
+    c = CVSS4(cvss_vector)
+    return c.base_score
+
+
+# ---------------------------------------------------------------------------
+# Internal insert helper  (risk_management.agent_risk_assessment)
+# ---------------------------------------------------------------------------
+
+def _execute_insert(
+    cursor,
+    assessment_id:  str,
+    created_ts:     datetime,
+    updated_ts:     datetime,
+    type_of_risk:   str,
+    response_data:  dict,
+    aars:           dict,        # output of _extract_aars_data()
+    tenant_id:      str = None,
+) -> None:
+    """
+    Fire a new-record INSERT into risk_management.agent_risk_assessment.
+    All values are passed as psycopg2 parameters – no string interpolation.
+    """
+    article_5  = json.dumps(response_data["article_5"])
+    article_6  = json.dumps(response_data["article_6"])
     agent_name = response_data["agent_name"]
 
     insert_query = sql.SQL(
@@ -87,6 +245,7 @@ def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts
             assessment_id,
             agent_internal_id,
             agent_id,
+            tenant_id,
             agent_name,
             agent_risk_assessment_name,
             risk_classification,
@@ -97,6 +256,17 @@ def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts
             eu_ai_act_article_6_high_risk_ai_systems_evaluation,
             risk_classification_rationale,
             type_of_risk,
+            aars_score,
+            autonomy_of_action,               autonomy_of_action_rationale,
+            dynamic_tool_use,                 dynamic_tool_use_rationale,
+            memory_use,                       memory_use_rationale,
+            dynamic_identity,                 dynamic_identity_rationale,
+            multi_agent_interactions,         multi_agent_interactions_rationale,
+            non_determinism,                  non_determinism_rationale,
+            self_modification,                self_modification_rationale,
+            goal_driven_planning,             goal_driven_planning_rationale,
+            contextual_awareness,             contextual_awareness_rationale,
+            opacity_reflexivity,              opacity_reflexivity_rationale,
             created_ts,
             created_by,
             updated_ts,
@@ -105,7 +275,15 @@ def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts
             state
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s
         )
         """
     ).format(risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment"))
@@ -116,6 +294,7 @@ def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts
             assessment_id,
             response_data["agent_internal_id"],
             response_data["agent_id"],
+            tenant_id,
             agent_name,
             f"{agent_name}_Assessment_{created_ts:%Y-%m-%d}",
             response_data["risk_classification"],
@@ -126,58 +305,202 @@ def _execute_insert(cursor, assessment_id: str, created_ts: datetime, updated_ts
             article_6,
             response_data["risk_rating_rationale"],
             type_of_risk,
+            # AARS scores + rationales (10 pairs + total)
+            aars["aars_score"],
+            aars["autonomy_of_action"],       aars["r_autonomy"],
+            aars["tool_use"],                 aars["r_tool_use"],
+            aars["memory_use"],               aars["r_memory"],
+            aars["dynamic_identity"],         aars["r_identity"],
+            aars["multi_agent_interactions"], aars["r_multi_agent"],
+            aars["non_determinism"],          aars["r_non_determinism"],
+            aars["self_modification"],        aars["r_self_mod"],
+            aars["goal_driven_planning"],     aars["r_goal"],
+            aars["contextual_awareness"],     aars["r_context"],
+            aars["opacity_reflexivity"],      aars["r_opacity"],
+            # Audit fields
             created_ts,
             "Admin",
             updated_ts,
             "Admin",
             "Admin",
-            "Completed",
+            "Ready to take",
         ),
+    )
+    print(cursor.mogrify(insert_query, (
+        assessment_id,
+        response_data["agent_internal_id"],
+        response_data["agent_id"],
+        tenant_id,
+        agent_name,
+        f"{agent_name}_Assessment_{created_ts:%Y-%m-%d}",
+        response_data["risk_classification"],
+        response_data["personally_identifiable_information"],
+        response_data["protected_health_information"],
+        response_data["payment_card_industry"],
+        article_5,
+        article_6,
+        response_data["risk_rating_rationale"],
+        type_of_risk,
+        # AARS scores + rationales (10 pairs + total)
+        aars["aars_score"],
+        aars["autonomy_of_action"],       aars["r_autonomy"],
+        aars["tool_use"],                 aars["r_tool_use"],
+        aars["memory_use"],               aars["r_memory"],
+        aars["dynamic_identity"],         aars["r_identity"],
+        aars["multi_agent_interactions"], aars["r_multi_agent"],
+        aars["non_determinism"],          aars["r_non_determinism"],
+        aars["self_modification"],        aars["r_self_mod"],
+        aars["goal_driven_planning"],     aars["r_goal"],
+        aars["contextual_awareness"],     aars["r_context"],
+        aars["opacity_reflexivity"],      aars["r_opacity"],
+        # Audit fields
+        created_ts,
+        "Admin",
+        updated_ts,
+        "Admin",
+        "Admin",
+        "Ready to take",
+    )).decode())
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            f"Failed to insert new assessment row for assessment_id={assessment_id} "
+            f"rowcount={cursor.rowcount}"
+        )
+    print(
+        f"[{RISK_MANAGEMENT_SCHEMA}] Inserted assessment_id={assessment_id} "
+        f"agent_internal_id={response_data['agent_internal_id']} "
+        f"aars_score={aars['aars_score']}"
     )
 
 
-def insert_or_update_into_postgres(response_data: dict) -> str:
-    now_ts = datetime.now()
-    assessment_id = str(uuid.uuid4())
+# ---------------------------------------------------------------------------
+# Main upsert  (risk_management.agent_risk_assessment + agent_risk_scenarios)
+# ---------------------------------------------------------------------------
+
+def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -> str:
+    """
+    Upsert agent risk assessment data into:
+      - risk_management.agent_risk_assessment
+      - risk_management.agent_risk_scenarios  (10 standard scenarios)
+
+    response_data must contain the flat keys produced by the calling workflow,
+    including 'aars_factors', 'aars_rationales', and 'aars_total_score'.
+
+    Returns the assessment_id (new or existing) that was written to.
+    """
+    tenant_id         = _normalize_tenant_id(tenant_id)
+    if tenant_id is None and isinstance(response_data, dict):
+        tenant_id     = _normalize_tenant_id(response_data.get("tenant_id"))
+
+    now_ts            = datetime.now()
+    assessment_id     = str(uuid.uuid4())
     agent_internal_id = response_data["agent_internal_id"]
+    agent_id          = response_data["agent_id"]
+
+    aars = _extract_aars_data(response_data)
+
+    # CVSS params forwarded to scenario rows
+    cvss_params = {col: response_data[col] for col in CVSS_PARAM_COLS}
 
     with _db_connection() as connection:
         with connection.cursor() as cursor:
+            _lock_agent_assessment(cursor, agent_internal_id, tenant_id)
+
+            # ---- Check for existing records ---------------------------------
             check_query = sql.SQL(
                 """
                 SELECT assessment_id, state
                 FROM {risk_table}
                 WHERE agent_internal_id = %s
                   AND state = ANY(%s)
+                  AND (%s IS NULL OR tenant_id = %s)
+                ORDER BY
+                    CASE WHEN state = ANY(%s) THEN 0 ELSE 1 END,
+                    updated_ts DESC NULLS LAST,
+                    created_ts DESC NULLS LAST
+                FOR UPDATE
                 """
             ).format(risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment"))
-            cursor.execute(check_query, (agent_internal_id, ALL_RISK_STATES))
+            print(cursor.mogrify(check_query, (agent_internal_id, ALL_RISK_STATES, tenant_id, tenant_id, ACTIVE_RISK_STATES)).decode())
+            cursor.execute(check_query, (agent_internal_id, ALL_RISK_STATES, tenant_id, tenant_id, ACTIVE_RISK_STATES))
             rows = cursor.fetchall()
+            print(f"Existing records found: {rows}")
 
             type_of_risk = "Residual Risk" if rows else "Inherent Risk"
-            active_row = next((row for row in rows if row[1] in ACTIVE_RISK_STATES), None)
+            active_row   = next((row for row in rows if row[1] in ACTIVE_RISK_STATES), None)
 
             if active_row:
+                # ---- UPDATE existing active record --------------------------
                 existing_assessment_id = active_row[0]
+
                 update_query = sql.SQL(
                     """
                     UPDATE {risk_table}
                     SET
-                        risk_classification = %s,
-                        personally_identifiable_information = %s,
-                        protected_health_information = %s,
-                        payment_card_industry = %s,
+                        risk_classification                                    = %s,
+                        personally_identifiable_information                    = %s,
+                        protected_health_information                           = %s,
+                        payment_card_industry                                  = %s,
                         eu_ai_act_article_5_prohibited_ai_practices_evaluation = %s,
-                        eu_ai_act_article_6_high_risk_ai_systems_evaluation = %s,
-                        risk_classification_rationale = %s,
-                        type_of_risk = %s,
-                        state = %s,
-                        updated_ts = %s,
-                        updated_by = %s
-                    WHERE agent_internal_id = %s
+                        eu_ai_act_article_6_high_risk_ai_systems_evaluation    = %s,
+                        risk_classification_rationale                          = %s,
+                        type_of_risk                                           = %s,
+                        aars_score                                             = %s,
+                        autonomy_of_action                                     = %s,
+                        autonomy_of_action_rationale                           = %s,
+                        dynamic_tool_use                                       = %s,
+                        dynamic_tool_use_rationale                             = %s,
+                        memory_use                                             = %s,
+                        memory_use_rationale                                   = %s,
+                        dynamic_identity                                       = %s,
+                        dynamic_identity_rationale                             = %s,
+                        multi_agent_interactions                               = %s,
+                        multi_agent_interactions_rationale                     = %s,
+                        non_determinism                                        = %s,
+                        non_determinism_rationale                              = %s,
+                        self_modification                                      = %s,
+                        self_modification_rationale                            = %s,
+                        goal_driven_planning                                   = %s,
+                        goal_driven_planning_rationale                         = %s,
+                        contextual_awareness                                   = %s,
+                        contextual_awareness_rationale                         = %s,
+                        opacity_reflexivity                                    = %s,
+                        opacity_reflexivity_rationale                          = %s,
+                        updated_ts                                             = %s,
+                        updated_by                                             = %s
+                    WHERE assessment_id = %s
                       AND state = ANY(%s)
+                      AND (%s IS NULL OR tenant_id = %s)
                     """
                 ).format(risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment"))
+
+                print(cursor.mogrify(update_query, (
+                    response_data["risk_classification"],
+                    response_data["personally_identifiable_information"],
+                    response_data["protected_health_information"],
+                    response_data["payment_card_industry"],
+                    json.dumps(response_data["article_5"]),
+                    json.dumps(response_data["article_6"]),
+                    response_data["risk_rating_rationale"],
+                    type_of_risk,
+                    aars["aars_score"],
+                    aars["autonomy_of_action"],       aars["r_autonomy"],
+                    aars["tool_use"],                 aars["r_tool_use"],
+                    aars["memory_use"],               aars["r_memory"],
+                    aars["dynamic_identity"],         aars["r_identity"],
+                    aars["multi_agent_interactions"], aars["r_multi_agent"],
+                    aars["non_determinism"],          aars["r_non_determinism"],
+                    aars["self_modification"],        aars["r_self_mod"],
+                    aars["goal_driven_planning"],     aars["r_goal"],
+                    aars["contextual_awareness"],     aars["r_context"],
+                    aars["opacity_reflexivity"],      aars["r_opacity"],
+                    now_ts,
+                    "Admin",
+                    existing_assessment_id,
+                    ACTIVE_RISK_STATES,
+                    tenant_id,
+                    tenant_id,
+                )).decode())
                 cursor.execute(
                     update_query,
                     (
@@ -189,18 +512,587 @@ def insert_or_update_into_postgres(response_data: dict) -> str:
                         json.dumps(response_data["article_6"]),
                         response_data["risk_rating_rationale"],
                         type_of_risk,
-                        "Completed",
+                        aars["aars_score"],
+                        aars["autonomy_of_action"],       aars["r_autonomy"],
+                        aars["tool_use"],                 aars["r_tool_use"],
+                        aars["memory_use"],               aars["r_memory"],
+                        aars["dynamic_identity"],         aars["r_identity"],
+                        aars["multi_agent_interactions"], aars["r_multi_agent"],
+                        aars["non_determinism"],          aars["r_non_determinism"],
+                        aars["self_modification"],        aars["r_self_mod"],
+                        aars["goal_driven_planning"],     aars["r_goal"],
+                        aars["contextual_awareness"],     aars["r_context"],
+                        aars["opacity_reflexivity"],      aars["r_opacity"],
                         now_ts,
                         "Admin",
-                        agent_internal_id,
+                        existing_assessment_id,
                         ACTIVE_RISK_STATES,
+                        tenant_id,
+                        tenant_id,
                     ),
+                )
+                if cursor.rowcount == 0:
+                    raise RuntimeError(
+                        f"Expected to update an existing active assessment for "
+                        f"agent_internal_id={agent_internal_id}, but no rows were updated."
+                    )
+                print(f"Updated existing record assessment_id={existing_assessment_id}")
+
+                # Recompute scenario CVSS/aivss scores in-transaction
+                _update_risk_scenarios_cursor(
+                    cursor,
+                    existing_assessment_id,
+                    aars["aars_score"],
+                    now_ts,
+                    tenant_id=tenant_id,
+                    **cvss_params,
                 )
                 return existing_assessment_id
 
-            _execute_insert(cursor, assessment_id, now_ts, now_ts, type_of_risk, response_data)
-            return assessment_id
+            else:
+                # ---- INSERT new record (terminal or no prior records) -------
+                _execute_insert(
+                    cursor,
+                    assessment_id,
+                    now_ts,
+                    now_ts,
+                    type_of_risk,
+                    response_data,
+                    aars,
+                    tenant_id=tenant_id,
+                )
 
+                _insert_risk_scenarios_cursor(
+                    cursor,
+                    assessment_id,
+                    aars["aars_score"],
+                    now_ts,
+                    now_ts,
+                    tenant_id=tenant_id,
+                    **cvss_params,
+                )
+                return assessment_id
+
+
+# ---------------------------------------------------------------------------
+# Risk scenarios  (internal cursor-level helpers + public wrappers)
+# ---------------------------------------------------------------------------
+
+def _insert_risk_scenarios_cursor(
+    cursor,
+    assessment_id: str,
+    aars_score:    float,
+    created_ts:    datetime,
+    updated_ts:    datetime,
+    attack_vector_av:                     str,
+    attack_complexity_ac:                 str,
+    attack_requirements_at:               str,
+    privileges_required_pr:               str,
+    user_interaction_ui:                  str,
+    vulnerable_system_confidentiality_vc: str,
+    vulnerable_system_integrity_vi:       str,
+    vulnerable_system_availability_va:    str,
+    subsequent_system_confidentiality_sc: str,
+    subsequent_system_integrity_si:       str,
+    subsequent_system_availability_sa:    str,
+    tenant_id: str = None,
+) -> None:
+    """
+    Bulk-insert 10 standard risk scenarios into agent_risk_scenarios.
+    Executed within an already-open cursor/transaction.
+    """
+    risk_scenario_names = list(SCENARIO_KEY_TO_DISPLAY.values())
+
+    vector = generate_cvss_vector(
+        attack_vector_av=attack_vector_av,
+        attack_complexity_ac=attack_complexity_ac,
+        attack_requirements_at=attack_requirements_at,
+        privileges_required_pr=privileges_required_pr,
+        user_interaction_ui=user_interaction_ui,
+        vulnerable_system_confidentiality_vc=vulnerable_system_confidentiality_vc,
+        vulnerable_system_integrity_vi=vulnerable_system_integrity_vi,
+        vulnerable_system_availability_va=vulnerable_system_availability_va,
+        subsequent_system_confidentiality_sc=subsequent_system_confidentiality_sc,
+        subsequent_system_integrity_si=subsequent_system_integrity_si,
+        subsequent_system_availability_sa=subsequent_system_availability_sa,
+    )
+    cvss_score  = calculate_cvss_score(vector)
+    aivss_score = round(((cvss_score + aars_score) / 2) * 1.0, 4)
+
+    insert_query = sql.SQL(
+        """
+        INSERT INTO {scenarios_table} (
+            risk_scenario_id,
+            assessment_id,
+            tenant_id,
+            agentic_ai_core_security_risks,
+            attack_vector_av,
+            attack_complexity_ac,
+            attack_requirements_at,
+            privileges_required_pr,
+            user_interaction_ui,
+            vulnerable_system_confidentiality_vc,
+            vulnerable_system_integrity_vi,
+            vulnerable_system_availability_va,
+            subsequent_system_confidentiality_sc,
+            subsequent_system_integrity_si,
+            subsequent_system_availability_sa,
+            cvss_4_0_vector,
+            cvss_score,
+            threat_multiplier,
+            aivss_score,
+            created_ts,
+            created_by,
+            updated_ts,
+            updated_by
+        )
+        VALUES (
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s
+        )
+        """
+    ).format(scenarios_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_scenarios"))
+
+    rows = [
+        (
+            str(uuid.uuid4()),
+            assessment_id,
+            tenant_id,
+            risk_name,
+            attack_vector_av,
+            attack_complexity_ac,
+            attack_requirements_at,
+            privileges_required_pr,
+            user_interaction_ui,
+            vulnerable_system_confidentiality_vc,
+            vulnerable_system_integrity_vi,
+            vulnerable_system_availability_va,
+            subsequent_system_confidentiality_sc,
+            subsequent_system_integrity_si,
+            subsequent_system_availability_sa,
+            vector,
+            cvss_score,
+            1.0,
+            aivss_score,
+            created_ts,
+            "Admin",
+            updated_ts,
+            "Admin",
+        )
+        for risk_name in risk_scenario_names
+    ]
+
+    cursor.executemany(insert_query, rows)
+    if rows:
+        print(cursor.mogrify(insert_query, rows[0]).decode())
+    print(f"Bulk-inserted {len(rows)} risk scenarios for assessment_id={assessment_id}")
+
+
+def insert_risk_scenarios(
+    assessment_id: str,
+    aars_score:    float,
+    created_ts:    datetime,
+    updated_ts:    datetime,
+    attack_vector_av:                     str,
+    attack_complexity_ac:                 str,
+    attack_requirements_at:               str,
+    privileges_required_pr:               str,
+    user_interaction_ui:                  str,
+    vulnerable_system_confidentiality_vc: str,
+    vulnerable_system_integrity_vi:       str,
+    vulnerable_system_availability_va:    str,
+    subsequent_system_confidentiality_sc: str,
+    subsequent_system_integrity_si:       str,
+    subsequent_system_availability_sa:    str,
+    tenant_id: str = None,
+) -> None:
+    """Public wrapper: bulk-insert 10 standard risk scenarios (opens its own connection)."""
+    with _db_connection() as connection:
+        with connection.cursor() as cursor:
+            _insert_risk_scenarios_cursor(
+                cursor,
+                assessment_id,
+                aars_score,
+                created_ts,
+                updated_ts,
+                attack_vector_av=attack_vector_av,
+                attack_complexity_ac=attack_complexity_ac,
+                attack_requirements_at=attack_requirements_at,
+                privileges_required_pr=privileges_required_pr,
+                user_interaction_ui=user_interaction_ui,
+                vulnerable_system_confidentiality_vc=vulnerable_system_confidentiality_vc,
+                vulnerable_system_integrity_vi=vulnerable_system_integrity_vi,
+                vulnerable_system_availability_va=vulnerable_system_availability_va,
+                subsequent_system_confidentiality_sc=subsequent_system_confidentiality_sc,
+                subsequent_system_integrity_si=subsequent_system_integrity_si,
+                subsequent_system_availability_sa=subsequent_system_availability_sa,
+                tenant_id=tenant_id,
+            )
+
+
+def _update_risk_scenarios_cursor(
+    cursor,
+    assessment_id: str,
+    aars_score:    float,
+    updated_ts:    datetime,
+    attack_vector_av:                     str,
+    attack_complexity_ac:                 str,
+    attack_requirements_at:               str,
+    privileges_required_pr:               str,
+    user_interaction_ui:                  str,
+    vulnerable_system_confidentiality_vc: str,
+    vulnerable_system_integrity_vi:       str,
+    vulnerable_system_availability_va:    str,
+    subsequent_system_confidentiality_sc: str,
+    subsequent_system_integrity_si:       str,
+    subsequent_system_availability_sa:    str,
+    tenant_id: str = None,
+) -> None:
+    """
+    Recompute cvss_score and aivss_score for every scenario tied to this
+    assessment and persist the updated values. Runs inside an existing transaction.
+    """
+    vector = generate_cvss_vector(
+        attack_vector_av=attack_vector_av,
+        attack_complexity_ac=attack_complexity_ac,
+        attack_requirements_at=attack_requirements_at,
+        privileges_required_pr=privileges_required_pr,
+        user_interaction_ui=user_interaction_ui,
+        vulnerable_system_confidentiality_vc=vulnerable_system_confidentiality_vc,
+        vulnerable_system_integrity_vi=vulnerable_system_integrity_vi,
+        vulnerable_system_availability_va=vulnerable_system_availability_va,
+        subsequent_system_confidentiality_sc=subsequent_system_confidentiality_sc,
+        subsequent_system_integrity_si=subsequent_system_integrity_si,
+        subsequent_system_availability_sa=subsequent_system_availability_sa,
+    )
+    cvss_score  = calculate_cvss_score(vector)
+    aivss_score = round(((cvss_score + aars_score) / 2) * 1.0, 4)
+
+    update_query = sql.SQL(
+        """
+        UPDATE {scenarios_table}
+        SET
+            cvss_4_0_vector                      = %s,
+            cvss_score                           = %s,
+            aivss_score                          = %s,
+            attack_vector_av                     = %s,
+            attack_complexity_ac                 = %s,
+            attack_requirements_at               = %s,
+            privileges_required_pr               = %s,
+            user_interaction_ui                  = %s,
+            vulnerable_system_confidentiality_vc = %s,
+            vulnerable_system_integrity_vi       = %s,
+            vulnerable_system_availability_va    = %s,
+            subsequent_system_confidentiality_sc = %s,
+            subsequent_system_integrity_si       = %s,
+            subsequent_system_availability_sa    = %s,
+            updated_ts                           = %s,
+            updated_by                           = %s
+        WHERE assessment_id = %s
+          AND (%s IS NULL OR tenant_id = %s)
+        """
+    ).format(scenarios_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_scenarios"))
+
+    print(cursor.mogrify(update_query, (
+        vector, cvss_score, aivss_score,
+        attack_vector_av, attack_complexity_ac, attack_requirements_at,
+        privileges_required_pr, user_interaction_ui,
+        vulnerable_system_confidentiality_vc, vulnerable_system_integrity_vi,
+        vulnerable_system_availability_va,
+        subsequent_system_confidentiality_sc, subsequent_system_integrity_si,
+        subsequent_system_availability_sa,
+        updated_ts,
+        "Admin",
+        assessment_id,
+        tenant_id, tenant_id,
+    )).decode())
+    cursor.execute(
+        update_query,
+        (
+            vector, cvss_score, aivss_score,
+            attack_vector_av, attack_complexity_ac, attack_requirements_at,
+            privileges_required_pr, user_interaction_ui,
+            vulnerable_system_confidentiality_vc, vulnerable_system_integrity_vi,
+            vulnerable_system_availability_va,
+            subsequent_system_confidentiality_sc, subsequent_system_integrity_si,
+            subsequent_system_availability_sa,
+            updated_ts,
+            "Admin",
+            assessment_id,
+            tenant_id, tenant_id,
+        ),
+    )
+    print(f"Updated risk scenarios for assessment_id={assessment_id} cvss_score={cvss_score}")
+
+
+def update_risk_scenarios(
+    assessment_id: str,
+    aars_score:    float,
+    updated_ts:    datetime,
+    attack_vector_av:                     str,
+    attack_complexity_ac:                 str,
+    attack_requirements_at:               str,
+    privileges_required_pr:               str,
+    user_interaction_ui:                  str,
+    vulnerable_system_confidentiality_vc: str,
+    vulnerable_system_integrity_vi:       str,
+    vulnerable_system_availability_va:    str,
+    subsequent_system_confidentiality_sc: str,
+    subsequent_system_integrity_si:       str,
+    subsequent_system_availability_sa:    str,
+    tenant_id: str = None,
+) -> None:
+    """Public wrapper: recompute & update scenario CVSS/aivss scores (opens its own connection)."""
+    with _db_connection() as connection:
+        with connection.cursor() as cursor:
+            _update_risk_scenarios_cursor(
+                cursor,
+                assessment_id,
+                aars_score,
+                updated_ts,
+                attack_vector_av=attack_vector_av,
+                attack_complexity_ac=attack_complexity_ac,
+                attack_requirements_at=attack_requirements_at,
+                privileges_required_pr=privileges_required_pr,
+                user_interaction_ui=user_interaction_ui,
+                vulnerable_system_confidentiality_vc=vulnerable_system_confidentiality_vc,
+                vulnerable_system_integrity_vi=vulnerable_system_integrity_vi,
+                vulnerable_system_availability_va=vulnerable_system_availability_va,
+                subsequent_system_confidentiality_sc=subsequent_system_confidentiality_sc,
+                subsequent_system_integrity_si=subsequent_system_integrity_si,
+                subsequent_system_availability_sa=subsequent_system_availability_sa,
+                tenant_id=tenant_id,
+            )
+
+
+# ---------------------------------------------------------------------------
+# CVSS & AIVSS update for assessment (per-scenario + overall summary)
+# ---------------------------------------------------------------------------
+
+def update_cvss_for_assessment(
+    agent_internal_id: str,
+    assessment_id:     str,
+    aars_score:        float,
+    cvss_result:       dict,
+    updated_ts:        str,
+    tenant_id:         str = None,
+) -> None:
+    print("update_cvss_for_assessment CALLED")
+
+    tenant_id = _normalize_tenant_id(tenant_id)
+
+    SCENARIO_KEY_TO_DISPLAY = {
+        "agentic_ai_tool_misuse": "Agentic AI Tool Misuse",
+        "agent_access_control_violation": "Agent Access Control Violation",
+        "agent_cascading_failures": "Agent Cascading Failures",
+        "agent_orchestration_and_multi_agent_exploitation": "Agent Orchestration and Multi-Agent Exploitation",
+        "agent_identity_impersonation": "Agent Identity Impersonation",
+        "agent_memory_and_context_manipulation": "Agent Memory and Context Manipulation",
+        "insecure_agent_critical_systems_interaction": "Insecure Agent Critical Systems Interaction",
+        "agent_supply_chain_and_dependency_attacks": "Agent Supply Chain and Dependency Attacks",
+        "agent_untraceability": "Agent Untraceability",
+        "agent_goal_and_instruction_manipulation": "Agent Goal and Instruction Manipulation",
+    }
+
+    CVSS_PARAM_COLS = [
+        "attack_vector_av",
+        "attack_complexity_ac",
+        "attack_requirements_at",
+        "privileges_required_pr",
+        "user_interaction_ui",
+        "vulnerable_system_confidentiality_vc",
+        "vulnerable_system_integrity_vi",
+        "vulnerable_system_availability_va",
+        "subsequent_system_confidentiality_sc",
+        "subsequent_system_integrity_si",
+        "subsequent_system_availability_sa",
+    ]
+
+    overall_data = cvss_result.get("Overall Data", {})
+    cvss_numeric = cvss_result.get("CVSS Numeric", {})
+    cvss_vectors = cvss_result.get("CVSS Scores", {})
+
+    scenario_rows = []
+
+    for scenario_key, params in overall_data.items():
+        if scenario_key == "overall_risk_summary":
+            continue
+
+        display_name = SCENARIO_KEY_TO_DISPLAY.get(scenario_key)
+        if not display_name:
+            raise RuntimeError(f"Unknown scenario key: {scenario_key}")
+
+        cvss_score = float(cvss_numeric.get(display_name, 0.0))
+        vector = cvss_vectors.get(display_name, "")
+        aivss_score = round((cvss_score + aars_score) / 2, 4)
+
+        cvss_params = {col: params.get(col, "") for col in CVSS_PARAM_COLS}
+
+        scenario_rows.append((display_name, vector, cvss_score, aivss_score, cvss_params))
+
+    if not scenario_rows:
+        raise RuntimeError(f"No scenario rows generated for assessment_id={assessment_id}")
+
+    max_cvss_score = max(r[2] for r in scenario_rows)
+    final_aivss_score = round((max_cvss_score + aars_score) / 2, 4)
+
+    updated_dt = (
+        datetime.strptime(updated_ts, "%Y-%m-%d %H:%M:%S")
+        if isinstance(updated_ts, str)
+        else updated_ts
+    )
+
+    with _db_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # ─────────────────────────────────────────────
+            # SCENARIO UPDATE
+            # ─────────────────────────────────────────────
+            scenario_update_query = sql.SQL("""
+                UPDATE {scenarios_table}
+                SET
+                    cvss_4_0_vector = %s,
+                    cvss_score = %s,
+                    aivss_score = %s,
+                    attack_vector_av = %s,
+                    attack_complexity_ac = %s,
+                    attack_requirements_at = %s,
+                    privileges_required_pr = %s,
+                    user_interaction_ui = %s,
+                    vulnerable_system_confidentiality_vc = %s,
+                    vulnerable_system_integrity_vi = %s,
+                    vulnerable_system_availability_va = %s,
+                    subsequent_system_confidentiality_sc = %s,
+                    subsequent_system_integrity_si = %s,
+                    subsequent_system_availability_sa = %s,
+                    updated_ts = %s,
+                    updated_by = 'Admin'
+                WHERE assessment_id = %s
+                  AND agentic_ai_core_security_risks = %s
+                  AND (%s IS NULL OR tenant_id = %s)
+            """).format(
+                scenarios_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_scenarios")
+            )
+
+            scenario_updates = 0
+
+            for display_name, vector, cvss_score, aivss_score, params in scenario_rows:
+                values = (
+                    vector,
+                    cvss_score,
+                    aivss_score,
+                    params["attack_vector_av"],
+                    params["attack_complexity_ac"],
+                    params["attack_requirements_at"],
+                    params["privileges_required_pr"],
+                    params["user_interaction_ui"],
+                    params["vulnerable_system_confidentiality_vc"],
+                    params["vulnerable_system_integrity_vi"],
+                    params["vulnerable_system_availability_va"],
+                    params["subsequent_system_confidentiality_sc"],
+                    params["subsequent_system_integrity_si"],
+                    params["subsequent_system_availability_sa"],
+                    updated_dt,
+                    assessment_id,
+                    display_name,
+                    tenant_id,
+                    tenant_id,
+                )
+
+                # 🔍 PRINT FULL QUERY
+                print(cursor.mogrify(scenario_update_query, values).decode())
+
+                try:
+                    cursor.execute(scenario_update_query, values)
+                    if cursor.rowcount != 1:
+                        raise RuntimeError(
+                            f"Expected exactly one scenario row for assessment_id={assessment_id}, "
+                            f"scenario={display_name}; rowcount={cursor.rowcount}"
+                        )
+                    scenario_updates += cursor.rowcount
+                except Exception as e:
+                    raise RuntimeError(f"Scenario update failed for {display_name}") from e
+
+            if scenario_updates != len(scenario_rows):
+                raise RuntimeError(
+                    f"Updated {scenario_updates}/{len(scenario_rows)} scenario rows "
+                    f"for assessment_id={assessment_id}"
+                )
+
+            # ─────────────────────────────────────────────
+            # RISK TYPE
+            # ─────────────────────────────────────────────
+            risk_type_query = sql.SQL("""
+                SELECT COUNT(*)
+                FROM {risk_table}
+                WHERE agent_internal_id = %s
+                  AND assessment_id != %s
+                  AND (%s IS NULL OR tenant_id = %s)
+            """).format(
+                risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")
+            )
+
+            risk_values = (agent_internal_id, assessment_id, tenant_id, tenant_id)
+
+            # 🔍 PRINT FULL QUERY
+            print(cursor.mogrify(risk_type_query, risk_values).decode())
+
+            cursor.execute(risk_type_query, risk_values)
+
+            other_count = cursor.fetchone()[0]
+            type_of_risk = "Residual Risk" if other_count > 0 else "Inherent Risk"
+
+            # ─────────────────────────────────────────────
+            # FINAL UPDATE
+            # ─────────────────────────────────────────────
+            assessment_update_query = sql.SQL("""
+                UPDATE {risk_table}
+                SET
+                    state = 'Completed',
+                    cvss_score = %s,
+                    aivss_score = %s,
+                    type_of_risk = %s,
+                    updated_ts = %s,
+                    updated_by = 'Admin'
+                WHERE assessment_id = %s
+                  AND (%s IS NULL OR tenant_id = %s)
+            """).format(
+                risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")
+            )
+
+            assessment_values = (
+                max_cvss_score,
+                final_aivss_score,
+                type_of_risk,
+                updated_dt,
+                assessment_id,
+                tenant_id,
+                tenant_id,
+            )
+
+            # 🔍 PRINT FULL QUERY
+            print(cursor.mogrify(assessment_update_query, assessment_values).decode())
+
+            try:
+                cursor.execute(assessment_update_query, assessment_values)
+
+                if cursor.rowcount == 0:
+                    raise RuntimeError(
+                        f"Failed to update assessment row (no matching record): {assessment_id}"
+                    )
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"Assessment update failed for {assessment_id}"
+                ) from e
+
+
+# ---------------------------------------------------------------------------
+# Assessment name lookup
+# ---------------------------------------------------------------------------
 
 def get_assessment_name(risk_assessment_id: str) -> str:
     with _db_connection() as connection:
@@ -213,6 +1105,7 @@ def get_assessment_name(risk_assessment_id: str) -> str:
                 LIMIT 1
                 """
             ).format(risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment"))
+            print(cursor.mogrify(query, (risk_assessment_id,)).decode())
             cursor.execute(query, (risk_assessment_id,))
             row = cursor.fetchone()
 
@@ -221,28 +1114,135 @@ def get_assessment_name(risk_assessment_id: str) -> str:
     return row[0]
 
 
+# ---------------------------------------------------------------------------
+# Core risk assessment  (core.agent_risk_assessments  – SCD-2 table)
+# ---------------------------------------------------------------------------
+
 def insert_core_risk_assessment(
     agent_internal_id: str,
-    agent_id: str,
+    agent_id:          str,
     risk_assessment_id: str,
+    aars_score:        float,
+    cvss_result:       dict,
     risk_classification: str,
-    created_ts: str,
+    created_ts:        str,
+    tenant_id:         str = None,
 ) -> None:
-    created_at = datetime.strptime(created_ts, "%Y-%m-%d %H:%M:%S")
+    """
+    Insert a completed assessment snapshot into core.agent_risk_assessments.
+    Computes blended risk, aivss, and regulatory risk entirely in Python.
+    """
+    tenant_id  = _normalize_tenant_id(tenant_id)
+    created_at = (
+        datetime.strptime(created_ts, "%Y-%m-%d %H:%M:%S")
+        if isinstance(created_ts, str)
+        else created_ts
+    )
+
+    # Derived scores (all computed in Python, not in SQL)
+    cvss_score            = max(cvss_result["CVSS Numeric"].values())
+    aivss_score           = round((cvss_score + aars_score) / 2, 2)
     regulatory_risk_score = _regulatory_risk_score(risk_classification)
+    blended_risk_score    = round((0.8 * aivss_score) + (regulatory_risk_score * 0.2), 2)
+    blended_risk_class    = _blended_risk_class(blended_risk_score)
+    aivss_class_val       = _aivss_class(aivss_score)
+    regulatory_risk_class = risk_classification
+
     assessment_name = get_assessment_name(risk_assessment_id)
+
+    print(
+        f"[{CORE_SCHEMA}] Inserting risk_assessment_id={risk_assessment_id} "
+        f"agent_internal_id={agent_internal_id} blended={blended_risk_score} ({blended_risk_class}) "
+        f"aivss={aivss_score} regulatory={regulatory_risk_score}"
+    )
 
     with _db_connection() as connection:
         with connection.cursor() as cursor:
+            _lock_agent_assessment(cursor, agent_internal_id, tenant_id)
+            values = (
+                risk_assessment_id,
+                agent_internal_id,
+                agent_id,
+                tenant_id,
+                assessment_name,
+                "Admin",
+                created_at,
+                blended_risk_score,
+                blended_risk_class,
+                aivss_score,
+                aivss_class_val,
+                regulatory_risk_score,
+                regulatory_risk_class,
+                "Completed",
+                True,
+                created_at,
+                created_at,
+            )
+
+            update_query = sql.SQL(
+                """
+                UPDATE {core_table}
+                SET
+                    agent_internal_id = %s,
+                    agent_id = %s,
+                    tenant_id = %s,
+                    assessment_name = %s,
+                    assessor_name = %s,
+                    assessment_ts = %s,
+                    blended_risk_score = %s,
+                    blended_risk_class = %s,
+                    aivss_score = %s,
+                    aivss_class = %s,
+                    regulatory_risk_score = %s,
+                    regulatory_risk_class = %s,
+                    state_name = %s,
+                    is_current = %s,
+                    updated_ts = %s
+                WHERE risk_assessment_id = %s
+                  AND (%s IS NULL OR tenant_id = %s)
+                """
+            ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
+
+            update_values = (
+                agent_internal_id,
+                agent_id,
+                tenant_id,
+                assessment_name,
+                "Admin",
+                created_at,
+                blended_risk_score,
+                blended_risk_class,
+                aivss_score,
+                aivss_class_val,
+                regulatory_risk_score,
+                regulatory_risk_class,
+                "Completed",
+                True,
+                created_at,
+                risk_assessment_id,
+                tenant_id,
+                tenant_id,
+            )
+            print(cursor.mogrify(update_query, update_values).decode())
+            cursor.execute(update_query, update_values)
+            if cursor.rowcount:
+                print(f"[{CORE_SCHEMA}] Updated existing risk_assessment_id={risk_assessment_id}")
+                return
+
             query = sql.SQL(
                 """
                 INSERT INTO {core_table} (
                     risk_assessment_id,
                     agent_internal_id,
                     agent_id,
+                    tenant_id,
                     assessment_name,
                     assessor_name,
                     assessment_ts,
+                    blended_risk_score,
+                    blended_risk_class,
+                    aivss_score,
+                    aivss_class,
                     regulatory_risk_score,
                     regulatory_risk_class,
                     state_name,
@@ -250,37 +1250,40 @@ def insert_core_risk_assessment(
                     created_ts,
                     updated_ts
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
             ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
-            cursor.execute(
-                query,
-                (
-                    risk_assessment_id,
-                    agent_internal_id,
-                    agent_id,
-                    assessment_name,
-                    "Admin",
-                    created_at,
-                    regulatory_risk_score,
-                    risk_classification,
-                    "Completed",
-                    True,
-                    created_at,
-                    created_at,
-                ),
-            )
 
+            print(cursor.mogrify(query, values).decode())
+            cursor.execute(query, values)
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity flags  (core.agent_data_sources)
+# ---------------------------------------------------------------------------
 
 def update_agent_data_sensitivity_flags(
-    agent_internal_id: str,
-    agent_id: str,
+    agent_internal_id:                   str,
+    agent_id:                            str,
     personally_identifiable_information: str,
-    protected_health_information: str,
-    payment_card_industry: str,
+    protected_health_information:        str,
+    payment_card_industry:               str,
+    tenant_id:                           str = None,
 ) -> None:
+    """Update PII / PHI / PCI boolean flags on the agent's data-source rows."""
+    tenant_id = _normalize_tenant_id(tenant_id)
+
     def _to_bool(value: str) -> bool:
         return str(value).strip().lower() == "yes"
+
+    contains_pii = _to_bool(personally_identifiable_information)
+    contains_phi = _to_bool(protected_health_information)
+    contains_pci = _to_bool(payment_card_industry)
+
+    print(
+        f"[{CORE_SCHEMA}] Updating sensitivity flags for agent_internal_id={agent_internal_id} "
+        f"PII={contains_pii} PHI={contains_phi} PCI={contains_pci}"
+    )
 
     with _db_connection() as connection:
         with connection.cursor() as cursor:
@@ -291,39 +1294,142 @@ def update_agent_data_sensitivity_flags(
                     contains_pii = %s,
                     contains_phi = %s,
                     contains_pci = %s,
-                    updated_ts = CURRENT_TIMESTAMP
+                    updated_ts   = CURRENT_TIMESTAMP
                 WHERE agent_internal_id = %s
                   AND (
-                    (source_object_type = 'Agent' AND source_object_id = %s)
-                    OR
-                    (target_object_type = 'Agent' AND target_object_id = %s)
-                  )
+                        (source_object_type = 'Agent' AND source_object_id = %s)
+                        OR
+                        (target_object_type = 'Agent' AND target_object_id = %s)
+                      )
+                  AND (%s IS NULL OR tenant_id = %s)
                 """
             ).format(data_sources_table=_table(CORE_SCHEMA, "agent_data_sources"))
+
+            print(cursor.mogrify(query, (
+                contains_pii,
+                contains_phi,
+                contains_pci,
+                agent_internal_id,
+                agent_id,
+                agent_id,
+                tenant_id, tenant_id,
+            )).decode())
             cursor.execute(
                 query,
                 (
-                    _to_bool(personally_identifiable_information),
-                    _to_bool(protected_health_information),
-                    _to_bool(payment_card_industry),
+                    contains_pii,
+                    contains_phi,
+                    contains_pci,
                     agent_internal_id,
                     agent_id,
                     agent_id,
+                    tenant_id, tenant_id,
                 ),
             )
 
 
-def refresh_curated_agent_360(agent_internal_id: str, agent_id: str) -> dict:
+# ---------------------------------------------------------------------------
+# Summary  (updates both core and risk_management tables)
+# ---------------------------------------------------------------------------
+
+def insert_summary_to_tables(
+    agent_internal_id: str,
+    assessment_id: str,
+    summary: str,
+    tenant_id: str = None,
+) -> None:
+
+    tenant_id = _normalize_tenant_id(tenant_id)
+
+    if summary is None:
+        raise RuntimeError("Summary text is None; cannot persist empty summary.")
+
     with _db_connection() as connection:
         with connection.cursor() as cursor:
+
+            # ─────────────────────────────────────────────
+            # CORE UPDATE
+            # ─────────────────────────────────────────────
+            core_update_query = sql.SQL(
+                """
+                UPDATE {core_table}
+                SET
+                    summary = %s,
+                    updated_ts = CURRENT_TIMESTAMP
+                WHERE agent_internal_id = %s
+                  AND risk_assessment_id = %s
+                  AND (%s IS NULL OR tenant_id = %s)
+                """
+            ).format(
+                core_table=_table(CORE_SCHEMA, "agent_risk_assessments")
+            )
+
+            print(cursor.mogrify(core_update_query, (summary, agent_internal_id, assessment_id, tenant_id, tenant_id)).decode())
+            cursor.execute(
+                core_update_query,
+                (summary, agent_internal_id, assessment_id, tenant_id, tenant_id),
+            )
+
+            if cursor.rowcount == 0:
+                raise RuntimeError(
+                    f"Core update failed for agent_internal_id={agent_internal_id}, "
+                    f"assessment_id={assessment_id}"
+                )
+
+            # ─────────────────────────────────────────────
+            # RISK MANAGEMENT UPDATE
+            # ─────────────────────────────────────────────
+            rm_update_query = sql.SQL(
+                """
+                UPDATE {risk_table}
+                SET
+                    summary = %s,
+                    updated_ts = CURRENT_TIMESTAMP
+                WHERE agent_internal_id = %s
+                  AND assessment_id = %s
+                  AND (%s IS NULL OR tenant_id = %s)
+                """
+            ).format(
+                risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")
+            )
+
+            print(cursor.mogrify(rm_update_query, (summary, agent_internal_id, assessment_id, tenant_id, tenant_id)).decode())
+            cursor.execute(
+                rm_update_query,
+                (summary, agent_internal_id, assessment_id, tenant_id, tenant_id),
+            )
+
+            if cursor.rowcount == 0:
+                raise RuntimeError(
+                    f"Risk management update failed for assessment_id={assessment_id}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Curated agent-360 view refresh
+# ---------------------------------------------------------------------------
+
+def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: str = None) -> dict:
+    """
+    Refresh the curated.agent_360 snapshot for a single agent:
+      1. DELETE any existing rows for this agent.
+      2. Re-INSERT from a live JOIN across all core tables.
+    Returns row counts for observability.
+    """
+    tenant_id = _normalize_tenant_id(tenant_id)
+    with _db_connection() as connection:
+        with connection.cursor() as cursor:
+            _lock_agent_assessment(cursor, agent_internal_id, tenant_id)
+
             delete_query = sql.SQL(
                 """
                 DELETE FROM {agent_360_table}
-                WHERE agent_internal_id = %s
-                   OR agent_id = %s
+                WHERE (agent_internal_id = %s OR agent_id = %s)
+                  AND (%s IS NULL OR tenant_id = %s)
                 """
             ).format(agent_360_table=_table(CURATED_SCHEMA, "agent_360"))
-            cursor.execute(delete_query, (agent_internal_id, agent_id))
+            print(cursor.mogrify(delete_query, (agent_internal_id, agent_id, tenant_id, tenant_id)).decode())
+            cursor.execute(delete_query, (agent_internal_id, agent_id, tenant_id, tenant_id))
             deleted_rows = cursor.rowcount
 
             insert_query = sql.SQL(
@@ -361,16 +1467,16 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str) -> dict:
                     cfg.autonomy_level,
                     cfg.memory_type,
                     cfg.reasoning_model,
-                    COALESCE(tools.tool_count, 0),
-                    COALESCE(data_sources.data_source_count, 0),
-                    COALESCE(apps.business_application_count, 0),
-                    COALESCE(processes.business_process_count, 0),
-                    COALESCE(models.ai_model_count, 0),
+                    COALESCE(tools.tool_count,                        0),
+                    COALESCE(data_sources.data_source_count,          0),
+                    COALESCE(apps.business_application_count,         0),
+                    COALESCE(processes.business_process_count,        0),
+                    COALESCE(models.ai_model_count,                   0),
                     primary_model.model_name,
                     primary_model.model_provider,
-                    COALESCE(data_sources.contains_pii, FALSE),
-                    COALESCE(data_sources.contains_phi, FALSE),
-                    COALESCE(data_sources.contains_pci, FALSE),
+                    COALESCE(data_sources.contains_pii,           FALSE),
+                    COALESCE(data_sources.contains_phi,           FALSE),
+                    COALESCE(data_sources.contains_pci,           FALSE),
                     COALESCE(risk.blended_risk_score, risk.regulatory_risk_score),
                     COALESCE(risk.blended_risk_class, risk.regulatory_risk_class),
                     latest_event.status,
@@ -379,49 +1485,50 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str) -> dict:
                     risk.summary
                 FROM {agents_table} a
                 LEFT JOIN {config_table} cfg
-                    ON cfg.agent_internal_id = a.agent_internal_id
-                   AND COALESCE(cfg.is_current, TRUE) = TRUE
+                    ON  cfg.agent_internal_id = a.agent_internal_id
+                    AND COALESCE(cfg.is_current, TRUE) = TRUE
                 LEFT JOIN (
                     SELECT agent_internal_id, COUNT(*)::bigint AS tool_count
-                    FROM {tools_table}
-                    GROUP BY agent_internal_id
+                    FROM   {tools_table}
+                    GROUP  BY agent_internal_id
                 ) tools
                     ON tools.agent_internal_id = a.agent_internal_id
                 LEFT JOIN (
                     SELECT
                         agent_internal_id,
-                        COUNT(*)::bigint AS data_source_count,
-                        BOOL_OR(COALESCE(contains_pii, FALSE)) AS contains_pii,
-                        BOOL_OR(COALESCE(contains_phi, FALSE)) AS contains_phi,
-                        BOOL_OR(COALESCE(contains_pci, FALSE)) AS contains_pci
-                    FROM {data_sources_table}
-                    GROUP BY agent_internal_id
+                        COUNT(*)::bigint                          AS data_source_count,
+                        BOOL_OR(COALESCE(contains_pii, FALSE))   AS contains_pii,
+                        BOOL_OR(COALESCE(contains_phi, FALSE))   AS contains_phi,
+                        BOOL_OR(COALESCE(contains_pci, FALSE))   AS contains_pci
+                    FROM   {data_sources_table}
+                    GROUP  BY agent_internal_id
                 ) data_sources
                     ON data_sources.agent_internal_id = a.agent_internal_id
                 LEFT JOIN (
                     SELECT agent_internal_id, COUNT(*)::bigint AS business_application_count
-                    FROM {applications_table}
-                    GROUP BY agent_internal_id
+                    FROM   {applications_table}
+                    GROUP  BY agent_internal_id
                 ) apps
                     ON apps.agent_internal_id = a.agent_internal_id
                 LEFT JOIN (
                     SELECT agent_internal_id, COUNT(*)::bigint AS business_process_count
-                    FROM {processes_table}
-                    GROUP BY agent_internal_id
+                    FROM   {processes_table}
+                    GROUP  BY agent_internal_id
                 ) processes
                     ON processes.agent_internal_id = a.agent_internal_id
                 LEFT JOIN (
                     SELECT agent_internal_id, COUNT(*)::bigint AS ai_model_count
-                    FROM {models_table}
-                    GROUP BY agent_internal_id
+                    FROM   {models_table}
+                    GROUP  BY agent_internal_id
                 ) models
                     ON models.agent_internal_id = a.agent_internal_id
                 LEFT JOIN LATERAL (
                     SELECT model_name, model_provider
-                    FROM {models_table} m
-                    WHERE m.agent_internal_id = a.agent_internal_id
-                    ORDER BY COALESCE(m.is_primary_model, FALSE) DESC, m.created_ts DESC NULLS LAST
-                    LIMIT 1
+                    FROM   {models_table} m
+                    WHERE  m.agent_internal_id = a.agent_internal_id
+                    ORDER  BY COALESCE(m.is_primary_model, FALSE) DESC,
+                              m.created_ts DESC NULLS LAST
+                    LIMIT  1
                 ) primary_model ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT
@@ -431,50 +1538,53 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str) -> dict:
                         regulatory_risk_class,
                         state_name,
                         summary
-                    FROM {risk_table} r
-                    WHERE r.agent_internal_id = a.agent_internal_id
-                    ORDER BY r.assessment_ts DESC NULLS LAST, r.updated_ts DESC NULLS LAST
-                    LIMIT 1
+                    FROM   {risk_table} r
+                    WHERE  r.agent_internal_id = a.agent_internal_id
+                    ORDER  BY r.assessment_ts DESC NULLS LAST,
+                              r.updated_ts    DESC NULLS LAST
+                    LIMIT  1
                 ) risk ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT status
-                    FROM {governance_events_table} ge
-                    WHERE ge.agent_internal_id = a.agent_internal_id
-                    ORDER BY ge.event_ts DESC NULLS LAST, ge.created_ts DESC NULLS LAST
-                    LIMIT 1
+                    FROM   {governance_events_table} ge
+                    WHERE  ge.agent_internal_id = a.agent_internal_id
+                    ORDER  BY ge.event_ts    DESC NULLS LAST,
+                              ge.created_ts  DESC NULLS LAST
+                    LIMIT  1
                 ) latest_event ON TRUE
                 WHERE a.agent_internal_id = %s
                   AND COALESCE(a.is_current, TRUE) = TRUE
+                  AND (%s IS NULL OR a.tenant_id = %s)
                 """
             ).format(
-                agent_360_table=_table(CURATED_SCHEMA, "agent_360"),
-                agents_table=_table(CORE_SCHEMA, "agents"),
-                config_table=_table(CORE_SCHEMA, "agent_configurations"),
-                tools_table=_table(CORE_SCHEMA, "agent_tools"),
-                data_sources_table=_table(CORE_SCHEMA, "agent_data_sources"),
-                applications_table=_table(CORE_SCHEMA, "agent_business_applications"),
-                processes_table=_table(CORE_SCHEMA, "agent_business_processes"),
-                models_table=_table(CORE_SCHEMA, "agent_ai_models"),
-                governance_events_table=_table(CORE_SCHEMA, "agent_governance_events"),
-                risk_table=_table(CORE_SCHEMA, "agent_risk_assessments"),
+                agent_360_table         = _table(CURATED_SCHEMA, "agent_360"),
+                agents_table            = _table(CORE_SCHEMA,    "agents"),
+                config_table            = _table(CORE_SCHEMA,    "agent_configurations"),
+                tools_table             = _table(CORE_SCHEMA,    "agent_tools"),
+                data_sources_table      = _table(CORE_SCHEMA,    "agent_data_sources"),
+                applications_table      = _table(CORE_SCHEMA,    "agent_business_applications"),
+                processes_table         = _table(CORE_SCHEMA,    "agent_business_processes"),
+                models_table            = _table(CORE_SCHEMA,    "agent_ai_models"),
+                governance_events_table = _table(CORE_SCHEMA,    "agent_governance_events"),
+                risk_table              = _table(CORE_SCHEMA,    "agent_risk_assessments"),
             )
-            cursor.execute(insert_query, (agent_internal_id,))
+            print(cursor.mogrify(insert_query, (agent_internal_id, tenant_id, tenant_id)).decode())
+            cursor.execute(insert_query, (agent_internal_id, tenant_id, tenant_id))
             inserted_rows = cursor.rowcount
 
     return {
         "agent_internal_id": agent_internal_id,
-        "agent_id": agent_id,
-        "deleted_rows": deleted_rows,
-        "inserted_rows": inserted_rows,
+        "agent_id":          agent_id,
+        "tenant_id":         tenant_id,
+        "deleted_rows":      deleted_rows,
+        "inserted_rows":     inserted_rows,
     }
-
 
 def _val(row: dict, key: str):
     value = row.get(key) if row else None
     if value in (None, "", "null", "NULL"):
         return None
     return value
-
 
 def _query_core_rows(cursor, table_name: str, agent_internal_id: str):
     query = sql.SQL("SELECT * FROM {} WHERE agent_internal_id = %s").format(
@@ -486,7 +1596,67 @@ def _query_core_rows(cursor, table_name: str, agent_internal_id: str):
     return [dict(zip(columns, row)) for row in rows]
 
 
-def create_local_agent_card(agent_internal_id: str, output_dir: str = None) -> dict:
+def _query_agent_application_rows(cursor, agent_internal_id: str):
+    query = sql.SQL(
+        """
+        SELECT
+            aba.business_application_id,
+            COALESCE(ba.application_name, aba.application_name) AS application_name,
+            ba.application_description                           AS description,
+            COALESCE(ba.business_criticality, aba.criticality)  AS criticality,
+            ba.emergency_tier                                    AS emergency_tier
+        FROM {} aba
+        LEFT JOIN {} ba
+            ON ba.business_application_id = aba.business_application_id
+        WHERE aba.agent_internal_id = %s
+        """
+    ).format(
+        _table(CORE_SCHEMA, "agent_business_applications"),
+        _table(CORE_SCHEMA, "business_applications"),
+    )
+    cursor.execute(query, (agent_internal_id,))
+    rows = cursor.fetchall()
+    columns = [d[0] for d in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _query_agent_process_rows(cursor, agent_internal_id: str):
+    query = sql.SQL(
+        """
+        SELECT
+            abp.business_process_id,
+            COALESCE(bp.process_name, abp.process_name)          AS process_name,
+            bp.process_description                               AS description,
+            COALESCE(bp.business_criticality, abp.criticality)   AS criticality,
+            bp.parent_process_id                                 AS parent_process_id,
+            rel.related_process_ids                              AS related_process_ids
+        FROM {} abp
+        LEFT JOIN {} bp
+            ON bp.business_process_id = abp.business_process_id
+        LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(rel_id ORDER BY rel_id) AS related_process_ids
+            FROM (
+                SELECT bp.parent_process_id AS rel_id
+                WHERE bp.parent_process_id IS NOT NULL
+                UNION
+                SELECT child.business_process_id AS rel_id
+                FROM {} child
+                WHERE child.parent_process_id = abp.business_process_id
+            ) rel
+        ) rel ON TRUE
+        WHERE abp.agent_internal_id = %s
+        """
+    ).format(
+        _table(CORE_SCHEMA, "agent_business_processes"),
+        _table(CORE_SCHEMA, "business_processes"),
+        _table(CORE_SCHEMA, "business_processes"),
+    )
+    cursor.execute(query, (agent_internal_id,))
+    rows = cursor.fetchall()
+    columns = [d[0] for d in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
     # Mirrors index.py card shape, but sources data from Postgres core schema.
     table_names = [
         "agents",
@@ -513,15 +1683,16 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None) -> d
     with _db_connection() as connection:
         with connection.cursor() as cursor:
             data = {name: _query_core_rows(cursor, name, agent_internal_id) for name in table_names}
+            application_rows = _query_agent_application_rows(cursor, agent_internal_id)
+            process_rows = _query_agent_process_rows(cursor, agent_internal_id)
 
     def first(name: str) -> dict:
         rows = data.get(name, [])
         return rows[0] if rows else {}
-
     ag = first("agents")
     if not ag:
         raise ValueError(f"No core.agents record found for agent_internal_id={agent_internal_id}")
-
+    
     ai = first("agent_identifications")
     ac = first("agent_configurations")
     ara = first("agent_risk_assessments")
@@ -531,24 +1702,24 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None) -> d
     apt = first("agent_prompt_templates")
     amem = first("agent_memories")
     arf = first("agent_regulations_or_frameworks")
-
+    
     use_cases = data["agent_ai_use_cases"]
-    apps = data["agent_business_applications"]
+    apps = application_rows
     ai_models = data["agent_ai_models"]
-    biz_procs = data["agent_business_processes"]
+    biz_procs = process_rows
     phys_ai = data["agent_physical_ai"]
     llm_models = data["agent_llm_models"]
     tools = data["agent_tools"]
     dsources = data["agent_data_sources"]
     controls = data["agent_controls"]
-
+    
     card = {
         "capabilities": {"streaming": False},
         "defaultInputModes": ["text"],
         "defaultOutputModes": ["text"],
         "name": _val(ag, "agent_name"),
         "description": _val(ag, "agent_description"),
-        "preferredTransport": "JSONRPC",
+        "preferredTransport": _val(ag, "preferred_transport"),
         "protocol_version": _val(ag, "protocol_version"),
         "instruction_sets": [],
         "skills": [],
@@ -562,7 +1733,7 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None) -> d
         "security": None,
         "security_schemes": None,
         "signatures": None,
-        "supports_authenticated_extended_card": True,
+        "supports_authenticated_extended_card": _val(ag, "supports_auth_ext_card"),
         "additional_interfaces": None,
         "version": _val(ag, "card_version"),
         "identification": {
@@ -734,16 +1905,10 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None) -> d
             "summary": _val(ara, "summary"),
         },
     }
-
+    
     target_dir = Path(output_dir or os.getenv("LOCAL_AGENT_CARD_DIR", "./agent_cards"))
     target_dir.mkdir(parents=True, exist_ok=True)
     agent_id = _val(ag, "agent_id") or agent_internal_id
     file_path = target_dir / f"{agent_id}_agent_card.json"
     with file_path.open("w", encoding="utf-8") as f:
         json.dump(card, f, indent=2, default=str)
-
-    return {
-        "agent_internal_id": agent_internal_id,
-        "agent_id": agent_id,
-        "file_path": str(file_path.resolve()),
-    }

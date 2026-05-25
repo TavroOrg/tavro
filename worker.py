@@ -15,7 +15,7 @@ import psycopg2.pool
 
 from tavro_agent_card import TavroAgentCard
 
-API_URL = os.getenv("API_URL", "http://fastapi:80/classify-risk")
+API_URL = os.getenv("API_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
 API_DISPATCH_MAX_WORKERS = int(os.getenv("API_DISPATCH_MAX_WORKERS", "20"))
 WAIT_FOR_API_DISPATCH = os.getenv("WAIT_FOR_API_DISPATCH", "false").strip().lower() == "true"
 _api_dispatch_pool = ThreadPoolExecutor(max_workers=API_DISPATCH_MAX_WORKERS)
@@ -51,8 +51,6 @@ def init_pool():
 
 
 def _get_conn():
-    if _pool is None:
-        init_pool()
     return _pool.getconn()
 
 
@@ -630,6 +628,148 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
     execute_dml(sql, label="agent_ai_use_cases BULK INSERT ON CONFLICT")
 
 
+def _clean_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _canonical_entity_id(raw_identifier, raw_name):
+    return _clean_text(raw_identifier) or _clean_text(raw_name)
+
+
+def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
+    processes = card.get("business_process", []) or []
+    if not has_meaningful_data(processes):
+        print("Skipping core.business_processes: all values are null/empty.")
+        return
+
+    select_rows = []
+    inserted_ids = set()
+    referenced_ids = set()
+
+    for proc in processes:
+        business_process_id = _canonical_entity_id(proc.get("identifier"), proc.get("name"))
+        if not business_process_id or business_process_id in inserted_ids:
+            continue
+        inserted_ids.add(business_process_id)
+        referenced_ids.add(business_process_id)
+
+        process_number = _clean_text(proc.get("process_number")) or business_process_id
+        parent_process_id = _canonical_entity_id(
+            proc.get("parent_process_id"),
+            proc.get("parent_process_name"),
+        )
+        if parent_process_id:
+            referenced_ids.add(parent_process_id)
+        select_rows.append(f"""
+            SELECT
+                {_sq(business_process_id)}              AS business_process_id,
+                {_sq(process_number)}                   AS process_number,
+                {_sq(proc.get('name'))}                 AS process_name,
+                {_sq(proc.get('description'))}          AS process_description,
+                {_sq(parent_process_id)}                AS parent_process_id,
+                {_sq(proc.get('business_criticality'))} AS business_criticality,
+                TIMESTAMP '{now_str}'                   AS now_ts
+        """.strip())
+
+    if not select_rows:
+        print("Skipping core.business_processes: no process identifiers found.")
+        return
+
+    process_seed_rows = "\nUNION ALL\n".join(
+        f"SELECT {_sq(pid)} AS business_process_id, TIMESTAMP '{now_str}' AS now_ts"
+        for pid in sorted(referenced_ids)
+    )
+    process_seed_sql = f"""
+        INSERT INTO core.business_processes (
+            business_process_id, process_number, created_ts, updated_ts
+        )
+        SELECT business_process_id, business_process_id, now_ts, now_ts
+        FROM ({process_seed_rows}) AS seed
+        ON CONFLICT (business_process_id)
+        DO UPDATE SET
+            updated_ts = EXCLUDED.updated_ts
+    """
+    execute_dml(process_seed_sql, label="business_processes SEED FOR HIERARCHY")
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+
+    sql = f"""
+        INSERT INTO core.business_processes (
+            business_process_id, process_number, process_name, process_description,
+            parent_process_id, business_criticality, created_ts, updated_ts
+        )
+        SELECT
+            business_process_id, process_number, process_name, process_description,
+            parent_process_id, business_criticality, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (business_process_id)
+        DO UPDATE SET
+            process_number       = COALESCE(EXCLUDED.process_number, core.business_processes.process_number),
+            process_name         = COALESCE(EXCLUDED.process_name, core.business_processes.process_name),
+            process_description  = COALESCE(EXCLUDED.process_description, core.business_processes.process_description),
+            parent_process_id    = COALESCE(EXCLUDED.parent_process_id, core.business_processes.parent_process_id),
+            business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_processes.business_criticality),
+            updated_ts           = EXCLUDED.updated_ts
+    """
+    print(f"  Upserting {len(select_rows)} core business processes â€¦")
+    execute_dml(sql, label="business_processes BULK INSERT ON CONFLICT")
+
+
+def upsert_business_applications(card: dict, agent_internal_id: str, now_str: str):
+    applications = card.get("application", []) or []
+    if not has_meaningful_data(applications):
+        print("Skipping core.business_applications: all values are null/empty.")
+        return
+
+    select_rows = []
+    inserted_ids = set()
+
+    for app in applications:
+        business_application_id = _canonical_entity_id(app.get("identifier"), app.get("name"))
+        if not business_application_id or business_application_id in inserted_ids:
+            continue
+        inserted_ids.add(business_application_id)
+
+        select_rows.append(f"""
+            SELECT
+                {_sq(business_application_id)}           AS business_application_id,
+                {_sq(app.get('name'))}                   AS application_name,
+                {_sq(app.get('business_criticality'))}   AS business_criticality,
+                {_sq(app.get('emergency_tier'))}         AS emergency_tier,
+                {_sq(app.get('description'))}            AS application_description,
+                TIMESTAMP '{now_str}'                    AS now_ts
+        """.strip())
+
+    if not select_rows:
+        print("Skipping core.business_applications: no application identifiers found.")
+        return
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+
+    sql = f"""
+        INSERT INTO core.business_applications (
+            business_application_id, application_name, business_criticality,
+            emergency_tier, application_description, created_ts, updated_ts
+        )
+        SELECT
+            business_application_id, application_name, business_criticality,
+            emergency_tier, application_description, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (business_application_id)
+        DO UPDATE SET
+            application_name        = COALESCE(EXCLUDED.application_name, core.business_applications.application_name),
+            business_criticality    = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
+            emergency_tier          = COALESCE(EXCLUDED.emergency_tier, core.business_applications.emergency_tier),
+            application_description = COALESCE(EXCLUDED.application_description, core.business_applications.application_description),
+            updated_ts              = EXCLUDED.updated_ts
+    """
+    print(f"  Upserting {len(select_rows)} core business applications ...")
+    execute_dml(sql, label="business_applications BULK INSERT ON CONFLICT")
+
+
 def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str: str):
     ident     = card.get("identification", {})
     processes = card.get("business_process", []) or []
@@ -639,17 +779,27 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
 
     agent_id    = ident.get("agent_id")
     select_rows = []
+    process_ids = []
 
     for proc in processes:
+        business_process_id = _canonical_entity_id(proc.get("identifier"), proc.get("name"))
+        if not business_process_id:
+            continue
+        process_ids.append(business_process_id)
+
         select_rows.append(f"""
             SELECT
                 {_sq(agent_internal_id)}                AS agent_internal_id,
                 {_sq(agent_id)}                         AS agent_id,
-                {_sq(proc.get('identifier'))}           AS business_process_id,
+                {_sq(business_process_id)}              AS business_process_id,
                 {_sq(proc.get('name'))}                 AS process_name,
                 {_sq(proc.get('business_criticality'))} AS criticality,
                 TIMESTAMP '{now_str}'                   AS now_ts
         """.strip())
+
+    if not select_rows:
+        print("Skipping business_process: no process identifiers found.")
+        return
 
     union_all = "\nUNION ALL\n".join(select_rows)
 
@@ -669,8 +819,17 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
             criticality         = EXCLUDED.criticality,
             updated_ts          = EXCLUDED.updated_ts
     """
-    print(f"  Upserting {len(processes)} business processes …")
+    print(f"  Upserting {len(select_rows)} business processes ...")
     execute_dml(sql, label="agent_business_processes BULK INSERT ON CONFLICT")
+
+    unique_ids = list(dict.fromkeys(process_ids))
+    ids_sql = ", ".join(_sq(pid) for pid in unique_ids)
+    cleanup_sql = f"""
+        DELETE FROM core.agent_business_processes
+        WHERE agent_internal_id = {_sq(agent_internal_id)}
+          AND (business_process_id IS NULL OR business_process_id NOT IN ({ids_sql}))
+    """
+    execute_dml(cleanup_sql, label="agent_business_processes DELETE STALE RELATIONS")
 
 
 def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_str: str):
@@ -682,17 +841,27 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
 
     agent_id    = ident.get("agent_id")
     select_rows = []
+    application_ids = []
 
     for app in applications:
+        business_application_id = _canonical_entity_id(app.get("identifier"), app.get("name"))
+        if not business_application_id:
+            continue
+        application_ids.append(business_application_id)
+
         select_rows.append(f"""
             SELECT
-                {_sq(agent_internal_id)}                  AS agent_internal_id,
-                {_sq(agent_id)}                           AS agent_id,
-                {_sq(app.get('identifier'))}              AS business_application_id,
-                {_sq(app.get('name'))}                    AS application_name,
-                {_sq(app.get('business_criticality'))}    AS criticality,
-                TIMESTAMP '{now_str}'                     AS now_ts
+                {_sq(agent_internal_id)}                AS agent_internal_id,
+                {_sq(agent_id)}                         AS agent_id,
+                {_sq(business_application_id)}          AS business_application_id,
+                {_sq(app.get('name'))}                  AS application_name,
+                {_sq(app.get('business_criticality'))}  AS criticality,
+                TIMESTAMP '{now_str}'                   AS now_ts
         """.strip())
+
+    if not select_rows:
+        print("Skipping application: no application identifiers found.")
+        return
 
     union_all = "\nUNION ALL\n".join(select_rows)
 
@@ -707,14 +876,22 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, business_application_id)
         DO UPDATE SET
-            agent_id                = EXCLUDED.agent_id,
-            application_name        = EXCLUDED.application_name,
-            criticality             = EXCLUDED.criticality,
-            updated_ts              = EXCLUDED.updated_ts
+            agent_id         = EXCLUDED.agent_id,
+            application_name = EXCLUDED.application_name,
+            criticality      = EXCLUDED.criticality,
+            updated_ts       = EXCLUDED.updated_ts
     """
-    print(f"  Upserting {len(applications)} business applications …")
+    print(f"  Upserting {len(select_rows)} business applications ...")
     execute_dml(sql, label="agent_business_applications BULK INSERT ON CONFLICT")
 
+    unique_ids = list(dict.fromkeys(application_ids))
+    ids_sql = ", ".join(_sq(app_id) for app_id in unique_ids)
+    cleanup_sql = f"""
+        DELETE FROM core.agent_business_applications
+        WHERE agent_internal_id = {_sq(agent_internal_id)}
+          AND (business_application_id IS NULL OR business_application_id NOT IN ({ids_sql}))
+    """
+    execute_dml(cleanup_sql, label="agent_business_applications DELETE STALE RELATIONS")
 
 def upsert_agent_guardrail(card: dict, agent_internal_id: str, now_str: str):
     ident     = card.get("identification", {})
@@ -1106,8 +1283,24 @@ def dispatch_to_api(agent_internal_id: str, card: dict) -> bool:
         "agent_id": agent_id,
         "agent_name": agent_name,
         "agent_description": agent_description,
-        "agent_instructions": ident.get("instruction"),
+        "agent_instructions": _clean_required(ident.get("instruction")),
+        "agent_role": _clean_required(ident.get("role")),
+        "provider": "Agentic AI System Platform",
+        "agent_platform": _clean_required(card.get("provider", {}).get("organization")),
+        "tenant_id": "",
+        "attack_vector_av": "N",
+        "attack_complexity_ac": "L",
+        "attack_requirements_at": "P",
+        "privileges_required_pr": "L",
+        "user_interaction_ui": "P",
+        "vulnerable_system_confidentiality_vc": "L",
+        "vulnerable_system_integrity_vi": "L",
+        "vulnerable_system_availability_va": "L",
+        "subsequent_system_confidentiality_sc": "L",
+        "subsequent_system_integrity_si": "L",
+        "subsequent_system_availability_sa": "L"
     }
+
     agent_ref = (
         f"agent_internal_id={payload['agent_internal_id']}, "
         f"agent_id={payload['agent_id']}, "
@@ -1220,30 +1413,32 @@ def process_card(card_dict: dict):
         print(f"[WARN] source_hash check failed, continuing: {e}")
 
     try:
-        print("[INFO] Step  1/19 — agents")
+        print("[INFO] Step  1/21 - agents")
         agent_internal_id = upsert_agent(card_dict, now_str, incoming_source_hash)
     except Exception as e:
         print(f"[ERROR] upsert_agent failed: {e}")
         return
 
     steps = [
-        ("[INFO] Step  2/19 — agent_configurations",        upsert_agent_configuration),
-        ("[INFO] Step  3/19 — agent_identifications",       upsert_agent_identification),
-        ("[INFO] Step  4/19 — agent_tools",                 upsert_agent_tools),
-        ("[INFO] Step  5/19 — agent_controls",              upsert_agent_controls),
-        ("[INFO] Step  6/19 — agent_knowledge_sources",     upsert_agent_knowledge_source),
-        ("[INFO] Step  7/19 — agent_llm_models",            upsert_agent_llm_models),
-        ("[INFO] Step  8/19 — agent_ai_use_cases",          upsert_agent_ai_use_cases),
-        ("[INFO] Step  9/19 — agent_business_processes",    upsert_agent_business_processes),
-        ("[INFO] Step 10/19 — agent_business_applications", upsert_agent_business_applications),
-        ("[INFO] Step 11/19 — agent_guardrails",            upsert_agent_guardrail),
-        ("[INFO] Step 12/19 — agent_mcp_servers",           upsert_agent_mcp_server),
-        ("[INFO] Step 13/19 — agent_memories",              upsert_agent_memory),
-        ("[INFO] Step 14/19 — agent_physical_ai",           upsert_agent_physical_ai),
-        ("[INFO] Step 15/19 — agent_prompt_templates",      upsert_agent_prompt_template),
-        ("[INFO] Step 16/19 — agent_regulations_or_frameworks", upsert_agent_regulation_or_framework),
-        ("[INFO] Step 17/19 — agent_ai_models",             upsert_agent_ai_models),
-        ("[INFO] Step 18/19 — agent_data_sources",          upsert_agent_data_sources),
+        ("[INFO] Step  2/21 - agent_configurations",              upsert_agent_configuration),
+        ("[INFO] Step  3/21 - agent_identifications",             upsert_agent_identification),
+        ("[INFO] Step  4/21 - agent_tools",                       upsert_agent_tools),
+        ("[INFO] Step  5/21 - agent_controls",                    upsert_agent_controls),
+        ("[INFO] Step  6/21 - agent_knowledge_sources",           upsert_agent_knowledge_source),
+        ("[INFO] Step  7/21 - agent_llm_models",                  upsert_agent_llm_models),
+        ("[INFO] Step  8/21 - agent_ai_use_cases",                upsert_agent_ai_use_cases),
+        ("[INFO] Step  9/21 - business_processes",                upsert_business_processes),
+        ("[INFO] Step 10/21 - business_applications",             upsert_business_applications),
+        ("[INFO] Step 11/21 - agent_business_processes",          upsert_agent_business_processes),
+        ("[INFO] Step 12/21 - agent_business_applications",       upsert_agent_business_applications),
+        ("[INFO] Step 13/21 - agent_guardrails",                  upsert_agent_guardrail),
+        ("[INFO] Step 14/21 - agent_mcp_servers",                 upsert_agent_mcp_server),
+        ("[INFO] Step 15/21 - agent_memories",                    upsert_agent_memory),
+        ("[INFO] Step 16/21 - agent_physical_ai",                 upsert_agent_physical_ai),
+        ("[INFO] Step 17/21 - agent_prompt_templates",            upsert_agent_prompt_template),
+        ("[INFO] Step 18/21 - agent_regulations_or_frameworks",   upsert_agent_regulation_or_framework),
+        ("[INFO] Step 19/21 - agent_ai_models",                   upsert_agent_ai_models),
+        ("[INFO] Step 20/21 - agent_data_sources",                upsert_agent_data_sources),
     ]
 
     for label, fn in steps:
@@ -1254,7 +1449,7 @@ def process_card(card_dict: dict):
             print(f"[ERROR] {fn.__name__} failed: {e}")
 
     try:
-        print("[INFO] Step 19/19 — dispatching to classify-risk API")
+        print("[INFO] Step 21/21 - dispatching to classify-risk API")
         if dispatch_to_api_async(agent_internal_id, card_dict):
             print("  ✓ API dispatch queued")
         else:
