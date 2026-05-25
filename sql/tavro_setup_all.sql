@@ -44,6 +44,8 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
 
+ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
+
 DO $$ BEGIN
     CREATE TYPE twin.visibility_level AS ENUM (
         'public','internal','restricted','confidential'

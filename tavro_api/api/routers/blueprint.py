@@ -580,7 +580,6 @@ Categories to include:
 - "organisation": exactly 3 nodes — one per major business unit or functional area
 - "finance": exactly 3 nodes — revenue model, cost structure, key financial metrics
 
-
 Rules:
 - Do NOT invent specific revenue figures, employee counts, or named executives
 - Use qualitative descriptions and industry-typical ranges where appropriate
