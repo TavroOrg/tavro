@@ -12,24 +12,22 @@ WORKDIR /app
 
 # ── Install Python dependencies ───────────────────────────────────────────────
 COPY tavro_api/requirements.txt /tmp/requirements.txt
-COPY tavro-python-stack/services/requirements.txt /tmp/requirements-risk.txt
-COPY tavro-python-stack/services/requirements-postgres.txt /tmp/requirements-postgres.txt
-COPY tavro-python-stack/dist/tavro_agent_card-0.1.1-py3-none-any.whl /tmp/
+COPY services/requirements.txt /tmp/requirements-risk.txt
+COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl /tmp/
 
 RUN pip install  \
       -r /tmp/requirements.txt \
-      -r /tmp/requirements-risk.txt \
-      -r /tmp/requirements-postgres.txt && \
+      -r /tmp/requirements-risk.txt && \
     pip install /tmp/tavro_agent_card-0.1.1-py3-none-any.whl
 
 # ── Copy Digital Twin API source ─────────────────────────────────────────────
 COPY tavro_api/ /app/
 
 # ── Copy Risk stack source (keeps original import paths intact) ───────────────
-COPY tavro-python-stack/services     /app/services
-COPY tavro-python-stack/risk_agents  /app/risk_agents
-COPY tavro-python-stack/utils        /app/utils
-COPY tavro-python-stack/config.yaml.example /app/config.yaml.example
+COPY services     /app/services
+COPY tavro_library /app/tavro_library
+COPY utils        /app/utils
+COPY config.yaml.example /app/config.yaml.example
 
 ENV PYTHONPATH=/app
 

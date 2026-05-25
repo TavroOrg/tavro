@@ -34,11 +34,11 @@ _WORKFLOW_STATUS: Dict[str, Dict[str, Any]] = {}
 # DATABASE CONFIG
 # ============================================================
 
-CORE_GLUE_DB_NAME = os.getenv("CORE_GLUE_DB_NAME")
-CURATED_GLUE_DB_NAME = os.getenv("CURATED_GLUE_DB_NAME")
+CORE_DB_NAME = os.getenv("CORE_DB_NAME")
+CURATED_DB_NAME = os.getenv("CURATED_DB_NAME")
 RISK_MANAGEMENT_DB_NAME = os.getenv(
     "RISK_MANAGEMENT_DB_NAME",
-    os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME")
+    os.getenv("RISK_MANAGEMENT_DB_NAME")
 )
 
 
@@ -225,13 +225,13 @@ def delete_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
     queries = [
 
         f"""
-        UPDATE {CORE_GLUE_DB_NAME}.agent_risk_assessments
+        UPDATE {CORE_DB_NAME}.agent_risk_assessments
         SET summary = NULL
         WHERE agent_internal_id = %s
         """,
 
         f"""
-        UPDATE {CURATED_GLUE_DB_NAME}.agent_360
+        UPDATE {CURATED_DB_NAME}.agent_360
         SET summary = NULL
         WHERE agent_internal_id = %s
         """,
@@ -314,8 +314,8 @@ def update_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
             a.source_system,
             a.tenant_id,
             i.instruction
-        FROM {CORE_GLUE_DB_NAME}.agents a
-        LEFT JOIN {CORE_GLUE_DB_NAME}.agent_identifications i
+        FROM {CORE_DB_NAME}.agents a
+        LEFT JOIN {CORE_DB_NAME}.agent_identifications i
             ON a.agent_internal_id = i.agent_internal_id
             AND a.agent_id = i.agent_id
             AND i.is_current = true

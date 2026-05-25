@@ -5,12 +5,12 @@
 --
 -- Usage (from host):
 --   docker compose exec tavro-postgres \
---     psql -U tavro_user -d tavro -f /sql/setup_all.sql
+--     psql -U tavro -d tavro -f /sql/tavro_setup_all.sql
 --
 -- Or copy into container first:
---   docker cp setup_all.sql tavro-postgres:/tmp/setup_all.sql
+--   docker cp sql/tavro_setup_all.sql tavro-postgres:/tmp/tavro_setup_all.sql
 --   docker compose exec tavro-postgres \
---     psql -U tavro_user -d tavro -f /tmp/setup_all.sql
+--     psql -U tavro -d tavro -f /tmp/tavro_setup_all.sql
 -- =============================================================
 
 \echo '======================================================'
@@ -26,6 +26,7 @@ SET search_path = ag_catalog, "$user", public;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS age;
+ALTER DATABASE tavro SET search_path = ag_catalog, "$user", public;
 
 
 -- ── 1. Schema & core types ────────────────────────────────────────────────────
@@ -143,6 +144,17 @@ CREATE TABLE IF NOT EXISTS twin.source_ref (
 );
 CREATE INDEX IF NOT EXISTS source_ref_node_idx   ON twin.source_ref (dim_node_id);
 CREATE INDEX IF NOT EXISTS source_ref_system_idx ON twin.source_ref (system_name, external_id);
+
+CREATE TABLE IF NOT EXISTS twin.dim_node_attachment (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    node_id      UUID        NOT NULL REFERENCES twin.dim_node(id) ON DELETE CASCADE,
+    filename     TEXT        NOT NULL,
+    content_type TEXT        NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes   BIGINT      NOT NULL,
+    data         BYTEA       NOT NULL,
+    uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS dim_node_attachment_node_idx ON twin.dim_node_attachment (node_id);
 
 -- context_log — partitioned by quarter
 CREATE TABLE IF NOT EXISTS twin.context_log (
@@ -283,6 +295,7 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
 );
 CREATE INDEX IF NOT EXISTS compliance_item_type_idx    ON twin.compliance_item (item_type, status);
 CREATE INDEX IF NOT EXISTS compliance_item_company_idx ON twin.compliance_item (company_id) WHERE company_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS compliance_item_name_idx    ON twin.compliance_item USING GIN(to_tsvector('english', name));
 
 CREATE TABLE IF NOT EXISTS twin.compliance_dimension (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -300,6 +313,7 @@ CREATE TABLE IF NOT EXISTS twin.compliance_dimension (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS compliance_dim_item_idx ON twin.compliance_dimension (compliance_item_id);
+CREATE INDEX IF NOT EXISTS compliance_dim_type_idx ON twin.compliance_dimension (dim_type_id);
 
 CREATE TABLE IF NOT EXISTS twin.compliance_impact (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -325,6 +339,8 @@ CREATE TABLE IF NOT EXISTS twin.compliance_impact (
 );
 CREATE INDEX IF NOT EXISTS compliance_impact_item_idx    ON twin.compliance_impact (compliance_item_id);
 CREATE INDEX IF NOT EXISTS compliance_impact_company_idx ON twin.compliance_impact (company_id);
+CREATE INDEX IF NOT EXISTS compliance_impact_node_idx    ON twin.compliance_impact (dim_node_id) WHERE dim_node_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS compliance_impact_level_idx   ON twin.compliance_impact (impact_level);
 
 CREATE TABLE IF NOT EXISTS twin.compliance_document (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -442,6 +458,7 @@ CREATE INDEX IF NOT EXISTS audit_finding_run_idx       ON twin.audit_finding (au
 CREATE INDEX IF NOT EXISTS audit_finding_company_idx   ON twin.audit_finding (company_id);
 CREATE INDEX IF NOT EXISTS audit_finding_usecase_idx   ON twin.audit_finding (use_case_id);
 CREATE INDEX IF NOT EXISTS audit_finding_risk_idx      ON twin.audit_finding (risk_level);
+CREATE INDEX IF NOT EXISTS audit_finding_status_idx    ON twin.audit_finding (status);
 
 DO $$ BEGIN
     CREATE TRIGGER audit_run_updated_at
@@ -492,66 +509,80 @@ INSERT INTO twin.compliance_dim_type (name, category, scope, system_defined) VAL
 ON CONFLICT DO NOTHING;
 
 -- Seed regulations (shared — no company_id)
+WITH regulation_seed
+    (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, status, ai_researched)
+AS (
+    VALUES
+        ('regulation', 'external',
+         'Bank Secrecy Act / Anti-Money Laundering', 'BSA/AML',
+         'Federal law requiring financial institutions to assist government agencies in detecting and preventing money laundering.',
+         'FinCEN / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','credit-union'],
+         'active', false),
+
+        ('regulation', 'external',
+         'Dodd-Frank Wall Street Reform and Consumer Protection Act', 'Dodd-Frank',
+         'Comprehensive financial reform legislation enacted in response to the 2008 financial crisis.',
+         'US Congress / CFPB / SEC', ARRAY['US'], ARRAY['banking','securities','insurance'],
+         'active', false),
+
+        ('regulation', 'external',
+         'General Data Protection Regulation', 'GDPR',
+         'EU regulation on data protection and privacy for individuals within the EU and EEA.',
+         'European Data Protection Board', ARRAY['EU','EEA'],
+         ARRAY['all-industries','technology','banking','healthcare'],
+         'active', false),
+
+        ('regulation', 'external',
+         'Health Insurance Portability and Accountability Act', 'HIPAA',
+         'US law providing data privacy and security provisions for safeguarding medical information.',
+         'HHS / OCR', ARRAY['US'], ARRAY['healthcare','insurance','technology'],
+         'active', false),
+
+        ('regulation', 'external',
+         'OCC Heightened Standards for Large Financial Institutions', 'OCC Heightened Standards',
+         'OCC guidelines establishing minimum standards for the design and implementation of a risk governance framework.',
+         'OCC', ARRAY['US'], ARRAY['banking'],
+         'active', false),
+
+        ('regulation', 'external',
+         'Equal Credit Opportunity Act', 'ECOA',
+         'Federal law prohibiting creditors from discriminating against credit applicants on the basis of race, color, religion, national origin, sex, marital status, age, or receipt of public assistance.',
+         'CFPB / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','lending'],
+         'active', false),
+
+        ('regulation', 'external',
+         'Gramm-Leach-Bliley Act', 'GLBA',
+         'Requires financial institutions to explain how they share and protect their customers'' private information.',
+         'Federal Trade Commission', ARRAY['US'], ARRAY['banking','insurance','fintech'],
+         'active', false)
+)
 INSERT INTO twin.compliance_item
     (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, status, ai_researched)
-VALUES
-    ('regulation', 'external',
-     'Bank Secrecy Act / Anti-Money Laundering', 'BSA/AML',
-     'Federal law requiring financial institutions to assist government agencies in detecting and preventing money laundering.',
-     'FinCEN / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','credit-union'],
-     'active', false),
-
-    ('regulation', 'external',
-     'Dodd-Frank Wall Street Reform and Consumer Protection Act', 'Dodd-Frank',
-     'Comprehensive financial reform legislation enacted in response to the 2008 financial crisis.',
-     'US Congress / CFPB / SEC', ARRAY['US'], ARRAY['banking','securities','insurance'],
-     'active', false),
-
-    ('regulation', 'external',
-     'General Data Protection Regulation', 'GDPR',
-     'EU regulation on data protection and privacy for individuals within the EU and EEA.',
-     'European Data Protection Board', ARRAY['EU','EEA'],
-     ARRAY['all-industries','technology','banking','healthcare'],
-     'active', false),
-
-    ('regulation', 'external',
-     'Health Insurance Portability and Accountability Act', 'HIPAA',
-     'US law providing data privacy and security provisions for safeguarding medical information.',
-     'HHS / OCR', ARRAY['US'], ARRAY['healthcare','insurance','technology'],
-     'active', false),
-
-    ('regulation', 'external',
-     'OCC Heightened Standards for Large Financial Institutions', 'OCC Heightened Standards',
-     'OCC guidelines establishing minimum standards for the design and implementation of a risk governance framework.',
-     'OCC', ARRAY['US'], ARRAY['banking'],
-     'active', false),
-
-    ('regulation', 'external',
-     'Equal Credit Opportunity Act', 'ECOA',
-     'Federal law prohibiting creditors from discriminating against credit applicants on the basis of race, color, religion, national origin, sex, marital status, age, or receipt of public assistance.',
-     'CFPB / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','lending'],
-     'active', false),
-
-    ('regulation', 'external',
-     'Gramm-Leach-Bliley Act', 'GLBA',
-     'Requires financial institutions to explain how they share and protect their customers'' private information.',
-     'Federal Trade Commission', ARRAY['US'], ARRAY['banking','insurance','fintech'],
-     'active', false)
-ON CONFLICT DO NOTHING;
+SELECT
+    s.item_type, s.scope, s.name, s.short_name, s.description, s.issuing_body,
+    s.jurisdiction, s.industry_tags, s.status, s.ai_researched
+FROM regulation_seed s
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM twin.compliance_item ci
+    WHERE ci.item_type = s.item_type
+      AND ci.name = s.name
+      AND COALESCE(ci.short_name, '') = COALESCE(s.short_name, '')
+);
 
 \echo '======================================================'
 \echo ' Setup complete.'
 \echo ''
 \echo ' Tables created:'
 \echo '   twin.company, twin.dim_type, twin.dim_node'
-\echo '   twin.dim_edge, twin.source_ref, twin.context_log'
+\echo '   twin.dim_edge, twin.source_ref, twin.dim_node_attachment, twin.context_log'
 \echo '   twin.compliance_dim_type, twin.compliance_item'
 \echo '   twin.compliance_dimension, twin.compliance_impact'
-\echo '   twin.compliance_document'
+\echo '   twin.compliance_document, public.agent_attachment'
 \echo '   twin.audit_run, twin.audit_finding'
 \echo ''
 \echo ' Seed data loaded:'
-\echo '   8 blueprint dim_types'
+\echo '   9 blueprint dim_types'
 \echo '   15 compliance dim_types'
 \echo '   7 seeded regulations'
 \echo ''

@@ -14,9 +14,9 @@ from api.database import get_db
 
 router = APIRouter()
 
-CORE    = os.getenv("CORE_GLUE_DB_NAME",       "core")
-CURATED = os.getenv("CURATED_GLUE_DB_NAME",    "curated")
-RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_GLUE_DB_NAME", "risk_management"))
+CORE    = os.getenv("CORE_DB_NAME",       "core")
+CURATED = os.getenv("CURATED_DB_NAME",    "curated")
+RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
 _RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
 
 
