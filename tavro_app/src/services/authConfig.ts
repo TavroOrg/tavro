@@ -9,7 +9,7 @@ const fallbackConfig: AuthConfig = {
     zitadelIssuer: import.meta.env.VITE_ZITADEL_ISSUER?.replace(/\/$/, '') || '',
     zitadelClientId: import.meta.env.VITE_ZITADEL_CLIENT_ID || '',
     zitadelRedirectPath: import.meta.env.VITE_ZITADEL_REDIRECT_PATH || '/auth/callback',
-    zitadelScope: import.meta.env.VITE_ZITADEL_SCOPE || 'openid profile email',
+    zitadelScope: import.meta.env.VITE_ZITADEL_SCOPE || 'openid profile email urn:zitadel:iam:user:resourceowner',
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
