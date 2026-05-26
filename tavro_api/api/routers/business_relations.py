@@ -822,17 +822,17 @@ async def _fetch_processes(
     """
 
     has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
-    has_auc = await _table_exists(db, "core", "agent_ai_use_cases")
+    has_auc = await _table_exists(db, "core", "ai_use_cases")
     auc_order_sql = "ORDER BY 1"
     if has_auc:
-        auc_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        auc_cols = await _table_columns(db, "core", "ai_use_cases")
         order_parts: list[str] = []
         if "updated_ts" in auc_cols:
             order_parts.append("auc.updated_ts DESC NULLS LAST")
         if "created_ts" in auc_cols:
             order_parts.append("auc.created_ts DESC NULLS LAST")
-        if "identifier" in auc_cols:
-            order_parts.append("auc.identifier")
+        if "ai_use_case_id" in auc_cols:
+            order_parts.append("auc.ai_use_case_id")
         if order_parts:
             auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
     if has_uc_proc_rel and has_auc:
@@ -866,8 +866,8 @@ async def _fetch_processes(
                             auc.owner,
                             auc.priority,
                             auc.status
-                        FROM core.agent_ai_use_cases auc
-                        WHERE auc.identifier = rel.ai_use_case_id
+                        FROM core.ai_use_cases auc
+                        WHERE auc.ai_use_case_id = rel.ai_use_case_id
                         {auc_order_sql}
                         LIMIT 1
                     ) latest ON TRUE

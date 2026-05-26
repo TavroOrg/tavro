@@ -214,8 +214,8 @@ async def upload_use_cases(
         try:
             await db.execute(
                 text(f"""
-                    INSERT INTO {CORE}.agent_ai_use_cases
-                        (tenant_id, identifier, name, description, owner,
+                    INSERT INTO {CORE}.ai_use_cases
+                        (tenant_id, ai_use_case_id, name, description, owner,
                          problem_statement, expected_benefits, priority, status,
                          solution_approach, agent_risk_exposure_are, no_of_associated_agents,
                          inherent_risk_classification, residual_risk_classification,
