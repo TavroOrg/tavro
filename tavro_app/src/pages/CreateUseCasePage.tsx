@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { mcpClient } from '../services/mcpClient';
-import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, ClipboardList } from 'lucide-react';
+import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import { useCaseApi } from '../services/useCaseApi';
 
@@ -33,11 +33,30 @@ const CreateUseCasePage: React.FC = () => {
         status: 'Proposed',
     });
     const [saving, setSaving] = useState(false);
+    const [generatingDescription, setGeneratingDescription] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
     const set = (field: string, value: string) =>
         setForm(prev => ({ ...prev, [field]: value }));
+
+    const handleSuggestDescription = async () => {
+        if (!form.name.trim()) {
+            setError('Enter a use case name first so AI can generate the description.');
+            return;
+        }
+
+        setGeneratingDescription(true);
+        setError(null);
+        try {
+            const result = await useCaseApi.suggestDescription(form.name.trim());
+            if (result.description) set('description', result.description);
+        } catch (err: any) {
+            setError(err.message || 'Failed to generate description.');
+        } finally {
+            setGeneratingDescription(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -153,7 +172,27 @@ const CreateUseCasePage: React.FC = () => {
 
                         {/* Description */}
                         <div>
-                            <label className={labelCls}>Description <span className="text-red-500">*</span></label>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <label className={`${labelCls} mb-0`}>Description <span className="text-red-500">*</span></label>
+                                <button
+                                    type="button"
+                                    onClick={handleSuggestDescription}
+                                    disabled={generatingDescription || !form.name.trim()}
+                                    title={form.name.trim() ? 'Generate description with AI' : 'Enter a use case name first'}
+                                    className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                                        generatingDescription
+                                            ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-500 cursor-wait'
+                                            : form.name.trim()
+                                                ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 hover:border-violet-300 dark:hover:border-violet-600'
+                                                : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {generatingDescription
+                                        ? <RefreshCw size={11} className="animate-spin" />
+                                        : <Sparkles size={11} />}
+                                    {generatingDescription ? 'Generating…' : 'AI assist'}
+                                </button>
+                            </div>
                             <textarea
                                 rows={3}
                                 required

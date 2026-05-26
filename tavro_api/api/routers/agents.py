@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import json
 import os
 import uuid
 from typing import Any, Dict, List, Optional
@@ -11,6 +11,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.routers.blueprint import (
+    _call_anthropic,
+    _call_openai,
+    _collect_text,
+    _extract_json,
+)
 
 router = APIRouter()
 
@@ -23,6 +29,20 @@ _RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/cl
 def _tenant(request: Request) -> Optional[str]:
     val = request.headers.get("x-tenant-id", "")
     return val.strip() or None
+
+def _resolve_agent_llm() -> tuple[str, str]:
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if anthropic_key:
+        return "anthropic", anthropic_key
+
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        return "openai", openai_key
+
+    raise HTTPException(
+        status_code=500,
+        detail="No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
+    )
 
 
 def _require_tenant(request: Request) -> str:
@@ -85,6 +105,32 @@ class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = None
     description: Optional[str] = None
     instruction: Optional[str] = None
+
+class SuggestAgentDescriptionRequest(BaseModel):
+    agent_name: str
+
+
+class SuggestAgentDescriptionResponse(BaseModel):
+    description: str
+
+
+SUGGEST_AGENT_DESCRIPTION_SYSTEM = """You are helping a user create an AI agent in Tavro.
+
+Given only an agent name, generate a short plain-text description of what the agent likely does.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent implementation details, integrations, or company-specific facts.
+- Focus on the agent's likely purpose, users, and business value based on the name alone.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence agent description"
+}"""
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +265,45 @@ async def create_agent(
 
     return {"agent_id": agent_id, "agent_name": body.agent_name,
             "message": "Agent created successfully and risk assessment triggered."}
+
+@router.post("/suggest-description", response_model=SuggestAgentDescriptionResponse, summary="Suggest Agent Description")
+async def suggest_agent_description(body: SuggestAgentDescriptionRequest):
+    agent_name = body.agent_name.strip()
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="agent_name is required")
+
+    provider, api_key = _resolve_agent_llm()
+    user_prompt = f"""Generate a concise description for this AI agent:
+
+Agent name: {agent_name}
+
+Return ONLY the JSON object with the "description" field."""
+
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_AGENT_DESCRIPTION_SYSTEM,
+            300,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_AGENT_DESCRIPTION_SYSTEM,
+            tools=None,
+            max_tokens=300,
+        )
+
+    raw = _collect_text(data).strip()
+    try:
+        parsed = json.loads(_extract_json(raw))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestAgentDescriptionResponse(
+        description=str(parsed.get("description", "")).strip(),
+    )
 
 
 # ---------------------------------------------------------------------------

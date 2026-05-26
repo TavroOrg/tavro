@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles} from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
@@ -22,12 +22,33 @@ const CreateAgentPage: React.FC = () => {
     owner: '', role: '', environment: '',
   });
   const [saving, setSaving] = useState(false);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const redirectTimerRef = useRef<number | null>(null);
 
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  const handleSuggestDescription = async () => {
+    if (!form.name.trim()) {
+      setError('Enter an agent name first so AI can generate the description.');
+      return;
+    }
+
+    setGeneratingDescription(true);
+    setError(null);
+    try {
+      const result = await agentApi.suggestDescription(form.name.trim());
+      if (result.description) {
+        set('description', result.description);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate description.');
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,14 +199,45 @@ const CreateAgentPage: React.FC = () => {
             </div>
 
             <div>
-              <label className={labelCls}>Description</label>
-              <textarea
-                rows={3}
-                value={form.description}
-                onChange={e => set('description', e.target.value)}
-                placeholder="What this agent does and what problem it solves"
-                className={`${inputCls} resize-none`}
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <label className={`${labelCls} mb-0`}>Description</label>
+                <button
+                  type="button"
+                  onClick={handleSuggestDescription}
+                  disabled={generatingDescription || !form.name.trim()}
+                  title={form.name.trim() ? 'Generate description with AI' : 'Enter an agent name first'}
+                  className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                    generatingDescription
+                      ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-500 cursor-wait'
+                      : form.name.trim()
+                      ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 hover:border-violet-300 dark:hover:border-violet-600'
+                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  {generatingDescription
+                    ? <RefreshCw size={11} className="animate-spin" />
+                    : <Sparkles size={11} />}
+                  {generatingDescription ? 'Generating…' : 'AI assist'}
+                </button>
+              </div>
+              <div className="relative">
+                <textarea
+                  rows={3}
+                  value={form.description}
+                  onChange={e => set('description', e.target.value)}
+                  placeholder={generatingDescription ? 'Generating description…' : 'What this agent does and what problem it solves'}
+                  className={`${inputCls} resize-none transition-all ${generatingDescription ? 'opacity-50' : ''}`}
+                  disabled={generatingDescription}
+                />
+                {generatingDescription && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/60 dark:bg-slate-800/60">
+                    <div className="flex items-center gap-2 text-violet-600 dark:text-violet-400 text-[11px] font-bold">
+                      <Sparkles size={13} className="animate-pulse" />
+                      Generating with AI…
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
