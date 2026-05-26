@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { extractAndStoreTenantId } from '../services/auth';
 
 const AuthCallback: React.FC = () => {
     const navigate = useNavigate();
@@ -253,6 +254,7 @@ const AuthCallback: React.FC = () => {
                         if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
                         localStorage.removeItem('tavro_pkce_verifier');
                         localStorage.setItem('tavro_auth', 'true');
+                        extractAndStoreTenantId();
                         sessionStorage.removeItem('tavro_catalog_agents_cache');
                         sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
                         sessionStorage.removeItem('tavro_catalog_usecases_cache');

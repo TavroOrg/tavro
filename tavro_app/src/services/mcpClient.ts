@@ -699,6 +699,9 @@ ${toolSummary}`;
                     window.dispatchEvent(new CustomEvent('tavro:usecase-created', { detail: result }));
                 } else if (name === 'create_agent') {
                     this.invalidateCache();
+                    window.dispatchEvent(new CustomEvent('tavro:agent-created', {
+                        detail: { result, args: toolArgs },
+                    }));
                 }
             }
             return result;

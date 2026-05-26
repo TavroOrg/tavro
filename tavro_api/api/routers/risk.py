@@ -151,6 +151,7 @@ class UpdateRiskSummaryRequest(BaseModel):
 class WorkflowStatusItem(BaseModel):
     workflow_id: str
     run_id: Optional[str] = None
+    tenant_id: Optional[str] = None
     agent_internal_id: str
     agent_id: str
     agent_name: str
@@ -166,6 +167,7 @@ def _set_workflow_status(
     workflow_id: str,
     *,
     run_id: Optional[str],
+    tenant_id: Optional[str],
     agent_internal_id: str,
     agent_id: str,
     agent_name: str,
@@ -180,6 +182,7 @@ def _set_workflow_status(
         _WORKFLOW_STATUS[workflow_id] = {
             "workflow_id": workflow_id,
             "run_id": run_id or (prev.get("run_id") if prev else None),
+            "tenant_id": tenant_id or (prev.get("tenant_id") if prev else None),
             "agent_internal_id": agent_internal_id,
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -195,6 +198,11 @@ def _set_workflow_status(
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+def _tenant(request: Request) -> Optional[str]:
+    val = request.headers.get("x-tenant-id", "")
+    val = val.strip()
+    return val or None
 
 def get_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
 
@@ -362,11 +370,13 @@ def update_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
 # ============================================================
 
 @router.post("/classify-risk", response_model=RiskClassificationResponse)
-async def classify_risk(request: RiskClassificationRequest):
+async def classify_risk(request: RiskClassificationRequest, http_request: Request):
     workflow_id = f"risk-manager-{uuid.uuid4()}"
+    tenant_id = request.tenant_id or _tenant(http_request)
     _set_workflow_status(
         workflow_id,
         run_id=None,
+        tenant_id=tenant_id,
         agent_internal_id=request.agent_internal_id,
         agent_id=request.agent_id,
         agent_name=request.agent_name,
@@ -399,7 +409,7 @@ async def classify_risk(request: RiskClassificationRequest):
                 request.subsequent_system_confidentiality_sc,
                 request.subsequent_system_integrity_si,
                 request.subsequent_system_availability_sa,
-                request.tenant_id,
+                tenant_id,
             ],
             id=workflow_id,
             task_queue=TASK_QUEUE,
@@ -408,6 +418,7 @@ async def classify_risk(request: RiskClassificationRequest):
         _set_workflow_status(
             workflow_id,
             run_id=handle.result_run_id,
+            tenant_id=tenant_id,
             agent_internal_id=request.agent_internal_id,
             agent_id=request.agent_id,
             agent_name=request.agent_name,
@@ -422,6 +433,7 @@ async def classify_risk(request: RiskClassificationRequest):
         _set_workflow_status(
             workflow_id,
             run_id=handle.result_run_id,
+            tenant_id=tenant_id,
             agent_internal_id=request.agent_internal_id,
             agent_id=request.agent_id,
             agent_name=request.agent_name,
@@ -445,6 +457,7 @@ async def classify_risk(request: RiskClassificationRequest):
         _set_workflow_status(
             workflow_id,
             run_id=None,
+            tenant_id=tenant_id,
             agent_internal_id=request.agent_internal_id,
             agent_id=request.agent_id,
             agent_name=request.agent_name,
@@ -458,15 +471,20 @@ async def classify_risk(request: RiskClassificationRequest):
 
 @router.get("/workflows", response_model=List[WorkflowStatusItem])
 async def list_risk_workflows(request: Request, status: Optional[str] = None, agent_id: Optional[str] = None):
+    tenant_id = _tenant(request)
+    print("TENANT_ID:", tenant_id)
     with _WORKFLOW_STATUS_LOCK:
         rows = list(_WORKFLOW_STATUS.values())
 
-    tenant_id = (request.headers.get("x-tenant-id") or "").strip()
     if tenant_id:
         rows = [r for r in rows if str(r.get("tenant_id") or "") == tenant_id]
+    else:
+        rows = [r for r in rows if not str(r.get("tenant_id") or "").strip()]
+
     if status:
         status_l = status.strip().lower()
         rows = [r for r in rows if str(r.get("status", "")).lower() == status_l]
+
     if agent_id:
         aid = agent_id.strip().lower()
         rows = [r for r in rows if str(r.get("agent_id", "")).lower() == aid or str(r.get("agent_internal_id", "")).lower() == aid]
