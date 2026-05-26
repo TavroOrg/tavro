@@ -173,7 +173,6 @@ def _set_workflow_status(
     agent_name: str,
     agent_description: str,
     status: str,
-    tenant_id: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
@@ -182,7 +181,6 @@ def _set_workflow_status(
         _WORKFLOW_STATUS[workflow_id] = {
             "workflow_id": workflow_id,
             "run_id": run_id or (prev.get("run_id") if prev else None),
-            "tenant_id": tenant_id or (prev.get("tenant_id") if prev else None),
             "agent_internal_id": agent_internal_id,
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -382,7 +380,6 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
         agent_name=request.agent_name,
         agent_description=request.agent_description,
         status="running",
-        tenant_id=request.tenant_id,
     )
 
     try:
@@ -424,7 +421,6 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="running",
-            tenant_id=request.tenant_id,
         )
 
         workflow_result = await handle.result()
@@ -439,7 +435,6 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="completed",
-            tenant_id=request.tenant_id,
         )
 
         return RiskClassificationResponse(
@@ -463,7 +458,6 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="failed",
-            tenant_id=request.tenant_id,
             error=str(e),
         )
         raise
