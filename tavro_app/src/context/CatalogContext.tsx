@@ -255,7 +255,15 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     const old = key ? prevMap.get(key) : undefined;
                     const base = old ? mergeAgent(agent, old) : agent;
                     const runningForAgent = runningRecords.some(wf => workflowMatchesAgent(wf, base));
-                    if (!runningForAgent) return base;
+                    if (!runningForAgent) {
+                        if (base.identification?.governance_status === 'Risk Assessment is running') {
+                            return {
+                                ...base,
+                                identification: { ...base.identification, governance_status: null },
+                            };
+                        }
+                        return base;
+                    }
                     return {
                         ...base,
                         latest_risk_score: null,
@@ -470,6 +478,75 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             return next;
         });
     }, []);
+
+    useEffect(() => {
+        const handleAgentCreated = (event: Event) => {
+            const { result, args } = (event as CustomEvent).detail ?? {};
+
+            // Extract agent_id from the MCP result (handles several common response shapes).
+            const agentId: string | undefined =
+                result?.agent_id ||
+                result?.identification?.agent_id ||
+                result?.agent_card?.agent_id ||
+                result?.agent_card?.identification?.agent_id;
+
+            const agentName: string =
+                args?.agent_name || result?.agent_name || result?.name || agentId || '';
+            const description: string =
+                args?.description || result?.description || agentName;
+
+            if (!agentId) return;
+
+            // Immediately surface the agent with a pending-assessment status so it
+            // appears in the catalog before the backend workflow status is polled.
+            const optimisticAgent: AgentData = {
+                name: agentName,
+                description,
+                version: '1.0',
+                identification: {
+                    agent_id: agentId,
+                    role: null,
+                    instruction: args?.instruction || null,
+                    governance_status: 'Risk Assessment is running',
+                },
+                configuration: { autonomy_level: null },
+                tool: [],
+                data_source: [],
+                application: [],
+                business_process: [],
+                risk_assessment: null,
+            };
+            upsertAgent(optimisticAgent);
+
+            // Register agent for workflow-completion tracking so the 5-second poller
+            // knows this session owns the workflow and can trigger an auto-refresh.
+            try {
+                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+                localStorage.setItem(
+                    'tavro_pending_assessment_agents',
+                    JSON.stringify(Array.from(new Set([...pending, agentId]))),
+                );
+
+                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                const meta = metaRaw
+                    ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>)
+                    : [];
+                const filtered = meta.filter(item => item.agent_id !== agentId);
+                filtered.unshift({ agent_id: agentId, name: agentName, description, created_at: new Date().toISOString() });
+                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+            } catch {
+                // localStorage writes are best-effort
+            }
+
+            // Silent background fetch to pull the real record from the backend
+            // without showing a full loading spinner.
+            fetchAgents(false);
+        };
+
+        window.addEventListener('tavro:agent-created', handleAgentCreated);
+        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+    }, [upsertAgent, fetchAgents]);
 
     return (
         <CatalogContext.Provider value={{ agents, loading, error, lastFetched, refresh, upsertAgent }}>
