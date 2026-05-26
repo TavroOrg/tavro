@@ -158,6 +158,7 @@ class WorkflowStatusItem(BaseModel):
     agent_description: str
     status: str
     error: Optional[str] = None
+    tenant_id: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -172,6 +173,7 @@ def _set_workflow_status(
     agent_name: str,
     agent_description: str,
     status: str,
+    tenant_id: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
@@ -186,6 +188,7 @@ def _set_workflow_status(
             "agent_name": agent_name,
             "agent_description": agent_description,
             "status": status,
+            "tenant_id": tenant_id if tenant_id is not None else (prev.get("tenant_id") if prev else None),
             "error": error,
             "created_at": prev.get("created_at", now) if prev else now,
             "updated_at": now,
@@ -379,6 +382,7 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
         agent_name=request.agent_name,
         agent_description=request.agent_description,
         status="running",
+        tenant_id=request.tenant_id,
     )
 
     try:
@@ -420,6 +424,7 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="running",
+            tenant_id=request.tenant_id,
         )
 
         workflow_result = await handle.result()
@@ -434,6 +439,7 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="completed",
+            tenant_id=request.tenant_id,
         )
 
         return RiskClassificationResponse(
@@ -457,6 +463,7 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             agent_name=request.agent_name,
             agent_description=request.agent_description,
             status="failed",
+            tenant_id=request.tenant_id,
             error=str(e),
         )
         raise
@@ -473,9 +480,11 @@ async def list_risk_workflows(request: Request, status: Optional[str] = None, ag
         rows = [r for r in rows if str(r.get("tenant_id") or "") == tenant_id]
     else:
         rows = [r for r in rows if not str(r.get("tenant_id") or "").strip()]
+
     if status:
         status_l = status.strip().lower()
         rows = [r for r in rows if str(r.get("status", "")).lower() == status_l]
+
     if agent_id:
         aid = agent_id.strip().lower()
         rows = [r for r in rows if str(r.get("agent_id", "")).lower() == aid or str(r.get("agent_internal_id", "")).lower() == aid]

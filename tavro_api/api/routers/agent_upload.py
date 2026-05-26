@@ -31,6 +31,13 @@ def _get_tenant(request: Request):
     return val.strip() or None
 
 
+def _require_tenant(request: Request) -> str:
+    tenant_id = _get_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant context.")
+    return tenant_id
+
+
 def _parse_cards_from_bytes(filename: str, content: bytes) -> list[dict]:
     """Parse JSON bytes into a list of card dicts. Supports single object or array."""
     try:
@@ -78,7 +85,7 @@ async def upload_agents(
     Returns the count of successfully uploaded agents and a prompt to complete
     risk assessments.
     """
-    tenant_id = _get_tenant(request)
+    tenant_id = _require_tenant(request)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")

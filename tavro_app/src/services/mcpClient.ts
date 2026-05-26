@@ -356,16 +356,11 @@ class McpClientService {
                 throw new Error(`MCP initialization failed: HTTP ${res.status}: ${body}`);
             }
 
-            // Capture session and tenant metadata from headers
+            // Capture session metadata. Do NOT accept tenant_id from the MCP
+            // response headers — tenant mapping must originate from Zitadel or
+            // the client-side admin switch. Prefer the saved client-side tenant.
             this.sessionId = res.headers.get('mcp-session-id');
-            const serverTenantId = res.headers.get('x-tenant-id') || res.headers.get('mcp-tenant-id') || res.headers.get('tenant_id');
-
-            if (serverTenantId) {
-                this.tenantId = serverTenantId;
-                localStorage.setItem('tavro_tenant_id', serverTenantId);
-            } else if (savedTenantId) {
-                this.tenantId = savedTenantId;
-            }
+            this.tenantId = savedTenantId || null;
 
             this.initialized = true;
             appLogger.info('MCP Session established', { sessionId: this.sessionId, tenantId: this.tenantId });
