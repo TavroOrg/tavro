@@ -132,7 +132,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
 
   return (
     <Overlay onClose={onClose}>
-      <div className="w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+      <div className="w-full max-w-3xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
@@ -158,7 +158,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
 
           {/* Category */}
           <Field label="Category" required>
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-5 gap-1.5">
               {(Object.keys(CATEGORY_LABELS) as DimCategory[]).map(cat => {
                 const p = CATEGORY_PALETTE[cat];
                 const active = category === cat;
