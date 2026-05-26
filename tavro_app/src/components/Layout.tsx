@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ProductTour from './ProductTour';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Home, Bot, Workflow, BarChart2, Settings,
@@ -169,11 +170,13 @@ const Layout: React.FC = () => {
 
     return (
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+            <ProductTour />
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
                 {/* Logo */}
                 <div
+                    id="tour-logo"
                     className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
                     onClick={() => navigate('/')}
                 >
@@ -191,6 +194,7 @@ const Layout: React.FC = () => {
                         {/* Nav links */}
                         <div className="flex flex-col p-4 gap-2">
                             <button
+                                id="tour-nav-home"
                                 onClick={() => navigate('/')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/'
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -202,6 +206,7 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                id="tour-nav-use-cases"
                                 onClick={() => navigate('/use-cases')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -213,6 +218,7 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                id="tour-nav-agents"
                                 onClick={() => navigate('/catalog')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -224,6 +230,7 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                id="tour-nav-applications"
                                 onClick={() => navigate('/applications')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -235,6 +242,7 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                id="tour-nav-processes"
                                 onClick={() => navigate('/processes')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -246,6 +254,7 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                id="tour-nav-insights"
                                 onClick={() => navigate('/insights')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/insights'
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -256,6 +265,7 @@ const Layout: React.FC = () => {
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Insights</span>
                             </button>
                             <button
+                                id="tour-nav-blueprint"
                                 onClick={() => navigate('/blueprint')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -272,6 +282,7 @@ const Layout: React.FC = () => {
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Blueprint</span>
                             </button>
                             <button
+                                id="tour-nav-compliance"
                                 onClick={() => navigate('/compliance')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/compliance')
@@ -290,6 +301,7 @@ const Layout: React.FC = () => {
                                     }`}>Compliance</span>
                             </button>
                             <button
+                                id="tour-nav-audit"
                                 onClick={() => navigate('/audit')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
                                     } ${location.pathname.startsWith('/audit')
@@ -308,6 +320,7 @@ const Layout: React.FC = () => {
                                     }`}>Audit Center</span>
                             </button>
                             <button
+                                id="tour-nav-playground"
                                 onClick={() => navigate('/playground')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -327,7 +340,7 @@ const Layout: React.FC = () => {
                     </div>{/* end scrollable nav */}
 
                     {/* Catalog Sync Widget - pinned */}
-                    <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
+                    <div id="tour-catalog-sync" className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
@@ -372,6 +385,7 @@ const Layout: React.FC = () => {
                     {/* Bottom Actions */}
                     <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
                         <button
+                            id="tour-nav-settings"
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
                                 ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -423,6 +437,7 @@ const Layout: React.FC = () => {
                 {!isPanelOpen ? (
                     <div className="flex flex-col items-center py-6 gap-3 w-full h-full">
                         <button
+                            id="tour-panel-chat"
                             onClick={() => setActivePanel('chat')}
                             className="flex flex-col items-center gap-1.5 p-3 w-14 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors shadow-sm border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 outline-none"
                             title="AI Assistant"

@@ -1,0 +1,54 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:9000",
+      "localStorage": [
+        {
+          "name": "tavro_chat_sessions",
+          "value": "[{\"id\":\"session-1779773385012-ik6oh\",\"title\":\"New Chat\",\"selectedProvider\":null,\"createdAt\":\"2026-05-26T05:29:45.012Z\",\"updatedAt\":\"2026-05-26T05:29:45.012Z\",\"messages\":[]}]"
+        },
+        {
+          "name": "tavro_oidc_provider",
+          "value": "zitadel"
+        },
+        {
+          "name": "tavro_chat_active_session",
+          "value": "session-1779773385012-ik6oh"
+        },
+        {
+          "name": "tavro_theme",
+          "value": "light"
+        },
+        {
+          "name": "tavro_auth",
+          "value": "true"
+        },
+        {
+          "name": "tavro_raw_access_token",
+          "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItcGxheXdyaWdodCIsImlzcyI6Imh0dHBzOi8vdGVzdC56aXRhZGVsLnRhdnJvLmFpIiwiYXVkIjpbInRhdnJvLXBvcnRhbCJdLCJleHAiOjE3Nzk3NzY5ODQsImlhdCI6MTc3OTc3MzM4NCwiZW1haWwiOiJwbGF5d3JpZ2h0QHRhdnJvLmFpIiwibmFtZSI6IlBsYXl3cmlnaHQgVGVzdGVyIiwiZ2l2ZW5fbmFtZSI6IlBsYXl3cmlnaHQiLCJmYW1pbHlfbmFtZSI6IlRlc3RlciJ9.playwright-fake-sig"
+        },
+        {
+          "name": "tavro_pending_assessment_agents",
+          "value": "[]"
+        },
+        {
+          "name": "tavro_id_token",
+          "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItcGxheXdyaWdodCIsImlzcyI6Imh0dHBzOi8vdGVzdC56aXRhZGVsLnRhdnJvLmFpIiwiYXVkIjpbInRhdnJvLXBvcnRhbCJdLCJleHAiOjE3Nzk3NzY5ODQsImlhdCI6MTc3OTc3MzM4NCwiZW1haWwiOiJwbGF5d3JpZ2h0QHRhdnJvLmFpIiwibmFtZSI6IlBsYXl3cmlnaHQgVGVzdGVyIiwiZ2l2ZW5fbmFtZSI6IlBsYXl3cmlnaHQiLCJmYW1pbHlfbmFtZSI6IlRlc3RlciJ9.playwright-fake-sig"
+        },
+        {
+          "name": "tavro_access_token",
+          "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItcGxheXdyaWdodCIsImlzcyI6Imh0dHBzOi8vdGVzdC56aXRhZGVsLnRhdnJvLmFpIiwiYXVkIjpbInRhdnJvLXBvcnRhbCJdLCJleHAiOjE3Nzk3NzY5ODQsImlhdCI6MTc3OTc3MzM4NCwiZW1haWwiOiJwbGF5d3JpZ2h0QHRhdnJvLmFpIiwibmFtZSI6IlBsYXl3cmlnaHQgVGVzdGVyIiwiZ2l2ZW5fbmFtZSI6IlBsYXl3cmlnaHQiLCJmYW1pbHlfbmFtZSI6IlRlc3RlciJ9.playwright-fake-sig"
+        },
+        {
+          "name": "tavro_oidc_issuer",
+          "value": "https://test.zitadel.tavro.ai"
+        },
+        {
+          "name": "tavro_pending_assessment_agent_meta",
+          "value": "[]"
+        }
+      ]
+    }
+  ]
+}

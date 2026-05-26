@@ -1,0 +1,58 @@
+name: Demo videos
+
+# Regenerate marketing videos on every release tag (v*) or on-demand.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      slow_mo:
+        description: 'slowMo delay in ms (default 400 for CI)'
+        required: false
+        default: '400'
+
+jobs:
+  record:
+    name: Record demo videos
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tavro_app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tavro_app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Record demo videos (standard 1280×720)
+        run: npm run demo:ci
+        env:
+          DEMO_SLOW_MO: ${{ github.event.inputs.slow_mo || '400' }}
+
+      - name: Upload demo videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-videos-${{ github.ref_name }}-${{ github.run_id }}
+          path: |
+            tavro_app/test-results/
+            tavro_app/demo-screenshots/
+          retention-days: 90
+
+      - name: Upload demo HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-report-${{ github.ref_name }}-${{ github.run_id }}
+          path: tavro_app/playwright-report/demos/
+          retention-days: 30

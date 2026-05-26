@@ -7,7 +7,21 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report",
+    "demo": "playwright test --config playwright.demo.config.ts --project=demo-chrome",
+    "demo:full": "playwright test demos/06-full-user-journey.demo.ts --config playwright.demo.config.ts --project=demo-chrome",
+    "demo:tour": "playwright test demos/07-product-tour.demo.ts --config playwright.demo.config.ts --project=demo-chrome",
+    "demo:hd": "playwright test --config playwright.demo.config.ts --project=demo-chrome-hd",
+    "demo:ci": "CI=true playwright test --config playwright.demo.config.ts --project=demo-chrome",
+    "demo:report": "playwright show-report playwright-report/demos",
+    "demo:auth": "playwright test demos/auth.setup.ts --config playwright.demo.config.ts --project=demo-auth-setup",
+    "demo:live": "playwright test --config playwright.demo.config.ts --project=demo-chrome-live",
+    "record": "bash scripts/record-demo.sh"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -17,12 +31,14 @@
     "lucide-react": "^1.14.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-joyride": "^3.1.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.1",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.52.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
