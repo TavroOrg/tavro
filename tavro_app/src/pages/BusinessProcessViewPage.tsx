@@ -9,9 +9,11 @@ import {
   Loader2,
   Pencil,
   PlusCircle,
+  RefreshCw,
   Save,
   Search,
   ShieldAlert,
+  Sparkles,
   Trash2,
   Unlink2,
   XCircle,
@@ -264,6 +266,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('overview');
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const [searchAgents, setSearchAgents] = useState('');
@@ -419,6 +422,26 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const setField = (key: keyof ProcessFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSuggestDescription = async () => {
+    if (!form.process_name.trim()) {
+      setActionError('Process Name is required before generating the description.');
+      return;
+    }
+
+    setGeneratingDescription(true);
+    setActionError(null);
+    try {
+      const result = await businessRelationsApi.suggestProcessDescription(form.process_name.trim());
+      if (result.description) {
+        setField('process_description', result.description);
+      }
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to generate process description');
+    } finally {
+      setGeneratingDescription(false);
+    }
   };
 
   const isProcessNameMissing = !form.process_name.trim();
@@ -820,13 +843,36 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <div className="md:col-span-2 flex flex-col gap-1.5">
-                <HintLabel label="Description" />
+                <div className="flex items-center justify-between">
+                  <HintLabel label="Description" />
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={handleSuggestDescription}
+                      disabled={generatingDescription || !form.process_name.trim()}
+                      title={form.process_name.trim() ? 'Generate description with AI' : 'Enter a process name first'}
+                      className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                        generatingDescription
+                          ? 'bg-violet-50 border-violet-200 text-violet-500 cursor-wait'
+                          : form.process_name.trim()
+                            ? 'bg-violet-50 border-violet-200 text-violet-600 hover:bg-violet-100 hover:border-violet-300'
+                            : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                      }`}
+                    >
+                      {generatingDescription
+                        ? <RefreshCw size={11} className="animate-spin" />
+                        : <Sparkles size={11} />}
+                      {generatingDescription ? 'Generating...' : 'AI assist'}
+                    </button>
+                  )}
+                </div>
                 {editing ? (
                   <textarea
                     value={form.process_description}
                     onChange={(e) => setField('process_description', e.target.value)}
                     rows={3}
-                    className={textAreaCls}
+                    className={`${textAreaCls} ${generatingDescription ? 'opacity-50' : ''}`}
+                    disabled={generatingDescription}
                   />
                 ) : (
                   <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]">

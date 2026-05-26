@@ -82,6 +82,13 @@ class BusinessRelationsApi {
     });
   }
 
+  async suggestApplicationDescription(applicationName: string): Promise<{ description: string }> {
+    return req('/applications/suggest-description', {
+      method: 'POST',
+      body: JSON.stringify({ application_name: applicationName }),
+    });
+  }
+
   async updateApplication(
     applicationId: string,
     payload: BusinessApplicationUpsertPayload,
@@ -117,6 +124,13 @@ class BusinessRelationsApi {
     return req('/processes', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  async suggestProcessDescription(processName: string): Promise<{ description: string }> {
+    return req('/processes/suggest-description', {
+      method: 'POST',
+      body: JSON.stringify({ process_name: processName }),
     });
   }
 

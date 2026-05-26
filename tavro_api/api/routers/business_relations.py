@@ -11,6 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.routers.agents import _resolve_agent_llm
+from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
@@ -194,6 +196,59 @@ class EntityAttachmentCreate(BaseModel):
     mime_type: str
     content_base64: str
 
+class SuggestApplicationDescriptionRequest(BaseModel):
+    application_name: str
+
+
+class SuggestApplicationDescriptionResponse(BaseModel):
+    description: str
+
+
+class SuggestProcessDescriptionRequest(BaseModel):
+    process_name: str
+
+
+class SuggestProcessDescriptionResponse(BaseModel):
+    description: str
+
+
+SUGGEST_APPLICATION_DESCRIPTION_SYSTEM = """You are helping a user create a business application record in Tavro.
+
+Given only an application name, generate a short plain-text application description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, versions, vendors, or integrations unless clearly implied by the name.
+- Focus on the application's likely business purpose and who uses it.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence application description"
+}"""
+
+
+SUGGEST_PROCESS_DESCRIPTION_SYSTEM = """You are helping a user create a business process record in Tavro.
+
+Given only a process name, generate a short plain-text process description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, systems, or implementation details.
+- Focus on the process's likely workflow, business purpose, and outcome.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence process description"
+}"""
+
 
 async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     global _AGENT_ATTACHMENTS_READY
@@ -226,6 +281,34 @@ async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     )
     await db.commit()
     _AGENT_ATTACHMENTS_READY = True
+
+async def _suggest_single_description(name: str, system_prompt: str, label: str) -> str:
+    provider, api_key = _resolve_agent_llm()
+    user_prompt = f"""Generate a concise description for this {label}:
+
+Name: {name}
+
+Return ONLY the JSON object with the "description" field."""
+
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            300,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            tools=None,
+            max_tokens=300,
+        )
+
+    raw = _collect_text(data).strip()
+    parsed = json.loads(_extract_json(raw))
+    return str(parsed.get("description", "")).strip()
 
 
 async def _ensure_application_attachments_table(db: AsyncSession) -> None:
@@ -822,17 +905,17 @@ async def _fetch_processes(
     """
 
     has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
-    has_auc = await _table_exists(db, "core", "agent_ai_use_cases")
+    has_auc = await _table_exists(db, "core", "ai_use_cases")
     auc_order_sql = "ORDER BY 1"
     if has_auc:
-        auc_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        auc_cols = await _table_columns(db, "core", "ai_use_cases")
         order_parts: list[str] = []
         if "updated_ts" in auc_cols:
             order_parts.append("auc.updated_ts DESC NULLS LAST")
         if "created_ts" in auc_cols:
             order_parts.append("auc.created_ts DESC NULLS LAST")
-        if "identifier" in auc_cols:
-            order_parts.append("auc.identifier")
+        if "ai_use_case_id" in auc_cols:
+            order_parts.append("auc.ai_use_case_id")
         if order_parts:
             auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
     if has_uc_proc_rel and has_auc:
@@ -866,8 +949,8 @@ async def _fetch_processes(
                             auc.owner,
                             auc.priority,
                             auc.status
-                        FROM core.agent_ai_use_cases auc
-                        WHERE auc.identifier = rel.ai_use_case_id
+                        FROM core.ai_use_cases auc
+                        WHERE auc.ai_use_case_id = rel.ai_use_case_id
                         {auc_order_sql}
                         LIMIT 1
                     ) latest ON TRUE
@@ -987,6 +1070,23 @@ async def get_application(
             detail=f"Application '{application_id}' not found",
     )
     return rows[0]
+
+@router.post("/applications/suggest-description", tags=["Applications"], summary="Suggest Application Description")
+async def suggest_application_description(body: SuggestApplicationDescriptionRequest):
+    application_name = body.application_name.strip()
+    if not application_name:
+        raise HTTPException(status_code=400, detail="application_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            application_name,
+            SUGGEST_APPLICATION_DESCRIPTION_SYSTEM,
+            "business application",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestApplicationDescriptionResponse(description=description)
 
 
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
@@ -1166,6 +1266,23 @@ async def get_process(
             detail=f"Process '{process_id}' not found",
     )
     return rows[0]
+
+@router.post("/processes/suggest-description", tags=["Processes"], summary="Suggest Process Description")
+async def suggest_process_description(body: SuggestProcessDescriptionRequest):
+    process_name = body.process_name.strip()
+    if not process_name:
+        raise HTTPException(status_code=400, detail="process_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            process_name,
+            SUGGEST_PROCESS_DESCRIPTION_SYSTEM,
+            "business process",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestProcessDescriptionResponse(description=description)
 
 
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")

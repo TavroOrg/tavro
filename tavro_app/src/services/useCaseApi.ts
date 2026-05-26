@@ -101,6 +101,13 @@ class UseCaseApiService {
         });
     }
 
+    async suggestDescription(title: string): Promise<{ description: string }> {
+        return req('/use-cases/suggest-description', {
+            method: 'POST',
+            body: JSON.stringify({ title }),
+        });
+    }
+
     async updateUseCase(useCaseId: string, payload: UseCaseUpdatePayload): Promise<{ message: string; use_case_id: string }> {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'PUT',
