@@ -12,9 +12,11 @@ import { AgentData } from '../types/agent';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface LeafNodeData { id: string; label: string; sublabel?: string; badgeText?: string; badgeColor?: string; }
+interface SubContextGroup { id: string; label: string; leaves: LeafNodeData[]; count?: number; }
 interface ContextGroup {
   id: string; label: string; bgColor: string; strokeColor: string; textColor: string;
   leaves: LeafNodeData[];
+  subGroups?: SubContextGroup[];
 }
 
 const hasNonBlankText = (value: unknown): boolean =>
@@ -33,8 +35,10 @@ const normalizedLinkedUseCases = (agent: AgentData): any[] => {
 
 const CAT_RING_R = 220; const LEAF_RING_R = 390;
 const CAT_W = 120;  const CAT_H = 44;
-const LEAF_W = 156; const LEAF_H = 48;
+const LEAF_W = 180; const LEAF_H = 48;
 const CO_W = 160;   const CO_H = 56;
+const SUBCTX_RING_R = 340; const SUBLEAF_RING_R = 520;
+const SUBCTX_W = 128; const SUBCTX_H = 44;
 
 function centerLabelFontSize(label: string) {
   const len = label.trim().length;
@@ -57,69 +61,65 @@ function riskColor(v: string) { const l = v.toLowerCase(); return (l === 'critic
 // ── Data builder ──────────────────────────────────────────────────────────────
 
 function buildGroups(agent: AgentData): ContextGroup[] {
-  const id = agent.identification ?? {} as any;
-  const cfg = agent.configuration ?? {} as any;
 
   const linkedUseCases = normalizedLinkedUseCases(agent).filter((u: any) =>
     hasNonBlankText(u?.identifier ?? u?.use_case_id ?? u?.id ?? u?.name ?? u?.title),
   );
 
-  const toolLeaves: LeafNodeData[] = (agent.tool ?? []).slice(0, 5).map((t, i) => ({
+  const toolLeaves: LeafNodeData[] = (agent.tool ?? []).map((t, i) => ({
     id: `t-${i}-${t.name ?? 'tool'}`,
     label: t.name ?? `Tool ${i + 1}`,
     sublabel: 'Tool',
   }));
 
-  const techLeaves: LeafNodeData[] = [
-    id.role && { id: 'role', label: 'Role', sublabel: id.role },
-    id.environment && { id: 'env', label: 'Environment', sublabel: id.environment },
-    id.owner && { id: 'owner', label: 'Owner', sublabel: id.owner },
-    cfg.autonomy_level && { id: 'auto', label: 'Autonomy', sublabel: cfg.autonomy_level },
-    cfg.access_scope && { id: 'scope', label: 'Access Scope', sublabel: cfg.access_scope },
-    cfg.memory_type && { id: 'mem', label: 'Memory', sublabel: cfg.memory_type },
-    cfg.reasoning_model && { id: 'llm', label: 'LLM Model', sublabel: cfg.reasoning_model },
-    ...toolLeaves,
-  ].filter(Boolean) as LeafNodeData[];
 
-  const toolArr = Array.isArray(agent.tool) ? agent.tool : (agent.tool && typeof agent.tool === 'object' ? [agent.tool] : []);
   const dsArr = Array.isArray(agent.data_source) ? agent.data_source : (agent.data_source && typeof agent.data_source === 'object' ? [agent.data_source] : []);
-  const funcLeaves: LeafNodeData[] = [
-    ...toolArr.slice(0, 5).map((t: any) => ({ id: `t-${t.name ?? t.tool_name ?? 'tool'}`, label: String(t.name ?? t.tool_name ?? 'Tool'), sublabel: 'Tool' })),
-    ...dsArr.slice(0, 4).map((ds: any, i: number) => ({
-      id: `ds-${i}`, label: String(ds.source_object_name ?? ds.source_name ?? ds.source ?? 'Data Source'), sublabel: String(ds.source_object_type ?? ds.type ?? ''),
-    })),
-  ];
-  if (!funcLeaves.length) funcLeaves.push({ id: 'fn0', label: 'No data sources', sublabel: 'configured' });
 
-  const bizLeaves: LeafNodeData[] = [
-    ...(agent.application ?? [])
-      .filter((a) => hasNonBlankText(a?.identifier ?? a?.name))
-      .slice(0, 5)
-      .map((a, i) => ({
+  const tableLeaves: LeafNodeData[] = dsArr
+    .filter((ds: any) => (ds.target_object_type ?? '').toLowerCase() === 'table')
+    .map((ds: any, i: number) => ({
+      id: `ds-t-${i}-${ds.target_object_id ?? i}`,
+      label: String(ds.target_object_name ?? 'Data Source'),
+      sublabel: 'Table',
+    }));
+
+  const colLeaves: LeafNodeData[] = dsArr
+    .filter((ds: any) => (ds.target_object_type ?? '').toLowerCase() === 'column')
+    .map((ds: any, i: number) => ({
+      id: `col-${i}-${ds.target_object_id ?? i}`,
+      label: String(ds.target_object_name ?? 'Column'),
+      sublabel: String(ds.source_object_name ?? ''),
+    }));
+
+  const funcLeaves = [...tableLeaves, ...colLeaves];
+
+  // Business: split into three sub-groups
+  const appLeaves: LeafNodeData[] = (agent.application ?? [])
+    .filter((a) => hasNonBlankText(a?.identifier ?? a?.name))
+    .map((a, i) => ({
       id: `app-${i}-${a.identifier ?? a.name ?? 'unknown'}`,
       label: a.name ?? `Application ${i + 1}`,
-      sublabel:'Application',
-      // sublabel: a.business_criticality ?? undefined,
-      // badgeText: a.business_criticality ?? undefined,
-      // badgeColor: a.business_criticality ? critColor(a.business_criticality) : undefined,
-    })),
-    ...(agent.business_process ?? [])
-      .filter((p) => hasNonBlankText(p?.identifier ?? p?.name))
-      .slice(0, 3)
-      .map((p, i) => ({
+      sublabel: 'Application',
+    }));
+
+  const procLeaves: LeafNodeData[] = (agent.business_process ?? [])
+    .filter((p) => hasNonBlankText(p?.identifier ?? p?.name))
+    .map((p, i) => ({
       id: `proc-${i}-${p.identifier ?? 'unknown'}`,
       label: p.name ?? `Process ${i + 1}`,
-      sublabel:'Process',
-    })),
-    ...linkedUseCases.slice(0, 3).map((u, i) => {
-      const uc = u as any;
-      return {
-        id: `uc-${i}-${uc.identifier ?? uc.use_case_id ?? uc.id ?? 'unknown'}`,
-        label: uc.name ?? uc.title ?? `AI Use Case ${i + 1}`,
-        sublabel: 'AI Use Case',        
-      };
-    }),
-  ];
+      sublabel: 'Process',
+    }));
+
+  const ucLeaves: LeafNodeData[] = linkedUseCases.map((u, i) => {
+    const uc = u as any;
+    return {
+      id: `uc-${i}-${uc.identifier ?? uc.use_case_id ?? uc.id ?? 'unknown'}`,
+      label: uc.name ?? uc.title ?? `AI Use Case ${i + 1}`,
+      sublabel: 'AI Use Case',
+    };
+  });
+
+  const bizLeaves = [...appLeaves, ...procLeaves, ...ucLeaves];
 
   const ra = agent.risk_assessment;
   const riskLeaves: LeafNodeData[] = [];
@@ -144,9 +144,30 @@ function buildGroups(agent: AgentData): ContextGroup[] {
   if (!riskLeaves.length) riskLeaves.push({ id: 'rk0', label: 'No risk assessment', sublabel: 'on file' });
 
   return [
-    { id: 'tech', label: 'Technical', bgColor: TECH.bg, strokeColor: TECH.stroke, textColor: TECH.text, leaves: techLeaves },
-    { id: 'func', label: 'Functional', bgColor: FUNC.bg, strokeColor: FUNC.stroke, textColor: FUNC.text, leaves: funcLeaves },
-    { id: 'biz', label: 'Business', bgColor: BIZ.bg, strokeColor: BIZ.stroke, textColor: BIZ.text, leaves: bizLeaves },
+    {
+      id: 'tech', label: 'Technical', bgColor: TECH.bg, strokeColor: TECH.stroke, textColor: TECH.text,
+      leaves: toolLeaves,
+      subGroups: [
+        { id: 'tool', label: 'Tool', leaves: toolLeaves.length ? toolLeaves : [{ id: 'tool0', label: 'No tools', sublabel: 'configured' }], count: toolLeaves.length },
+      ],
+    },
+    {
+      id: 'func', label: 'Functional', bgColor: FUNC.bg, strokeColor: FUNC.stroke, textColor: FUNC.text,
+      leaves: funcLeaves,
+      subGroups: [
+        { id: 'ds',  label: 'Table',        leaves: tableLeaves.length ? tableLeaves : [{ id: 'ds0',  label: 'No tables', sublabel: 'configured' }], count: tableLeaves.length },
+        { id: 'col', label: 'Column',      leaves: colLeaves.length  ? colLeaves   : [{ id: 'col0', label: 'No columns',       sublabel: 'configured' }], count: colLeaves.length },
+      ],
+    },
+    {
+      id: 'biz', label: 'Business', bgColor: BIZ.bg, strokeColor: BIZ.stroke, textColor: BIZ.text,
+      leaves: bizLeaves,
+      subGroups: [
+        { id: 'app',  label: 'Application', leaves: appLeaves, count: appLeaves.length },
+        { id: 'proc', label: 'Process',     leaves: procLeaves, count: procLeaves.length },
+        { id: 'uc',   label: 'AI Use Case', leaves: ucLeaves, count: ucLeaves.length },
+      ],
+    },
     { id: 'risk', label: 'Risk', bgColor: RISK.bg, strokeColor: RISK.stroke, textColor: RISK.text, leaves: riskLeaves },
   ];
 }
@@ -164,6 +185,29 @@ function leafPos(ci: number, cn: number, li: number, ln: number) {
   const a = base + t * Math.min(Math.PI / (cn * 0.9), 0.65);
   const r = ln > 5 ? LEAF_RING_R + 40 : LEAF_RING_R;
   return { x: r * Math.cos(a) - LEAF_W / 2, y: r * Math.sin(a) - LEAF_H / 2 };
+}
+
+// Sub-context node positioned between context ring and leaf ring.
+// Spread is dynamic: guarantees at least (SUBCTX_W + 30)px arc-gap between siblings.
+function subctxPos(groupIdx: number, subIdx: number, subCount: number, groupCount: number) {
+  const base = (2 * Math.PI * groupIdx) / groupCount - Math.PI / 2;
+  const t = subCount <= 1 ? 0 : (subIdx / (subCount - 1) - 0.5);
+  const minSpread = subCount <= 1 ? 0 : ((SUBCTX_W + 30) * (subCount - 1)) / SUBCTX_RING_R;
+  const spread = Math.max(0.55, minSpread);
+  const a = base + t * spread;
+  return { x: SUBCTX_RING_R * Math.cos(a) - SUBCTX_W / 2, y: SUBCTX_RING_R * Math.sin(a) - SUBCTX_H / 2 };
+}
+
+// Leaf node for sub-context, fanned out from the sub-context angle.
+function subLeafPos(groupIdx: number, subIdx: number, subCount: number, leafIdx: number, leafCount: number, groupCount: number) {
+  const base = (2 * Math.PI * groupIdx) / groupCount - Math.PI / 2;
+  const subT = subCount <= 1 ? 0 : (subIdx / (subCount - 1) - 0.5);
+  const minSpread = subCount <= 1 ? 0 : ((SUBCTX_W + 30) * (subCount - 1)) / SUBCTX_RING_R;
+  const spread = Math.max(0.55, minSpread);
+  const subAngle = base + subT * spread;
+  const t = leafCount <= 1 ? 0 : (leafIdx / (leafCount - 1) - 0.5);
+  const a = subAngle + t * 0.45;
+  return { x: SUBLEAF_RING_R * Math.cos(a) - LEAF_W / 2, y: SUBLEAF_RING_R * Math.sin(a) - LEAF_H / 2 };
 }
 
 // ── Node components ───────────────────────────────────────────────────────────
@@ -211,37 +255,60 @@ const ContextNode: React.FC<NodeProps> = ({ data }) => {
   );
 };
 
-const LeafNode: React.FC<NodeProps> = ({ data }) => {
-  const d = data as { label: string; sublabel?: string; badgeText?: string; badgeColor?: string; bgColor: string; strokeColor: string; textColor: string };
+const SubContextNode: React.FC<NodeProps> = ({ data }: NodeProps) => {
+  const d = data as { label: string; count: number; expanded: boolean; bgColor: string; strokeColor: string; textColor: string };
   return (
-    <div style={{
-      width: LEAF_W, height: LEAF_H, background: d.bgColor,
-      border: `1px solid ${d.strokeColor}80`, borderRadius: 10,
-      display: 'flex', alignItems: 'center', padding: '0 10px', gap: 8,
-      cursor: 'default', userSelect: 'none', position: 'relative'
+    <div className="rf-subctx" style={{
+      width: SUBCTX_W, height: SUBCTX_H, background: d.bgColor,
+      border: `${d.expanded ? 2 : 1.5}px solid ${d.strokeColor}`, borderRadius: 10,
+      display: 'flex', alignItems: 'center', padding: '0 9px', gap: 7,
+      cursor: 'pointer', userSelect: 'none',
+      boxShadow: d.expanded ? `0 0 0 3px ${d.strokeColor}28` : '0 1px 4px rgba(0,0,0,0.07)', transition: 'box-shadow .15s',
     }}>
       <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <div style={{ width: 6, height: 6, borderRadius: '50%', background: d.strokeColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, color: d.textColor, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3 }}>{d.label}</p>
+        <p style={{ fontSize: 10.5, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</p>
+        <p style={{ fontSize: 8.5, color: d.strokeColor, margin: 0, opacity: 0.75 }}>{d.count} item{d.count !== 1 ? 's' : ''} {d.expanded ? '▴' : '▾'}</p>
+      </div>
+    </div>
+  );
+};
+
+const LeafNode: React.FC<NodeProps> = ({ data }) => {
+  const d = data as { label: string; sublabel?: string; badgeText?: string; badgeColor?: string; bgColor: string; strokeColor: string; textColor: string };
+  return (
+    <div className="rf-leaf" style={{
+      width: LEAF_W, minHeight: LEAF_H, background: d.bgColor,
+      border: `1px solid ${d.strokeColor}45`, borderRadius: 10,
+      display: 'flex', alignItems: 'flex-start', padding: '8px 10px', gap: 8,
+      cursor: 'default', userSelect: 'none', position: 'relative',
+      boxShadow: `0 1px 4px rgba(0,0,0,0.07), 0 0 0 0px ${d.strokeColor}`,
+      transition: 'box-shadow .15s, border-color .15s',
+    }}>
+      <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
+      <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: d.strokeColor, flexShrink: 0, marginTop: 3 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 11, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.4, wordBreak: 'break-word' }}>{d.label}</p>
         {d.badgeText ? (
-          <div style={{ background: `${d.badgeColor}1e`, padding: '1px 7px', borderRadius: 5, marginTop: 2, width: 'fit-content', maxWidth: '100%' }}>
-            <p style={{ fontSize: 7.5, fontWeight: 700, color: d.badgeColor, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.badgeText}</p>
+          <div style={{ background: `${d.badgeColor}1e`, padding: '1px 7px', borderRadius: 5, marginTop: 3, width: 'fit-content', maxWidth: '100%' }}>
+            <p style={{ fontSize: 7.5, fontWeight: 700, color: d.badgeColor, margin: 0 }}>{d.badgeText}</p>
           </div>
         ) : (
-          <p style={{ fontSize: 9, color: d.strokeColor, margin: 0, opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.sublabel}</p>
+          <p style={{ fontSize: 9, color: d.strokeColor, margin: 0, opacity: 0.75, marginTop: 1 }}>{d.sublabel}</p>
         )}
       </div>
     </div>
   );
 };
 
-const nodeTypes = { agent: AgentNode, context: ContextNode, leaf: LeafNode };
+const nodeTypes = { agent: AgentNode, context: ContextNode, subctx: SubContextNode, leaf: LeafNode };
 
 // ── Build flow ────────────────────────────────────────────────────────────────
 
-function buildFlow(groups: ContextGroup[], agentName: string, expanded: Set<string>) {
+function buildFlow(groups: ContextGroup[], agentName: string, expanded: Set<string>, subExpanded: Set<string>) {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -249,29 +316,63 @@ function buildFlow(groups: ContextGroup[], agentName: string, expanded: Set<stri
 
   groups.forEach((g, gi) => {
     const isExp = expanded.has(g.id);
-    nodes.push({ 
-      id: `ctx_${g.id}`, type: 'context', position: ctxPos(gi, groups.length), 
-      data: { label: g.label, count: g.leaves.length, expanded: isExp, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor }, 
-      draggable: false 
+    const contextCount = g.subGroups ? g.subGroups.length : g.leaves.length;
+    nodes.push({
+      id: `ctx_${g.id}`, type: 'context', position: ctxPos(gi, groups.length),
+      data: { label: g.label, count: contextCount, expanded: isExp, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor },
+      draggable: false
     });
-    
-    edges.push({ 
-      id: `e_ag_${g.id}`, source: '__agent', target: `ctx_${g.id}`, type: 'straight', 
-      style: { stroke: g.strokeColor, strokeWidth: isExp ? 2.5 : 1.5, opacity: isExp ? 0.5 : 0.25 } 
+
+    edges.push({
+      id: `e_ag_${g.id}`, source: '__agent', target: `ctx_${g.id}`, type: 'straight',
+      style: { stroke: g.strokeColor, strokeWidth: isExp ? 2.5 : 1.5, opacity: isExp ? 0.5 : 0.25 }
     });
 
     if (isExp) {
-      g.leaves.forEach((lf, li) => {
-        const lid = `lf_${g.id}_${lf.id}`;
-        nodes.push({ 
-          id: lid, type: 'leaf', position: leafPos(gi, groups.length, li, g.leaves.length), 
-          data: { ...lf, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor } 
+      if (g.subGroups) {
+        // Business: render Application, Process, AI Use Case as intermediate nodes
+        g.subGroups.forEach((sg, si) => {
+          const subNodeId = `sub_${g.id}_${sg.id}`;
+          const isSubExp = subExpanded.has(subNodeId);
+          nodes.push({
+            id: subNodeId, type: 'subctx',
+            position: subctxPos(gi, si, g.subGroups!.length, groups.length),
+            data: { label: sg.label, count: sg.count ?? sg.leaves.length, expanded: isSubExp, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor },
+          });
+          edges.push({
+            id: `e_ctx_${subNodeId}`, source: `ctx_${g.id}`, target: subNodeId, type: 'straight',
+            style: { stroke: g.strokeColor, strokeWidth: isSubExp ? 2 : 1.2, strokeDasharray: isSubExp ? undefined : '5 3', opacity: isSubExp ? 0.45 : 0.3 },
+          });
+
+          if (isSubExp) {
+            sg.leaves.forEach((lf, li) => {
+              const lid = `lf_${subNodeId}_${lf.id}`;
+              nodes.push({
+                id: lid, type: 'leaf',
+                position: subLeafPos(gi, si, g.subGroups!.length, li, sg.leaves.length, groups.length),
+                data: { ...lf, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor },
+              });
+              edges.push({
+                id: `e_sub_${lid}`, source: subNodeId, target: lid, type: 'straight',
+                style: { stroke: g.strokeColor, strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.35 },
+              });
+            });
+          }
         });
-        edges.push({ 
-          id: `e_ctx_${lid}`, source: `ctx_${g.id}`, target: lid, type: 'straight', 
-          style: { stroke: g.strokeColor, strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.35 } 
+      } else {
+        // Standard flat leaf expansion for Tech, Functional, Risk
+        g.leaves.forEach((lf, li) => {
+          const lid = `lf_${g.id}_${lf.id}`;
+          nodes.push({
+            id: lid, type: 'leaf', position: leafPos(gi, groups.length, li, g.leaves.length),
+            data: { ...lf, bgColor: g.bgColor, strokeColor: g.strokeColor, textColor: g.textColor }
+          });
+          edges.push({
+            id: `e_ctx_${lid}`, source: `ctx_${g.id}`, target: lid, type: 'straight',
+            style: { stroke: g.strokeColor, strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.35 }
+          });
         });
-      });
+      }
     }
   });
 
@@ -285,13 +386,14 @@ const FIT: FitViewOptions = { padding: 0.18, maxZoom: 1.4 };
 const Inner: React.FC<{ agent: AgentData }> = ({ agent }) => {
   const { fitView } = useReactFlow();
   const [exp, setExp] = useState<Set<string>>(new Set());
-  
+  const [subExp, setSubExp] = useState<Set<string>>(new Set());
+
   const groups = useMemo(() => buildGroups(agent), [agent]);
   const agentName = agent.name ?? 'Unknown Agent';
 
-  useEffect(() => { setExp(new Set()); }, [agentName]);
+  useEffect(() => { setExp(new Set()); setSubExp(new Set()); }, [agentName]);
 
-  const { nodes: bn, edges: be } = useMemo(() => buildFlow(groups, agentName, exp), [groups, agentName, exp]);
+  const { nodes: bn, edges: be } = useMemo(() => buildFlow(groups, agentName, exp, subExp), [groups, agentName, exp, subExp]);
   const [nodes, setNodes, onNodesChange] = useNodesState(bn);
   const [edges, setEdges, onEdgesChange] = useEdgesState(be);
 
@@ -300,13 +402,15 @@ const Inner: React.FC<{ agent: AgentData }> = ({ agent }) => {
     setEdges(be);
   }, [bn, be, setNodes, setEdges]);
 
-  useEffect(() => { setTimeout(() => fitView(FIT), 80); }, [exp, fitView]);
+  useEffect(() => { setTimeout(() => fitView(FIT), 80); }, [exp, subExp, fitView]);
 
   const toggle = useCallback((cat: string) => setExp(p => { const s = new Set(p); s.has(cat) ? s.delete(cat) : s.add(cat); return s; }), []);
+  const toggleSub = useCallback((subId: string) => setSubExp((p: Set<string>) => { const s = new Set(p); s.has(subId) ? s.delete(subId) : s.add(subId); return s; }), []);
 
   const handleClick = useCallback((_: React.MouseEvent, node: Node) => {
     if (node.type === 'context') toggle(node.id.replace('ctx_', ''));
-  }, [toggle]);
+    if (node.type === 'subctx') toggleSub(node.id);
+  }, [toggle, toggleSub]);
 
   return (
     <div className="flex flex-col h-full">
@@ -342,15 +446,15 @@ const Inner: React.FC<{ agent: AgentData }> = ({ agent }) => {
               </button>
             );
           })}
-          {exp.size > 0 && (
-            <button onClick={() => setExp(new Set())}
+          {(exp.size > 0 || subExp.size > 0) && (
+            <button onClick={() => { setExp(new Set()); setSubExp(new Set()); }}
               className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 transition-colors">
               Collapse all
             </button>
           )}
         </div>
       </div>
-      
+
       <div className="flex-1 min-h-0">
         <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
           onNodeClick={handleClick} nodeTypes={nodeTypes} fitView fitViewOptions={FIT}
@@ -376,9 +480,20 @@ const Inner: React.FC<{ agent: AgentData }> = ({ agent }) => {
 };
 
 const AgentContextGraphRF: React.FC<{ agent: AgentData }> = ({ agent }) => (
-  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors" style={{ height: 580 }}>
-    <ReactFlowProvider><Inner agent={agent} /></ReactFlowProvider>
-  </div>
+  <>
+    <style>{`
+      @keyframes rfNodeIn {
+        from { opacity: 0; transform: scale(0.82); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      .rf-leaf   { animation: rfNodeIn 0.18s cubic-bezier(0.34,1.56,0.64,1) both; }
+      .rf-subctx { animation: rfNodeIn 0.15s cubic-bezier(0.34,1.56,0.64,1) both; }
+      .rf-leaf:hover   { box-shadow: 0 0 0 2px var(--leaf-stroke, #94a3b8) !important; }
+    `}</style>
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors" style={{ height: 580 }}>
+      <ReactFlowProvider><Inner agent={agent} /></ReactFlowProvider>
+    </div>
+  </>
 );
 
 export default AgentContextGraphRF;
