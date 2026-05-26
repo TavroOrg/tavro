@@ -63,6 +63,15 @@ class ComplianceApiService {
     return req('/items', { method: 'POST', body: JSON.stringify(body) });
   }
 
+  async suggestDescription(body: {
+    item_type: ComplianceItemType;
+    name: string;
+    short_name?: string;
+    issuing_body?: string;
+  }): Promise<{ description: string }> {
+    return req('/suggest-description', { method: 'POST', body: JSON.stringify(body) });
+  }
+  
   async updateItem(id: string, body: Partial<ComplianceItemCreate>): Promise<ComplianceItem> {
     return req(`/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
   }

@@ -95,6 +95,13 @@ class AgentApiService {
         });
     }
 
+    async suggestDescription(agentName: string): Promise<{ description: string }> {
+        return req('/agents/suggest-description', {
+            method: 'POST',
+            body: JSON.stringify({ agent_name: agentName }),
+        });
+    }
+
     async updateAgent(agentId: string, payload: AgentUpdatePayload): Promise<{ message: string; agent_id: string }> {
         return req(`/agents/${encodeURIComponent(agentId)}`, {
             method: 'PUT',

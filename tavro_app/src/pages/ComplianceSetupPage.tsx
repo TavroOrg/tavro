@@ -24,6 +24,7 @@ const ComplianceSetupPage: React.FC = () => {
   const defaultType = (searchParams.get('type') ?? 'regulation') as ComplianceItemType;
   const [step,  setStep]  = useState(1);
   const [saving, setSaving] = useState(false);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
   const [error,  setError]  = useState<string | null>(null);
 
   // Form state
@@ -58,6 +59,30 @@ const ComplianceSetupPage: React.FC = () => {
   );
 
   const meta = ITEM_TYPE_META[form.item_type];
+  const handleSuggestDescription = async () => {
+    if (!form.name.trim()) {
+      setError(`Enter a ${form.item_type === 'regulation' ? 'regulation' : 'policy'} name first so AI can generate the description.`);
+      return;
+    }
+
+    setGeneratingDescription(true);
+    setError(null);
+    try {
+      const result = await complianceApi.suggestDescription({
+        item_type: form.item_type,
+        name: form.name.trim(),
+        ...(form.item_type === 'regulation' && {
+          short_name: form.short_name.trim() || undefined,
+          issuing_body: form.issuing_body.trim() || undefined,
+        }),
+      });
+      if (result.description) update('description', result.description);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to generate description.');
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
 
   // ── Step 2: Research ───────────────────────────────────────────────────────
   const handleResearch = async () => {
@@ -254,11 +279,45 @@ const ComplianceSetupPage: React.FC = () => {
                 </Field>
               )}
 
-              <Field label="Description">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                    Description
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSuggestDescription}
+                    disabled={generatingDescription || !form.name.trim()}
+                    title={form.name.trim() ? 'Generate description with AI' : `Enter a ${form.item_type === 'regulation' ? 'regulation' : 'policy'} name first`}
+                    className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                      generatingDescription
+                        ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-500 cursor-wait'
+                        : form.name.trim()
+                          ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 hover:border-violet-300 dark:hover:border-violet-600'
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                    }`}
+                  >
+                    {generatingDescription
+                      ? <RefreshCw size={11} className="animate-spin" />
+                      : <Sparkles size={11} />}
+                    {generatingDescription ? 'Generating...' : 'AI assist'}
+                  </button>
+                </div>
+                <div className="relative">
                 <textarea value={form.description} onChange={e => update('description', e.target.value)}
                   rows={3} placeholder="Brief description of what this covers…"
-                  className={`${inputCls} resize-none`} />
-              </Field>
+                  disabled={generatingDescription}
+                  className={`${inputCls} resize-none transition-all ${generatingDescription ? 'opacity-50' : ''}`} />
+                  {generatingDescription && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/60 dark:bg-slate-800/60">
+                      <div className="flex items-center gap-2 text-violet-600 dark:text-violet-400 text-[11px] font-bold">
+                        <Sparkles size={13} className="animate-pulse" />
+                        Generating with AI...
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {form.item_type === 'regulation' && (
                 <>

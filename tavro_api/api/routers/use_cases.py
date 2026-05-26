@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import json
 import os
 import base64
 import re
@@ -12,6 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.routers.agents import _resolve_agent_llm
+from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 
@@ -90,6 +92,32 @@ class UseCaseAttachmentCreate(BaseModel):
     mime_type: str
     content_base64: str
 
+class SuggestUseCaseDescriptionRequest(BaseModel):
+    title: str
+
+
+class SuggestUseCaseDescriptionResponse(BaseModel):
+    description: str
+
+
+SUGGEST_USE_CASE_DESCRIPTION_SYSTEM = """You are helping a user create an AI use case in Tavro.
+
+Given only a use case name, generate a short plain-text description of what the use case likely does.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent integrations, company-specific facts, or implementation details.
+- Focus on the likely business problem, workflow, and expected value based on the name alone.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence AI use case description"
+}"""
+
 
 async def _ensure_use_case_process_relation_table(db: AsyncSession) -> None:
     await db.execute(
@@ -147,6 +175,45 @@ async def _ensure_use_case_attachments_table(db: AsyncSession) -> None:
     )
     await db.commit()
     _USE_CASE_ATTACHMENTS_READY = True
+
+@router.post("/suggest-description", response_model=SuggestUseCaseDescriptionResponse, summary="Suggest AI Use Case Description")
+async def suggest_use_case_description(body: SuggestUseCaseDescriptionRequest):
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+
+    provider, api_key = _resolve_agent_llm()
+    user_prompt = f"""Generate a concise description for this AI use case:
+
+Use case name: {title}
+
+Return ONLY the JSON object with the "description" field."""
+
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_USE_CASE_DESCRIPTION_SYSTEM,
+            300,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            SUGGEST_USE_CASE_DESCRIPTION_SYSTEM,
+            tools=None,
+            max_tokens=300,
+        )
+
+    raw = _collect_text(data).strip()
+    try:
+        parsed = json.loads(_extract_json(raw))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestUseCaseDescriptionResponse(
+        description=str(parsed.get("description", "")).strip(),
+    )
 
 
 # ---------------------------------------------------------------------------
