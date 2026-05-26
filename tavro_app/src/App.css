@@ -4,6 +4,25 @@
   flex-direction: column;
 }
 
+/* Keep Joyride controls interactive */
+body.tavro-tour-active .react-joyride__overlay,
+body.tavro-tour-active .react-joyride__tooltip,
+body.tavro-tour-active .react-joyride__tooltip *,
+body.tavro-tour-active .__floater,
+body.tavro-tour-active .__floater *,
+body.tavro-tour-active [class*="joyride"] {
+  pointer-events: auto !important;
+}
+/* Let page scrolling pass through the dim overlay */
+body.tavro-tour-active .react-joyride__overlay {
+  pointer-events: none !important;
+}
+/* Prevent clicks on sidebar while tour is active */
+body.tavro-tour-active aside,
+body.tavro-tour-active aside * {
+  pointer-events: none !important;
+}
+
 .app-content {
   flex: 1;
   padding: 2rem;

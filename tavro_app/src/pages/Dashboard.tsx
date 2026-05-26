@@ -126,12 +126,14 @@ const Dashboard: React.FC = () => {
             )}
 
             {!error && (
-                <AgentCatalog
-                    agents={displayedAgents}
-                    searchTerm={searchTerm}
-                    onSearchChange={setSearchTerm}
-                    onSelectAgent={handleSelectAgent}
-                />
+                <div id="tour-agent-catalog-section">
+                    <AgentCatalog
+                        agents={displayedAgents}
+                        searchTerm={searchTerm}
+                        onSearchChange={setSearchTerm}
+                        onSelectAgent={handleSelectAgent}
+                    />
+                </div>
             )}
 
             {!isSearching && !loading && !error && pagedAgents.length > 0 && (

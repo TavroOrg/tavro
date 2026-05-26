@@ -402,7 +402,7 @@ const AgentViewPage: React.FC = () => {
     const prettyJson = JSON.stringify(buildAgentCardPayload(agent), null, 2);
 
     return (
-        <div className="flex-col gap-6 w-full animate-fade-in relative">
+        <div id="tour-agent-detail-header" className="flex-col gap-6 w-full animate-fade-in relative">
             {/* Top bar */}
             <div className="flex items-center justify-between mb-2">
                 <button
@@ -420,6 +420,7 @@ const AgentViewPage: React.FC = () => {
 
                 <div className="flex items-center gap-3">
                     <button
+                        id="tour-playground-btn"
                         onClick={() => navigate(
                             `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}`
                         )}

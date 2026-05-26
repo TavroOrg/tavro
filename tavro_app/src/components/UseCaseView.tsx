@@ -213,10 +213,10 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
     ];
 
     return (
-        <div className="flex flex-col gap-6 w-full animate-fade-in pb-6 max-w-[1400px] mx-auto">
+        <div id="tour-usecase-detail-section" className="flex flex-col gap-6 w-full animate-fade-in pb-6 max-w-[1400px] mx-auto">
             <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
 
-            <div className="-mt-6 bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
+            <div id="tour-usecase-detail-card" className="-mt-6 bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
                 <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
                     <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
                         <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">

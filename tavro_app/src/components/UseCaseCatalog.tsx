@@ -177,7 +177,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                     key={searchTerm ? 'search-grid' : 'paged-grid'}
                     className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
                 >
-                    {useCases.map(uc => {
+                    {useCases.map((uc, ucIdx) => {
                         const relatedAgentCount = getRelatedAgentCount(uc);
                         const summary = getUseCaseSummary(uc);
                         const cardId = String(uc.id ?? uc.identifier ?? 'N/A').slice(0, 8);
@@ -189,6 +189,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         return (
                             <div
                                 key={uc.identifier ?? uc.id}
+                                id={ucIdx === 0 ? 'tour-usecase-card-0' : undefined}
                                 onClick={() => navId ? navigate(`/use-case/${navId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
                                 className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-700 transition-all cursor-pointer overflow-hidden flex flex-col h-full"
                             >

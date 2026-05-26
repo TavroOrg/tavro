@@ -6,4 +6,5 @@ export * from './catalog';
 export * from './compliance';
 export * from './mcp-stub';
 export * from './navigation';
+export * from './tour';
 export * from './use-cases';

@@ -40,12 +40,12 @@ const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange }) 
     useEffect(() => setActiveTab('IDENTIFICATION'), [agentId]);
 
     return (
-        <div className="flex flex-col gap-4 animate-fade-in w-full max-w-[1400px] mx-auto">
+        <div id="tour-agent-detail-section" className="flex flex-col gap-4 animate-fade-in w-full max-w-[1400px] mx-auto">
             {/* Top accent bar */}
             <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
 
             {/* Header (always visible) */}
-            <div className="-mt-6">
+            <div id="tour-agent-detail-card" className="-mt-6">
                 <AgentHeader agent={agent} />
             </div>
 

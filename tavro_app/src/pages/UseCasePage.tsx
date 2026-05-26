@@ -131,12 +131,14 @@ const UseCasePage: React.FC = () => {
             )}
 
             {!error && (
-                <UseCaseCatalog
-                    useCases={displayedUseCases}
-                    searchTerm={searchTerm}
-                    onSearchChange={setSearchTerm}
-                    currentPage={page}
-                />
+                <div id="tour-usecase-list">
+                    <UseCaseCatalog
+                        useCases={displayedUseCases}
+                        searchTerm={searchTerm}
+                        onSearchChange={setSearchTerm}
+                        currentPage={page}
+                    />
+                </div>
             )}
 
             {!isSearching && !loading && !error && pagedUseCases.length > 0 && (

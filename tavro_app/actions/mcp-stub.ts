@@ -17,7 +17,7 @@ export async function stubMcpServer(page: Page, agents: any[], useCases: any[] =
 
   const useCaseResponse = JSON.stringify({
     jsonrpc: '2.0',
-    result: { content: [{ type: 'text', text: JSON.stringify({ use_cases: useCases, total_records: useCases.length }) }] },
+    result: { content: [{ type: 'text', text: JSON.stringify({ use_case_card: useCases[0] ?? null, data: useCases, total_records: useCases.length }) }] },
     id: 1,
   });
 

@@ -224,3 +224,6 @@ config.yaml
 
 .claude/
 agent_cards/
+
+# Tour build output
+tavro_app/dist-tour/

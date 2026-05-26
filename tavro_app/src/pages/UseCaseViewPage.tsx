@@ -817,7 +817,7 @@ const UseCaseViewPage: React.FC = () => {
   const useCaseName = useCase ? ((useCase as any).name ?? (useCase as any).title ?? useCase.identifier ?? '') : '';
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fade-in pb-12">
+    <div id="tour-usecase-detail-header" className="flex flex-col gap-6 w-full animate-fade-in pb-12">
       <div className="flex items-center justify-between">
         <button
           onClick={() => {

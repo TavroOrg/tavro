@@ -62,15 +62,16 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                     key={searchTerm ? 'search-grid' : 'paged-grid'}
                     className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
                 >
-                    {agents.map(agent => {
+                    {agents.map((agent, agentIdx) => {
                         const pending = isPendingAssessment(agent);
                         const risk = getRiskLevel(agent);
                         const isHigh = !pending && (risk === 'high' || risk === 'prohibited');
                         const isMed = !pending && risk === 'medium';
-                        
+
                         return (
                             <div
                                 key={agent.identification?.agent_id || agent.id || agent.name}
+                                id={agentIdx === 0 ? 'tour-agent-card-0' : undefined}
                                 onClick={() => onSelectAgent(agent)}
                                 className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-700 transition-all cursor-pointer overflow-hidden flex flex-col h-full"
                             >

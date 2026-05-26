@@ -12,7 +12,8 @@
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "demo:tour": "playwright test --config playwright.demo.config.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

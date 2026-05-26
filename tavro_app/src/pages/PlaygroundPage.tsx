@@ -134,6 +134,17 @@ const PlaygroundPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    const openChatTab = () => setActiveTab('chat');
+    const openConfigTab = () => setActiveTab('config');
+    window.addEventListener('tavro:tour-open-chat', openChatTab as EventListener);
+    window.addEventListener('tavro:tour-open-config', openConfigTab as EventListener);
+    return () => {
+      window.removeEventListener('tavro:tour-open-chat', openChatTab as EventListener);
+      window.removeEventListener('tavro:tour-open-config', openConfigTab as EventListener);
+    };
+  }, []);
+
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isRunning) return;
     const text = input.trim();
@@ -207,10 +218,10 @@ const PlaygroundPage: React.FC = () => {
     }`;
 
   return (
-    <div className="flex flex-col h-full gap-0 -m-8">
+    <div id="tour-playground-page" className="flex flex-col h-full gap-0 -m-8">
 
       {/* ── Header ───────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-8 py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors">
+      <div id="tour-playground-header" className="flex items-center justify-between px-8 py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors">
         <div className="flex items-center gap-3">
           <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-sm">
             <FlaskConical size={18} />
@@ -242,6 +253,7 @@ const PlaygroundPage: React.FC = () => {
           {/* Session controls */}
           {!sessionActive ? (
             <button
+              id="tour-start-session"
               onClick={startSession}
               disabled={!config.agentName.trim()}
               className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -270,7 +282,7 @@ const PlaygroundPage: React.FC = () => {
         <button className={navCls('config')} onClick={() => setActiveTab('config')}>
           <Settings2 size={13} /> Configure
         </button>
-        <button className={navCls('chat')} onClick={() => setActiveTab('chat')}>
+        <button id="tour-chat-tab" className={navCls('chat')} onClick={() => setActiveTab('chat')}>
           <MessageSquare size={13} /> Interact
           {messages.filter(m => m.role !== 'system').length > 0 && (
             <span className="ml-1 text-[9px] font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-full">
@@ -293,13 +305,13 @@ const PlaygroundPage: React.FC = () => {
       </div>
 
       {/* ── Tab content ───────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 transition-colors">
+      <div id="tour-session-page" className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 transition-colors">
 
         {/* ══════════════════════════════════════════════════════════════════════
             CONFIG TAB
         ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'config' && (
-          <div className="max-w-3xl mx-auto px-8 py-8 flex flex-col gap-6">
+          <div id="tour-playground-config-section" className="max-w-3xl mx-auto px-8 py-8 flex flex-col gap-6">
 
             {/* Infrastructure provider */}
             <Section title="Infrastructure" icon={<FlaskConical size={14} />}>
@@ -445,7 +457,7 @@ const PlaygroundPage: React.FC = () => {
             INTERACT TAB
         ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'chat' && (
-          <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
+          <div id="tour-chat-interaction" className="flex flex-col h-full max-w-3xl mx-auto w-full">
 
             {/* Not started state */}
             {!sessionActive && (
