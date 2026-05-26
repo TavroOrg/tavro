@@ -51,6 +51,18 @@ const Settings: React.FC = () => {
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
         github: 'gpt-4.1', openai: 'gpt-5.5', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
     };
+    const PROVIDER_MODEL_OPTIONS: Partial<Record<LLMProvider, string[]>> = {
+        openai:    ['gpt-4o', 'gpt-5.5'],
+        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+    };
+    const BYOK_MODEL_OPTIONS: Partial<Record<ByokType, string[]>> = {
+        openai:    ['gpt-4o', 'gpt-5.5'],
+        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+    };
+    const getModelOptions = (p: LLMProvider, s: ProviderState): string[] | null => {
+        if (p === 'copilot') return BYOK_MODEL_OPTIONS[s.byokType ?? 'github'] ?? null;
+        return PROVIDER_MODEL_OPTIONS[p] ?? null;
+    };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);
         const base: ProviderState = { model: cfg?.model || DEFAULT_MODELS[p], key: cfg?.apiKey || '', showKey: false, saved: false, configured: !!cfg };
@@ -214,13 +226,35 @@ const Settings: React.FC = () => {
                                     {/* Model */}
                                     <div className="flex flex-col gap-1">
                                         <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Model</label>
-                                        <input
-                                            type="text"
-                                            value={s.model}
-                                            onChange={e => updateProvider(p, { model: e.target.value })}
-                                            placeholder={p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}
-                                            className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
-                                        />
+                                        {(() => {
+                                            const fieldCls = "text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono";
+                                            const defaultModel = p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p];
+                                            const options = getModelOptions(p, s);
+                                            if (options) {
+                                                // Include any previously saved custom value so it isn't silently dropped.
+                                                const allOptions = Array.from(new Set([...options, s.model].filter(Boolean)));
+                                                return (
+                                                    <select
+                                                        value={s.model || defaultModel}
+                                                        onChange={e => updateProvider(p, { model: e.target.value })}
+                                                        className={fieldCls}
+                                                    >
+                                                        {allOptions.map(m => (
+                                                            <option key={m} value={m}>{m}</option>
+                                                        ))}
+                                                    </select>
+                                                );
+                                            }
+                                            return (
+                                                <input
+                                                    type="text"
+                                                    value={s.model}
+                                                    onChange={e => updateProvider(p, { model: e.target.value })}
+                                                    placeholder={defaultModel}
+                                                    className={fieldCls}
+                                                />
+                                            );
+                                        })()}
                                         <p className="text-[10px] text-slate-400 dark:text-slate-500">
                                             Default: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">
                                                 {p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}

@@ -255,6 +255,21 @@ class ZitadelProvider(OIDCProxy):
                     or claims.get("urn:zitadel:iam:user:loginname")
                     or claims.get("urn:zitadel:iam:user:preferred_login_name")
                 ),
+                "urn:zitadel:iam:user:resourceowner:id": claims.get(
+                    "urn:zitadel:iam:user:resourceowner:id"
+                ),
+                "urn:zitadel:iam:user:resourceowner:name": claims.get(
+                    "urn:zitadel:iam:user:resourceowner:name"
+                ),
+                "urn:zitadel:iam:user:resourceowner:primary_domain": claims.get(
+                    "urn:zitadel:iam:user:resourceowner:primary_domain"
+                ),
+                "urn:zitadel:iam:org:id": claims.get("urn:zitadel:iam:org:id"),
+                "org_id": claims.get("org_id"),
+                "orgId": claims.get("orgId"),
+                "org": claims.get("org"),
+                "tenant_id": claims.get("tenant_id"),
+                "tenant": claims.get("tenant"),
             }.items()
             if value is not None
         }
@@ -334,11 +349,33 @@ class ZitadelProvider(OIDCProxy):
             print(f"[DEBUG] No approved ZITADEL user found for email: {email}")
             return None
 
+        def _extract_org_id(claims_dict: dict[str, Any], upstream: dict[str, Any]) -> str | None:
+            # Look for common Zitadel org/tenant claim keys, prefer upstream if present
+            candidates = [
+                "urn:zitadel:iam:user:resourceowner:id",
+                "urn:zitadel:iam:org:id",
+                "org_id",
+                "orgId",
+                "org",
+                "tenant_id",
+                "tenant",
+            ]
+            for k in candidates:
+                if k in upstream and isinstance(upstream[k], str) and upstream[k].strip():
+                    return upstream[k].strip()
+                if k in claims_dict and isinstance(claims_dict[k], str) and claims_dict[k].strip():
+                    return claims_dict[k].strip()
+            return None
+
+        tenant_from_token = _extract_org_id(claims, upstream_claims)
+
+        # Do NOT inject tenant_id from the approval DB. Tenant mapping is
+        # determined exclusively from upstream Zitadel claims (or left empty).
         enriched_claims = {
             **claims,
             **upstream_claims,
             "email": approved_user.email,
-            "tenant_id": approved_user.tenant_id,
+            "tenant_id": tenant_from_token or None,
         }
 
         print("[DEBUG] ===== ZITADEL AUTH SUCCESS =====")
@@ -387,10 +424,28 @@ class TavroZitadelTokenVerifier(TokenVerifier):
             print(f"[DEBUG] No approved direct ZITADEL user found for email: {email}")
             return None
 
+        def _extract_org_id_from_userinfo(userinfo: dict[str, Any]) -> str | None:
+            candidates = [
+                "urn:zitadel:iam:user:resourceowner:id",
+                "urn:zitadel:iam:org:id",
+                "org_id",
+                "orgId",
+                "org",
+                "tenant_id",
+                "tenant",
+            ]
+            for k in candidates:
+                if k in userinfo and isinstance(userinfo[k], str) and userinfo[k].strip():
+                    return userinfo[k].strip()
+            return None
+
+        tenant_from_userinfo = _extract_org_id_from_userinfo(userinfo_claims)
+
+        # Do NOT inject tenant_id from the approval DB for direct bearer tokens.
         enriched_claims = {
             **userinfo_claims,
             "email": approved_user.email,
-            "tenant_id": approved_user.tenant_id,
+            "tenant_id": tenant_from_userinfo or None,
         }
 
         print("[DEBUG] ===== DIRECT ZITADEL AUTH SUCCESS =====")

@@ -25,6 +25,13 @@ def _tenant(request: Request) -> Optional[str]:
     return val.strip() or None
 
 
+def _require_tenant(request: Request) -> str:
+    tenant_id = _tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant context.")
+    return tenant_id
+
+
 def _risk_payload(agent_internal_id: str, agent_id: str, agent_name: str,
                   description: str, instruction: str, tenant_id: Optional[str]) -> Dict[str, Any]:
     return {
@@ -97,12 +104,11 @@ async def get_agent_catalog(
     except Exception:
         start, end = start_record, start_record + 49
 
-    tenant_id = _tenant(request)
+    tenant_id = _require_tenant(request)
     where = ""
     params: Dict[str, Any] = {"start": start, "end": end}
-    if tenant_id:
-        where = "WHERE (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
-        params["tid"] = tenant_id
+    where = "WHERE tenant_id = :tid"
+    params["tid"] = tenant_id
 
     try:
         result = await db.execute(
@@ -138,7 +144,7 @@ async def create_agent(
 ):
     agent_id = str(uuid.uuid4())
     agent_internal_id = str(uuid.uuid4())
-    tenant_id = _tenant(request)
+    tenant_id = _require_tenant(request)
 
     try:
         await db.execute(
@@ -221,6 +227,7 @@ async def create_agent(
 
 @router.get("/{agent_id}", summary="Get Agent Card")
 async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    tenant_id = _require_tenant(request)
     try:
         result = await db.execute(
             text(f"""
@@ -247,10 +254,12 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
                     LIMIT 1
                 ) r ON true
-                WHERE a.agent_id = :aid AND a.is_current = true
+                WHERE a.agent_id = :aid
+                  AND a.tenant_id = :tid
+                  AND a.is_current = true
                 LIMIT 1
             """),
-            {"aid": agent_id},
+            {"aid": agent_id, "tid": tenant_id},
         )
         row = result.mappings().first()
         if not row:
@@ -273,6 +282,7 @@ async def trigger_risk_assessment(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
+    tenant_id = _require_tenant(request)
     try:
         result = await db.execute(
             text(f"""
@@ -287,10 +297,12 @@ async def trigger_risk_assessment(
                     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
                     LIMIT 1
                 ) i ON true
-                WHERE a.agent_id = :aid AND a.is_current = true
+                WHERE a.agent_id = :aid
+                  AND a.tenant_id = :tid
+                  AND a.is_current = true
                 LIMIT 1
             """),
-            {"aid": agent_id},
+            {"aid": agent_id, "tid": tenant_id},
         )
         row = result.mappings().first()
         if not row:
@@ -305,7 +317,7 @@ async def trigger_risk_assessment(
         _risk_payload(
             str(row["agent_internal_id"]), str(row["agent_id"]),
             str(row["agent_name"]), str(row["agent_description"] or ""),
-            str(row["instruction"] or ""), _tenant(request),
+            str(row["instruction"] or ""), tenant_id,
         ),
     )
     return {"message": "Risk assessment triggered.", "agent_id": agent_id,
@@ -317,17 +329,18 @@ async def trigger_risk_assessment(
 # ---------------------------------------------------------------------------
 
 @router.put("/{agent_id}", summary="Update Agent")
-async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession = Depends(get_db)):
+async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    tenant_id = _require_tenant(request)
     try:
         exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.agents WHERE agent_id = :aid LIMIT 1"),
-            {"aid": agent_id},
+            text(f"SELECT 1 FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+            {"aid": agent_id, "tid": tenant_id},
         )
         if not exists.first():
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
 
         agent_sets = ["updated_ts = CURRENT_TIMESTAMP"]
-        params: Dict[str, Any] = {"aid": agent_id}
+        params: Dict[str, Any] = {"aid": agent_id, "tid": tenant_id}
 
         if body.agent_name and body.agent_name.strip():
             agent_sets.append("agent_name = :name")
@@ -338,7 +351,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession
 
         if len(agent_sets) > 1:
             await db.execute(
-                text(f"UPDATE {CORE}.agents SET {', '.join(agent_sets)} WHERE agent_id = :aid"),
+                text(f"UPDATE {CORE}.agents SET {', '.join(agent_sets)} WHERE agent_id = :aid AND tenant_id = :tid"),
                 params,
             )
 
@@ -347,14 +360,16 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession
                 text(f"""
                     UPDATE {CORE}.agent_identifications
                     SET instruction = :instr, updated_ts = CURRENT_TIMESTAMP
-                    WHERE agent_id = :aid AND COALESCE(is_current, true) = true
+                    WHERE agent_id = :aid
+                      AND tenant_id = :tid
+                      AND COALESCE(is_current, true) = true
                 """),
-                {"instr": body.instruction.strip(), "aid": agent_id},
+                {"instr": body.instruction.strip(), "aid": agent_id, "tid": tenant_id},
             )
 
         # Keep curated snapshot in sync so catalog refresh reflects changes immediately
         curated_sets: List[str] = []
-        curated_params: Dict[str, Any] = {"aid": agent_id}
+        curated_params: Dict[str, Any] = {"aid": agent_id, "tid": tenant_id}
         if body.agent_name and body.agent_name.strip():
             curated_sets.append("agent_name = :c_name")
             curated_params["c_name"] = body.agent_name.strip()
@@ -363,7 +378,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession
             curated_params["c_desc"] = body.description.strip()
         if curated_sets:
             await db.execute(
-                text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid"),
+                text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid AND tenant_id = :tid"),
                 curated_params,
             )
 
@@ -381,11 +396,12 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, db: AsyncSession
 # ---------------------------------------------------------------------------
 
 @router.delete("/{agent_id}", summary="Delete Agent")
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    tenant_id = _require_tenant(request)
     try:
         row = await db.execute(
-            text(f"SELECT agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid LIMIT 1"),
-            {"aid": agent_id},
+            text(f"SELECT agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+            {"aid": agent_id, "tid": tenant_id},
         )
         mapping = row.mappings().first()
         if not mapping:
@@ -422,30 +438,30 @@ async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
                 FROM counts c
                 WHERE uc.ai_use_case_id = c.ai_use_case_id
             """),
-            {"aid": agent_id},
+            {"aid": agent_id, "tid": tenant_id},
         )
 
         for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
             await db.execute(
-                text(f"DELETE FROM {CORE}.{table} WHERE agent_id = :aid"),
-                {"aid": agent_id},
+                text(f"DELETE FROM {CORE}.{table} WHERE agent_id = :aid AND tenant_id = :tid"),
+                {"aid": agent_id, "tid": tenant_id},
             )
 
         await db.execute(
-            text(f"DELETE FROM {CORE}.agent_risk_assessments WHERE agent_internal_id = :iid"),
-            {"iid": internal_id},
+            text(f"DELETE FROM {CORE}.agent_risk_assessments WHERE agent_internal_id = :iid AND tenant_id = :tid"),
+            {"iid": internal_id, "tid": tenant_id},
         )
         await db.execute(
-            text(f"DELETE FROM {CORE}.agents WHERE agent_id = :aid"),
-            {"aid": agent_id},
+            text(f"DELETE FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid"),
+            {"aid": agent_id, "tid": tenant_id},
         )
 
         for schema_table in (f"{CURATED}.agent_360", f"{RISK}.agent_risk_assessment"):
             try:
                 sp = await db.begin_nested()
                 await db.execute(
-                    text(f"DELETE FROM {schema_table} WHERE agent_internal_id = :iid"),
-                    {"iid": internal_id},
+                    text(f"DELETE FROM {schema_table} WHERE agent_internal_id = :iid AND tenant_id = :tid"),
+                    {"iid": internal_id, "tid": tenant_id},
                 )
                 await sp.commit()
             except Exception:

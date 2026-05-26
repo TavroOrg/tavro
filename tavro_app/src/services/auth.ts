@@ -68,6 +68,35 @@ export function isAccessTokenExpired(): boolean {
     return false;
 }
 
+/**
+ * Derives the tenant identifier from the current JWT and stores it in
+ * localStorage as `tavro_tenant_id`. Called immediately after a successful
+ * token exchange or silent refresh so every subsequent API call carries the
+ * correct `x-tenant-id` header regardless of whether the MCP server returns
+ * that header during its initialize handshake.
+ *
+ * Priority: Zitadel org claim → org_id → organization_id → sub (per-user
+ * isolation fallback). Always overwrites so stale values from a previous
+ * session or expired token are replaced.
+ */
+export function extractAndStoreTenantId(): void {
+    const token =
+        localStorage.getItem('tavro_access_token') ||
+        localStorage.getItem('tavro_id_token');
+    if (!token) return;
+    const payload = parseJwtPayload(token);
+    if (!payload) return;
+    const tenantId =
+        (payload['urn:zitadel:iam:org:id'] as string | undefined) ||
+        (payload['org_id'] as string | undefined) ||
+        (payload['organization_id'] as string | undefined) ||
+        (payload['sub'] as string | undefined) ||
+        null;
+    if (tenantId) {
+        localStorage.setItem('tavro_tenant_id', tenantId);
+    }
+}
+
 /** True when tavro_auth is set AND the access token is still live. */
 export function isAuthenticated(): boolean {
     return localStorage.getItem('tavro_auth') === 'true' && !isAccessTokenExpired();
@@ -112,6 +141,7 @@ export async function refreshAccessToken(): Promise<boolean> {
             localStorage.setItem('tavro_access_token', data.access_token);
             if (typeof data.id_token === 'string') localStorage.setItem('tavro_id_token', data.id_token);
             if (typeof data.refresh_token === 'string') localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
+            extractAndStoreTenantId();
 
             return true;
         } catch {
@@ -130,7 +160,13 @@ export async function refreshAccessToken(): Promise<boolean> {
  */
 export async function getValidToken(): Promise<string | null> {
     if (!isAccessTokenExpired()) {
-        return localStorage.getItem('tavro_access_token');
+        const token = localStorage.getItem('tavro_access_token');
+        // Lazily populate tavro_tenant_id for sessions that pre-date the
+        // extractAndStoreTenantId call in AuthCallback / refreshAccessToken.
+        if (token && !localStorage.getItem('tavro_tenant_id')) {
+            extractAndStoreTenantId();
+        }
+        return token;
     }
     const ok = await refreshAccessToken();
     return ok ? localStorage.getItem('tavro_access_token') : null;

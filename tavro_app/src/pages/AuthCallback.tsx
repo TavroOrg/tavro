@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { extractAndStoreTenantId } from '../services/auth';
 
 const AuthCallback: React.FC = () => {
     const navigate = useNavigate();
@@ -10,6 +11,37 @@ const AuthCallback: React.FC = () => {
     const [debugInfo, setDebugInfo] = useState<string>('');
 
     const exchangeAttempted = React.useRef(false);
+
+    const decodeJwtPayload = (token: string | undefined | null) => {
+        try {
+            if (!token) return null;
+            const part = token.split('.')[1];
+            if (!part) return null;
+            const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'));
+            return JSON.parse(json);
+        } catch {
+            return null;
+        }
+    };
+
+    const extractOrgIdFromPayload = (payload: Record<string, any> | null) => {
+        if (!payload) return null;
+        const candidates = [
+            'urn:zitadel:iam:user:resourceowner:id',
+            'urn:zitadel:iam:org:id',
+            'urn:zitadel:iam:org:org_id',
+            'org_id',
+            'orgId',
+            'org',
+            'tenant_id',
+            'tenant',
+        ];
+        for (const k of candidates) {
+            const v = payload[k];
+            if (typeof v === 'string' && v.trim()) return v.trim();
+        }
+        return null;
+    };
 
     useEffect(() => {
         if (exchangeAttempted.current) return;
@@ -34,6 +66,12 @@ const AuthCallback: React.FC = () => {
         if (token) {
             console.log('[AuthCallback] Got direct token, storing...');
             localStorage.setItem('tavro_access_token', token);
+            const orgId = extractOrgIdFromPayload(decodeJwtPayload(token));
+            if (orgId) {
+                localStorage.setItem('tavro_tenant_id', orgId);
+            } else {
+                localStorage.removeItem('tavro_tenant_id');
+            }
             localStorage.setItem('tavro_auth', 'true');
             setStatus('success');
             setMessage('Authentication successful! Redirecting...');
@@ -118,6 +156,19 @@ const AuthCallback: React.FC = () => {
                         }
 
                         if (data.id_token) localStorage.setItem('tavro_id_token', data.id_token);
+                        // Persist tenant id from Zitadel-provided claims (if present).
+                        try {
+                            const idPayload = decodeJwtPayload(data.id_token as string | undefined | null) ||
+                                decodeJwtPayload(data.access_token as string | undefined | null);
+                            const orgId = extractOrgIdFromPayload(idPayload as Record<string, any> | null);
+                            if (orgId) {
+                                localStorage.setItem('tavro_tenant_id', orgId);
+                            } else {
+                                localStorage.removeItem('tavro_tenant_id');
+                            }
+                        } catch (e) {
+                            console.debug('[AuthCallback] could not derive org id from token', e);
+                        }
                         if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
                         localStorage.removeItem('tavro_pkce_verifier');
                         localStorage.removeItem('tavro_oidc_state');
@@ -186,9 +237,24 @@ const AuthCallback: React.FC = () => {
                         localStorage.setItem('tavro_mcp_access_token', primaryToken);
                         localStorage.setItem('tavro_access_token', primaryToken);
                         if (data.id_token) localStorage.setItem('tavro_id_token', data.id_token);
+                        // Also try to persist tenant id for non-Zitadel DCR flows when the
+                        // id_token contains an org claim.
+                        try {
+                            const idPayload = decodeJwtPayload(data.id_token as string | undefined | null) ||
+                                decodeJwtPayload(data.access_token as string | undefined | null);
+                            const orgId = extractOrgIdFromPayload(idPayload as Record<string, any> | null);
+                            if (orgId) {
+                                localStorage.setItem('tavro_tenant_id', orgId);
+                            } else {
+                                localStorage.removeItem('tavro_tenant_id');
+                            }
+                        } catch (e) {
+                            console.debug('[AuthCallback] could not derive org id from token', e);
+                        }
                         if (data.refresh_token) localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
                         localStorage.removeItem('tavro_pkce_verifier');
                         localStorage.setItem('tavro_auth', 'true');
+                        extractAndStoreTenantId();
                         sessionStorage.removeItem('tavro_catalog_agents_cache');
                         sessionStorage.removeItem('tavro_catalog_agents_cache_ts');
                         sessionStorage.removeItem('tavro_catalog_usecases_cache');
