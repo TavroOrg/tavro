@@ -465,6 +465,7 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
 @router.get("/workflows", response_model=List[WorkflowStatusItem])
 async def list_risk_workflows(request: Request, status: Optional[str] = None, agent_id: Optional[str] = None):
     tenant_id = _tenant(request)
+    print("TENANT_ID:", tenant_id)
     with _WORKFLOW_STATUS_LOCK:
         rows = list(_WORKFLOW_STATUS.values())
 

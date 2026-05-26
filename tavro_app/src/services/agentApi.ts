@@ -90,7 +90,7 @@ class AgentApiService {
     }
 
     async createAgent(payload: AgentCreatePayload): Promise<{ agent_id: string; agent_name: string; message: string }> {
-        return req('/agents', {
+        return req('/agents/', {
             method: 'POST',
             body: JSON.stringify(payload),
         });
