@@ -3,7 +3,9 @@ upload_worker.py — Standalone upload processing module for the worker containe
 
 Imports upsert functions from worker.py and provides process_card_without_risk()
 which runs all 20 upsert steps but deliberately skips Step 21 (risk dispatch).
-Also injects tenant_id into core.agents after the initial upsert.
+This upload flow does NOT modify tenant mappings; tenant assignment
+is managed externally (Zitadel claims or portal admin) and is not
+automatically injected into the DB by this script.
 
 Usage (worker container CLI):
     python upload_worker.py path/to/agent1.json path/to/agent2.json
@@ -99,14 +101,8 @@ def process_card_without_risk(card_dict: dict, tenant_id: str = None) -> bool:
         print(f"[ERROR] upsert_agent failed: {e}")
         return False
 
-    if tenant_id:
-        try:
-            execute_dml(
-                f"UPDATE core.agents SET tenant_id = {_sq(tenant_id)} WHERE agent_id = {_sq(agent_id)}",
-                "tenant_id update for uploaded agent",
-            )
-        except Exception as e:
-            print(f"[WARN] tenant_id update failed: {e}")
+    # Tenant assignment is intentionally not performed here. Tenant IDs
+    # should come from Zitadel claims or be set via the portal admin UI.
 
     steps = [
         ("[INFO] Step  2/20 - agent_configurations",            upsert_agent_configuration),
@@ -170,13 +166,13 @@ if __name__ == "__main__":
         print("Usage: python upload_worker.py <file1.json> [file2.json ...]")
         sys.exit(1)
 
-    tenant_id = os.getenv("UPLOAD_TENANT_ID")
+    # Tenant assignment is not handled by this upload script.
     init_pool()
 
     processed = 0
     for file_path, idx, card in _iter_upload_cards(sys.argv[1:]):
         print(f"\n[INFO] Processing {file_path.name} (record #{idx})")
-        if process_card_without_risk(card, tenant_id):
+        if process_card_without_risk(card):
             processed += 1
 
     print(f"\n[INFO] Upload complete. Cards processed: {processed}")

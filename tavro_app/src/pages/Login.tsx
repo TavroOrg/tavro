@@ -39,6 +39,7 @@ const Login: React.FC = () => {
                 'tavro_oidc_client_id',
                 'tavro_auth_redirect_uri',
                 'tavro_oidc_state',
+                'tavro_tenant_id',
             ];
             staleKeys.forEach((key) => localStorage.removeItem(key));
 

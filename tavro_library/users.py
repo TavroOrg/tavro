@@ -36,9 +36,10 @@ async def get_approved_user(email: str) -> Optional[ApprovedUser]:
     Resolve login approval by email.
 
     Behavior:
-    - If table `tavro_requests` exists, enforce approval_status='approved'.
-    - If the table is missing and strict mode is disabled, allow fallback login.
-    - Set MCP_REQUIRE_USER_APPROVAL=true to enforce strict approval at all times.
+    - By default, trust ZITADEL as the user registry and do not query Tavro DB.
+    - Set MCP_REQUIRE_USER_APPROVAL=true to additionally require an approved
+      row in `tavro_requests`.
+    - Tenant mapping is not read from this DB; it comes from ZITADEL org claims.
     """
     if not email:
         print("[DB] No email claim available in auth token")
@@ -48,6 +49,8 @@ async def get_approved_user(email: str) -> Optional[ApprovedUser]:
         os.getenv("MCP_REQUIRE_USER_APPROVAL"),
         default=False,
     )
+    if not strict_approval_required:
+        return _fallback_approved_user(email)
 
     try:
         row = await fetch_one_read(
