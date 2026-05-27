@@ -12,6 +12,7 @@
 
 import { test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { exec } from 'child_process';
 import { loginToTavro, stubMcpServer } from '../../actions';
 import {
     TOUR_SAMPLE_AGENT,
@@ -376,8 +377,12 @@ test('Tavro product tour', async ({ page }) => {
         if (action === 'next') {
             if (stepIndex === STEPS.length - 1) {
                 await clearTourUI(page);
-                // "Book a Demo" — navigate to the Tavro website
-                await page.goto('https://www.tavro.ai/tavro/');
+                // Open the booking page in the user's real browser, then let Playwright exit cleanly
+                const bookingUrl = 'https://www.tavro.ai/tavro/';
+                const openCmd = process.platform === 'win32' ? `start ${bookingUrl}`
+                    : process.platform === 'darwin' ? `open ${bookingUrl}`
+                    : `xdg-open ${bookingUrl}`;
+                exec(openCmd);
                 break;
             }
             stepIndex++;
