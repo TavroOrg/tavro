@@ -32,7 +32,7 @@ from api.routers.use_case_upload import _extract_fields, _normalize_priority
 
 router = APIRouter()
 
-CORE = os.getenv("CORE_GLUE_DB_NAME", "core")
+CORE = os.getenv("CORE_DB_NAME", "core")
 
 _drive_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="drive-import")
 

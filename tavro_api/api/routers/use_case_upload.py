@@ -34,7 +34,7 @@ from api.database import get_db
 
 router = APIRouter()
 
-CORE = os.getenv("CORE_GLUE_DB_NAME", "core")
+CORE = os.getenv("CORE_DB_NAME", "core")
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
