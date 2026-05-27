@@ -131,6 +131,7 @@ export interface AgentRelationsPayload {
     inherent_risk_classification: string | null;
     related_processes: RelatedProcessReference[];
   }>;
+  ai_use_cases?: RelatedUseCaseReference[];
 }
 
 export interface BusinessApplicationUpsertPayload {

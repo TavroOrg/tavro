@@ -115,6 +115,45 @@ const normalizeLinkedUseCasesFromAgent = (agent: AgentData): UseCaseSummary[] =>
   return [];
 };
 
+const normalizeLinkedUseCasesFromRelations = (relations: AgentRelationsPayload | null | undefined): UseCaseSummary[] => {
+  const rawLinked = relations?.ai_use_cases;
+  if (!Array.isArray(rawLinked)) return [];
+
+  const seen = new Set<string>();
+  return rawLinked
+    .filter(Boolean)
+    .map((u: any) => ({
+      identifier: u.identifier ?? u.ai_use_case_id ?? u.use_case_id ?? u.id ?? '',
+      name: u.name ?? u.title ?? 'Unnamed Use Case',
+      description: u.description ?? null,
+      owner: u.owner ?? u.use_case_owner ?? null,
+      priority: u.priority ?? null,
+      status: u.status ?? null,
+      function: u.function ?? u.business_function ?? null,
+      problem_statement: u.problem_statement ?? null,
+      expected_benefits: u.expected_benefits ?? null,
+      proposed_by: u.proposed_by ?? null,
+    }))
+    .filter((u: UseCaseSummary) => {
+      const normalizedId = (u.identifier ?? '').trim();
+      if (!normalizedId || seen.has(normalizedId)) return false;
+      seen.add(normalizedId);
+      return true;
+    });
+};
+
+const useCaseSignature = (useCases: UseCaseSummary[]): string =>
+  JSON.stringify(
+    [...useCases]
+      .sort((a, b) => (a.identifier ?? '').localeCompare(b.identifier ?? ''))
+      .map((uc) => ({
+        identifier: uc.identifier ?? '',
+        name: uc.name ?? '',
+        status: uc.status ?? '',
+        priority: uc.priority ?? '',
+      })),
+  );
+
 const getRiskBadge = (level: string | null | undefined) => {
   const normalized = (level ?? '').toLowerCase();
   if (normalized.includes('critical') || normalized.includes('high')) {
@@ -165,7 +204,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loadingRelations, setLoadingRelations] = useState(false);
-  const [relationError, setRelationError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actingKey, setActingKey] = useState<string | null>(null);
   const [applicationSearch, setApplicationSearch] = useState('');
@@ -200,6 +238,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   const refreshRelations = async () => {
     if (!agentId) {
+      setRelations(null);
       onCountsChange?.({
         applications: fallbackApplicationCount,
         processes: fallbackProcessCount,
@@ -208,7 +247,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       return;
     }
     setLoadingRelations(true);
-    setRelationError(null);
     try {
       const [agentRelations, appCatalog, processCatalog] = await Promise.all([
         businessRelationsApi.getAgentRelations(agentId),
@@ -218,13 +256,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       setRelations(agentRelations);
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
+
+      const relationUseCases = normalizeLinkedUseCasesFromRelations(agentRelations);
+      if (Array.isArray(agentRelations.ai_use_cases)) {
+        setLinkedUseCases((prev) =>
+          useCaseSignature(prev) === useCaseSignature(relationUseCases) ? prev : relationUseCases,
+        );
+      }
+
+      const useCaseCount = Array.isArray(agentRelations.ai_use_cases)
+        ? relationUseCases.length
+        : linkedUseCases.length;
       onCountsChange?.({
         applications: agentRelations.applications.filter(isLinkedApplicationLike).length,
         processes: agentRelations.business_processes.filter(isLinkedProcessLike).length,
-        useCases: linkedUseCases.length,
+        useCases: useCaseCount,
       });
-    } catch (err: any) {
-      setRelationError(err.message || 'Could not load live relationship data.');
+    } catch {
       onCountsChange?.({
         applications: fallbackApplicationCount,
         processes: fallbackProcessCount,
@@ -237,11 +285,11 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   useEffect(() => {
     refreshRelations();
-  }, [agentId, showApplications, showProcesses, linkedUseCases.length]);
+  }, [agentId, showApplications, showProcesses]);
 
   const liveApplications = relations?.applications ?? [];
   const liveProcesses = relations?.business_processes ?? [];
-  const showingLiveData = !!relations && !relationError;
+  const showingLiveData = !!relations;
 
   const displayedApplications = useMemo(
     () =>
@@ -412,7 +460,12 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     try {
       await useCaseApi.linkAgent(useCaseId, agentId);
       const linked = allUseCases.find(uc => uc.identifier === useCaseId);
-      if (linked) setLinkedUseCases(prev => [...prev, linked]);
+      if (linked) {
+        setLinkedUseCases(prev => (
+          prev.some((uc) => uc.identifier === linked.identifier) ? prev : [...prev, linked]
+        ));
+      }
+      await refreshRelations();
     } catch (err: any) {
       setActionError(err.message || 'Failed to link AI use case.');
     } finally {
@@ -428,6 +481,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     try {
       await useCaseApi.unlinkAgent(useCaseId, agentId);
       setLinkedUseCases(prev => prev.filter(uc => uc.identifier !== useCaseId));
+      await refreshRelations();
     } catch (err: any) {
       setActionError(err.message || 'Failed to unlink AI use case.');
     } finally {
@@ -441,11 +495,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
           <div className="inline-flex items-center gap-2 text-xs text-blue-600">
             <Loader2 size={13} className="animate-spin" />
             Syncing...
-          </div>
-        )}
-        {relationError && (
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Live relation data is unavailable: {relationError}. Showing card snapshot values.
           </div>
         )}
         {actionError && (
