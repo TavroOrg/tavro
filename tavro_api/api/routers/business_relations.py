@@ -1999,6 +1999,81 @@ async def get_agent_relations(
         payload["related_processes"] = _json_list(payload.get("related_processes"))
         business_processes.append(payload)
 
+    ai_use_cases: list[dict[str, Any]] = []
+    has_agent_use_cases = await _table_exists(db, "core", "agent_ai_use_cases")
+    if has_agent_use_cases:
+        rel_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        if "ai_use_case_id" in rel_cols:
+            match_parts: list[str] = []
+            tenant_filter = ""
+            params: dict[str, Any] = {
+                "agent_internal_id": agent.get("agent_internal_id"),
+                "agent_id": agent.get("agent_id"),
+                "agent_name": agent.get("agent_name"),
+                "tenant_id": agent.get("tenant_id"),
+            }
+
+            if "agent_internal_id" in rel_cols:
+                match_parts.append("rel.agent_internal_id = :agent_internal_id")
+            if "agent_id" in rel_cols:
+                match_parts.append("rel.agent_id = :agent_id")
+            if "agent_name" in rel_cols and agent.get("agent_name"):
+                match_parts.append("rel.agent_name = :agent_name")
+            if "tenant_id" in rel_cols and agent.get("tenant_id"):
+                tenant_filter = (
+                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                )
+
+            if match_parts:
+                has_use_cases = await _table_exists(db, "core", "ai_use_cases")
+                use_case_cols: set[str] = set()
+                if has_use_cases:
+                    use_case_cols = await _table_columns(db, "core", "ai_use_cases")
+
+                rel_name_expr = "rel.ai_use_case_name" if "ai_use_case_name" in rel_cols else "NULL::text"
+                uc_name_expr = "uc.name" if "name" in use_case_cols else "NULL::text"
+                name_expr = f"COALESCE({uc_name_expr}, {rel_name_expr}, rel.ai_use_case_id)"
+
+                description_expr = "uc.description" if "description" in use_case_cols else "NULL::text"
+                owner_expr = "uc.owner" if "owner" in use_case_cols else "NULL::text"
+                priority_expr = "uc.priority" if "priority" in use_case_cols else "NULL::text"
+                status_expr = "uc.status" if "status" in use_case_cols else "NULL::text"
+
+                uc_join = ""
+                if has_use_cases and "ai_use_case_id" in use_case_cols:
+                    tenant_join = ""
+                    if "tenant_id" in use_case_cols and "tenant_id" in rel_cols:
+                        tenant_join = "AND COALESCE(uc.tenant_id, '') = COALESCE(rel.tenant_id, '')"
+                    uc_join = """
+                    LEFT JOIN core.ai_use_cases uc
+                        ON LOWER(TRIM(uc.ai_use_case_id)) = LOWER(TRIM(rel.ai_use_case_id))
+                        {tenant_join}
+                    """
+                    uc_join = uc_join.format(tenant_join=tenant_join)
+
+                use_case_rows = await db.execute(
+                    text(
+                        f"""
+                        SELECT DISTINCT
+                            rel.ai_use_case_id AS identifier,
+                            {name_expr} AS name,
+                            {description_expr} AS description,
+                            {owner_expr} AS owner,
+                            {priority_expr} AS priority,
+                            {status_expr} AS status
+                        FROM core.agent_ai_use_cases rel
+                        {uc_join}
+                        WHERE ({' OR '.join(match_parts)})
+                          {tenant_filter}
+                          AND rel.ai_use_case_id IS NOT NULL
+                          AND rel.ai_use_case_id <> ''
+                        ORDER BY LOWER({name_expr})
+                        """
+                    ),
+                    params,
+                )
+                ai_use_cases = [dict(r._mapping) for r in use_case_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -2008,6 +2083,7 @@ async def get_agent_relations(
         },
         "applications": applications,
         "business_processes": business_processes,
+        "ai_use_cases": ai_use_cases,
     }
 
 
