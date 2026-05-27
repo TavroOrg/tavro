@@ -324,6 +324,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         let timer: number | null = null;
         let active = true;
 
+        const POLL_FAST = 5_000;   // while workflows are running
+        const POLL_IDLE = 30_000;  // nothing in flight
+
+        const schedule = (delay: number) => {
+            if (timer) window.clearInterval(timer);
+            timer = window.setInterval(syncTemporalWorkflows, delay);
+        };
+
         const syncTemporalWorkflows = async () => {
             try {
                 const workflows = await agentApi.getRiskWorkflows();
@@ -343,13 +351,16 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     localStorage.setItem(TEMPORAL_WORKFLOW_KEY, snapshot);
                     window.dispatchEvent(new Event('tavro_temporal_workflow_update'));
                 }
+                // Slow down when there are no running workflows
+                const hasRunning = normalized.some(w => w.status === 'running');
+                schedule(hasRunning ? POLL_FAST : POLL_IDLE);
             } catch {
                 // ignore transient endpoint errors
             }
         };
 
         syncTemporalWorkflows();
-        timer = window.setInterval(syncTemporalWorkflows, 5000);
+        timer = window.setInterval(syncTemporalWorkflows, POLL_IDLE);
 
         return () => {
             active = false;

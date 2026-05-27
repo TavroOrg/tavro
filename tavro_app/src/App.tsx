@@ -36,6 +36,9 @@ import BusinessApplicationsPage from './pages/BusinessApplicationsPage';
 import BusinessApplicationViewPage from './pages/BusinessApplicationViewPage';
 import BusinessProcessesPage from './pages/BusinessProcessesPage';
 import BusinessProcessViewPage from './pages/BusinessProcessViewPage';
+import IntegrationsPage from './pages/IntegrationsPage';
+import IntegrationViewPage from './pages/IntegrationViewPage';
+import SparkPage from './pages/SparkPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -156,6 +159,11 @@ function App() {
                 <Route path="processes" element={<BusinessProcessesPage />} />
                 <Route path="processes/new" element={<BusinessProcessViewPage />} />
                 <Route path="processes/:id" element={<BusinessProcessViewPage />} />
+                <Route path="integrations" element={<IntegrationsPage />} />
+                <Route path="integrations/new" element={<IntegrationViewPage />} />
+                <Route path="integrations/:id" element={<IntegrationViewPage />} />
+
+                <Route path="spark" element={<SparkPage />} />
 
               </Route>
             </Routes>

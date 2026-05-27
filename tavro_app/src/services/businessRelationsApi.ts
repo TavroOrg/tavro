@@ -4,6 +4,8 @@ import type {
   BusinessApplicationUpsertPayload,
   BusinessProcessRecord,
   BusinessProcessUpsertPayload,
+  IntegrationRecord,
+  IntegrationUpsertPayload,
 } from '../types/businessRelations';
 
 export interface AgentAttachmentRecord {
@@ -267,6 +269,47 @@ class BusinessRelationsApi {
 
   async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
     await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listIntegrations(search?: string): Promise<IntegrationRecord[]> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    params.set('offset', '0');
+    params.set('limit', '500');
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const data = await req<unknown>(`/integrations${suffix}`);
+    if (Array.isArray(data)) return data as IntegrationRecord[];
+    return ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+  }
+
+  async getIntegration(integrationId: string): Promise<IntegrationRecord> {
+    return req(`/integrations/${encodeURIComponent(integrationId)}`);
+  }
+
+  async createIntegration(payload: IntegrationUpsertPayload, companyId?: string): Promise<IntegrationRecord> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/integrations${qs}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateIntegration(
+    integrationId: string,
+    payload: IntegrationUpsertPayload,
+    companyId?: string,
+  ): Promise<IntegrationRecord> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/integrations/${encodeURIComponent(integrationId)}${qs}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteIntegration(integrationId: string): Promise<void> {
+    await req(`/integrations/${encodeURIComponent(integrationId)}`, {
       method: 'DELETE',
     });
   }

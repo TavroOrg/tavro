@@ -1,0 +1,741 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import {
+  Network,
+  AlertCircle,
+  ArrowLeft,
+  Info,
+  Loader2,
+  Pencil,
+  Save,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
+import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useBlueprint } from '../context/BlueprintContext';
+import type {
+  IntegrationRecord,
+  IntegrationUpsertPayload,
+} from '../types/businessRelations';
+
+type Tab = 'overview' | 'related';
+type Option = { label: string; value: string };
+
+const PROTOCOL_OPTIONS: Option[] = [
+  { label: 'REST', value: 'REST' },
+  { label: 'GraphQL', value: 'GraphQL' },
+  { label: 'Webhook', value: 'Webhook' },
+  { label: 'gRPC', value: 'gRPC' },
+  { label: 'SOAP', value: 'SOAP' },
+  { label: 'MCP', value: 'MCP' },
+  { label: 'Event Stream', value: 'Event Stream' },
+  { label: 'EDI', value: 'EDI' },
+];
+
+const AUTH_METHOD_OPTIONS: Option[] = [
+  { label: 'OAuth2', value: 'OAuth2' },
+  { label: 'API Key', value: 'API Key' },
+  { label: 'mTLS', value: 'mTLS' },
+  { label: 'Basic', value: 'Basic' },
+  { label: 'None', value: 'None' },
+];
+
+const DATA_SENSITIVITY_OPTIONS: Option[] = [
+  { label: 'None', value: 'None' },
+  { label: 'PII', value: 'PII' },
+  { label: 'PCI', value: 'PCI' },
+  { label: 'PHI', value: 'PHI' },
+  { label: 'Confidential', value: 'Confidential' },
+];
+
+const AVAILABILITY_STATUS_OPTIONS: Option[] = [
+  { label: 'Active', value: 'Active' },
+  { label: 'Deprecated', value: 'Deprecated' },
+  { label: 'Planned', value: 'Planned' },
+  { label: 'Unknown', value: 'Unknown' },
+];
+
+interface IntegrationFormState {
+  integration_name: string;
+  integration_description: string;
+  capabilities: string;
+  protocol: string;
+  endpoint_url: string;
+  authentication_method: string;
+  owner: string;
+  documentation_url: string;
+  data_sensitivity: string;
+  rate_limit: string;
+  availability_status: string;
+  sla: string;
+  version: string;
+  parent_application_id: string;
+}
+
+const inputCls =
+  'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
+const textAreaCls = `${inputCls} resize-y min-h-[84px]`;
+
+const toText = (value: unknown, fallback = ''): string => {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+};
+
+const toNullable = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const emptyForm = (): IntegrationFormState => ({
+  integration_name: '',
+  integration_description: '',
+  capabilities: '',
+  protocol: '',
+  endpoint_url: '',
+  authentication_method: '',
+  owner: '',
+  documentation_url: '',
+  data_sensitivity: '',
+  rate_limit: '',
+  availability_status: '',
+  sla: '',
+  version: '',
+  parent_application_id: '',
+});
+
+const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => ({
+  integration_name: toText(item.integration_name),
+  integration_description: toText(item.integration_description),
+  capabilities: toText(item.capabilities),
+  protocol: toText(item.protocol),
+  endpoint_url: toText(item.endpoint_url),
+  authentication_method: toText(item.authentication_method),
+  owner: toText(item.owner),
+  documentation_url: toText(item.documentation_url),
+  data_sensitivity: toText(item.data_sensitivity),
+  rate_limit: toText(item.rate_limit),
+  availability_status: toText(item.availability_status),
+  sla: toText(item.sla),
+  version: toText(item.version),
+  parent_application_id: toText(item.parent_application_id),
+});
+
+const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertPayload => ({
+  integration_name: toNullable(form.integration_name),
+  integration_description: toNullable(form.integration_description),
+  capabilities: toNullable(form.capabilities),
+  protocol: toNullable(form.protocol),
+  endpoint_url: toNullable(form.endpoint_url),
+  authentication_method: toNullable(form.authentication_method),
+  owner: toNullable(form.owner),
+  documentation_url: toNullable(form.documentation_url),
+  data_sensitivity: toNullable(form.data_sensitivity),
+  rate_limit: toNullable(form.rate_limit),
+  availability_status: toNullable(form.availability_status),
+  sla: toNullable(form.sla),
+  version: toNullable(form.version),
+  parent_application_id: toNullable(form.parent_application_id),
+});
+
+const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
+  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+    {label}
+    {required && <span className="text-red-500">*</span>}
+    {hint && (
+      <span title={hint}>
+        <Info size={12} className="text-slate-400" />
+      </span>
+    )}
+  </label>
+);
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-4">
+    <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+    {children}
+  </div>
+);
+
+const IntegrationViewPage: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { activeCompany } = useBlueprint();
+  const isCreateMode = !id || id === 'new';
+
+  const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
+  const [form, setForm] = useState<IntegrationFormState>(emptyForm);
+  const [loading, setLoading] = useState(!isCreateMode);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [attemptedSave, setAttemptedSave] = useState(false);
+  const [tab, setTab] = useState<Tab>('overview');
+  const [editing, setEditing] = useState(isCreateMode);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = async () => {
+    if (!id || isCreateMode) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await businessRelationsApi.getIntegration(id);
+      setIntegration(data);
+      setForm(formFromIntegration(data));
+      setAttemptedSave(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load integration');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isCreateMode) {
+      setIntegration(null);
+      setForm(emptyForm());
+      setEditing(true);
+      setAttemptedSave(false);
+      setLoading(false);
+      setTab('overview');
+      setError(null);
+      return;
+    }
+    setEditing(false);
+    load();
+  }, [id, isCreateMode]);
+
+  const relatedAgentCount = useMemo(
+    () => integration?.related_agents?.length ?? 0,
+    [integration],
+  );
+
+  const setField = (key: keyof IntegrationFormState, value: string) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const isNameMissing = !form.integration_name.trim();
+
+  const handleSave = async () => {
+    setAttemptedSave(true);
+    if (isNameMissing) {
+      setActionError('Integration Name is required.');
+      return;
+    }
+
+    setSaving(true);
+    setActionError(null);
+    try {
+      const payload = buildIntegrationPayload(form);
+      if (isCreateMode) {
+        const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
+        navigate(`/integrations/${encodeURIComponent(created.integration_id)}`, { replace: true });
+        return;
+      }
+      if (!integration) return;
+      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, payload, activeCompany?.id);
+      setIntegration(updated);
+      setForm(formFromIntegration(updated));
+      setAttemptedSave(false);
+      setEditing(false);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to save integration');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setActionError(null);
+    setAttemptedSave(false);
+    if (isCreateMode) {
+      navigate('/integrations');
+      return;
+    }
+    if (integration) setForm(formFromIntegration(integration));
+    setEditing(false);
+  };
+
+  const handleDelete = async () => {
+    if (!integration) return;
+    const ok = window.confirm(`Delete integration "${integration.integration_name || integration.integration_id}"?`);
+    if (!ok) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await businessRelationsApi.deleteIntegration(integration.integration_id);
+      navigate('/integrations');
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
+      setDeleting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-slate-500">
+        <Loader2 size={16} className="animate-spin" />
+        Loading integration details...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-4">
+        <button
+          onClick={() => navigate('/integrations')}
+          className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
+        >
+          <ArrowLeft size={16} /> Back to Integrations
+        </button>
+        <div className="flex items-start gap-3 text-red-500 bg-red-50 border border-red-200 rounded-xl px-6 py-4">
+          <AlertCircle size={20} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-bold text-sm">Could not load integration</p>
+            <p className="text-xs mt-1 text-red-400">{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const pageTitle = form.integration_name || integration?.integration_name || 'New Integration';
+  const integrationId = integration?.integration_id || 'Will be generated on create';
+
+  return (
+    <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button
+          onClick={() => navigate('/integrations')}
+          className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
+        >
+          <ArrowLeft size={16} /> Back to Integrations
+        </button>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {editing ? (
+            <>
+              <button
+                onClick={handleCancelEdit}
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              >
+                <XCircle size={15} /> Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                {isCreateMode ? 'Create Integration' : 'Save Changes'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  setTab('overview');
+                  setAttemptedSave(false);
+                  setEditing(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              >
+                <Pencil size={15} /> Edit
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {actionError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {actionError}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="h-4 bg-gradient-to-r from-violet-600 to-blue-600 rounded-t-2xl w-full" />
+        <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[60%]">
+            <div className="p-3 bg-violet-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+              <Network size={24} />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Integration</span>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{pageTitle}</h2>
+              <p className="text-xs font-mono text-slate-400 mt-1">{integrationId}</p>
+              <p className="text-sm text-slate-600 line-clamp-2">
+                {form.integration_description || 'No description available.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+            {form.protocol && (
+              <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Protocol</span>
+                <span className="text-xs font-bold text-violet-700">{form.protocol}</span>
+              </div>
+            )}
+            {form.availability_status && (
+              <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Availability</span>
+                <span className="text-xs font-bold text-slate-700">{form.availability_status}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 border-b border-slate-200">
+        <button
+          onClick={() => setTab('overview')}
+          className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+            tab === 'overview'
+              ? 'border-blue-600 text-blue-700'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Details
+        </button>
+        {!isCreateMode && !editing && (
+          <button
+            onClick={() => setTab('related')}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+              tab === 'related'
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Related Agents ({relatedAgentCount})
+          </button>
+        )}
+      </div>
+
+      {tab === 'overview' && (
+        <div className="flex flex-col gap-4">
+          <Section title="General">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Integration Name" required />
+                {editing ? (
+                  <>
+                    <input
+                      value={form.integration_name}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setField('integration_name', value);
+                        if (attemptedSave && value.trim()) setActionError(null);
+                      }}
+                      className={`${inputCls} ${attemptedSave && isNameMissing ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20' : ''}`}
+                      placeholder="Integration name"
+                      aria-invalid={attemptedSave && isNameMissing}
+                    />
+                    {attemptedSave && isNameMissing && (
+                      <p className="text-xs text-red-600">Integration Name is required.</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.integration_name || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Owner" />
+                {editing ? (
+                  <input
+                    value={form.owner}
+                    onChange={(e) => setField('owner', e.target.value)}
+                    className={inputCls}
+                    placeholder="Owner name or team"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.owner || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="md:col-span-2 flex flex-col gap-1.5">
+                <HintLabel label="Integration Description" />
+                {editing ? (
+                  <textarea
+                    value={form.integration_description}
+                    onChange={(e) => setField('integration_description', e.target.value)}
+                    rows={3}
+                    className={textAreaCls}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap">
+                    {form.integration_description || 'N/A'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Capabilities">
+            <p className="text-xs text-slate-400 -mt-1">
+              List the data, events, and operations this integration exposes — used by Spark to generate contextual AI ideas.
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <HintLabel label="Capabilities" hint="Describe what this integration can read, write, subscribe to, or trigger. Use bullet points or numbered lists." />
+              {editing ? (
+                <textarea
+                  value={form.capabilities}
+                  onChange={(e) => setField('capabilities', e.target.value)}
+                  rows={5}
+                  className={textAreaCls}
+                  placeholder={`e.g.\n1. Read real-time machine sensor data (OPC-UA)\n2. Push quality alerts to ERP work orders\n3. Subscribe to production schedule changes`}
+                />
+              ) : (
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap">
+                  {form.capabilities || 'No capabilities defined.'}
+                </p>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Technical Details">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Protocol" />
+                {editing ? (
+                  <select
+                    value={form.protocol}
+                    onChange={(e) => setField('protocol', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {PROTOCOL_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.protocol || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Authentication Method" />
+                {editing ? (
+                  <select
+                    value={form.authentication_method}
+                    onChange={(e) => setField('authentication_method', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {AUTH_METHOD_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.authentication_method || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="md:col-span-2 flex flex-col gap-1.5">
+                <HintLabel label="Endpoint URL" />
+                {editing ? (
+                  <input
+                    value={form.endpoint_url}
+                    onChange={(e) => setField('endpoint_url', e.target.value)}
+                    className={inputCls}
+                    placeholder="https://..."
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
+                    {form.endpoint_url || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="md:col-span-2 flex flex-col gap-1.5">
+                <HintLabel label="Documentation URL" />
+                {editing ? (
+                  <input
+                    value={form.documentation_url}
+                    onChange={(e) => setField('documentation_url', e.target.value)}
+                    className={inputCls}
+                    placeholder="https://..."
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
+                    {form.documentation_url || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Version" />
+                {editing ? (
+                  <input
+                    value={form.version}
+                    onChange={(e) => setField('version', e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. v1.2.0"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.version || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Rate Limit" />
+                {editing ? (
+                  <input
+                    value={form.rate_limit}
+                    onChange={(e) => setField('rate_limit', e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. 1000 req/min"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.rate_limit || 'N/A'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Governance">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Data Sensitivity" />
+                {editing ? (
+                  <select
+                    value={form.data_sensitivity}
+                    onChange={(e) => setField('data_sensitivity', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {DATA_SENSITIVITY_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.data_sensitivity || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Availability Status" />
+                {editing ? (
+                  <select
+                    value={form.availability_status}
+                    onChange={(e) => setField('availability_status', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {AVAILABILITY_STATUS_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.availability_status || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="SLA" />
+                {editing ? (
+                  <input
+                    value={form.sla}
+                    onChange={(e) => setField('sla', e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. 99.9% uptime"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                    {form.sla || 'N/A'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Parent Application ID" />
+                {editing ? (
+                  <input
+                    value={form.parent_application_id}
+                    onChange={(e) => setField('parent_application_id', e.target.value)}
+                    className={inputCls}
+                    placeholder="Application UUID"
+                  />
+                ) : (
+                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
+                    {form.parent_application_id
+                      ? form.parent_application_id
+                      : integration?.parent_application_name
+                        ? `${integration.parent_application_name}`
+                        : 'N/A'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {tab === 'related' && integration && (
+        <div className="flex flex-col gap-4">
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Related Agents ({relatedAgentCount})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {integration.related_agents.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No agents linked.</div>
+              )}
+              {integration.related_agents.map((rel, idx) => {
+                const relId = rel.agent_id || `missing-${idx}`;
+                const displayName = rel.agent_id
+                  ? (rel.agent_name || rel.agent_id)
+                  : (rel.agent_name || 'Unknown Agent');
+                return (
+                  <div key={`${relId}-${idx}`} className="px-5 py-3 flex items-center gap-3">
+                    <div className="min-w-0">
+                      {rel.agent_id ? (
+                        <Link
+                          to={`/agent/${encodeURIComponent(rel.agent_id)}`}
+                          className="text-sm font-semibold text-blue-600 hover:underline"
+                        >
+                          {displayName}
+                        </Link>
+                      ) : (
+                        <p className="text-sm font-semibold text-slate-700">{displayName}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default IntegrationViewPage;
