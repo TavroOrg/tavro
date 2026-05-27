@@ -32,7 +32,7 @@ from api.routers.use_case_upload import _extract_fields, _normalize_priority
 
 router = APIRouter()
 
-CORE = os.getenv("CORE_GLUE_DB_NAME", "core")
+CORE = os.getenv("CORE_DB_NAME", "core")
 
 _drive_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="drive-import")
 
@@ -205,46 +205,57 @@ async def import_from_drive(
     all_file_entries: list[dict] = []
     folder_status: int = 0
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        # Always check the regular folder URL for access / existence
-        folder_resp = await client.get(folder_page_url, headers=_BROWSER_HEADERS)
-        folder_status = folder_resp.status_code
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            # Always check the regular folder URL for access / existence
+            folder_resp = await client.get(folder_page_url, headers=_BROWSER_HEADERS)
+            folder_status = folder_resp.status_code
 
-        if folder_status == 404:
-            raise HTTPException(status_code=404, detail="Folder not found. Check the URL.")
-        if folder_status in (401, 403):
-            raise HTTPException(
-                status_code=400,
-                detail="Access denied. Make sure the folder is shared as 'Anyone with the link → Viewer'.",
-            )
-        if folder_status != 200:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not reach the Drive folder (HTTP {folder_status}).",
-            )
-
-        # Strategy A: embeddedfolderview
-        try:
-            embed_resp = await client.get(embed_url, headers=_BROWSER_HEADERS)
-            if embed_resp.status_code == 200:
-                all_file_entries = _extract_json_files_from_html(embed_resp.text)
-                print(f"[INFO] drive_import: embeddedfolderview → {len(all_file_entries)} entries")
-        except Exception as exc:
-            print(f"[WARN] drive_import: embeddedfolderview fetch failed: {exc}")
-
-        # Strategy B: regular folder page (fallback)
-        if not all_file_entries:
-            all_file_entries = _extract_json_files_from_html(folder_resp.text)
-            print(f"[INFO] drive_import: folder page → {len(all_file_entries)} entries")
-
-            if not all_file_entries:
-                print(
-                    f"[WARN] drive_import: no file IDs found. "
-                    f"HTML len={len(folder_resp.text)}, "
-                    f"has AF_initDataCallback={'AF_initDataCallback' in folder_resp.text}, "
-                    f"has /file/d/={'/file/d/' in folder_resp.text}, "
-                    f"has data-id={'data-id=' in folder_resp.text}"
+            if folder_status == 404:
+                raise HTTPException(status_code=404, detail="Folder not found. Check the URL.")
+            if folder_status in (401, 403):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Access denied. Make sure the folder is shared as 'Anyone with the link → Viewer'.",
                 )
+            if folder_status != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not reach the Drive folder (HTTP {folder_status}).",
+                )
+
+            # Strategy A: embeddedfolderview
+            try:
+                embed_resp = await client.get(embed_url, headers=_BROWSER_HEADERS)
+                if embed_resp.status_code == 200:
+                    all_file_entries = _extract_json_files_from_html(embed_resp.text)
+                    print(f"[INFO] drive_import: embeddedfolderview → {len(all_file_entries)} entries")
+            except Exception as exc:
+                print(f"[WARN] drive_import: embeddedfolderview fetch failed: {exc}")
+
+            # Strategy B: regular folder page (fallback)
+            if not all_file_entries:
+                all_file_entries = _extract_json_files_from_html(folder_resp.text)
+                print(f"[INFO] drive_import: folder page → {len(all_file_entries)} entries")
+
+                if not all_file_entries:
+                    print(
+                        f"[WARN] drive_import: no file IDs found. "
+                        f"HTML len={len(folder_resp.text)}, "
+                        f"has AF_initDataCallback={'AF_initDataCallback' in folder_resp.text}, "
+                        f"has /file/d/={'/file/d/' in folder_resp.text}, "
+                        f"has data-id={'data-id=' in folder_resp.text}"
+                    )
+    except HTTPException:
+        raise
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Cannot reach Google Drive — the server has no internet access. "
+                "Check that the container has DNS and outbound connectivity."
+            ),
+        ) from exc
 
     # Entries with a known .json name, OR entries whose type we don't know yet
     json_entries = [
@@ -330,8 +341,8 @@ async def import_from_drive(
         try:
             await db.execute(
                 text(f"""
-                    INSERT INTO {CORE}.agent_ai_use_cases
-                        (tenant_id, identifier, name, description, owner,
+                    INSERT INTO {CORE}.ai_use_cases
+                        (tenant_id, ai_use_case_id, name, description, owner,
                          problem_statement, expected_benefits, priority, status,
                          solution_approach, agent_risk_exposure_are, no_of_associated_agents,
                          inherent_risk_classification, residual_risk_classification,
