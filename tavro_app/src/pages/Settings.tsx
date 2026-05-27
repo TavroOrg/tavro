@@ -8,23 +8,24 @@ import {
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
 import {
-    DEFAULT_MODELS, PROVIDER_HINTS, PROVIDER_LABELS, LLMProvider,
+    DEFAULT_MODELS, /* PROVIDER_HINTS, */ PROVIDER_LABELS, LLMProvider,
     getProviderConfig, saveProviderConfig, clearProviderConfig,
     getActiveProvider, setActiveProvider,
 } from '../services/llmService';
 
 import { useTheme } from '../context/ThemeContext';
 
-const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
+// const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
 // const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+const ALL_PROVIDERS: LLMProvider[] = ['copilot'];
 const MCP_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:9001/zitadel/mcp';
 
-const PROVIDER_ICONS: Record<LLMProvider, string> = {
-    openai: '🤖',
-    gemini: '✨',
-    anthropic: '🧠',
-    copilot: '🪄',
-};
+// const PROVIDER_ICONS: Record<LLMProvider, string> = {
+//     openai: '🤖',
+//     gemini: '✨',
+//     anthropic: '🧠',
+//     copilot: '🪄',
+// };
 
 import { useChatContext } from '../context/ChatContext';
 
@@ -135,7 +136,7 @@ const Settings: React.FC = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
                     <BotMessageSquare size={16} className="text-blue-500" />
-                    <span className="font-bold text-slate-800 dark:text-slate-100">Chat AI Configuration</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assitant Settings - Chat AI Configuration</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -152,12 +153,13 @@ const Settings: React.FC = () => {
                                     : 'border-slate-200 dark:border-slate-700'
                             }`}>
                                 {/* Card header */}
-                                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-base">{PROVIDER_ICONS[p]}</span>
-                                        <span className="font-bold text-sm text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p]}</span>
-                                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{PROVIDER_HINTS[p]}</span>
-                                    </div>
+                                {/* <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800"> */}
+                                <div className="flex justify-end px-4">
+                                    {/* <div className="flex items-center gap-2"> */}
+                                        {/* <span className="text-base">{PROVIDER_ICONS[p]}</span> */}
+                                        {/* <span className="font-bold text-sm text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p]}</span> */}
+                                        {/* <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{PROVIDER_HINTS[p]}</span> */}
+                                    {/* </div> */}
                                     <div className="flex items-center gap-2">
                                         {s.configured && (
                                             <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-2 py-0.5 rounded-full">

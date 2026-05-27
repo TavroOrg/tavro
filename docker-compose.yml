@@ -86,6 +86,9 @@ services:
       # Temporal
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8000:8000"
     volumes:
