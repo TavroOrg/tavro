@@ -1,5 +1,21 @@
 import { Page } from '@playwright/test';
+import { readFileSync, readdirSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { stubMcpServer } from './mcp-stub';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SAMPLE_DATA_DIR = resolve(__dirname, '../../sample-data');
+
+function loadSampleDataAgents(): any[] {
+    try {
+        return readdirSync(SAMPLE_DATA_DIR)
+            .filter((f: string) => f.endsWith('.json'))
+            .map((f: string) => JSON.parse(readFileSync(resolve(SAMPLE_DATA_DIR, f), 'utf-8')));
+    } catch {
+        return [];
+    }
+}
 
 export const TOUR_AGENT_ID = 'TOUR-AGENT-001';
 export const TOUR_USE_CASE_ID = 'UC-TOUR-001';
@@ -32,6 +48,7 @@ export const TOUR_SAMPLE_AGENT = {
         environment: 'Production',
         governance_status: 'Approved',
         goal_orientation: '0.8',
+        instruction: 'Step 1 — Read: Retrieve the full incident record including short description, category, sub-category, and priority from ServiceNow.\n\nStep 2 — Classify: Analyse the incident text to identify the affected service and configuration item using the CMDB lookup tool. Match against known service catalogue entries.\n\nStep 3 — Route: Assign the correct service, service offering, and CI to the incident. Update the assignment group based on the classification outcome.\n\nStep 4 — Audit: Log all classification decisions with confidence scores and source evidence to the audit trail. Escalate low-confidence cases to L1 for manual review.',
     },
     configuration: {
         autonomy_level: '0.5',
@@ -40,10 +57,10 @@ export const TOUR_SAMPLE_AGENT = {
         reasoning_model: 'Chain-of-Thought',
     },
     risk_assessment: {
-        blended_risk_classification: 'High',
-        blended_risk_score: 72,
+        blended_risk_classification: 'Low',
+        blended_risk_score: 1.8,
         regulatory_risk_classification: 'Limited Risk',
-        summary: 'Medium risk due to automated incident routing affecting SLA compliance.',
+        summary: 'Low blended risk. Agent operates within a well-defined scope with human oversight on low-confidence classifications.',
         state: 'Completed',
     },
     ai_use_case: {
@@ -76,14 +93,21 @@ export const TOUR_SAMPLE_USE_CASE = {
     use_case_id: TOUR_USE_CASE_ID,
     name: 'Automate Incident Triage',
     title: 'Automate Incident Triage',
-    description: 'Automatically classify and route incidents to reduce MTTR',
+    description: 'Automatically classify and route incidents to reduce MTTR and improve SLA compliance across IT operations.',
     status: 'In Progress',
     priority: 'High',
+    owner: 'IT Operations',
     use_case_owner: 'IT Operations',
-    business_problem_statement: 'Manual incident routing is slow and error-prone.',
-    expected_benefits: 'Reduced MTTR and improved SLA compliance.',
+    function: 'IT Operations',
+    problem_statement: 'Manual incident triage requires L1 agents to read, categorise, and route each ticket by hand. This introduces 8–15 minutes of handling time per incident, causes misrouting errors, and delays SLA-critical responses — particularly during high-volume periods.',
+    business_problem_statement: 'Manual incident triage requires L1 agents to read, categorise, and route each ticket by hand. This introduces 8–15 minutes of handling time per incident, causes misrouting errors, and delays SLA-critical responses — particularly during high-volume periods.',
+    expected_benefits: 'Reduce average triage time from 12 minutes to under 90 seconds. Cut misrouting errors by 70%. Improve P1/P2 SLA attainment from 74% to 95%+. Free L1 agents to focus on complex, high-value incidents.',
+    solution_approach: 'Deploy an AI agent connected to ServiceNow that reads incoming incident descriptions, retrieves relevant CI and service data, and automatically assigns the correct service, service offering, and configuration item — then routes the ticket to the appropriate resolver group without human intervention.',
     agents: [TOUR_SAMPLE_AGENT],
 };
+
+/** All agents shown in the catalog during the tour — primary tour agent first, then all agents from sample-data/. */
+export const TOUR_CATALOG_AGENTS = [TOUR_SAMPLE_AGENT, ...loadSampleDataAgents()];
 
 /**
  * Stubs all network requests needed for the product tour to run end-to-end
@@ -118,7 +142,7 @@ export async function setupTourMocks(page: Page): Promise<void> {
         route.fulfill({ json: TOUR_SAMPLE_AGENT }),
     );
     await page.route(/\/api\/v1\/agents(\?.*)?$/, (route) =>
-        route.fulfill({ json: { agents: [TOUR_SAMPLE_AGENT], total_records: 1 } }),
+        route.fulfill({ json: { agents: TOUR_CATALOG_AGENTS, total_records: TOUR_CATALOG_AGENTS.length } }),
     );
 
     // Use case list and individual use case
@@ -130,7 +154,7 @@ export async function setupTourMocks(page: Page): Promise<void> {
     );
 
     // MCP server — provides the catalog and use-case data for context-aware pages
-    await stubMcpServer(page, [TOUR_SAMPLE_AGENT], [TOUR_SAMPLE_USE_CASE]);
+    await stubMcpServer(page, TOUR_CATALOG_AGENTS, [TOUR_SAMPLE_USE_CASE]);
 }
 
 /** Clicks the primary tour button (Start / Next) on the visible tooltip. */

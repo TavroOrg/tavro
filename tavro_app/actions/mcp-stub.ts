@@ -71,6 +71,17 @@ export async function stubMcpServer(page: Page, agents: any[], useCases: any[] =
       return;
     }
 
+    // get_agent_card → return single agent wrapped under agent_card key
+    if (toolName === 'get_agent_card') {
+      const singleAgentBody = JSON.stringify({
+        jsonrpc: '2.0',
+        result: { content: [{ type: 'text', text: JSON.stringify({ agent_card: agents[0] }) }] },
+        id: 1,
+      });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: singleAgentBody });
+      return;
+    }
+
     // get_ai_use_case → use case list, everything else → agent catalog
     const body = toolName.includes('use_case') ? useCaseResponse : agentResponse;
     await route.fulfill({ status: 200, contentType: 'application/json', body });

@@ -29,10 +29,10 @@ const TOUR_STEPS: Step[] = [
         spotlightPadding: 6,
     },
     {
-        target: '#tour-usecase-detail-section',
+        target: '#tour-usecase-detail-card',
         title: 'Use Case Deep Dive',
         content: 'Open any use case to review its owner, priority, linked agents, and full business context in a single governed view.',
-        placement: 'top',
+        placement: 'bottom',
         skipBeacon: true,
         spotlightPadding: 8,
     },

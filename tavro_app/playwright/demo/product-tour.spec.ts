@@ -16,6 +16,7 @@ import { loginToTavro, stubMcpServer } from '../../actions';
 import {
     TOUR_SAMPLE_AGENT,
     TOUR_SAMPLE_USE_CASE,
+    TOUR_CATALOG_AGENTS,
     TOUR_AGENT_ID,
 } from '../../actions/tour';
 
@@ -66,8 +67,8 @@ const STEPS: DemoStep[] = [
         content:
             'Open any use case to review its owner, priority, linked agents, and full ' +
             'business context in a single governed view.',
-        target: '#tour-usecase-detail-section',
-        placement: 'top',
+        target: '#tour-usecase-detail-card',
+        placement: 'bottom',
         url: `/use-case/UC-TOUR-001`,
     },
     {
@@ -162,6 +163,11 @@ async function showStep(page: Page, step: DemoStep, index: number): Promise<void
             const vw = window.innerWidth;
             const vh = window.innerHeight;
 
+            // ── Blocking layer (prevents clicks reaching the underlying page) ──
+            const blocker = document.createElement('div');
+            blocker.style.cssText = 'position:fixed;inset:0;z-index:9997;';
+            root.appendChild(blocker);
+
             // ── Spotlight / overlay ───────────────────────────────
             if (rect) {
                 const spot = document.createElement('div');
@@ -175,7 +181,7 @@ async function showStep(page: Page, step: DemoStep, index: number): Promise<void
             } else {
                 const ov = document.createElement('div');
                 ov.style.cssText =
-                    'position:fixed;inset:0;background:rgba(15,23,42,0.72);z-index:9998;';
+                    'position:fixed;inset:0;background:rgba(15,23,42,0.72);z-index:9998;pointer-events:none;';
                 root.appendChild(ov);
             }
 
@@ -316,7 +322,7 @@ test('Tavro product tour', async ({ page }) => {
         r.fulfill({ json: TOUR_SAMPLE_AGENT }),
     );
     await page.route(/\/api\/v1\/agents(\?.*)?$/, (r) =>
-        r.fulfill({ json: { agents: [TOUR_SAMPLE_AGENT], total_records: 1 } }),
+        r.fulfill({ json: { agents: TOUR_CATALOG_AGENTS, total_records: TOUR_CATALOG_AGENTS.length } }),
     );
     await page.route(/\/api\/v1\/use-cases\/[^?]+/, (r) =>
         r.fulfill({ json: { data: [TOUR_SAMPLE_USE_CASE], total_records: 1, start_record: 1, end_record: 1, record_count: 1 } }),
@@ -324,8 +330,11 @@ test('Tavro product tour', async ({ page }) => {
     await page.route(/\/api\/v1\/use-cases(\?.*)?$/, (r) =>
         r.fulfill({ json: { use_cases: [TOUR_SAMPLE_USE_CASE], total_records: 1 } }),
     );
+    await page.route(/\/api\/v1\/business-relations/, (r) =>
+        r.fulfill({ json: { processes: [], applications: [], total_records: 0 } }),
+    );
 
-    await stubMcpServer(page, [TOUR_SAMPLE_AGENT], [TOUR_SAMPLE_USE_CASE]);
+    await stubMcpServer(page, TOUR_CATALOG_AGENTS, [TOUR_SAMPLE_USE_CASE]);
 
     // Prevent the react-joyride tour from triggering via localStorage fallback
     await page.addInitScript(() => {
