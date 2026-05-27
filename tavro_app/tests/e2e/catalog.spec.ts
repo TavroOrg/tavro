@@ -1,60 +1,74 @@
 import { test, expect } from '../fixtures';
-import { navigateToCatalog, searchAgents } from '../../actions';
+import { navigateToCatalog, searchAgents, stubMcpServer } from '../../actions';
+import { expectVisibleReadable } from './portal-helpers';
+
+async function useStubbedMcp(page: Parameters<typeof stubMcpServer>[0], agents: any[] = []): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem('tavro_mcp_access_token', 'playwright-mcp-token');
+  });
+  await stubMcpServer(page, agents);
+}
 
 test.describe('Catalog page (/catalog)', () => {
-  test.beforeEach(async ({ page, mockBackend: _ }) => {
-    await navigateToCatalog(page);
-  });
-
   test('renders without crashing when agent list is empty', async ({ page }) => {
-    // Dashboard mounts and shows the catalog shell (search bar / add button)
+    await useStubbedMcp(page, []);
+    await navigateToCatalog(page);
     await expect(page.getByRole('button', { name: /new agent|add agent|\+/i }).first()).toBeVisible({
       timeout: 8_000,
     });
   });
 
   test('search input is present and accepts input', async ({ page }) => {
+    await useStubbedMcp(page, []);
+    await navigateToCatalog(page);
     const input = page.getByRole('textbox').first();
     await expect(input).toBeVisible();
     await searchAgents(page, 'Risk');
     await expect(input).toHaveValue('Risk');
   });
 
-  test('shows agent cards when the API returns agents', async ({ page }) => {
-    // Override the route set by mockBackend with a populated response
-    await page.route('**/api/v1/agents**', (route) =>
-      route.fulfill({
-        json: {
-          agents: [
-            {
-              name: 'Risk Classifier',
-              identification: { agent_id: 'agent-001' },
-              description: 'Classifies business risks using LLM.',
-            },
-            {
-              name: 'Compliance Checker',
-              identification: { agent_id: 'agent-002' },
-              description: 'Validates policies against regulation frameworks.',
-            },
-          ],
-        },
-      }),
-    );
+  test('shows agent cards when the MCP server returns agents', async ({ page }) => {
+    await useStubbedMcp(page, [
+      {
+        name: 'Risk Classifier',
+        identification: { agent_id: 'agent-001' },
+        description: 'Classifies business risks using the MCP server.',
+      },
+      {
+        name: 'Compliance Checker',
+        identification: { agent_id: 'agent-002' },
+        description: 'Validates policies against regulation frameworks.',
+      },
+    ]);
 
     await navigateToCatalog(page);
-    await expect(page.getByText('Risk Classifier')).toBeVisible({ timeout: 8_000 });
-    await expect(page.getByText('Compliance Checker')).toBeVisible();
+    await expectVisibleReadable(
+      page.getByRole('heading', { name: 'Risk Classifier' }),
+      'the agent card heading "Risk Classifier"',
+      'Catalog',
+    );
+    await expectVisibleReadable(
+      page.getByRole('heading', { name: 'Compliance Checker' }),
+      'the agent card heading "Compliance Checker"',
+      'Catalog',
+    );
   });
 
-  test('shows error state when agents API fails', async ({ page }) => {
-    await page.route('**/api/v1/agents**', (route) =>
-      route.fulfill({ status: 500, body: 'Internal Server Error' }),
-    );
+  test('shows a readable error when the MCP server rejects the connection', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('tavro_mcp_access_token', 'playwright-mcp-token');
+    });
+    await page.route(/(localhost:9001|zitadel\/mcp)/, async (route) => {
+      const requestBody = route.request().postData() || '';
+      if (requestBody.includes('"method":"initialize"')) {
+        await route.fulfill({ status: 401, body: 'Unauthorized' });
+        return;
+      }
+      await route.fulfill({ status: 401, body: 'Unauthorized' });
+    });
 
     await navigateToCatalog(page);
-    // The Dashboard renders an error message/icon — assert something error-related
-    // Adjust the selector if the component uses a different text
-    await expect(page.locator('[class*="error"], [class*="alert"], svg[class*="text-red"]').first()).toBeVisible({
+    await expect(page.getByText(/MCP request unauthorized/i).first()).toBeVisible({
       timeout: 8_000,
     });
   });
