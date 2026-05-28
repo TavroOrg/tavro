@@ -4,12 +4,12 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
 
-import psycopg2
 import requests
 
 from ..base_connector import BaseConnector
-from utils.db import DATABASE_URL
+from utils.db import DATABASE_URL, SyncSessionLocal
 
 
 class GithubConnector(BaseConnector):
@@ -21,6 +21,22 @@ class GithubConnector(BaseConnector):
 
     def get_pg_dsn(self):
         return DATABASE_URL
+
+    @staticmethod
+    @contextmanager
+    def _get_db_cursor():
+        """Borrow a psycopg2 cursor from the SQLAlchemy sync session pool."""
+        session = SyncSessionLocal()
+        try:
+            conn = session.connection()
+            cursor = conn.connection.cursor()
+            try:
+                yield cursor
+                conn.commit()
+            finally:
+                cursor.close()
+        finally:
+            session.close()
 
     def validate_config(self):
         required = ["base_url", "token"]
@@ -477,50 +493,45 @@ class GithubConnector(BaseConnector):
         source_hash = self._hash_payload(card)
         now_ts = datetime.utcnow()
 
-        conn = psycopg2.connect(DATABASE_URL)
-        try:
-            with conn:
-                with conn.cursor() as cursor:
-                    existing = self._fetch_existing_parent(cursor, server_name, server_url)
-                    parent_id = existing[0] if existing else str(uuid.uuid4())
-                    existing_hash = existing[1] if existing else None
-                    created_ts = existing[2] if existing and existing[2] else now_ts
+        with self._get_db_cursor() as cursor:
+            existing = self._fetch_existing_parent(cursor, server_name, server_url)
+            parent_id = existing[0] if existing else str(uuid.uuid4())
+            existing_hash = existing[1] if existing else None
+            created_ts = existing[2] if existing and existing[2] else now_ts
 
-                    if existing_hash == source_hash:
-                        return {
-                            "status": "SKIPPED",
-                            "identifier": parent_id,
-                            "source_hash": source_hash,
-                            "tools": 0,
-                            "prompts": 0,
-                            "resources": 0,
-                        }
+            if existing_hash == source_hash:
+                return {
+                    "status": "SKIPPED",
+                    "identifier": parent_id,
+                    "source_hash": source_hash,
+                    "tools": 0,
+                    "prompts": 0,
+                    "resources": 0,
+                }
 
-                    self._upsert_parent(
-                        cursor,
-                        parent_id,
-                        card,
-                        source_hash,
-                        created_ts,
-                        now_ts,
-                    )
-                    tools_count, prompts_count, resources_count = self._replace_child_rows(
-                        cursor,
-                        parent_id,
-                        card,
-                        now_ts,
-                    )
+            self._upsert_parent(
+                cursor,
+                parent_id,
+                card,
+                source_hash,
+                created_ts,
+                now_ts,
+            )
+            tools_count, prompts_count, resources_count = self._replace_child_rows(
+                cursor,
+                parent_id,
+                card,
+                now_ts,
+            )
 
-                    return {
-                        "status": "PROCESSED",
-                        "identifier": parent_id,
-                        "source_hash": source_hash,
-                        "tools": tools_count,
-                        "prompts": prompts_count,
-                        "resources": resources_count,
-                    }
-        finally:
-            conn.close()
+            return {
+                "status": "PROCESSED",
+                "identifier": parent_id,
+                "source_hash": source_hash,
+                "tools": tools_count,
+                "prompts": prompts_count,
+                "resources": resources_count,
+            }
 
     def execute(self):
         print("Running GitHub MCP Connector")

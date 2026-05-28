@@ -7,7 +7,6 @@ from utils.auth import get_oauth2_token
 from ..transformers.agent_transformer import transform_to_agent_cards
 # from ..storage.s3_uploader import upload
 from pathlib import Path
-import psycopg2
 from worker import init_pool, process_card
 
 class CopilotConnector(BaseConnector):
@@ -26,28 +25,6 @@ class CopilotConnector(BaseConnector):
             self.config["tenant_id"],
             self.config["scope"]
         )
-
-    def insert_into_db(self, agent_cards):
-        conn = psycopg2.connect(DATABASE_URL)
-        try:
-            with conn.cursor() as cursor:
-                for agent in agent_cards:
-                    cursor.execute("""
-                        INSERT INTO core.agents (agent_id, agent_name, agent_description)
-                        VALUES (%s, %s, %s)
-                    """, (
-                        agent.get("agent_id"),
-                        agent.get("name"),
-                        agent.get("description")
-                    ))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-        print("Inserted into DB successfully")
 
     def fetch_metadata(self):
         url = f"{self.config['org_url']}/api/data/v9.2/bots?$select=botid,name"
