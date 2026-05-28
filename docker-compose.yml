@@ -386,6 +386,26 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
 
+  collibra-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.collibra-mcp
+      args:
+        CHIP_BINARY: ${COLLIBRA_CHIP_BINARY_PATH:-third_party/collibra/chip-linux-amd64}
+    container_name: collibra-mcp-server
+    restart: unless-stopped
+    network_mode: "service:risk-mcp-server"
+    environment:
+      COLLIBRA_MCP_API_URL: ${COLLIBRA_MCP_API_URL:-}
+      COLLIBRA_MCP_API_USR: ${COLLIBRA_MCP_API_USR:-}
+      COLLIBRA_MCP_API_PWD: ${COLLIBRA_MCP_API_PWD:-}
+      COLLIBRA_MCP_MODE: ${COLLIBRA_MCP_MODE:-http}
+      COLLIBRA_MCP_HTTP_PORT: ${COLLIBRA_MCP_HTTP_PORT:-8080}
+      COLLIBRA_MCP_ENABLED_TOOLS: ${COLLIBRA_MCP_ENABLED_TOOLS:-discover_data_assets,get_asset_details,discover_business_glossary,create_asset}
+    depends_on:
+      risk-mcp-server:
+        condition: service_started
+
 # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────  
   risk-mcp-server:
     build:
@@ -416,6 +436,10 @@ services:
       VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
       VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
       TAVRO_API_URL: http://tavro-api:8000
+      COLLIBRA_MCP_BASE_URL: ${COLLIBRA_MCP_BASE_URL:-http://localhost:8080}
+      COLLIBRA_MCP_API_USR: ${COLLIBRA_MCP_API_USR:-}
+      COLLIBRA_MCP_API_PWD: ${COLLIBRA_MCP_API_PWD:-}
+      COLLIBRA_MCP_TIMEOUT_SECONDS: ${COLLIBRA_MCP_TIMEOUT_SECONDS:-45}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./tavro_api/agent_cards:/app/agent_cards

@@ -632,10 +632,22 @@ Only ask the user for clarification if they have given you no context at all (no
 ${toolSummary}`;
             })() : '';
 
+            const multiToolGuidance = `
+
+## Multi-Step Tool Execution
+- You may call tools multiple times in sequence within a single answer when the task requires it.
+- If the user asks to create or update several records, and the tool only supports one record per call, make one tool call per record until the full task is complete.
+- Do not stop after describing a plan if the required tool calls are clear. Execute them.
+- If a Collibra asset creation request uses a domain or asset type that may not exist exactly as written, call \`prepare_create_asset\` first to resolve valid choices, then call \`create_asset\` with the resolved values.
+- Never invent Collibra domain names or asset types when a resolution tool can verify them first.
+- For tools that accept a single JSON \`payload\` object, build the payload to match the tool description exactly. Do not convert arrays into objects or objects into arrays.
+`;
+
             const baseSystemPrompt =
                 (context.systemPrompt ||
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
-                toolGuidance;
+                toolGuidance +
+                multiToolGuidance;
 
             if (toolDefs.length === 0) {
                 // No MCP tools — enrich context with catalog snapshot and stream directly.

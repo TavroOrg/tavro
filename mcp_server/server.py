@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import uuid
 from pathlib import Path
 import uvicorn
 import httpx
@@ -33,6 +34,10 @@ set_environment("secrets")
 set_environment("fastapi")
 
 TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
+COLLIBRA_MCP_BASE_URL = os.getenv("COLLIBRA_MCP_BASE_URL", "").strip()
+COLLIBRA_MCP_API_USR = os.getenv("COLLIBRA_MCP_API_USR", "").strip()
+COLLIBRA_MCP_API_PWD = os.getenv("COLLIBRA_MCP_API_PWD", "").strip()
+COLLIBRA_MCP_TIMEOUT_SECONDS = float(os.getenv("COLLIBRA_MCP_TIMEOUT_SECONDS", "45").strip() or "45")
 
 
 def _load_zitadel_client_id_from_runtime_config() -> str:
@@ -194,6 +199,103 @@ middleware = [
 # ---------------------------
 core = FastMCP("Tavro MCP Core")
 
+
+def _collibra_basic_auth() -> Optional[httpx.BasicAuth]:
+    if not COLLIBRA_MCP_API_USR or not COLLIBRA_MCP_API_PWD:
+        return None
+    return httpx.BasicAuth(COLLIBRA_MCP_API_USR, COLLIBRA_MCP_API_PWD)
+
+
+def _parse_mcp_http_response(body: str) -> Dict[str, Any]:
+    if not body:
+        raise ValueError("Empty MCP response")
+
+    data_lines: List[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("data:"):
+            data_lines.append(stripped[len("data:"):].strip())
+
+    if data_lines:
+        return json.loads("".join(data_lines))
+
+    return json.loads(body)
+
+
+def _extract_text_from_content_blocks(content_blocks: Any) -> str:
+    if not isinstance(content_blocks, list):
+        return ""
+    parts: List[str] = []
+    for block in content_blocks:
+        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _normalize_collibra_tool_result(tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(result, dict):
+        raise ValueError(f"Unexpected MCP payload for {tool_name}: missing result object")
+
+    structured = result.get("structuredContent")
+    text_content = _extract_text_from_content_blocks(result.get("content"))
+
+    normalized: Dict[str, Any] = {
+        "tool": tool_name,
+        "structuredContent": structured,
+        "content": text_content,
+    }
+
+    if structured is None and text_content:
+        try:
+            normalized["parsedContent"] = json.loads(text_content)
+        except json.JSONDecodeError:
+            pass
+
+    return normalized
+
+
+async def _call_collibra_mcp_method(method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not COLLIBRA_MCP_BASE_URL:
+        raise ValueError("COLLIBRA_MCP_BASE_URL is not configured")
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": method,
+        "params": params or {},
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    async with httpx.AsyncClient(timeout=COLLIBRA_MCP_TIMEOUT_SECONDS, auth=_collibra_basic_auth()) as client:
+        response = await client.post(COLLIBRA_MCP_BASE_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        parsed = _parse_mcp_http_response(response.text)
+
+    if isinstance(parsed, dict) and parsed.get("error"):
+        error = parsed["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise ValueError(f"Collibra MCP error {code}: {message}")
+
+    return parsed
+
+
+async def _call_collibra_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    parsed = await _call_collibra_mcp_method(
+        "tools/call",
+        {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    )
+
+    return _normalize_collibra_tool_result(tool_name, parsed)
+
 def log_tool_call(
     tool_name: str,
     original_prompt: str,
@@ -218,6 +320,188 @@ def log_tool_call(
         )
     except Exception as e:
         print(f"[LOG ERROR] Failed to write log for {tool_name}: {e}")
+
+
+@core.tool(name="collibra_discover_data_assets")
+async def collibra_discover_data_assets(original_prompt: str, *, input: str) -> Dict[str, Any]:
+    """
+    Query Collibra data assets using natural language through the external Collibra MCP server.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        input (str): The question to ask the Collibra data asset discovery agent.
+
+    Returns:
+        Dict[str, Any]: Collibra MCP tool result, including structuredContent when available.
+    """
+    print("Collibra discover_data_assets requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "collibra_discover_data_assets",
+            original_prompt,
+            {"input": input},
+            tenant_id,
+        )
+        return await _call_collibra_mcp_tool("discover_data_assets", {"input": input})
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="collibra_debug_status")
+async def collibra_debug_status(original_prompt: str) -> Dict[str, Any]:
+    """
+    Verify that Tavro can reach the Collibra MCP server and list the exposed tool names.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+
+    Returns:
+        Dict[str, Any]: Connection summary including available Collibra tool names.
+    """
+    print("Collibra debug status requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("collibra_debug_status", original_prompt, {}, tenant_id)
+
+        initialize = await _call_collibra_mcp_method(
+            "initialize",
+            {"clientInfo": {"name": "Tavro MCP Bridge", "version": "1.0"}},
+        )
+        tools_payload = await _call_collibra_mcp_method("tools/list")
+
+        result_obj = initialize.get("result") if isinstance(initialize, dict) else {}
+        tools_obj = tools_payload.get("result") if isinstance(tools_payload, dict) else {}
+        tools = tools_obj.get("tools") if isinstance(tools_obj, dict) else []
+
+        return {
+            "status": "ok",
+            "base_url": COLLIBRA_MCP_BASE_URL,
+            "server": result_obj.get("serverInfo") if isinstance(result_obj, dict) else None,
+            "tool_count": len(tools) if isinstance(tools, list) else 0,
+            "tool_names": [tool.get("name") for tool in tools if isinstance(tool, dict) and tool.get("name")] if isinstance(tools, list) else [],
+        }
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="collibra_get_asset_details")
+async def collibra_get_asset_details(
+    original_prompt: str,
+    *,
+    assetId: str,
+    outgoingRelationsCursor: Optional[str] = None,
+    incomingRelationsCursor: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Retrieve detailed asset information from Collibra for a specific asset UUID.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        assetId (str): The UUID of the asset to retrieve.
+        outgoingRelationsCursor (Optional[str]): Optional pagination cursor for outgoing relations.
+        incomingRelationsCursor (Optional[str]): Optional pagination cursor for incoming relations.
+
+    Returns:
+        Dict[str, Any]: Collibra MCP tool result, including structuredContent when available.
+    """
+    print(f"Collibra get_asset_details requested for assetId={assetId}")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        arguments: Dict[str, Any] = {"assetId": assetId}
+        if outgoingRelationsCursor:
+            arguments["outgoingRelationsCursor"] = outgoingRelationsCursor
+        if incomingRelationsCursor:
+            arguments["incomingRelationsCursor"] = incomingRelationsCursor
+
+        log_tool_call(
+            "collibra_get_asset_details",
+            original_prompt,
+            arguments,
+            tenant_id,
+        )
+        return await _call_collibra_mcp_tool("get_asset_details", arguments)
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="collibra_discover_business_glossary")
+async def collibra_discover_business_glossary(original_prompt: str, *, input: str) -> Dict[str, Any]:
+    """
+    Ask questions about terms and definitions in Collibra's business glossary.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        input (str): The question to ask the Collibra business glossary agent.
+
+    Returns:
+        Dict[str, Any]: Collibra MCP tool result, including structuredContent when available.
+    """
+    print("Collibra discover_business_glossary requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "collibra_discover_business_glossary",
+            original_prompt,
+            {"input": input},
+            tenant_id,
+        )
+        return await _call_collibra_mcp_tool("discover_business_glossary", {"input": input})
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_asset")
+async def create_collibra_asset(original_prompt: str, *, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create an asset in Collibra by forwarding the provided JSON payload to Collibra's create_asset MCP tool.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        payload (Dict[str, Any]): JSON object matching Collibra create_asset input.
+
+    Returns:
+        Dict[str, Any]: Collibra MCP tool result, including structuredContent when available.
+    """
+    print("Collibra create_asset requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("create_asset", original_prompt, payload, tenant_id)
+        return await _call_collibra_mcp_tool("create_asset", payload)
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, agent_id: Optional[str] = None) -> Dict[str, Any]:

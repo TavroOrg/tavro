@@ -31,6 +31,21 @@ ZITADEL_APP_NAME=tavro-mcp
 ZITADEL_APP_REDIRECT_URIS=http://localhost:9000/auth/callback,http://localhost:9001/auth/callback
 ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS=http://localhost:9000,http://localhost:9000/login,http://localhost:9001,http://localhost:9001/login
 
+# Optional Collibra MCP bridge settings for Tavro MCP.
+# Production/staging default: Collibra chip runs as a sidecar that shares the Tavro MCP network namespace.
+# For local Windows-only testing with chip.exe on the host, override this to http://host.docker.internal:8080
+COLLIBRA_MCP_BASE_URL=http://localhost:8080
+# Collibra chip service configuration.
+COLLIBRA_MCP_API_URL=https://your-collibra-instance.com/
+# Recommended for simpler initial testing. Leave blank only if you are implementing client-provided auth end-to-end.
+COLLIBRA_MCP_API_USR=
+COLLIBRA_MCP_API_PWD=
+COLLIBRA_MCP_MODE=http
+COLLIBRA_MCP_HTTP_PORT=8080
+COLLIBRA_MCP_ENABLED_TOOLS=discover_data_assets,get_asset_details,discover_business_glossary,create_asset
+COLLIBRA_MCP_TIMEOUT_SECONDS=45
+COLLIBRA_CHIP_BINARY_PATH=third_party/collibra/chip-linux-amd64
+
 # ⚠️  INSECURE DEFAULTS — for local development only.
 # Before exposing this stack to a network, change ZITADEL_MASTERKEY,
 # POSTGRES_ADMIN_PASSWORD, and POSTGRES_ZITADEL_PASSWORD.
