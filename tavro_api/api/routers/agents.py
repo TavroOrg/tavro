@@ -150,11 +150,13 @@ async def get_agent_catalog(
     except Exception:
         start, end = start_record, start_record + 49
 
-    tenant_id = _require_tenant(request)
-    where = ""
+    tenant_id = _tenant(request)
     params: Dict[str, Any] = {"start": start, "end": end}
-    where = "WHERE tenant_id = :tid"
-    params["tid"] = tenant_id
+    if tenant_id:
+        where = "WHERE (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        params["tid"] = tenant_id
+    else:
+        where = ""
 
     try:
         result = await db.execute(
