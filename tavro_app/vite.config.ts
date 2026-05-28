@@ -29,8 +29,8 @@ export default defineConfig({
         // selfHandleResponse lets us pipe the stream directly, bypassing http-proxy's
         // internal buffering which was causing SSE/chunked responses to hang in the browser.
         selfHandleResponse: true,
-        configure: (proxy) => {
-          proxy.on('proxyRes', (proxyRes, _req, res: any) => {
+        configure: (proxy: any) => {
+          proxy.on('proxyRes', (proxyRes: any, _req: any, res: any) => {
             // Forward all response headers from upstream to the browser
             res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
             // Pipe the raw upstream stream directly to the browser socket — no buffering

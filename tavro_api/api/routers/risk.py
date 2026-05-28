@@ -12,13 +12,13 @@ from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from utils.db import DATABASE_URL
 from utils.set_environment import set_environment
 
 from temporalio.client import Client
 
 from services.workflow.workflow import RiskManagerWorkflow
 
-set_environment("postgres")
 set_environment("databases")
 set_environment("environment")
 
@@ -42,19 +42,9 @@ RISK_MANAGEMENT_DB_NAME = os.getenv(
 )
 
 
-def _get_pg_config() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", os.getenv("PGHOST", "localhost")),
-        "port": int(os.getenv("POSTGRES_PORT", os.getenv("PGPORT", "5432"))),
-        "dbname": os.getenv("POSTGRES_DB", os.getenv("PGDATABASE", "postgres")),
-        "user": os.getenv("POSTGRES_USER", os.getenv("PGUSER", "postgres")),
-        "password": os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", "")),
-    }
-
-
 def _get_pg_connection():
     try:
-        return psycopg2.connect(**_get_pg_config())
+        return psycopg2.connect(DATABASE_URL)
     except psycopg2.OperationalError as e:
         raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
 

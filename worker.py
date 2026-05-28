@@ -13,6 +13,8 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 
+from utils.db import DATABASE_URL
+
 from tavro_agent_card import TavroAgentCard
 
 API_URL = os.getenv("API_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
@@ -37,7 +39,7 @@ def init_pool():
             _pool = psycopg2.pool.SimpleConnectionPool(
                 minconn=1,
                 maxconn=5,
-                dsn=os.environ["PG_DSN"],
+                dsn=DATABASE_URL,
             )
             print("DB pool initialised.")
             return

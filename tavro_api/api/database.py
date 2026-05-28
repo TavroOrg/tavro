@@ -5,12 +5,11 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import event, text
-import os
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://tavro_user:tavro_secret_changeme@tavro-postgres:5432/tavro",
-)
+from utils.db import DATABASE_URL as _BASE_URL
+
+# asyncpg requires the postgresql+asyncpg:// scheme; DATABASE_URL uses plain postgresql://
+DATABASE_URL = _BASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
     DATABASE_URL,

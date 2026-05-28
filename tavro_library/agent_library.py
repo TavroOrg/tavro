@@ -10,30 +10,20 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from rapidfuzz import process, fuzz
 from typing import Dict, Any, List, Optional
+from utils.db import DATABASE_URL
 from utils.set_environment import set_environment
 
 set_environment('databases')
-set_environment('postgres')
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
     RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_DB_NAME"))
 
-    @staticmethod
-    def _get_pg_config() -> Dict[str, Any]:
-        return {
-            "host": os.getenv("POSTGRES_HOST", os.getenv("PGHOST", "localhost")),
-            "port": int(os.getenv("POSTGRES_PORT", os.getenv("PGPORT", "5432"))),
-            "dbname": os.getenv("POSTGRES_DB", os.getenv("PGDATABASE", "postgres")),
-            "user": os.getenv("POSTGRES_USER", os.getenv("PGUSER", "postgres")),
-            "password": os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", "")),
-        }
-
     @classmethod
     def _get_pg_connection(cls):
         try:
-            return psycopg2.connect(**cls._get_pg_config())
+            return psycopg2.connect(DATABASE_URL)
         except psycopg2.OperationalError as e:
             raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
