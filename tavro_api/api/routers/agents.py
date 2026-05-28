@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,8 +91,8 @@ async def _fire_risk(payload: Dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 class AgentCreateRequest(BaseModel):
-    agent_name: str
-    description: str
+    agent_name: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
     instruction: str
     role: Optional[str] = None
     environment: Optional[str] = None
