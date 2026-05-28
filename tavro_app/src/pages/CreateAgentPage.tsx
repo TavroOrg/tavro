@@ -200,7 +200,7 @@ const CreateAgentPage: React.FC = () => {
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className={`${labelCls} mb-0`}>Description</label>
+                <label className={`${labelCls} mb-0`}>Description <span className="text-red-500">*</span></label>
                 <button
                   type="button"
                   onClick={handleSuggestDescription}
@@ -223,6 +223,7 @@ const CreateAgentPage: React.FC = () => {
               <div className="relative">
                 <textarea
                   rows={3}
+                  required
                   value={form.description}
                   onChange={e => set('description', e.target.value)}
                   placeholder={generatingDescription ? 'Generating description…' : 'What this agent does and what problem it solves'}
@@ -310,7 +311,7 @@ const CreateAgentPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              disabled={saving || !form.name.trim() || !form.instruction.trim() || success}
+              disabled={saving || !form.name.trim() || !form.description.trim() || !form.instruction.trim() || success}
               className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                 success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'
               }`}

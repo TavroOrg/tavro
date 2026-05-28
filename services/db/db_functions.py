@@ -1,23 +1,17 @@
 import json
 import os
 import uuid
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 import psycopg2
 from psycopg2 import sql
 from cvss import CVSS4
+from utils.db import db_connection as _db_connection
 from utils.set_environment import set_environment
 
-set_environment("postgres")
 set_environment("databases")
 
-DB_NAME   = os.getenv("POSTGRES_DB")
-DB_USER   = os.getenv("POSTGRES_USER")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB_HOST   = os.getenv("POSTGRES_HOST")
-DB_PORT   = os.getenv("POSTGRES_PORT", "5432")
 CORE_SCHEMA             = os.getenv("CORE_DB_NAME",            "core")
 RISK_MANAGEMENT_SCHEMA  = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 CURATED_SCHEMA          = os.getenv("CURATED_DB_NAME",         "curated")
@@ -54,40 +48,6 @@ SCENARIO_KEY_TO_DISPLAY = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Connection helper
-# ---------------------------------------------------------------------------
-
-@contextmanager
-def _db_connection():
-    missing = [
-        name
-        for name, value in {
-            "POSTGRES_DB":       DB_NAME,
-            "POSTGRES_USER":     DB_USER,
-            "POSTGRES_PASSWORD": DB_PASSWORD,
-            "POSTGRES_HOST":     DB_HOST,
-        }.items()
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(f"Missing Postgres config values: {', '.join(missing)}")
-
-    connection = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
-    try:
-        yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
 
 
 # ---------------------------------------------------------------------------

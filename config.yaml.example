@@ -91,16 +91,6 @@ databases:
   CURATED_DB_NAME: "curated"
   RISK_MANAGEMENT_DB_NAME: "risk_management"
 
-postgres:
-  POSTGRES_HOST: "tavro-postgres"
-  POSTGRES_PORT: "5432"
-  POSTGRES_USER: "admin"
-  POSTGRES_PASSWORD: "admin"
-  POSTGRES_DB: "agent_db"
-
-db:
-  DB_Name: ""
-  DB_USER: ""
-  DB_PASSWORD: ""
-  DB_HOST: "tavro-postgres"
-  DB_PORT: "5432"
+# Database credentials are no longer read from config.yaml.
+# Set DATABASE_URL in your environment or .env file:
+#   DATABASE_URL=postgresql://user:password@host:5432/dbname

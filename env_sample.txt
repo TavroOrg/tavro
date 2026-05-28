@@ -3,8 +3,11 @@
 # Add .env to your .gitignore if not already there.
 
 # ── Digital Twin PostgreSQL ──────────────────────────────────────────────────
+# Credentials used by the postgres container for initialisation.
+# DATABASE_URL is the single connection string used by all app services.
 POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
+DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 
 # ── AI Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
@@ -84,7 +87,6 @@ LETSENCRYPT_EMAIL=ops@example.com
 # -----------------------------
 # Postgres settings
 # -----------------------------
-POSTGRES_DB=tavro
 # DSN used by ZITADEL to connect to PostgreSQL.
 # The start-from-init command uses this DSN to create the database schema and for
 # normal operation. When a DSN is configured, ZITADEL does not create or switch
