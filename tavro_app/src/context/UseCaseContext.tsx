@@ -80,7 +80,14 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     if (!pendingAddIds.current.has(uc.identifier)) return false;
                     const nameKey = (uc.name ?? '').toLowerCase().trim();
                     const confirmedById = freshIds.has(uc.identifier);
-                    const confirmedByName = nameKey !== '' && freshNames.has(nameKey);
+                    // Only confirm by name when the fresh item sharing that name has the same
+                    // identifier (or no identifier) — prevents a pre-existing use case with the
+                    // same name from falsely confirming a newly-created one.
+                    const confirmedByName = nameKey !== '' && freshNames.has(nameKey) &&
+                        !fresh.some((f: UseCaseSummary) =>
+                            (f.name ?? '').toLowerCase().trim() === nameKey &&
+                            f.identifier && f.identifier !== uc.identifier
+                        );
                     if (confirmedById || confirmedByName) {
                         pendingAddIds.current.delete(uc.identifier);
                         pendingAddNames.current.delete(uc.identifier);
