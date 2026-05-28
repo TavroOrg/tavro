@@ -25,7 +25,7 @@ function centerLabelFontSize(label: string) {
 
 const CAT_RANK: Record<DimCategory, number> = {
   profile:0, strategy:1, organisation:2, process:3,
-  application:4, technology:5, risk:6, finance:7, custom:8,
+  application:4, technology:5, risk:6, finance:7, integration:8, custom:9,
 };
 
 function catPos(i: number, n: number) {

@@ -4,7 +4,7 @@ import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
     AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness, Paperclip, Network
+    AppWindow, BriefcaseBusiness, Paperclip, Network, Zap, Plug
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -129,7 +129,8 @@ const Layout: React.FC = () => {
 
         [
             'tavro_auth', 'tavro_access_token', 'tavro_id_token', 'tavro_raw_access_token',
-            'tavro_mcp_refresh_token', 'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
+            'tavro_mcp_refresh_token', 'tavro_mcp_access_token', 'tavro_tenant_id',
+            'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
             'tavro_oidc_state'
         ].forEach(k => localStorage.removeItem(k));
@@ -177,12 +178,12 @@ const Layout: React.FC = () => {
                     className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
                     onClick={() => navigate('/')}
                 >
-                        <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
-                            <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
-                        </div>
-                        <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
-                            Tavro Agent <span className="text-blue-600">BizOps</span>
-                        </span>
+                    <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
+                        <img src={travoLogo} alt="Tavro" className="w-[22px] h-[22px] object-contain" />
+                    </div>
+                    <span className={`font-bold text-xl tracking-tight text-slate-800 dark:text-white whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
+                        Tavro Agent <span className="text-blue-600">BizOps</span>
+                    </span>
                 </div>
 
                 <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden transition-all duration-300`}>
@@ -246,6 +247,28 @@ const Layout: React.FC = () => {
                             </button>
 
                             <button
+                                onClick={() => navigate('/integrations')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/integrations')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Integrations" : undefined}
+                            >
+                                <Plug size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/integrations') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
+                            </button>
+
+                            <button
+                                onClick={() => navigate('/spark')}
+                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/spark')
+                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Spark" : undefined}
+                            >
+                                <Zap size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
+                            </button>
+
+                            <button
                                 onClick={() => navigate('/insights')}
                                 className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/insights'
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -261,7 +284,7 @@ const Layout: React.FC = () => {
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                                     }`}
-                                title={!isLeftPanelOpen ? "Company Blueprint" : undefined}
+                                title={!isLeftPanelOpen ? "Blueprint" : undefined}
                             >
                                 <Network
                                     size={18}
@@ -269,7 +292,7 @@ const Layout: React.FC = () => {
                                         ? 'text-blue-600 dark:text-blue-400'
                                         : 'text-slate-400 dark:text-slate-500'}`}
                                 />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Blueprint</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Blueprint</span>
                             </button>
                             <button
                                 onClick={() => navigate('/compliance')}
@@ -328,46 +351,46 @@ const Layout: React.FC = () => {
 
                     {/* Catalog Sync Widget - pinned */}
                     <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
-                            <div className="flex flex-col gap-2">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <Database size={13} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
-                                        <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest whitespace-nowrap">
-                                            Catalog Sync
-                                        </span>
-                                    </div>
-                                    {anyLoading && (
-                                        <RefreshCw size={13} className="text-blue-500 animate-spin" />
-                                    )}
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Database size={13} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest whitespace-nowrap">
+                                        Catalog Sync
+                                    </span>
                                 </div>
-                                {!anyLoading && (
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                            {agents.length} agents
-                                        </span>
-                                        {useCases.length > 0 && (
-                                            <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                                {useCases.length} use cases
-                                            </span>
-                                        )}
-                                    </div>
+                                {anyLoading && (
+                                    <RefreshCw size={13} className="text-blue-500 animate-spin" />
                                 )}
                             </div>
-                            {lastFetched && !catalogLoading && (
-                                <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-none whitespace-nowrap">Last synced {timeSince}</p>
+                            {!anyLoading && (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                        {agents.length} agents
+                                    </span>
+                                    {useCases.length > 0 && (
+                                        <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                            {useCases.length} use cases
+                                        </span>
+                                    )}
+                                </div>
                             )}
-                            {catalogLoading && (
-                                <p className="text-[10px] text-blue-500 dark:text-blue-400 leading-none animate-pulse whitespace-nowrap">Fetching catalog…</p>
-                            )}
-                            <button
-                                onClick={handleRefreshAll}
-                                disabled={anyLoading}
-                                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                            >
-                                <RefreshCw size={11} className={anyLoading ? 'animate-spin flex-shrink-0' : 'flex-shrink-0'} />
-                                <span className="whitespace-nowrap">{anyLoading ? 'Syncing…' : 'Refresh Catalog'}</span>
-                            </button>
                         </div>
+                        {lastFetched && !catalogLoading && (
+                            <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-none whitespace-nowrap">Last synced {timeSince}</p>
+                        )}
+                        {catalogLoading && (
+                            <p className="text-[10px] text-blue-500 dark:text-blue-400 leading-none animate-pulse whitespace-nowrap">Fetching catalog…</p>
+                        )}
+                        <button
+                            onClick={handleRefreshAll}
+                            disabled={anyLoading}
+                            className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                            <RefreshCw size={11} className={anyLoading ? 'animate-spin flex-shrink-0' : 'flex-shrink-0'} />
+                            <span className="whitespace-nowrap">{anyLoading ? 'Syncing…' : 'Refresh Catalog'}</span>
+                        </button>
+                    </div>
 
                     {/* Bottom Actions */}
                     <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
@@ -405,7 +428,7 @@ const Layout: React.FC = () => {
             {/* ── Main Content Area ─────────────────────────────────────────── */}
             <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
 
-<div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
+                <div className="p-8 w-full max-w-[1600px] mx-auto flex-1">
                     <Outlet />
                 </div>
                 <footer className="border-t border-slate-200 dark:border-slate-800 py-4 px-6 text-xs text-slate-600 dark:text-slate-400 mt-auto bg-white dark:bg-slate-900 transition-colors flex items-center justify-between">

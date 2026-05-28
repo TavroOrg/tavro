@@ -18,6 +18,7 @@ _SYSTEM_DIM_TYPES = [
     ("Strategy",      "strategy",     True,  2),
     ("Process",       "process",      True,  2),
     ("Application",   "application",  True,  2),
+    ("Integration",   "integration",  True,  2),
     ("Organisation",  "organisation", True,  2),
     ("Technology",    "technology",   True,  2),
     ("Risk",          "risk",         True,  3),
