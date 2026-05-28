@@ -13,8 +13,8 @@ DATABASE_URL: str = os.environ["DATABASE_URL"]
 # pool_size=5 / max_overflow=5 → max 10 concurrent sync connections per process.
 sync_engine = create_engine(
     DATABASE_URL,
-    pool_size=5,
-    max_overflow=5,
+    pool_size=15,        # Keep 15 warm connections for sync services (worker, connectors, library)
+    max_overflow=35,     # Allow up to 50 total during peaks (500 users × 200ms req ÷ ~100ms hold)
     pool_pre_ping=True,  # drops stale connections before handing them out
 )
 SyncSessionLocal = sessionmaker(bind=sync_engine, autocommit=False, autoflush=False)

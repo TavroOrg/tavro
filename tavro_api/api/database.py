@@ -13,8 +13,8 @@ DATABASE_URL = _BASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
     DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=20,        # Keep 20 warm connections for async API requests (500 users)
+    max_overflow=50,     # Allow up to 70 total during traffic spikes
     echo=False,
 )
 
