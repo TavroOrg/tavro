@@ -206,6 +206,12 @@ function buildSynthesisPrompt(base: string, executedTools: string[]): string {
         ? `\nThe following tools were called to gather data: ${[...new Set(executedTools)].join(', ')}.`
         : '';
 
+    const writePattern = /\b(create|add|register|onboard|update|modify|edit|rename|remove|delete|link|associate|connect|detach|unlink)\b/i;
+    const hadWriteOp = executedTools.some(t => writePattern.test(t));
+    const blueprintNote = hadWriteOp
+        ? '\n- Where entities were created or updated, confirm how the result aligns with the company blueprint dimensions.'
+        : '';
+
     return `${base}
 
 ## Synthesis Instructions${toolSummary}
@@ -213,7 +219,7 @@ All required data has been gathered. Write a complete, clear, and well-structure
 - Directly answers the user's question using the tool results above.
 - Does NOT call any more tools.
 - Is written in natural language — do not dump raw JSON or tool output verbatim.
-- Highlights the most relevant findings concisely.`;
+- Highlights the most relevant findings concisely.${blueprintNote}`;
 }
 
 // ── Singleton ────────────────────────────────────────────────────────────────

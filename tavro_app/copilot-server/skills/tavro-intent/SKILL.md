@@ -23,7 +23,13 @@ Rules for handling it:
 
 3. **Retain Blueprint context across turns** — once the Blueprint has been provided in the conversation, continue to use it in all subsequent responses, even when the user's prompt does not mention the Blueprint directly.
 
-4. **Blueprint-aware tool calls** — when creating or updating agents, use cases, or companies, use the Blueprint dimensions as context to suggest relevant values (e.g. risk categories aligned to the company's risk profile, use cases grounded in the company's strategy dimensions).
+4. **Blueprint-aware tool calls** — when the system prompt contains a Company Blueprint block, any tool call that creates or modifies a resource MUST derive its generated parameter values from the blueprint dimensions. Apply this field-level mapping regardless of which tools exist:
+   - Fields describing purpose or behaviour (`description`, `instructions`, `summary`): use [strategy] and [process] dimensions.
+   - Fields describing problems or constraints (`business_problem_statement`, risk-related fields): use [risk] and [process] dimensions.
+   - Fields describing expected value or outcomes (`expected_benefits`, goal-related fields): use [strategy] dimensions.
+   - Fields describing technical context (tool lists, platform, integrations): use [technology] and [integration] dimensions.
+   - Fields describing industry or geography (`industry`, `region`, `sector`): preserve the blueprint's values exactly — never override them.
+   - Never generate values that contradict or ignore the blueprint profile. Every creation must complement the company's governance blueprint.
 
 ---
 
