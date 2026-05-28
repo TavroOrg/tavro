@@ -362,7 +362,7 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
     await db.execute(
         text(
             """
-            CREATE TABLE IF NOT EXISTS public.business_integrations (
+            CREATE TABLE IF NOT EXISTS core.business_integrations (
                 integration_id TEXT PRIMARY KEY,
                 tenant_id TEXT,
                 integration_name TEXT,
@@ -386,7 +386,7 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
         )
     )
     await db.execute(
-        text("ALTER TABLE public.business_integrations ADD COLUMN IF NOT EXISTS capabilities TEXT")
+        text("ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS capabilities TEXT")
     )
     await db.commit()
     _INTEGRATIONS_READY = True
@@ -814,11 +814,11 @@ async def _fetch_integrations(
 ) -> list[dict[str, Any]]:
     await _ensure_integrations_table(db)
 
-    int_cols = await _table_columns(db, "public", "business_integrations")
+    int_cols = await _table_columns(db, "core", "business_integrations")
     if "integration_id" not in int_cols:
         raise HTTPException(
             status_code=500,
-            detail="public.business_integrations.integration_id column not found",
+            detail="core.business_integrations.integration_id column not found",
         )
 
     select_cols = [
@@ -884,7 +884,7 @@ async def _fetch_integrations(
             f"""
             SELECT
                 {", ".join(select_cols)}
-            FROM public.business_integrations bi
+            FROM core.business_integrations bi
             {ba_join_sql}
             {where_sql}
             ORDER BY {order_sql}
@@ -1316,7 +1316,7 @@ async def create_integration(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_integrations_table(db)
-    int_cols = await _table_columns(db, "public", "business_integrations")
+    int_cols = await _table_columns(db, "core", "business_integrations")
 
     integration_id = uuid4().hex
     existing = await _fetch_integrations(db, integration_id=integration_id)
@@ -1353,7 +1353,7 @@ async def create_integration(
     await db.execute(
         text(
             f"""
-            INSERT INTO public.business_integrations ({columns_sql})
+            INSERT INTO core.business_integrations ({columns_sql})
             VALUES ({values_sql})
             """
         ),
@@ -1374,7 +1374,7 @@ async def update_integration(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_integrations_table(db)
-    int_cols = await _table_columns(db, "public", "business_integrations")
+    int_cols = await _table_columns(db, "core", "business_integrations")
     existing = await _fetch_integrations(db, integration_id=integration_id)
     if not existing:
         raise HTTPException(
@@ -1399,7 +1399,7 @@ async def update_integration(
     await db.execute(
         text(
             f"""
-            UPDATE public.business_integrations
+            UPDATE core.business_integrations
             SET {set_clause}
             WHERE integration_id = :integration_id
             """
@@ -1422,7 +1422,7 @@ async def delete_integration(
     result = await db.execute(
         text(
             """
-            DELETE FROM public.business_integrations
+            DELETE FROM core.business_integrations
             WHERE integration_id = :integration_id
             """
         ),

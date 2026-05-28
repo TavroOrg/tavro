@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ ANTHROPIC_MODEL         = "claude-sonnet-4-6"
 SPARK_MAX_TOKENS        = 2000
 SPARK_MAX_TOKENS_DIR    = 4000   # direction mode needs room for N structured ideas
 SPARK_MAX_IDEAS         = 16
+SPARK_DDL_CANDIDATE_PATHS = (
+    Path("/sql/core/spark_ideas.sql"),
+    Path(__file__).resolve().parents[3] / "sql" / "core" / "spark_ideas.sql",
+)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -77,30 +82,21 @@ class SparkConvertResponse(BaseModel):
 # ── Table bootstrap ────────────────────────────────────────────────────────────
 
 async def ensure_spark_table() -> None:
+    ddl_sql = _load_spark_ddl()
+    ddl_statements = [stmt.strip() for stmt in ddl_sql.split(";") if stmt.strip()]
     async with AsyncSessionLocal() as db:
-        await db.execute(text("""
-            CREATE TABLE IF NOT EXISTS public.spark_ideas (
-                idea_id           TEXT PRIMARY KEY,
-                company_id        TEXT NOT NULL,
-                title             TEXT NOT NULL,
-                description       TEXT,
-                rationale         TEXT,
-                signal_type       TEXT,
-                signal_label      TEXT,
-                target_dimensions TEXT[],
-                target_nodes      JSONB,
-                complexity        TEXT,
-                estimated_impact  TEXT,
-                similar_agents    JSONB,
-                created_at        TIMESTAMPTZ DEFAULT NOW(),
-                updated_at        TIMESTAMPTZ DEFAULT NOW()
-            )
-        """))
-        await db.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_spark_ideas_company_id
-            ON public.spark_ideas(company_id)
-        """))
+        for stmt in ddl_statements:
+            await db.execute(text(stmt))
         await db.commit()
+
+
+def _load_spark_ddl() -> str:
+    for candidate in SPARK_DDL_CANDIDATE_PATHS:
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+
+    attempted = ", ".join(str(path) for path in SPARK_DDL_CANDIDATE_PATHS)
+    raise FileNotFoundError(f"spark_ideas.sql not found. Checked: {attempted}")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -472,7 +468,7 @@ async def _upsert_ideas(company_id: str, ideas: list[SparkIdea]) -> None:
         try:
             for idea in ideas:
                 await db.execute(text("""
-                    INSERT INTO public.spark_ideas (
+                    INSERT INTO core.spark_ideas (
                         idea_id, company_id, title, description, rationale,
                         signal_type, signal_label, target_dimensions,
                         target_nodes, complexity, estimated_impact, similar_agents, updated_at
@@ -532,7 +528,7 @@ async def get_spark_ideas(
     rows = await db.execute(text(f"""
         SELECT idea_id, title, description, rationale, signal_type, signal_label,
                target_dimensions, target_nodes, complexity, estimated_impact, similar_agents
-        FROM public.spark_ideas
+        FROM core.spark_ideas
         WHERE {where}
         ORDER BY updated_at DESC
     """), params)
@@ -569,12 +565,12 @@ async def reset_spark_ideas(
                 params: dict = {"company_id": company_id}
                 params.update({f"id_{i}": v for i, v in enumerate(ids)})
                 await db.execute(
-                    text(f"DELETE FROM public.spark_ideas WHERE company_id = :company_id AND idea_id IN ({placeholders})"),
+                    text(f"DELETE FROM core.spark_ideas WHERE company_id = :company_id AND idea_id IN ({placeholders})"),
                     params,
                 )
         else:
             await db.execute(
-                text("DELETE FROM public.spark_ideas WHERE company_id = :company_id"),
+                text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
                 {"company_id": company_id},
             )
         await db.commit()
@@ -617,7 +613,7 @@ async def generate_spark_ideas(
     if not direction_clean:
         async with AsyncSessionLocal() as clear_db:
             await clear_db.execute(
-                text("DELETE FROM public.spark_ideas WHERE company_id = :company_id"),
+                text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
                 {"company_id": company_id},
             )
             await clear_db.commit()

@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS public.business_integrations (
+CREATE TABLE IF NOT EXISTS core.business_integrations (
     integration_id TEXT PRIMARY KEY,
     tenant_id TEXT,
     integration_name TEXT,
