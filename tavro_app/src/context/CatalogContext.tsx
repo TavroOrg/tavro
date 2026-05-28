@@ -88,12 +88,16 @@ function workflowMatchesAgent(workflow: TemporalWorkflowRecord, agent: AgentData
 
 function sameLogicalAgent(a: AgentData, b: AgentData): boolean {
     const aId = norm(a.identification?.agent_id);
-    const aName = norm(a.name);
     const bId = norm(b.identification?.agent_id);
+    // If both have real IDs, use only ID comparison — same name is not enough.
+    if (aId && bId) return aId === bId;
+    const aName = norm(a.name);
     const bName = norm(b.name);
+    // Fall back to cross-field matching only when one side lacks an ID (e.g. optimistic pending agents).
     return Boolean(
-        (aId && (aId === bId || aId === bName)) ||
-        (aName && (aName === bId || aName === bName))
+        (aId && (aId === bName)) ||
+        (bId && (bId === aName)) ||
+        (!aId && !bId && aName && aName === bName)
     );
 }
 
