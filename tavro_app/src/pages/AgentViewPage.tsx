@@ -421,7 +421,7 @@ const AgentViewPage: React.FC = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => navigate(
-                            `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}`
+                            `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}`
                         )}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
                     >
