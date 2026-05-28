@@ -4,21 +4,21 @@ import threading
 from datetime import datetime, timezone
 from typing import Literal, Optional, Dict, Any, List
 
-import psycopg2
 import requests
 
-from psycopg2.extras import RealDictCursor
-
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+from utils.db import DATABASE_URL
 from utils.set_environment import set_environment
+from api.database import get_db
 
 from temporalio.client import Client
 
 from services.workflow.workflow import RiskManagerWorkflow
 
-set_environment("postgres")
 set_environment("databases")
 set_environment("environment")
 
@@ -42,46 +42,25 @@ RISK_MANAGEMENT_DB_NAME = os.getenv(
 )
 
 
-def _get_pg_config() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", os.getenv("PGHOST", "localhost")),
-        "port": int(os.getenv("POSTGRES_PORT", os.getenv("PGPORT", "5432"))),
-        "dbname": os.getenv("POSTGRES_DB", os.getenv("PGDATABASE", "postgres")),
-        "user": os.getenv("POSTGRES_USER", os.getenv("PGUSER", "postgres")),
-        "password": os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", "")),
-    }
-
-
-def _get_pg_connection():
-    try:
-        return psycopg2.connect(**_get_pg_config())
-    except psycopg2.OperationalError as e:
-        raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
-
-
-def execute_select(
+async def execute_select(
+    session: AsyncSession,
     query: str,
-    params: Optional[tuple] = None
+    params: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
-
-    with _get_pg_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            return [dict(row) for row in cur.fetchall()]
+    """Execute a SELECT query and return rows as dicts."""
+    result = await session.execute(text(query), params or {})
+    return [dict(row) for row in result.mappings().all()]
 
 
-def execute_dml(
+async def execute_dml(
+    session: AsyncSession,
     query: str,
-    params: Optional[tuple] = None
+    params: Optional[Dict[str, Any]] = None
 ) -> int:
-
-    with _get_pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            affected = cur.rowcount
-
-        conn.commit()
-        return affected
+    """Execute an INSERT/UPDATE/DELETE and return rowcount."""
+    result = await session.execute(text(query), params or {})
+    await session.commit()
+    return result.rowcount
 
 # ============================================================
 # EXISTING POST REQUEST / RESPONSE MODELS
@@ -202,18 +181,18 @@ def _tenant(request: Request) -> Optional[str]:
     val = val.strip()
     return val or None
 
-def get_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
+async def get_risk_summary(session: AsyncSession, agent_internal_id: str) -> Dict[str, Any]:
 
     query = f"""
         SELECT
             summary
         FROM {RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
-        WHERE agent_internal_id = %s
+        WHERE agent_internal_id = :iid
         ORDER BY updated_ts DESC
         LIMIT 1
     """
 
-    rows = execute_select(query, (agent_internal_id,))
+    rows = await execute_select(session, query, {"iid": agent_internal_id})
 
     if not rows:
         return {
@@ -229,32 +208,32 @@ def get_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
     }
 
 
-def delete_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
+async def delete_risk_summary(session: AsyncSession, agent_internal_id: str) -> Dict[str, Any]:
 
     queries = [
 
         f"""
         UPDATE {CORE_DB_NAME}.agent_risk_assessments
         SET summary = NULL
-        WHERE agent_internal_id = %s
+        WHERE agent_internal_id = :iid
         """,
 
         f"""
         UPDATE {CURATED_DB_NAME}.agent_360
         SET summary = NULL
-        WHERE agent_internal_id = %s
+        WHERE agent_internal_id = :iid
         """,
 
         f"""
         UPDATE {RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
         SET summary = NULL,
             updated_ts = NOW()
-        WHERE agent_internal_id = %s
+        WHERE agent_internal_id = :iid
         """
     ]
 
     for query in queries:
-        execute_dml(query, (agent_internal_id,))
+        await execute_dml(session, query, {"iid": agent_internal_id})
 
     return {
         "message": "Risk summary cleared successfully (records retained).",
@@ -312,7 +291,7 @@ def send_payload_async(payload: Dict[str, Any]) -> None:
     threading.Thread(target=_send, daemon=True).start()
 
 
-def update_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
+async def update_risk_summary(session: AsyncSession, agent_internal_id: str) -> Dict[str, Any]:
 
     query = f"""
         SELECT
@@ -328,13 +307,13 @@ def update_risk_summary(agent_internal_id: str) -> Dict[str, Any]:
             ON a.agent_internal_id = i.agent_internal_id
             AND a.agent_id = i.agent_id
             AND i.is_current = true
-        WHERE a.agent_internal_id = %s
+        WHERE a.agent_internal_id = :iid
           AND a.is_current = true
         ORDER BY a.updated_ts DESC
         LIMIT 1
     """
 
-    rows = execute_select(query, (agent_internal_id,))
+    rows = await execute_select(session, query, {"iid": agent_internal_id})
 
     if not rows:
         return {
@@ -492,9 +471,9 @@ async def list_risk_workflows(request: Request, status: Optional[str] = None, ag
 # ============================================================
 
 @router.get("/risk-summary/{agent_internal_id}", response_model=RiskSummaryResponse)
-async def fetch_risk_summary(agent_internal_id: str):
+async def fetch_risk_summary(agent_internal_id: str, db: AsyncSession = Depends(get_db)):
 
-    result = get_risk_summary(agent_internal_id)
+    result = await get_risk_summary(db, agent_internal_id)
 
     if result.get("error"):
         raise HTTPException(
@@ -514,11 +493,12 @@ async def fetch_risk_summary(agent_internal_id: str):
 
 @router.put("/risk-summary")
 async def refresh_risk_summary(
-    request: UpdateRiskSummaryRequest
+    request: UpdateRiskSummaryRequest,
+    db: AsyncSession = Depends(get_db)
 ):
 
-    result = update_risk_summary(
-        request.agent_internal_id
+    result = await update_risk_summary(
+        db, request.agent_internal_id
     )
 
     if result.get("error"):
@@ -538,9 +518,9 @@ async def refresh_risk_summary(
 # ============================================================
 
 @router.delete("/risk-summary/{agent_internal_id}")
-async def remove_risk_summary(agent_internal_id: str):
+async def remove_risk_summary(agent_internal_id: str, db: AsyncSession = Depends(get_db)):
 
-    result = delete_risk_summary(agent_internal_id)
+    result = await delete_risk_summary(db, agent_internal_id)
 
     return JSONResponse(
         status_code=200,

@@ -100,7 +100,7 @@ interface PlaygroundState {
 
   setConfig:       (update: Partial<PlaygroundConfig>) => void;
   setProvider:     (provider: InfraProvider) => void;
-  loadFromAgent:   (id: string, name: string, description?: string) => void;
+  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string) => void;
   resetConfig:     () => void;
 
   startSession:    () => Promise<void>;
@@ -140,15 +140,17 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, []);
 
-  const loadFromAgent = useCallback((id: string, name: string, description?: string) => {
+  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string) => {
     setConfigState(prev => ({
       ...prev,
       useCaseId:    id,
       useCaseTitle: name,
       agentName:    name,
-      systemPrompt: description
-        ? `You are ${name}, an AI agent prototype.\n\nAgent description: ${description}\n\nYour goal is to demonstrate your capabilities for this agent role. Be specific, grounded, and honest about what information you need to perform well. Surface any gaps or limitations proactively.`
-        : `You are ${name}, an AI agent prototype.\n\nDemonstrate your capabilities for this agent role. Be specific and honest about what you can and cannot do.`,
+      systemPrompt: instruction?.trim()
+        ? instruction.trim()
+        : description
+          ? `You are ${name}, an AI agent prototype.\n\nAgent description: ${description}\n\nYour goal is to demonstrate your capabilities for this agent role. Be specific, grounded, and honest about what information you need to perform well. Surface any gaps or limitations proactively.`
+          : `You are ${name}, an AI agent prototype.\n\nDemonstrate your capabilities for this agent role. Be specific and honest about what you can and cannot do.`,
     }));
     setMessages([]);
     setObservations([]);

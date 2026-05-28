@@ -9,60 +9,50 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
-import psycopg2
-import psycopg2.extras
-import psycopg2.pool
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+
+from utils.db import DATABASE_URL, SyncSessionLocal, sync_engine
 
 from tavro_agent_card import TavroAgentCard
 
 API_URL = os.getenv("API_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
 API_DISPATCH_MAX_WORKERS = int(os.getenv("API_DISPATCH_MAX_WORKERS", "20"))
+# Default tenant assigned to all agents loaded via the worker / connectors.
+# Set TENANT_ID in the container environment (docker-compose or .env).
+TENANT_ID = os.getenv("TENANT_ID", "")
 WAIT_FOR_API_DISPATCH = os.getenv("WAIT_FOR_API_DISPATCH", "false").strip().lower() == "true"
 _api_dispatch_pool = ThreadPoolExecutor(max_workers=API_DISPATCH_MAX_WORKERS)
 _api_dispatch_futures = []
 
-# ── Connection pool ─────────────────────────────────────────────────────────────
-# One connection is fine for the single-threaded queue processor below.
-# Increase maxconn if you ever parallelise.
-_pool: psycopg2.pool.SimpleConnectionPool = None
+# ── Connection pool ───────────────────────────────────────────────────────────
+# SQLAlchemy manages the pool via sync_engine (defined in utils/db.py).
+# init_pool() is kept as a public API so connectors can call it before
+# processing cards — it now verifies connectivity with the same retry logic.
+
+_MAX_RETRIES = 10
+_RETRY_DELAY = 3
 
 
 def init_pool():
-    global _pool
-    max_retries = 10
-    retry_delay = 3
-
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, _MAX_RETRIES + 1):
         try:
-            _pool = psycopg2.pool.SimpleConnectionPool(
-                minconn=1,
-                maxconn=5,
-                dsn=os.environ["PG_DSN"],
-            )
+            with sync_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
             print("DB pool initialised.")
             return
-        except psycopg2.OperationalError as e:
-            print(f"DB not ready (attempt {attempt}/{max_retries}): {e}")
-            if attempt < max_retries:
-                print(f"Retrying in {retry_delay}s ...")
-                time.sleep(retry_delay)
+        except OperationalError as e:
+            print(f"DB not ready (attempt {attempt}/{_MAX_RETRIES}): {e}")
+            if attempt < _MAX_RETRIES:
+                print(f"Retrying in {_RETRY_DELAY}s ...")
+                time.sleep(_RETRY_DELAY)
             else:
                 raise RuntimeError("Could not connect to DB after maximum retries.")
 
 
-def _get_conn():
-    return _pool.getconn()
-
-
-def _put_conn(conn):
-    _pool.putconn(conn)
-
-
 def close_pool():
-    global _pool
-    if _pool:
-        _pool.closeall()
-        _pool = None
+    sync_engine.dispose()
+    print("DB pool closed.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -71,32 +61,17 @@ def close_pool():
 
 def execute_query(sql: str) -> list:
     """Execute a SELECT and return rows as a list of dicts."""
-    conn = _get_conn()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-        return [dict(r) for r in rows]
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        _put_conn(conn)
+    with SyncSessionLocal() as session:
+        result = session.execute(text(sql))
+        return [dict(row) for row in result.mappings()]
 
 
 def execute_dml(sql: str, label: str = ""):
     """Execute a DML statement (INSERT / UPDATE / DELETE)."""
-    conn = _get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.commit()
+    with SyncSessionLocal() as session:
+        session.execute(text(sql))
+        session.commit()
         print(f"  ✓ {label} succeeded")
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        _put_conn(conn)
 
 
 
@@ -201,6 +176,8 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
     ident    = card.get("identification", {})
     agent_id = ident.get("agent_id")
     incoming_internal_id = ident.get("agent_internal_id")
+    tenant_id = ident.get("tenant_id") or TENANT_ID or None
+    tenant_id_sql = "NULL" if not tenant_id else _sq(tenant_id)
 
     row = {
         "agent_name":             card.get("name"),
@@ -237,6 +214,7 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             agent_id, agent_internal_id, agent_name, agent_description,
             protocol_version, preferred_transport, supports_auth_ext_card,
             card_version, source_hash, source_system, record_hash,
+            tenant_id,
             valid_from_ts, valid_to_ts, is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_id)}, {_sq(agent_internal_id)}, {_sq(row['agent_name'])},
@@ -244,6 +222,7 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             {_sq(row['preferred_transport'])}, {_bool(row['supports_auth_ext_card'])},
             {_sq(row['card_version'])}, {_sq(source_hash)}, {_sq(row['source_system'])},
             {_sq(record_hash)},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
@@ -258,6 +237,7 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             source_hash            = EXCLUDED.source_hash,
             source_system          = EXCLUDED.source_system,
             record_hash            = EXCLUDED.record_hash,
+            tenant_id              = EXCLUDED.tenant_id,
             updated_ts             = EXCLUDED.updated_ts
     """
     print("  Upserting agents …")
@@ -1310,6 +1290,7 @@ def dispatch_to_api(agent_internal_id: str, card: dict) -> bool:
     agent_id = _clean_required(ident.get("agent_id"))
     agent_name = _clean_required(card.get("name"))
     agent_description = _clean_required(card.get("description"))
+    card_tenant_id = _clean_required(ident.get("tenant_id")) or TENANT_ID or None
 
     missing = []
     if not _clean_required(agent_internal_id):
@@ -1334,7 +1315,7 @@ def dispatch_to_api(agent_internal_id: str, card: dict) -> bool:
         "agent_role": _clean_required(ident.get("role")),
         "provider": "Agentic AI System Platform",
         "agent_platform": _clean_required(card.get("provider", {}).get("organization")),
-        "tenant_id": "",
+        "tenant_id": card_tenant_id or "",
         "attack_vector_av": "N",
         "attack_complexity_ac": "L",
         "attack_requirements_at": "P",

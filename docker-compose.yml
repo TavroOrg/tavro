@@ -60,8 +60,8 @@ services:
       risk-temporal:
         condition: service_started
     environment:
-      # Digital Twin DB (asyncpg)
-      DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      # Single connection string for all DB access (asyncpg driver prefix added in code)
+      DATABASE_URL:               postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       # AI keys
       ANTHROPIC_API_KEY:          ${ANTHROPIC_API_KEY}
       AZURE_AI_FOUNDRY_AGENT_API_VERSION: '${AZURE_AI_FOUNDRY_AGENT_API_VERSION:-v1}'
@@ -73,12 +73,6 @@ services:
       OPENAI_API_KEY:             ${OPENAI_API_KEY}
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
-      # Risk DB (psycopg2 — same postgres instance, different schemas)
-      POSTGRES_HOST:     tavro-postgres
-      POSTGRES_PORT:     "5432"
-      POSTGRES_USER:     ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB:       tavro
       # Risk schema names
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated
@@ -397,12 +391,7 @@ services:
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
-      PG_DSN:            postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-      POSTGRES_HOST:     tavro-postgres
-      POSTGRES_PORT:     "5432"
-      POSTGRES_USER:     ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB:       tavro
+      DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
@@ -440,7 +429,7 @@ services:
     restart: unless-stopped
     command: tail -f /dev/null
     environment:
-      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       DROP_DIR: /app/sample-data
       API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
     volumes:
@@ -449,14 +438,14 @@ services:
       tavro-postgres:
         condition: service_healthy
 
-# ── Sample Loader — one-shot: load sample agent cards ────────────────────────  
+# ── Sample Loader — one-shot: load sample agent cards ────────────────────────
   risk-sample-loader:
     <<: *risk_worker_base
     container_name: risk-sample-loader
     profiles: ["manual"]
     command: python -u worker.py
     environment:
-      PG_DSN:   postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       DROP_DIR: /app/sample-data
       API_URL:  http://tavro-api:8000/api/v1/risk/classify-risk
     volumes:
@@ -474,7 +463,7 @@ services:
     container_name: risk-connector
     command: python -u run_connectors.py
     environment:
-      PG_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     depends_on:
