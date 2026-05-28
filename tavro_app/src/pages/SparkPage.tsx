@@ -1,11 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import {
   Zap,
   RefreshCw,
   X,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Bot,
   ArrowRight,
   Lightbulb,
@@ -125,6 +128,7 @@ const IdeaCard: React.FC<{
 // ── Idea List Row (list-view variant) ────────────────────────────────────────
 
 const LIST_GRID = 'grid-cols-[32px_1fr_160px_180px_100px_80px_32px]';
+const PAGE_SIZE = 10;
 
 const IdeaListRow: React.FC<{
   idea: SparkIdea;
@@ -227,6 +231,21 @@ const IdeaModal: React.FC<{
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
 
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
   const handleConvert = async () => {
     setConverting(true);
     setConvertError(null);
@@ -310,16 +329,18 @@ const IdeaModal: React.FC<{
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div
-        className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="h-1.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-t-2xl" />
+  return createPortal(
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+        <div className="min-h-full flex items-start sm:items-center justify-center">
+          <div
+            className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="h-1.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-t-2xl" />
 
-        <div className="p-6 flex flex-col gap-5">
+            <div className="p-6 flex flex-col gap-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-violet-50 dark:bg-violet-900/20 text-violet-600 rounded-xl">
@@ -421,10 +442,13 @@ const IdeaModal: React.FC<{
             >
               Close
             </button>
+            </div>
+          </div>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -445,6 +469,7 @@ const SparkPage: React.FC = () => {
   const [direction, setDirection] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectMode, setSelectMode] = useState(false);
+  const [page, setPage] = useState(1);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
@@ -559,6 +584,28 @@ const SparkPage: React.FC = () => {
     ? ideas.filter(i => i.target_dimensions.some(d => activeDimensions.has(d)))
     : ideas;
 
+  const isSearching = search.trim().length > 0;
+  const totalPages = Math.max(1, Math.ceil(filteredIdeas.length / PAGE_SIZE));
+  const hasMore = page < totalPages;
+
+  const visibleIdeas = useMemo(() => {
+    if (isSearching) return filteredIdeas;
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredIdeas.slice(start, start + PAGE_SIZE);
+  }, [filteredIdeas, isSearching, page]);
+
+  useEffect(() => {
+    if (!isSearching) return;
+    setPage(1);
+  }, [isSearching]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const handlePrev = () => setPage(prev => Math.max(1, prev - 1));
+  const handleNext = () => setPage(prev => Math.min(totalPages, prev + 1));
+
   const selectAll = () => setSelectedForDelete(new Set(filteredIdeas.map(i => i.idea_id)));
   const deselectAll = () => setSelectedForDelete(new Set());
   const allSelected = filteredIdeas.length > 0 && filteredIdeas.every(i => selectedForDelete.has(i.idea_id));
@@ -585,6 +632,12 @@ const SparkPage: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Spark</h1>
           </div>
+          <p className="text-sm text-slate-500">
+            {isSearching
+              ? `${filteredIdeas.length} result${filteredIdeas.length === 1 ? '' : 's'} for "${search}"`
+              : `Page ${page} of ${totalPages} · ${visibleIdeas.length} idea${visibleIdeas.length === 1 ? '' : 's'} of ${filteredIdeas.length} total`
+            }
+          </p>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             AI ideation hub — AI Use Case candidates that fits your business vision and your enteprise portfolio of assets
           </p>
@@ -612,6 +665,30 @@ const SparkPage: React.FC = () => {
               : <Zap size={16} />}
             {generating ? 'Generating…' : 'Inspire Me'}
           </button>
+
+          {!loading && !generating && !isSearching && totalPages > 1 && (
+            <div className="hidden md:flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={handlePrev}
+                disabled={page === 1 || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronLeft size={14} />
+                Prev
+              </button>
+              <span className="px-2.5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg min-w-[2.5rem] text-center">
+                {page}
+              </span>
+              <button
+                onClick={handleNext}
+                disabled={!hasMore || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Next
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -858,7 +935,7 @@ const SparkPage: React.FC = () => {
               <span className="text-center">Impact</span>
               <span />
             </div>
-            {filteredIdeas.map(idea => (
+            {visibleIdeas.map(idea => (
               <IdeaListRow
                 key={idea.idea_id}
                 idea={idea}
@@ -873,7 +950,7 @@ const SparkPage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredIdeas.map(idea => (
+            {visibleIdeas.map(idea => (
               <IdeaCard
                 key={idea.idea_id}
                 idea={idea}
@@ -887,6 +964,29 @@ const SparkPage: React.FC = () => {
             ))}
           </div>
         )
+      )}
+
+      {/* ── Pagination ── */}
+      {!loading && !generating && !isSearching && visibleIdeas.length > 0 && totalPages > 1 && (
+        <div className="flex justify-center items-center gap-2 pb-4">
+          <button
+            onClick={handlePrev}
+            disabled={page === 1 || deleting}
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            <ChevronLeft size={16} />
+            Previous
+          </button>
+          <span className="text-sm text-slate-500 dark:text-slate-400 px-3">Page {page} of {totalPages}</span>
+          <button
+            onClick={handleNext}
+            disabled={!hasMore || deleting}
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            Next
+            <ChevronRight size={16} />
+          </button>
+        </div>
       )}
 
       {/* ── Empty state: no library yet ── */}
