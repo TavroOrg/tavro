@@ -151,10 +151,8 @@ async def get_agent_catalog(
         start, end = start_record, start_record + 49
 
     tenant_id = _require_tenant(request)
-    where = ""
-    params: Dict[str, Any] = {"start": start, "end": end}
-    where = "WHERE tenant_id = :tid"
-    params["tid"] = tenant_id
+    params: Dict[str, Any] = {"start": start, "end": end, "tid": tenant_id}
+    where = "WHERE (tenant_id = :tid OR tenant_id IS NULL)"
 
     try:
         result = await db.execute(
@@ -252,6 +250,28 @@ async def create_agent(
                  "desc": body.knowledge_source.get("description", "")},
             )
 
+        # Insert a placeholder row into curated.agent_360 immediately so the
+        # agent appears in the catalog straight away. Risk data is filled in
+        # later when the Temporal workflow completes.
+        await db.execute(
+            text(f"""
+                INSERT INTO {CURATED}.agent_360 (
+                    tenant_id, agent_id, agent_internal_id, agent_name, agent_description,
+                    snapshot_ts,
+                    tool_count, data_source_count, business_application_count,
+                    business_process_count, ai_model_count,
+                    contains_pii, contains_phi, contains_pci
+                ) VALUES (
+                    :tid, :aid, :iid, :name, :desc,
+                    CURRENT_TIMESTAMP,
+                    0, 0, 0, 0, 0,
+                    false, false, false
+                )
+                ON CONFLICT (agent_internal_id) DO NOTHING
+            """),
+            {"tid": tenant_id, "aid": agent_id, "iid": agent_internal_id,
+             "name": body.agent_name, "desc": body.description},
+        )
         await db.commit()
     except Exception as e:
         await db.rollback()
