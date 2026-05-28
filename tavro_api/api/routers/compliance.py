@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.routers.agents import _resolve_agent_llm
+from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 
@@ -103,6 +105,52 @@ class ComplianceDocCreate(BaseModel):
     effective_date:     str | None = None
 
 
+class ComplianceDescriptionSuggest(BaseModel):
+    item_type:    str
+    name:         str
+    short_name:   str | None = None
+    issuing_body: str | None = None
+
+class ComplianceDescriptionSuggestResponse(BaseModel):
+    description: str
+
+REGULATION_DESCRIPTION_SYSTEM = """You are helping a user create a regulation record in Tavro.
+
+Given a regulation name and optional acronym and issuing body, generate a short plain-text description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Describe what the regulation generally covers and the kind of compliance obligation it creates.
+- Use the acronym and issuing body only if provided.
+- Do not invent specific clauses, penalties, dates, jurisdictions, control requirements, or applicability details unless they are explicit in the provided fields.
+- If the regulation name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence regulation description"
+}"""
+
+POLICY_DESCRIPTION_SYSTEM = """You are helping a user create an internal policy record in Tavro.
+
+Given a policy name and optional policy number or code, generate a short plain-text description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Describe what the policy is likely intended to govern and the kind of internal expectations it sets.
+- Use the policy number or code only as an identifier if provided.
+- Do not invent company-specific procedures, systems, owners, standards, approval workflows, or enforcement details unless they are explicit in the provided fields.
+- If the policy name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence policy description"
+}"""
+
+
 # =============================================================
 # Helpers
 # =============================================================
@@ -121,10 +169,70 @@ def _parse_date(val: str | None):
     from datetime import date
     return date.fromisoformat(val)
 
+async def _generate_compliance_description(body: ComplianceDescriptionSuggest) -> str:
+    item_type = body.item_type.strip().lower()
+    provider, api_key = _resolve_agent_llm()
+
+    if item_type == "regulation":
+        system_prompt = REGULATION_DESCRIPTION_SYSTEM
+        context = [
+            f"Regulation name: {body.name.strip()}",
+            f"Short name / acronym: {body.short_name.strip()}" if body.short_name and body.short_name.strip() else "",
+            f"Issuing body: {body.issuing_body.strip()}" if body.issuing_body and body.issuing_body.strip() else "",
+        ]
+    elif item_type == "policy":
+        system_prompt = POLICY_DESCRIPTION_SYSTEM
+        context = [
+            f"Policy name: {body.name.strip()}",
+        ]
+    else:
+        raise HTTPException(status_code=400, detail="item_type must be regulation or policy")
+
+    user_prompt = "\n".join([line for line in context if line])
+    user_prompt = f"""Generate a concise description for this {item_type}:
+
+{user_prompt}
+
+Return ONLY the JSON object with the "description" field."""
+
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            300,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            tools=None,
+            max_tokens=300,
+        )
+
+    raw = _collect_text(data).strip()
+    parsed = json.loads(_extract_json(raw))
+    return str(parsed.get("description", "")).strip()
+
 
 # =============================================================
 # Compliance items
 # =============================================================
+
+@router.post('/suggest-description', response_model=ComplianceDescriptionSuggestResponse)
+async def suggest_description(body: ComplianceDescriptionSuggest):
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+
+    try:
+        description = await _generate_compliance_description(body)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return ComplianceDescriptionSuggestResponse(description=description)
 
 @router.get('/items')
 async def list_items(

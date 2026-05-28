@@ -132,7 +132,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
 
   return (
     <Overlay onClose={onClose}>
-      <div className="w-full max-w-3xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+      <div className="w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
@@ -158,22 +158,19 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
 
           {/* Category */}
           <Field label="Category" required>
-            <div className="grid grid-cols-5 gap-1.5">
-              {(Object.keys(CATEGORY_LABELS) as DimCategory[]).map(cat => {
+            <div className="flex flex-wrap gap-1.5">
+              {(['strategy', 'organisation', 'finance', 'risk', 'application', 'process', 'integration', 'custom'] as DimCategory[]).map(cat => {
                 const p = CATEGORY_PALETTE[cat];
                 const active = category === cat;
                 return (
                   <button key={cat} onClick={() => setCategory(cat)}
-                    className="flex flex-col items-center gap-1 px-2 py-2 rounded-xl border text-center transition-all"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all"
                     style={active
-                      ? { background: p.bg, borderColor: p.stroke }
-                      : { background: 'transparent', borderColor: 'var(--color-border-tertiary)' }
+                      ? { background: p.bg, borderColor: p.stroke, color: p.text }
+                      : { background: 'transparent', borderColor: '#e2e8f0', color: '#64748b' }
                     }>
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: p.stroke }} />
-                    <span className="text-[10px] font-bold leading-tight"
-                      style={{ color: active ? p.text : 'var(--color-text-secondary)' }}>
-                      {CATEGORY_LABELS[cat]}
-                    </span>
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.stroke }} />
+                    {CATEGORY_LABELS[cat]}
                   </button>
                 );
               })}

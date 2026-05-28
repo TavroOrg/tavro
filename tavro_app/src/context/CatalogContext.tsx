@@ -255,7 +255,15 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     const old = key ? prevMap.get(key) : undefined;
                     const base = old ? mergeAgent(agent, old) : agent;
                     const runningForAgent = runningRecords.some(wf => workflowMatchesAgent(wf, base));
-                    if (!runningForAgent) return base;
+                    if (!runningForAgent) {
+                        if (base.identification?.governance_status === 'Risk Assessment is running') {
+                            return {
+                                ...base,
+                                identification: { ...base.identification, governance_status: null },
+                            };
+                        }
+                        return base;
+                    }
                     return {
                         ...base,
                         latest_risk_score: null,
@@ -316,6 +324,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         let timer: number | null = null;
         let active = true;
 
+        const POLL_FAST = 5_000;   // while workflows are running
+        const POLL_IDLE = 30_000;  // nothing in flight
+
+        const schedule = (delay: number) => {
+            if (timer) window.clearInterval(timer);
+            timer = window.setInterval(syncTemporalWorkflows, delay);
+        };
+
         const syncTemporalWorkflows = async () => {
             try {
                 const workflows = await agentApi.getRiskWorkflows();
@@ -335,13 +351,16 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     localStorage.setItem(TEMPORAL_WORKFLOW_KEY, snapshot);
                     window.dispatchEvent(new Event('tavro_temporal_workflow_update'));
                 }
+                // Slow down when there are no running workflows
+                const hasRunning = normalized.some(w => w.status === 'running');
+                schedule(hasRunning ? POLL_FAST : POLL_IDLE);
             } catch {
                 // ignore transient endpoint errors
             }
         };
 
         syncTemporalWorkflows();
-        timer = window.setInterval(syncTemporalWorkflows, 5000);
+        timer = window.setInterval(syncTemporalWorkflows, POLL_IDLE);
 
         return () => {
             active = false;
@@ -354,6 +373,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const workflows = readTemporalRecords();
             const handled = readHandledWorkflowIds();
             let shouldRefresh = false;
+            let shouldFetchAgents = false;
 
             const pendingMetaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
             const pendingMeta = pendingMetaRaw
@@ -367,14 +387,19 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             for (const wf of workflows) {
                 const wfKey = `${wf.workflow_id}:${wf.agent_id}`;
                 const wasHandled = handled.has(wfKey);
+                const workflowIds = [wf.agent_internal_id, wf.agent_id, wf.name].map(norm).filter(Boolean);
                 const hasMeta = nextMeta.some(item =>
-                    norm(item.agent_id) === norm(wf.agent_id) ||
-                    norm(item.name) === norm(wf.name)
+                    workflowIds.includes(norm(item.agent_id)) ||
+                    workflowIds.includes(norm(item.name))
                 );
                 const hadPendingId = nextIds.some(id =>
-                    norm(id) === norm(wf.agent_id) || norm(id) === norm(wf.name)
+                    workflowIds.includes(norm(id))
                 );
+                const isLocallyPending = hasMeta || hadPendingId;
+
                 if (wf.status === 'running') {
+                    if (!isLocallyPending) continue;
+                    shouldFetchAgents = true;
                     if (!hasMeta) {
                         nextMeta.unshift({
                             agent_id: wf.agent_id,
@@ -388,16 +413,22 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 }
 
                 nextMeta = nextMeta.filter(item =>
-                    norm(item.agent_id) !== norm(wf.agent_id) &&
-                    norm(item.name) !== norm(wf.name)
+                    !workflowIds.includes(norm(item.agent_id)) &&
+                    !workflowIds.includes(norm(item.name))
                 );
                 nextIds = nextIds.filter(id =>
-                    norm(id) !== norm(wf.agent_id) &&
-                    norm(id) !== norm(wf.name)
+                    !workflowIds.includes(norm(id))
                 );
-                // Refresh only when a terminal workflow is newly observed or when
-                // we actually cleared a running/pending marker from local state.
-                if (!wasHandled || hasMeta || hadPendingId) shouldRefresh = true;
+                // Refresh only when this browser/session had a local pending marker
+                // for the workflow. Polling alone must not make another user's
+                // workflow completion invalidate this catalog.
+                if (isLocallyPending) shouldRefresh = true;
+                if (isLocallyPending) shouldFetchAgents = true;
+
+                if (!isLocallyPending) {
+                    handled.add(wfKey);
+                    continue;
+                }
 
                 if (wasHandled) continue;
                 handled.add(wfKey);
@@ -423,7 +454,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(nextIds));
             persistHandledWorkflowIds(handled);
 
-            fetchAgents(shouldRefresh);
+            if (shouldFetchAgents) fetchAgents(shouldRefresh);
         };
 
         const onStorage = (event: StorageEvent) => {
@@ -458,6 +489,75 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             return next;
         });
     }, []);
+
+    useEffect(() => {
+        const handleAgentCreated = (event: Event) => {
+            const { result, args } = (event as CustomEvent).detail ?? {};
+
+            // Extract agent_id from the MCP result (handles several common response shapes).
+            const agentId: string | undefined =
+                result?.agent_id ||
+                result?.identification?.agent_id ||
+                result?.agent_card?.agent_id ||
+                result?.agent_card?.identification?.agent_id;
+
+            const agentName: string =
+                args?.agent_name || result?.agent_name || result?.name || agentId || '';
+            const description: string =
+                args?.description || result?.description || agentName;
+
+            if (!agentId) return;
+
+            // Immediately surface the agent with a pending-assessment status so it
+            // appears in the catalog before the backend workflow status is polled.
+            const optimisticAgent: AgentData = {
+                name: agentName,
+                description,
+                version: '1.0',
+                identification: {
+                    agent_id: agentId,
+                    role: null,
+                    instruction: args?.instruction || null,
+                    governance_status: 'Risk Assessment is running',
+                },
+                configuration: { autonomy_level: null },
+                tool: [],
+                data_source: [],
+                application: [],
+                business_process: [],
+                risk_assessment: null,
+            };
+            upsertAgent(optimisticAgent);
+
+            // Register agent for workflow-completion tracking so the 5-second poller
+            // knows this session owns the workflow and can trigger an auto-refresh.
+            try {
+                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+                localStorage.setItem(
+                    'tavro_pending_assessment_agents',
+                    JSON.stringify(Array.from(new Set([...pending, agentId]))),
+                );
+
+                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                const meta = metaRaw
+                    ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>)
+                    : [];
+                const filtered = meta.filter(item => item.agent_id !== agentId);
+                filtered.unshift({ agent_id: agentId, name: agentName, description, created_at: new Date().toISOString() });
+                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+            } catch {
+                // localStorage writes are best-effort
+            }
+
+            // Silent background fetch to pull the real record from the backend
+            // without showing a full loading spinner.
+            fetchAgents(false);
+        };
+
+        window.addEventListener('tavro:agent-created', handleAgentCreated);
+        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+    }, [upsertAgent, fetchAgents]);
 
     return (
         <CatalogContext.Provider value={{ agents, loading, error, lastFetched, refresh, upsertAgent }}>

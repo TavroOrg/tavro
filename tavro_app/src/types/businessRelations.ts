@@ -131,6 +131,7 @@ export interface AgentRelationsPayload {
     inherent_risk_classification: string | null;
     related_processes: RelatedProcessReference[];
   }>;
+  ai_use_cases?: RelatedUseCaseReference[];
 }
 
 export interface BusinessApplicationUpsertPayload {
@@ -170,4 +171,46 @@ export interface BusinessProcessUpsertPayload {
   regulatory_impact?: string | null;
   sla?: string | null;
   process_health_state?: string | null;
+}
+
+export interface IntegrationRecord {
+  integration_id: string;
+  tenant_id: string | null;
+  integration_name: string | null;
+  integration_description: string | null;
+  capabilities: string | null;
+  protocol: string | null;
+  endpoint_url: string | null;
+  authentication_method: string | null;
+  owner: string | null;
+  documentation_url: string | null;
+  data_sensitivity: string | null;
+  rate_limit: string | null;
+  availability_status: string | null;
+  sla: string | null;
+  version: string | null;
+  parent_application_id: string | null;
+  parent_application_name: string | null;
+  related_agents: RelatedAgentReference[];
+  related_agent_count: number;
+  created_ts: string | null;
+  updated_ts: string | null;
+}
+
+export interface IntegrationUpsertPayload {
+  integration_id?: string | null;
+  integration_name?: string | null;
+  integration_description?: string | null;
+  capabilities?: string | null;
+  protocol?: string | null;
+  endpoint_url?: string | null;
+  authentication_method?: string | null;
+  owner?: string | null;
+  documentation_url?: string | null;
+  data_sensitivity?: string | null;
+  rate_limit?: string | null;
+  availability_status?: string | null;
+  sla?: string | null;
+  version?: string | null;
+  parent_application_id?: string | null;
 }

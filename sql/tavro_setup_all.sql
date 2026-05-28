@@ -39,12 +39,11 @@ SET search_path = twin, ag_catalog, public;
 DO $$ BEGIN
     CREATE TYPE twin.dim_category AS ENUM (
         'profile','strategy','process','application',
-        'organisation','technology','risk','finance','custom'
+        'integration','organisation','technology','risk','finance','custom'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
-
-ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'finance';
+ALTER TYPE twin.dim_category ADD VALUE IF NOT EXISTS 'integration';
 
 DO $$ BEGIN
     CREATE TYPE twin.visibility_level AS ENUM (
@@ -482,6 +481,7 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Strategy',     'strategy',     true, 2),
     ('Process',      'process',      true, 2),
     ('Application',  'application',  true, 2),
+    ('Integration',  'integration',  true, 2),
     ('Organisation', 'organisation', true, 2),
     ('Technology',   'technology',   true, 2),
     ('Risk',         'risk',         true, 3),
@@ -582,7 +582,7 @@ WHERE NOT EXISTS (
 \echo '   twin.audit_run, twin.audit_finding'
 \echo ''
 \echo ' Seed data loaded:'
-\echo '   9 blueprint dim_types'
+\echo '   10 blueprint dim_types'
 \echo '   15 compliance dim_types'
 \echo '   7 seeded regulations'
 \echo ''

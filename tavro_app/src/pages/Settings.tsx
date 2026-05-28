@@ -8,23 +8,24 @@ import {
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
 import {
-    DEFAULT_MODELS, PROVIDER_HINTS, PROVIDER_LABELS, LLMProvider,
+    DEFAULT_MODELS, /* PROVIDER_HINTS, */ PROVIDER_LABELS, LLMProvider,
     getProviderConfig, saveProviderConfig, clearProviderConfig,
     getActiveProvider, setActiveProvider,
 } from '../services/llmService';
 
 import { useTheme } from '../context/ThemeContext';
 
-const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
+// const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
 // const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
+const ALL_PROVIDERS: LLMProvider[] = ['copilot'];
 const MCP_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:9001/zitadel/mcp';
 
-const PROVIDER_ICONS: Record<LLMProvider, string> = {
-    openai: '🤖',
-    gemini: '✨',
-    anthropic: '🧠',
-    copilot: '🪄',
-};
+// const PROVIDER_ICONS: Record<LLMProvider, string> = {
+//     openai: '🤖',
+//     gemini: '✨',
+//     anthropic: '🧠',
+//     copilot: '🪄',
+// };
 
 import { useChatContext } from '../context/ChatContext';
 
@@ -50,6 +51,18 @@ const Settings: React.FC = () => {
     };
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
         github: 'gpt-4.1', openai: 'gpt-5.5', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
+    };
+    const PROVIDER_MODEL_OPTIONS: Partial<Record<LLMProvider, string[]>> = {
+        openai:    ['gpt-4o', 'gpt-5.5'],
+        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+    };
+    const BYOK_MODEL_OPTIONS: Partial<Record<ByokType, string[]>> = {
+        openai:    ['gpt-4o', 'gpt-5.5'],
+        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+    };
+    const getModelOptions = (p: LLMProvider, s: ProviderState): string[] | null => {
+        if (p === 'copilot') return BYOK_MODEL_OPTIONS[s.byokType ?? 'github'] ?? null;
+        return PROVIDER_MODEL_OPTIONS[p] ?? null;
     };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);
@@ -123,7 +136,7 @@ const Settings: React.FC = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
                     <BotMessageSquare size={16} className="text-blue-500" />
-                    <span className="font-bold text-slate-800 dark:text-slate-100">Chat AI Configuration</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assitant Settings - Chat AI Configuration</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -140,12 +153,13 @@ const Settings: React.FC = () => {
                                     : 'border-slate-200 dark:border-slate-700'
                             }`}>
                                 {/* Card header */}
-                                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-base">{PROVIDER_ICONS[p]}</span>
-                                        <span className="font-bold text-sm text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p]}</span>
-                                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{PROVIDER_HINTS[p]}</span>
-                                    </div>
+                                {/* <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800"> */}
+                                <div className="flex justify-end px-4">
+                                    {/* <div className="flex items-center gap-2"> */}
+                                        {/* <span className="text-base">{PROVIDER_ICONS[p]}</span> */}
+                                        {/* <span className="font-bold text-sm text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p]}</span> */}
+                                        {/* <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{PROVIDER_HINTS[p]}</span> */}
+                                    {/* </div> */}
                                     <div className="flex items-center gap-2">
                                         {s.configured && (
                                             <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-2 py-0.5 rounded-full">
@@ -214,13 +228,35 @@ const Settings: React.FC = () => {
                                     {/* Model */}
                                     <div className="flex flex-col gap-1">
                                         <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Model</label>
-                                        <input
-                                            type="text"
-                                            value={s.model}
-                                            onChange={e => updateProvider(p, { model: e.target.value })}
-                                            placeholder={p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}
-                                            className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
-                                        />
+                                        {(() => {
+                                            const fieldCls = "text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono";
+                                            const defaultModel = p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p];
+                                            const options = getModelOptions(p, s);
+                                            if (options) {
+                                                // Include any previously saved custom value so it isn't silently dropped.
+                                                const allOptions = Array.from(new Set([...options, s.model].filter(Boolean)));
+                                                return (
+                                                    <select
+                                                        value={s.model || defaultModel}
+                                                        onChange={e => updateProvider(p, { model: e.target.value })}
+                                                        className={fieldCls}
+                                                    >
+                                                        {allOptions.map(m => (
+                                                            <option key={m} value={m}>{m}</option>
+                                                        ))}
+                                                    </select>
+                                                );
+                                            }
+                                            return (
+                                                <input
+                                                    type="text"
+                                                    value={s.model}
+                                                    onChange={e => updateProvider(p, { model: e.target.value })}
+                                                    placeholder={defaultModel}
+                                                    className={fieldCls}
+                                                />
+                                            );
+                                        })()}
                                         <p className="text-[10px] text-slate-400 dark:text-slate-500">
                                             Default: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">
                                                 {p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p]}

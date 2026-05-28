@@ -252,6 +252,7 @@ class McpClientService {
     private _agentCacheGen = 0;
     private _useCaseCacheGen = 0;
     private _connectPromise: Promise<void> | null = null;
+    private _requestIdCounter = 0;
     private _mcpTools: Array<{ name: string; description?: string; inputSchema?: any }> | null = null;
 
     private getMcpUrl(): string {
@@ -356,9 +357,7 @@ class McpClientService {
                 throw new Error(`MCP initialization failed: HTTP ${res.status}: ${body}`);
             }
 
-            // Capture session metadata. Do NOT accept tenant_id from the MCP
-            // response headers — tenant mapping must originate from Zitadel or
-            // the client-side admin switch. Prefer the saved client-side tenant.
+            // Capture session and tenant metadata from headers
             this.sessionId = res.headers.get('mcp-session-id');
             this.tenantId = savedTenantId || null;
 
@@ -388,7 +387,7 @@ class McpClientService {
         };
         const requestBody = {
             jsonrpc: '2.0',
-            id: Date.now(),
+            id: ++this._requestIdCounter,
             method: 'tools/call',
             params: { name, arguments: toolArgs }
         };
@@ -699,6 +698,9 @@ ${toolSummary}`;
                     window.dispatchEvent(new CustomEvent('tavro:usecase-created', { detail: result }));
                 } else if (name === 'create_agent') {
                     this.invalidateCache();
+                    window.dispatchEvent(new CustomEvent('tavro:agent-created', {
+                        detail: { result, args: toolArgs },
+                    }));
                 }
             }
             return result;
@@ -1103,6 +1105,14 @@ ${toolSummary}`;
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
         return data;
+    }
+
+    async getApplicationCatalog(args: { original_prompt: string; start_record?: number; record_range?: string }): Promise<any> {
+        return await this.callTool('get_application_catalog', {
+            original_prompt: args.original_prompt,
+            start_record: args.start_record ?? 1,
+            record_range: args.record_range ?? '1-20',
+        });
     }
 
     async createRiskAssessment(agent_id: string): Promise<any> {

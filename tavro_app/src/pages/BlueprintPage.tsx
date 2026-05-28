@@ -21,8 +21,7 @@ import AddDimEdgeModal from '../components/AddDimEdgeModal';
 import { useBlueprintChatSync } from '../hooks/useChatSync';
 
 const ALL_CATEGORIES: DimCategory[] = [
-  'profile', 'strategy', 'organisation', 'process',
-  'application', 'technology', 'risk', 'finance', 'custom',
+  'profile', 'strategy', 'organisation', 'finance', 'risk', 'application', 'process', 'integration',
 ];
 
 type ViewMode = 'graph' | 'grid' | 'list';
@@ -345,11 +344,10 @@ const BlueprintPage: React.FC = () => {
             ) : (
               /* List mode */
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="grid grid-cols-[2fr_1fr_120px_100px_48px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-3.5 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                <div className="grid grid-cols-[1fr_160px_110px_44px] items-center gap-x-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-5 py-3 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                   <div>Dimension</div>
                   <div>Category</div>
                   <div>Visibility</div>
-                  <div>Sensitive</div>
                   <div />
                 </div>
                 {loading ? (

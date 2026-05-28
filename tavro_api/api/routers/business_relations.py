@@ -11,6 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.routers.agents import _resolve_agent_llm
+from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
@@ -86,6 +88,25 @@ _PROCESS_ALIAS_MAP: dict[str, str] = {
     "associated_agents": "num_of_associated_agents",
     "are": "agent_risk_exposure",
 }
+
+_INTEGRATION_EDITABLE_COLUMNS: set[str] = {
+    "integration_name",
+    "integration_description",
+    "capabilities",
+    "protocol",
+    "endpoint_url",
+    "authentication_method",
+    "owner",
+    "documentation_url",
+    "data_sensitivity",
+    "rate_limit",
+    "availability_status",
+    "sla",
+    "version",
+    "parent_application_id",
+}
+
+_INTEGRATION_READONLY_DEFAULTS: dict[str, Any] = {}
 
 _PROCESS_LABEL_TO_VALUE_MAP: dict[str, dict[str, str]] = {
     "business_criticality": {
@@ -182,6 +203,31 @@ class ProcessCreate(Process):
 class ProcessUpdate(Process):
     pass
 
+class Integration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    integration_name: Optional[str] = None
+    integration_description: Optional[str] = None
+    capabilities: Optional[str] = None
+    protocol: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    authentication_method: Optional[str] = None
+    owner: Optional[str] = None
+    documentation_url: Optional[str] = None
+    data_sensitivity: Optional[str] = None
+    rate_limit: Optional[str] = None
+    availability_status: Optional[str] = None
+    sla: Optional[str] = None
+    version: Optional[str] = None
+    parent_application_id: Optional[str] = None
+
+
+class IntegrationCreate(Integration):
+    pass
+
+class IntegrationUpdate(Integration):
+    pass
+
 
 class AgentAttachmentCreate(BaseModel):
     filename: str
@@ -193,6 +239,157 @@ class EntityAttachmentCreate(BaseModel):
     filename: str
     mime_type: str
     content_base64: str
+
+class SuggestApplicationDescriptionRequest(BaseModel):
+    application_name: str
+
+
+class SuggestApplicationDescriptionResponse(BaseModel):
+    description: str
+
+
+class SuggestProcessDescriptionRequest(BaseModel):
+    process_name: str
+
+
+class SuggestProcessDescriptionResponse(BaseModel):
+    description: str
+
+
+SUGGEST_APPLICATION_DESCRIPTION_SYSTEM = """You are helping a user create a business application record in Tavro.
+
+Given only an application name, generate a short plain-text application description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, versions, vendors, or integrations unless clearly implied by the name.
+- Focus on the application's likely business purpose and who uses it.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence application description"
+}"""
+
+
+SUGGEST_PROCESS_DESCRIPTION_SYSTEM = """You are helping a user create a business process record in Tavro.
+
+Given only a process name, generate a short plain-text process description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, systems, or implementation details.
+- Focus on the process's likely workflow, business purpose, and outcome.
+- Do not assume a specific technical approach such as machine learning, LLMs, OCR, NLP, real-time processing, APIs, or automation patterns unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence process description"
+}"""
+
+
+_INTEGRATIONS_READY = False
+
+
+async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integration: dict) -> None:
+    """Sync a saved integration into twin.dim_node so Spark can use it as context."""
+    try:
+        name = (integration.get("integration_name") or "").strip()
+        if not name:
+            return
+        desc = integration.get("integration_description") or ""
+        caps = integration.get("capabilities") or ""
+        summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
+
+        # Find or create the dim_type for "integration" category for this company
+        result = await db.execute(
+            text("""
+                SELECT id FROM twin.dim_type
+                WHERE company_id = :company_id AND category = 'integration'
+                LIMIT 1
+            """),
+            {"company_id": company_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            await db.execute(
+                text("""
+                    INSERT INTO twin.dim_type (company_id, category, label)
+                    VALUES (:company_id, 'integration', 'Integrations')
+                    ON CONFLICT DO NOTHING
+                """),
+                {"company_id": company_id},
+            )
+            await db.commit()
+            result = await db.execute(
+                text("""
+                    SELECT id FROM twin.dim_type
+                    WHERE company_id = :company_id AND category = 'integration'
+                    LIMIT 1
+                """),
+                {"company_id": company_id},
+            )
+            row = result.mappings().first()
+        if not row:
+            return
+
+        dim_type_id = row["id"]
+        await db.execute(
+            text("""
+                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary)
+                VALUES (:company_id, :dim_type_id, :label, :summary)
+                ON CONFLICT (company_id, dim_type_id, label)
+                DO UPDATE SET summary = EXCLUDED.summary, updated_at = NOW()
+            """),
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": name, "summary": summary},
+        )
+        await db.commit()
+    except Exception:
+        pass  # Non-fatal — don't break the integration save
+
+
+async def _ensure_integrations_table(db: AsyncSession) -> None:
+    global _INTEGRATIONS_READY
+    if _INTEGRATIONS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS core.business_integrations (
+                integration_id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                integration_name TEXT,
+                integration_description TEXT,
+                capabilities TEXT,
+                protocol TEXT,
+                endpoint_url TEXT,
+                authentication_method TEXT,
+                owner TEXT,
+                documentation_url TEXT,
+                data_sensitivity TEXT,
+                rate_limit TEXT,
+                availability_status TEXT,
+                sla TEXT,
+                version TEXT,
+                parent_application_id TEXT,
+                created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text("ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS capabilities TEXT")
+    )
+    await db.commit()
+    _INTEGRATIONS_READY = True
 
 
 async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
@@ -226,6 +423,34 @@ async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     )
     await db.commit()
     _AGENT_ATTACHMENTS_READY = True
+
+async def _suggest_single_description(name: str, system_prompt: str, label: str) -> str:
+    provider, api_key = _resolve_agent_llm()
+    user_prompt = f"""Generate a concise description for this {label}:
+
+Name: {name}
+
+Return ONLY the JSON object with the "description" field."""
+
+    if provider == "openai":
+        data = await _call_openai(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            300,
+        )
+    else:
+        data = await _call_anthropic(
+            api_key,
+            [{"role": "user", "content": user_prompt}],
+            system_prompt,
+            tools=None,
+            max_tokens=300,
+        )
+
+    raw = _collect_text(data).strip()
+    parsed = json.loads(_extract_json(raw))
+    return str(parsed.get("description", "")).strip()
 
 
 async def _ensure_application_attachments_table(db: AsyncSession) -> None:
@@ -313,6 +538,12 @@ def _json_list(value: Any) -> list[Any]:
         except json.JSONDecodeError:
             return []
     return []
+
+
+def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
+    row["related_agents"] = _json_list(row.get("related_agents"))
+    row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    return row
 
 
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -575,6 +806,95 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
     )
 
 
+async def _fetch_integrations(
+    db: AsyncSession,
+    *,
+    integration_id: Optional[str] = None,
+    search: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    await _ensure_integrations_table(db)
+
+    int_cols = await _table_columns(db, "core", "business_integrations")
+    if "integration_id" not in int_cols:
+        raise HTTPException(
+            status_code=500,
+            detail="core.business_integrations.integration_id column not found",
+        )
+
+    select_cols = [
+        _col_expr("bi", int_cols, "integration_id"),
+        _col_expr("bi", int_cols, "tenant_id"),
+        _col_expr("bi", int_cols, "integration_name"),
+        _col_expr("bi", int_cols, "integration_description"),
+        _col_expr("bi", int_cols, "capabilities"),
+        _col_expr("bi", int_cols, "protocol"),
+        _col_expr("bi", int_cols, "endpoint_url"),
+        _col_expr("bi", int_cols, "authentication_method"),
+        _col_expr("bi", int_cols, "owner"),
+        _col_expr("bi", int_cols, "documentation_url"),
+        _col_expr("bi", int_cols, "data_sensitivity"),
+        _col_expr("bi", int_cols, "rate_limit"),
+        _col_expr("bi", int_cols, "availability_status"),
+        _col_expr("bi", int_cols, "sla"),
+        _col_expr("bi", int_cols, "version"),
+        _col_expr("bi", int_cols, "parent_application_id"),
+        "pa.application_name AS parent_application_name",
+        _col_expr("bi", int_cols, "created_ts"),
+        _col_expr("bi", int_cols, "updated_ts"),
+        "NULL::json AS related_agents",
+        "0::int AS related_agent_count",
+    ]
+
+    where_parts: list[str] = []
+    query_params: dict[str, Any] = {}
+    if integration_id is not None:
+        where_parts.append("bi.integration_id = :integration_id")
+        query_params["integration_id"] = integration_id
+
+    search_clean = _clean(search)
+    if search_clean:
+        search_clauses = ["bi.integration_id ILIKE :search_like"]
+        if "integration_name" in int_cols:
+            search_clauses.append("COALESCE(bi.integration_name, '') ILIKE :search_like")
+        if "integration_description" in int_cols:
+            search_clauses.append("COALESCE(bi.integration_description, '') ILIKE :search_like")
+        if "owner" in int_cols:
+            search_clauses.append("COALESCE(bi.owner, '') ILIKE :search_like")
+        if "protocol" in int_cols:
+            search_clauses.append("COALESCE(bi.protocol, '') ILIKE :search_like")
+        where_parts.append("(" + " OR ".join(search_clauses) + ")")
+        query_params["search_like"] = f"%{search_clean}%"
+
+    where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+    order_sql = (
+        "LOWER(COALESCE(bi.integration_name, bi.integration_id))"
+        if "integration_name" in int_cols
+        else "LOWER(bi.integration_id)"
+    )
+
+    has_ba = await _table_exists(db, "core", "business_applications")
+    ba_join_sql = (
+        "LEFT JOIN core.business_applications pa ON pa.business_application_id = bi.parent_application_id"
+        if has_ba
+        else ""
+    )
+
+    rows = await db.execute(
+        text(
+            f"""
+            SELECT
+                {", ".join(select_cols)}
+            FROM core.business_integrations bi
+            {ba_join_sql}
+            {where_sql}
+            ORDER BY {order_sql}
+            """
+        ),
+        query_params,
+    )
+    return [_normalize_integration_row(dict(r._mapping)) for r in rows]
+
+
 async def _fetch_applications(
     db: AsyncSession,
     *,
@@ -822,17 +1142,17 @@ async def _fetch_processes(
     """
 
     has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
-    has_auc = await _table_exists(db, "core", "agent_ai_use_cases")
+    has_auc = await _table_exists(db, "core", "ai_use_cases")
     auc_order_sql = "ORDER BY 1"
     if has_auc:
-        auc_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        auc_cols = await _table_columns(db, "core", "ai_use_cases")
         order_parts: list[str] = []
         if "updated_ts" in auc_cols:
             order_parts.append("auc.updated_ts DESC NULLS LAST")
         if "created_ts" in auc_cols:
             order_parts.append("auc.created_ts DESC NULLS LAST")
-        if "identifier" in auc_cols:
-            order_parts.append("auc.identifier")
+        if "ai_use_case_id" in auc_cols:
+            order_parts.append("auc.ai_use_case_id")
         if order_parts:
             auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
     if has_uc_proc_rel and has_auc:
@@ -866,8 +1186,8 @@ async def _fetch_processes(
                             auc.owner,
                             auc.priority,
                             auc.status
-                        FROM core.agent_ai_use_cases auc
-                        WHERE auc.identifier = rel.ai_use_case_id
+                        FROM core.ai_use_cases auc
+                        WHERE auc.ai_use_case_id = rel.ai_use_case_id
                         {auc_order_sql}
                         LIMIT 1
                     ) latest ON TRUE
@@ -952,6 +1272,171 @@ async def _fetch_processes(
     return [_normalize_process_row(dict(r._mapping)) for r in rows]
 
 
+@router.get("/integrations", tags=["Integrations"], summary="List Integrations")
+async def list_integrations(
+    q: Optional[str] = Query(default=None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        all_items = await _fetch_integrations(db, search=q)
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": items,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to list integrations: {exc}")
+
+
+@router.get("/integrations/{integration_id}", tags=["Integrations"], summary="Get Integration")
+async def get_integration(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await _fetch_integrations(db, integration_id=integration_id)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Integration '{integration_id}' not found",
+        )
+    return rows[0]
+
+
+@router.post("/integrations", status_code=201, tags=["Integrations"], summary="Create Integration")
+async def create_integration(
+    body: IntegrationCreate = Body(default_factory=IntegrationCreate),
+    company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs integration to Blueprint dimensions"),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integrations_table(db)
+    int_cols = await _table_columns(db, "core", "business_integrations")
+
+    integration_id = uuid4().hex
+    existing = await _fetch_integrations(db, integration_id=integration_id)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Integration '{integration_id}' already exists",
+        )
+
+    canonical = body.model_dump(exclude_unset=True)
+    insert_values: dict[str, Any] = {"integration_id": integration_id}
+    insert_values.update(
+        _pick_text_columns(
+            canonical,
+            allowed_columns=_INTEGRATION_EDITABLE_COLUMNS,
+            existing_columns=int_cols,
+        )
+    )
+
+    if "created_ts" in int_cols:
+        insert_values["created_ts"] = None
+    if "updated_ts" in int_cols:
+        insert_values["updated_ts"] = None
+
+    insert_columns = [col for col in insert_values.keys() if col in int_cols]
+    param_columns = [col for col in insert_columns if col not in {"created_ts", "updated_ts"}]
+    params = {col: insert_values[col] for col in param_columns}
+
+    columns_sql = ", ".join(insert_columns)
+    values_sql = ", ".join(
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        for col in insert_columns
+    )
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO core.business_integrations ({columns_sql})
+            VALUES ({values_sql})
+            """
+        ),
+        params,
+    )
+    await db.commit()
+    rows = await _fetch_integrations(db, integration_id=integration_id)
+    if company_id and rows:
+        await _sync_integration_to_dim_node(db, company_id, rows[0])
+    return rows[0]
+
+
+@router.patch("/integrations/{integration_id}", tags=["Integrations"], summary="Update Integration")
+async def update_integration(
+    integration_id: str,
+    body: IntegrationUpdate = Body(default_factory=IntegrationUpdate),
+    company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs integration to Blueprint dimensions"),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integrations_table(db)
+    int_cols = await _table_columns(db, "core", "business_integrations")
+    existing = await _fetch_integrations(db, integration_id=integration_id)
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Integration '{integration_id}' not found",
+        )
+
+    canonical = body.model_dump(exclude_unset=True)
+    updates = _pick_text_columns(
+        canonical,
+        allowed_columns=_INTEGRATION_EDITABLE_COLUMNS,
+        existing_columns=int_cols,
+    )
+    if not updates:
+        raise HTTPException(status_code=400, detail="No editable fields provided for update")
+
+    updates["integration_id"] = integration_id
+    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "integration_id")
+    if "updated_ts" in int_cols:
+        set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
+
+    await db.execute(
+        text(
+            f"""
+            UPDATE core.business_integrations
+            SET {set_clause}
+            WHERE integration_id = :integration_id
+            """
+        ),
+        updates,
+    )
+    await db.commit()
+    rows = await _fetch_integrations(db, integration_id=integration_id)
+    if company_id and rows:
+        await _sync_integration_to_dim_node(db, company_id, rows[0])
+    return rows[0]
+
+
+@router.delete("/integrations/{integration_id}", tags=["Integrations"], summary="Delete Integration")
+async def delete_integration(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integrations_table(db)
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.business_integrations
+            WHERE integration_id = :integration_id
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Integration '{integration_id}' not found",
+        )
+    await db.commit()
+    return {"status": "deleted", "integration_id": integration_id}
+
+
 @router.get("/applications", tags=["Applications"], summary="List Applications")
 async def list_applications(
     q: Optional[str] = Query(default=None),
@@ -987,6 +1472,23 @@ async def get_application(
             detail=f"Application '{application_id}' not found",
     )
     return rows[0]
+
+@router.post("/applications/suggest-description", tags=["Applications"], summary="Suggest Application Description")
+async def suggest_application_description(body: SuggestApplicationDescriptionRequest):
+    application_name = body.application_name.strip()
+    if not application_name:
+        raise HTTPException(status_code=400, detail="application_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            application_name,
+            SUGGEST_APPLICATION_DESCRIPTION_SYSTEM,
+            "business application",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestApplicationDescriptionResponse(description=description)
 
 
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
@@ -1166,6 +1668,23 @@ async def get_process(
             detail=f"Process '{process_id}' not found",
     )
     return rows[0]
+
+@router.post("/processes/suggest-description", tags=["Processes"], summary="Suggest Process Description")
+async def suggest_process_description(body: SuggestProcessDescriptionRequest):
+    process_name = body.process_name.strip()
+    if not process_name:
+        raise HTTPException(status_code=400, detail="process_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            process_name,
+            SUGGEST_PROCESS_DESCRIPTION_SYSTEM,
+            "business process",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestProcessDescriptionResponse(description=description)
 
 
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
@@ -1882,6 +2401,81 @@ async def get_agent_relations(
         payload["related_processes"] = _json_list(payload.get("related_processes"))
         business_processes.append(payload)
 
+    ai_use_cases: list[dict[str, Any]] = []
+    has_agent_use_cases = await _table_exists(db, "core", "agent_ai_use_cases")
+    if has_agent_use_cases:
+        rel_cols = await _table_columns(db, "core", "agent_ai_use_cases")
+        if "ai_use_case_id" in rel_cols:
+            match_parts: list[str] = []
+            tenant_filter = ""
+            params: dict[str, Any] = {
+                "agent_internal_id": agent.get("agent_internal_id"),
+                "agent_id": agent.get("agent_id"),
+                "agent_name": agent.get("agent_name"),
+                "tenant_id": agent.get("tenant_id"),
+            }
+
+            if "agent_internal_id" in rel_cols:
+                match_parts.append("rel.agent_internal_id = :agent_internal_id")
+            if "agent_id" in rel_cols:
+                match_parts.append("rel.agent_id = :agent_id")
+            if "agent_name" in rel_cols and agent.get("agent_name"):
+                match_parts.append("rel.agent_name = :agent_name")
+            if "tenant_id" in rel_cols and agent.get("tenant_id"):
+                tenant_filter = (
+                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                )
+
+            if match_parts:
+                has_use_cases = await _table_exists(db, "core", "ai_use_cases")
+                use_case_cols: set[str] = set()
+                if has_use_cases:
+                    use_case_cols = await _table_columns(db, "core", "ai_use_cases")
+
+                rel_name_expr = "rel.ai_use_case_name" if "ai_use_case_name" in rel_cols else "NULL::text"
+                uc_name_expr = "uc.name" if "name" in use_case_cols else "NULL::text"
+                name_expr = f"COALESCE({uc_name_expr}, {rel_name_expr}, rel.ai_use_case_id)"
+
+                description_expr = "uc.description" if "description" in use_case_cols else "NULL::text"
+                owner_expr = "uc.owner" if "owner" in use_case_cols else "NULL::text"
+                priority_expr = "uc.priority" if "priority" in use_case_cols else "NULL::text"
+                status_expr = "uc.status" if "status" in use_case_cols else "NULL::text"
+
+                uc_join = ""
+                if has_use_cases and "ai_use_case_id" in use_case_cols:
+                    tenant_join = ""
+                    if "tenant_id" in use_case_cols and "tenant_id" in rel_cols:
+                        tenant_join = "AND COALESCE(uc.tenant_id, '') = COALESCE(rel.tenant_id, '')"
+                    uc_join = """
+                    LEFT JOIN core.ai_use_cases uc
+                        ON LOWER(TRIM(uc.ai_use_case_id)) = LOWER(TRIM(rel.ai_use_case_id))
+                        {tenant_join}
+                    """
+                    uc_join = uc_join.format(tenant_join=tenant_join)
+
+                use_case_rows = await db.execute(
+                    text(
+                        f"""
+                        SELECT DISTINCT
+                            rel.ai_use_case_id AS identifier,
+                            {name_expr} AS name,
+                            {description_expr} AS description,
+                            {owner_expr} AS owner,
+                            {priority_expr} AS priority,
+                            {status_expr} AS status
+                        FROM core.agent_ai_use_cases rel
+                        {uc_join}
+                        WHERE ({' OR '.join(match_parts)})
+                          {tenant_filter}
+                          AND rel.ai_use_case_id IS NOT NULL
+                          AND rel.ai_use_case_id <> ''
+                        ORDER BY LOWER({name_expr})
+                        """
+                    ),
+                    params,
+                )
+                ai_use_cases = [dict(r._mapping) for r in use_case_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -1891,6 +2485,7 @@ async def get_agent_relations(
         },
         "applications": applications,
         "business_processes": business_processes,
+        "ai_use_cases": ai_use_cases,
     }
 
 

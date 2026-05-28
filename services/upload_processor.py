@@ -21,6 +21,13 @@ from typing import Optional
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+from utils.set_environment import set_environment
+
+set_environment("databases")
+set_environment("postgres")
+
+
+CORE = os.getenv("CORE_DB_NAME", "core")
 
 # ---------------------------------------------------------------------------
 # DB connection
@@ -136,7 +143,7 @@ def _canonical_entity_id(raw_id, raw_name) -> Optional[str]:
 
 def _get_source_hash(conn, agent_id: str) -> Optional[str]:
     rows = _query(conn, f"""
-        SELECT source_hash FROM core.agents
+        SELECT source_hash FROM {CORE}.agents
         WHERE agent_id = {_sq(agent_id)} AND is_current = true
         ORDER BY updated_ts DESC LIMIT 1
     """)
@@ -163,11 +170,11 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
     }
     record_hash = _hash(row)
 
-    rows = _query(conn, f"SELECT agent_internal_id FROM core.agents WHERE agent_id = {_sq(agent_id)} LIMIT 1")
+    rows = _query(conn, f"SELECT agent_internal_id FROM {CORE}.agents WHERE agent_id = {_sq(agent_id)} LIMIT 1")
     agent_internal_id = rows[0]["agent_internal_id"] if rows else incoming_internal_id
 
     _exec(conn, f"""
-        INSERT INTO core.agents (
+        INSERT INTO {CORE}.agents (
             tenant_id, agent_id, agent_internal_id, agent_name, agent_description,
             protocol_version, preferred_transport, supports_auth_ext_card,
             card_version, source_hash, source_system, record_hash,
@@ -220,7 +227,7 @@ def _upsert_agent_configuration(conn, card: dict, agent_internal_id: str, now_st
     }
     record_hash = _hash(row)
     _exec(conn, f"""
-        INSERT INTO core.agent_configurations (
+        INSERT INTO {CORE}.agent_configurations (
             agent_internal_id, agent_id,
             access_scope, memory_type, data_freshness_policy,
             autonomy_level, reasoning_model, human_in_the_loop_flag,
@@ -259,7 +266,7 @@ def _upsert_agent_identification(conn, card: dict, agent_internal_id: str, now_s
     tags_raw = ident.get("tags")
     tags     = tags_raw if isinstance(tags_raw, list) else []
     _exec(conn, f"""
-        INSERT INTO core.agent_identifications (
+        INSERT INTO {CORE}.agent_identifications (
             agent_internal_id, agent_id,
             goal_orientation, role, instruction,
             owner, environment, tags,
@@ -319,7 +326,7 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         """.strip())
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_tools (
+        INSERT INTO {CORE}.agent_tools (
             agent_internal_id, agent_id, tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
@@ -361,7 +368,7 @@ def _upsert_agent_controls(conn, card: dict, agent_internal_id: str, now_str: st
     """.strip() for c in controls]
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_controls (
+        INSERT INTO {CORE}.agent_controls (
             agent_internal_id, agent_id, identifier, name, objective, domain,
             created_ts, updated_ts
         )
@@ -386,7 +393,7 @@ def _upsert_agent_knowledge_source(conn, card: dict, agent_internal_id: str, now
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_knowledge_sources (
+        INSERT INTO {CORE}.agent_knowledge_sources (
             agent_internal_id, agent_id, identifier, name, access_mechanism,
             created_ts, updated_ts
         ) VALUES (
@@ -420,7 +427,7 @@ def _upsert_agent_llm_models(conn, card: dict, agent_internal_id: str, now_str: 
     """.strip() for m in models]
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_llm_models (
+        INSERT INTO {CORE}.agent_llm_models (
             agent_internal_id, agent_id, name, version_number, created_ts, updated_ts
         )
         SELECT agent_internal_id, agent_id, name, version_number, now_ts, now_ts
@@ -437,57 +444,128 @@ def _upsert_agent_llm_models(conn, card: dict, agent_internal_id: str, now_str: 
 # ---------------------------------------------------------------------------
 
 def _upsert_agent_ai_use_cases(conn, card: dict, agent_internal_id: str, now_str: str):
-    ident        = card.get("identification", {})
+    ident = card.get("identification", {})
     ai_use_cases = card.get("ai_use_case", []) or []
     if not has_meaningful_data(ai_use_cases):
         return
-    tenant_id = ident.get("tenant_id")
-    agent_id  = ident.get("agent_id")
-    select_rows = [f"""
-        SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tenant_id)} AS tenant_id,
-               {_sq(agent_id)} AS agent_id, {_sq(uc.get('identifier'))} AS identifier,
-               {_sq(uc.get('name'))} AS name, {_sq(uc.get('description'))} AS description,
-               {_sq(uc.get('proposed_by'))} AS proposed_by, {_sq(uc.get('owner'))} AS owner,
-               {_sq(uc.get('business_function'))} AS function,
-               {_sq(uc.get('problem_statement'))} AS problem_statement,
-               {_sq(uc.get('expected_benefits'))} AS expected_benefits,
-               {_sq(uc.get('priority'))} AS priority, {_sq(uc.get('status'))} AS status,
-               {_sq(uc.get('agent_risk_exposure_are'))} AS agent_risk_exposure_are,
-               {_sq(uc.get('no_of_associated_agents'))} AS no_of_associated_agents,
-               {_sq(uc.get('inherent_risk_classification'))} AS inherent_risk_classification,
-               {_sq(uc.get('residual_risk_classification'))} AS residual_risk_classification,
-               {_sq(uc.get('agent_risk_tier_art'))} AS agent_risk_tier_art,
-               {_sq(uc.get('blended_risk_score'))} AS blended_risk_score,
-               {_sq(uc.get('inherent_risk_classification_score'))} AS inherent_risk_classification_score,
-               {_sq(uc.get('residual_risk_classification_score'))} AS residual_risk_classification_score,
-               {_sq(uc.get('solution_approach'))} AS solution_approach,
-               TIMESTAMP '{now_str}' AS now_ts
-    """.strip() for uc in ai_use_cases]
+
+    tenant_id = ident.get("tenant_id") or ""
+    agent_id = ident.get("agent_id")
+    agent_name = ident.get("agent_name") or card.get("name")
+    select_rows = []
+
+    for uc in ai_use_cases:
+        use_case_id = _clean_text(uc.get("identifier")) or _clean_text(uc.get("ai_use_case_id"))
+        if not use_case_id:
+            continue
+        select_rows.append(f"""
+            SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tenant_id)} AS tenant_id,
+                   {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name,
+                   {_sq(use_case_id)} AS ai_use_case_id, {_sq(uc.get('name'))} AS ai_use_case_name,
+                   {_sq(uc.get('description'))} AS description,
+                   {_sq(uc.get('proposed_by'))} AS proposed_by, {_sq(uc.get('owner'))} AS owner,
+                   {_sq(uc.get('business_function'))} AS function,
+                   {_sq(uc.get('problem_statement'))} AS problem_statement,
+                   {_sq(uc.get('expected_benefits'))} AS expected_benefits,
+                   {_sq(uc.get('priority'))} AS priority, {_sq(uc.get('status'))} AS status,
+                   NULLIF({_sq(uc.get('agent_risk_exposure_are'))}, '')::numeric(10,2) AS agent_risk_exposure_are,
+                   NULLIF({_sq(uc.get('no_of_associated_agents'))}, '')::int AS no_of_associated_agents,
+                   {_sq(uc.get('inherent_risk_classification'))} AS inherent_risk_classification,
+                   {_sq(uc.get('residual_risk_classification'))} AS residual_risk_classification,
+                   {_sq(uc.get('agent_risk_tier_art'))} AS agent_risk_tier_art,
+                   NULLIF({_sq(uc.get('blended_risk_score'))}, '')::numeric(10,2) AS blended_risk_score,
+                   NULLIF({_sq(uc.get('inherent_risk_classification_score'))}, '')::numeric(10,2) AS inherent_risk_classification_score,
+                   NULLIF({_sq(uc.get('residual_risk_classification_score'))}, '')::numeric(10,2) AS residual_risk_classification_score,
+                   {_sq(uc.get('solution_approach'))} AS solution_approach,
+                   TIMESTAMP '{now_str}' AS now_ts
+        """.strip())
+
+    if not select_rows:
+        return
+
     union_all = "\nUNION ALL\n".join(select_rows)
+
     _exec(conn, f"""
-        INSERT INTO core.agent_ai_use_cases (
-            agent_internal_id, tenant_id, agent_id, identifier, name, description,
-            proposed_by, owner, function, problem_statement, expected_benefits,
-            priority, status, agent_risk_exposure_are, no_of_associated_agents,
-            inherent_risk_classification, residual_risk_classification,
-            agent_risk_tier_art, blended_risk_score,
+        INSERT INTO {CORE}.ai_use_cases (
+            tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
+            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
+            residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
             solution_approach, created_ts, updated_ts
         )
-        SELECT agent_internal_id, tenant_id, agent_id, identifier, name, description,
-               proposed_by, owner, function, problem_statement, expected_benefits,
-               priority, status, agent_risk_exposure_are, no_of_associated_agents,
-               inherent_risk_classification, residual_risk_classification,
-               agent_risk_tier_art, blended_risk_score,
+        SELECT tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
+               problem_statement, expected_benefits, priority, status, agent_internal_id,
+               agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
+               residual_risk_classification, agent_risk_tier_art, blended_risk_score,
                inherent_risk_classification_score, residual_risk_classification_score,
                solution_approach, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, name)
+        ON CONFLICT (tenant_id, ai_use_case_id)
         DO UPDATE SET
-            tenant_id = EXCLUDED.tenant_id, agent_id = EXCLUDED.agent_id,
-            description = EXCLUDED.description, status = EXCLUDED.status,
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            proposed_by = EXCLUDED.proposed_by,
+            owner = EXCLUDED.owner,
+            function = EXCLUDED.function,
+            problem_statement = EXCLUDED.problem_statement,
+            expected_benefits = EXCLUDED.expected_benefits,
+            priority = EXCLUDED.priority,
+            status = EXCLUDED.status,
+            agent_internal_id = EXCLUDED.agent_internal_id,
+            agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
+            no_of_associated_agents = EXCLUDED.no_of_associated_agents,
+            inherent_risk_classification = EXCLUDED.inherent_risk_classification,
+            residual_risk_classification = EXCLUDED.residual_risk_classification,
+            agent_risk_tier_art = EXCLUDED.agent_risk_tier_art,
+            blended_risk_score = EXCLUDED.blended_risk_score,
+            inherent_risk_classification_score = EXCLUDED.inherent_risk_classification_score,
+            residual_risk_classification_score = EXCLUDED.residual_risk_classification_score,
+            solution_approach = EXCLUDED.solution_approach,
             updated_ts = EXCLUDED.updated_ts
-    """, f"agent_ai_use_cases upsert ({len(ai_use_cases)})")
+    """, f"ai_use_cases upsert ({len(select_rows)})")
+
+    _exec(conn, f"""
+        INSERT INTO {CORE}.agent_ai_use_cases (
+            tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts
+        )
+        SELECT tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, now_ts, now_ts
+        FROM ({union_all}) AS s
+        WHERE agent_id IS NOT NULL AND agent_id <> ''
+        ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
+        DO UPDATE SET
+            ai_use_case_name = EXCLUDED.ai_use_case_name,
+            agent_name = EXCLUDED.agent_name,
+            agent_internal_id = EXCLUDED.agent_internal_id,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"agent_ai_use_cases upsert ({len(select_rows)})")
+
+    _exec(conn, f"""
+        WITH affected AS (
+            SELECT DISTINCT tenant_id, ai_use_case_id
+            FROM ({union_all}) AS s
+        ),
+        counts AS (
+            SELECT
+                a.tenant_id,
+                a.ai_use_case_id,
+                COUNT(DISTINCT rel.agent_id) AS associated_count
+            FROM affected a
+            LEFT JOIN {CORE}.agent_ai_use_cases rel
+              ON rel.ai_use_case_id = a.ai_use_case_id
+             AND COALESCE(rel.tenant_id, '') = COALESCE(a.tenant_id, '')
+             AND rel.agent_id IS NOT NULL
+             AND rel.agent_id <> ''
+            GROUP BY a.tenant_id, a.ai_use_case_id
+        )
+        UPDATE {CORE}.ai_use_cases uc
+        SET
+            no_of_associated_agents = c.associated_count,
+            updated_ts = TIMESTAMP '{now_str}'
+        FROM counts c
+        WHERE uc.ai_use_case_id = c.ai_use_case_id
+          AND COALESCE(uc.tenant_id, '') = COALESCE(c.tenant_id, '')
+    """, f"ai_use_cases associated-count sync ({len(select_rows)})")
 
 
 # ---------------------------------------------------------------------------
@@ -529,14 +607,14 @@ def _upsert_business_processes(conn, card: dict, agent_internal_id: str, now_str
         for pid in sorted(referenced_ids)
     )
     _exec(conn, f"""
-        INSERT INTO core.business_processes (business_process_id, process_number, created_ts, updated_ts)
+        INSERT INTO {CORE}.business_processes (business_process_id, process_number, created_ts, updated_ts)
         SELECT business_process_id, business_process_id, now_ts, now_ts FROM ({seed_rows}) AS seed
         ON CONFLICT (business_process_id) DO UPDATE SET updated_ts = EXCLUDED.updated_ts
     """, "business_processes seed")
 
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.business_processes (
+        INSERT INTO {CORE}.business_processes (
             business_process_id, process_number, process_name, process_description,
             parent_process_id, business_criticality, created_ts, updated_ts
         )
@@ -545,11 +623,11 @@ def _upsert_business_processes(conn, card: dict, agent_internal_id: str, now_str
         FROM ({union_all}) AS s
         ON CONFLICT (business_process_id)
         DO UPDATE SET
-            process_number = COALESCE(EXCLUDED.process_number, core.business_processes.process_number),
-            process_name = COALESCE(EXCLUDED.process_name, core.business_processes.process_name),
-            process_description = COALESCE(EXCLUDED.process_description, core.business_processes.process_description),
-            parent_process_id = COALESCE(EXCLUDED.parent_process_id, core.business_processes.parent_process_id),
-            business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_processes.business_criticality),
+            process_number = COALESCE(EXCLUDED.process_number, {CORE}.business_processes.process_number),
+            process_name = COALESCE(EXCLUDED.process_name, {CORE}.business_processes.process_name),
+            process_description = COALESCE(EXCLUDED.process_description, {CORE}.business_processes.process_description),
+            parent_process_id = COALESCE(EXCLUDED.parent_process_id, {CORE}.business_processes.parent_process_id),
+            business_criticality = COALESCE(EXCLUDED.business_criticality, {CORE}.business_processes.business_criticality),
             updated_ts = EXCLUDED.updated_ts
     """, f"business_processes upsert ({len(select_rows)})")
 
@@ -582,7 +660,7 @@ def _upsert_business_applications(conn, card: dict, agent_internal_id: str, now_
         return
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.business_applications (
+        INSERT INTO {CORE}.business_applications (
             business_application_id, application_name, business_criticality,
             emergency_tier, application_description, created_ts, updated_ts
         )
@@ -591,10 +669,10 @@ def _upsert_business_applications(conn, card: dict, agent_internal_id: str, now_
         FROM ({union_all}) AS s
         ON CONFLICT (business_application_id)
         DO UPDATE SET
-            application_name = COALESCE(EXCLUDED.application_name, core.business_applications.application_name),
-            business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
-            emergency_tier = COALESCE(EXCLUDED.emergency_tier, core.business_applications.emergency_tier),
-            application_description = COALESCE(EXCLUDED.application_description, core.business_applications.application_description),
+            application_name = COALESCE(EXCLUDED.application_name, {CORE}.business_applications.application_name),
+            business_criticality = COALESCE(EXCLUDED.business_criticality, {CORE}.business_applications.business_criticality),
+            emergency_tier = COALESCE(EXCLUDED.emergency_tier, {CORE}.business_applications.emergency_tier),
+            application_description = COALESCE(EXCLUDED.application_description, {CORE}.business_applications.application_description),
             updated_ts = EXCLUDED.updated_ts
     """, f"business_applications upsert ({len(select_rows)})")
 
@@ -626,7 +704,7 @@ def _upsert_agent_business_processes(conn, card: dict, agent_internal_id: str, n
         return
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_business_processes (
+        INSERT INTO {CORE}.agent_business_processes (
             agent_internal_id, agent_id, business_process_id, process_name, criticality,
             created_ts, updated_ts
         )
@@ -641,7 +719,7 @@ def _upsert_agent_business_processes(conn, card: dict, agent_internal_id: str, n
         unique_ids = list(dict.fromkeys(process_ids))
         ids_sql = ", ".join(_sq(pid) for pid in unique_ids)
         _exec(conn, f"""
-            DELETE FROM core.agent_business_processes
+            DELETE FROM {CORE}.agent_business_processes
             WHERE agent_internal_id = {_sq(agent_internal_id)}
               AND (business_process_id IS NULL OR business_process_id NOT IN ({ids_sql}))
         """, "agent_business_processes cleanup")
@@ -674,7 +752,7 @@ def _upsert_agent_business_applications(conn, card: dict, agent_internal_id: str
         return
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_business_applications (
+        INSERT INTO {CORE}.agent_business_applications (
             agent_internal_id, agent_id, business_application_id, application_name, criticality,
             created_ts, updated_ts
         )
@@ -689,7 +767,7 @@ def _upsert_agent_business_applications(conn, card: dict, agent_internal_id: str
         unique_ids = list(dict.fromkeys(application_ids))
         ids_sql = ", ".join(_sq(a) for a in unique_ids)
         _exec(conn, f"""
-            DELETE FROM core.agent_business_applications
+            DELETE FROM {CORE}.agent_business_applications
             WHERE agent_internal_id = {_sq(agent_internal_id)}
               AND (business_application_id IS NULL OR business_application_id NOT IN ({ids_sql}))
         """, "agent_business_applications cleanup")
@@ -706,7 +784,7 @@ def _upsert_agent_guardrail(conn, card: dict, agent_internal_id: str, now_str: s
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_guardrails (
+        INSERT INTO {CORE}.agent_guardrails (
             agent_internal_id, agent_id, name, description, model, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
@@ -732,7 +810,7 @@ def _upsert_agent_mcp_server(conn, card: dict, agent_internal_id: str, now_str: 
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_mcp_servers (
+        INSERT INTO {CORE}.agent_mcp_servers (
             agent_internal_id, agent_id, name, url, version_number,
             last_updated_ts, created_ts, updated_ts
         ) VALUES (
@@ -760,7 +838,7 @@ def _upsert_agent_memory(conn, card: dict, agent_internal_id: str, now_str: str)
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_memories (
+        INSERT INTO {CORE}.agent_memories (
             agent_internal_id, agent_id, identifier, name, type, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
@@ -793,7 +871,7 @@ def _upsert_agent_physical_ai(conn, card: dict, agent_internal_id: str, now_str:
     """.strip() for pa in physical_ai_list]
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_physical_ai (
+        INSERT INTO {CORE}.agent_physical_ai (
             agent_internal_id, agent_id, identifier, name, type, sensory_input_source,
             created_ts, updated_ts
         )
@@ -818,7 +896,7 @@ def _upsert_agent_prompt_template(conn, card: dict, agent_internal_id: str, now_
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_prompt_templates (
+        INSERT INTO {CORE}.agent_prompt_templates (
             agent_internal_id, agent_id, identifier, name, description, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
@@ -844,7 +922,7 @@ def _upsert_agent_regulation_or_framework(conn, card: dict, agent_internal_id: s
         return
     agent_id = ident.get("agent_id")
     _exec(conn, f"""
-        INSERT INTO core.agent_regulations_or_frameworks (
+        INSERT INTO {CORE}.agent_regulations_or_frameworks (
             agent_internal_id, agent_id, name, type, regulatory_authority, jurisdiction,
             requirement, created_ts, updated_ts
         ) VALUES (
@@ -882,7 +960,7 @@ def _upsert_agent_ai_models(conn, card: dict, agent_internal_id: str, now_str: s
     """.strip() for m in models]
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_ai_models (
+        INSERT INTO {CORE}.agent_ai_models (
             ai_model_id, agent_internal_id, agent_id,
             model_name, owner, department_executive, description, created_ts, updated_ts
         )
@@ -936,7 +1014,7 @@ def _upsert_agent_data_sources(conn, card: dict, agent_internal_id: str, now_str
 
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
-        INSERT INTO core.agent_data_sources (
+        INSERT INTO {CORE}.agent_data_sources (
             agent_internal_id, tenant_id, agent_id,
             access_level, contains_pii, contains_phi, contains_pci,
             created_ts, updated_ts,

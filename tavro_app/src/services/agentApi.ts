@@ -68,6 +68,7 @@ export interface AgentCatalogResponse {
 export interface RiskWorkflowStatus {
     workflow_id: string;
     run_id?: string | null;
+    tenant_id?: string | null;
     agent_internal_id: string;
     agent_id: string;
     agent_name: string;
@@ -89,9 +90,16 @@ class AgentApiService {
     }
 
     async createAgent(payload: AgentCreatePayload): Promise<{ agent_id: string; agent_name: string; message: string }> {
-        return req('/agents', {
+        return req('/agents/', {
             method: 'POST',
             body: JSON.stringify(payload),
+        });
+    }
+
+    async suggestDescription(agentName: string): Promise<{ description: string }> {
+        return req('/agents/suggest-description', {
+            method: 'POST',
+            body: JSON.stringify({ agent_name: agentName }),
         });
     }
 

@@ -86,12 +86,16 @@ services:
       # Temporal
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8000:8000"
     volumes:
       - ./tavro_api:/app                    # live reload — tavro_api code
       - ./services:/app/services:ro         # live reload — risk services
       - ./utils:/app/utils:ro               # live reload — risk utils
+      - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./config.yaml:/app/config.yaml:ro   # risk config
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
     healthcheck:

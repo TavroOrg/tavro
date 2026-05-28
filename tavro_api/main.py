@@ -9,6 +9,7 @@ from temporalio.client import Client
 
 from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph
 from api.routers.dim_types import seed_system_dim_types
+from api.routers.spark import ensure_spark_table
 from api.routers import blueprint
 from api.routers import playground
 from api.routers import compliance, compliance_research
@@ -19,6 +20,8 @@ from api.routers import agents
 from api.routers import agent_upload
 from api.routers import use_cases
 from api.routers import use_case_upload
+from api.routers import drive_import
+from api.routers import spark
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -67,6 +70,7 @@ async def _run_temporal_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await seed_system_dim_types()
+    await ensure_spark_table()
     worker_task = asyncio.create_task(_run_temporal_worker())
     yield
     worker_task.cancel()
@@ -108,6 +112,8 @@ app.include_router(agents.router,    prefix="/api/v1/agents",     tags=["Agents"
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
+app.include_router(drive_import.router,     prefix="/api/v1/drive",      tags=["Drive Import"])
+app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["Spark"])
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
