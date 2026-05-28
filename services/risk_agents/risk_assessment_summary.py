@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2 import sql
 from datetime import datetime
 from utils.db import db_connection as _db_connection
+from contextlib import contextmanager
 from utils.set_environment import set_environment
 
 set_environment("databases")
@@ -157,6 +158,12 @@ def generate_risk_summary(data: dict) -> str:
         lines.append(sep)
         return "\n".join(lines)
  
+    def fmt_score(score) -> str:
+        try:
+            return f"{float(score):.2f}"
+        except (TypeError, ValueError):
+            return "N/A"
+        
     # ── Build AIVSS Capability table ────────────────────────────
     cap_rows = []
     for label, score_key, rationale_key in CAPABILITIES:
@@ -172,11 +179,7 @@ def generate_risk_summary(data: dict) -> str:
         risk_name       = s.get("agentic_ai_core_security_risks", "N/A")
         s_aivss         = s.get("aivss_score", "N/A")
         threat_mult     = s.get("threat_multiplier", "N/A")
-        # AARS Score per scenario = aivss_score × threat_multiplier
-        try:
-            s_aars = f"{float(s_aivss) * float(threat_mult):.2f}"
-        except (TypeError, ValueError):
-            s_aars = "N/A"
+        s_aars          = fmt_score(aars_score)
         scenario_rows.append([str(idx), risk_name, str(s_aivss), str(threat_mult), s_aars])
  
     scenario_table = make_table(
