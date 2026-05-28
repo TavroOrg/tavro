@@ -3,7 +3,7 @@
 // Used in the list view of BlueprintPage.
 
 import React from 'react';
-import { ChevronRight, ShieldAlert, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ChevronRight, ShieldAlert, Eye, EyeOff, Trash2, Lock } from 'lucide-react';
 import type { DimNode } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
 
@@ -106,23 +106,44 @@ interface BlueprintDimRowProps {
   onDelete?: (node: DimNode) => void;
 }
 
+const BLUEPRINT_ROW_GRID = 'grid-cols-[1fr_160px_110px_44px]';
+
 export const BlueprintDimRow: React.FC<BlueprintDimRowProps> = ({ node, onClick, onDelete }) => {
   const cat = node.category ?? 'custom';
   const palette = CATEGORY_PALETTE[cat as keyof typeof CATEGORY_PALETTE] ?? CATEGORY_PALETTE.custom;
 
+  const visIcon = node.visibility === 'public' || node.visibility === 'internal'
+    ? <Eye size={10} />
+    : <Lock size={10} />;
+
   return (
     <div
       onClick={() => onClick(node)}
-      className="grid grid-cols-[2fr_1fr_120px_100px_48px] items-center px-6 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group border-b border-slate-100 dark:border-slate-800 last:border-0"
+      className={`grid ${BLUEPRINT_ROW_GRID} items-center gap-x-3 px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group border-b border-slate-100 dark:border-slate-800 last:border-0`}
     >
-      <div className="flex flex-col gap-0.5 pr-4">
-        <span className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
+      {/* Col 1: label + summary + tags */}
+      <div className="min-w-0 flex flex-col gap-0.5 pr-2">
+        <span className="font-semibold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
           {node.label}
         </span>
         {node.summary && (
           <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{node.summary}</span>
         )}
+        {node.tags.length > 0 && (
+          <div className="flex gap-1 flex-wrap mt-0.5">
+            {node.tags.slice(0, 3).map(tag => (
+              <span key={tag} className="text-[9px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                {tag}
+              </span>
+            ))}
+            {node.tags.length > 3 && (
+              <span className="text-[9px] text-slate-400 px-1 py-0.5">+{node.tags.length - 3}</span>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Col 2: category badge */}
       <div>
         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border"
           style={{ background: palette.bg, color: palette.text, borderColor: palette.badge }}>
@@ -130,25 +151,31 @@ export const BlueprintDimRow: React.FC<BlueprintDimRowProps> = ({ node, onClick,
           {CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] ?? 'Custom'}
         </span>
       </div>
-      <div className="text-xs text-slate-500 dark:text-slate-400 capitalize">{node.visibility}</div>
-      <div>
+
+      {/* Col 3: visibility + sensitive */}
+      <div className="flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 dark:text-slate-400 capitalize">
+          {visIcon} {node.visibility}
+        </span>
         {node.sensitive && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800 px-1.5 py-0.5 rounded-full">
-            <ShieldAlert size={10} /> Sensitive
+          <span title="Sensitive" className="text-rose-500 dark:text-rose-400">
+            <ShieldAlert size={11} />
           </span>
         )}
       </div>
+
+      {/* Col 4: actions */}
       <div className="flex items-center justify-end gap-1">
         {onDelete && (
           <button
             onClick={e => { e.stopPropagation(); onDelete(node); }}
             className="p-1 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 rounded transition-colors opacity-0 group-hover:opacity-100"
-            title="Delete dimension"
+            title="Delete"
           >
             <Trash2 size={13} />
           </button>
         )}
-        <ChevronRight size={16} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transform group-hover:translate-x-0.5 transition-all" />
+        <ChevronRight size={15} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transform group-hover:translate-x-0.5 transition-all" />
       </div>
     </div>
   );

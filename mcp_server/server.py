@@ -1188,7 +1188,7 @@ zitadel_mcp = FastMCP(
 
 zitadel_mcp.mount(core)
 
-zitadel_app = zitadel_mcp.http_app(path=MCP_PATH)
+zitadel_app = zitadel_mcp.http_app(path=MCP_PATH, json_response=True)
 
 # ---------------------------
 # Parent lifespan

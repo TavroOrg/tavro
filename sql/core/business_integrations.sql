@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS core.business_integrations (
+    integration_id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    integration_name TEXT,
+    integration_description TEXT,
+    capabilities TEXT,
+    protocol TEXT,
+    endpoint_url TEXT,
+    authentication_method TEXT,
+    owner TEXT,
+    documentation_url TEXT,
+    data_sensitivity TEXT,
+    rate_limit TEXT,
+    availability_status TEXT,
+    sla TEXT,
+    version TEXT,
+    parent_application_id TEXT,
+    created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
+);

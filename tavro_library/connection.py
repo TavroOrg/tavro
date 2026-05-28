@@ -15,11 +15,15 @@ set_environment("db")
 _connection_pool: pool.SimpleConnectionPool | None = None
 _pool_lock = threading.Lock()
 
+def _env(primary: str, fallback: str, default: str = "") -> str:
+    """Return first non-empty value among primary env var, fallback env var, default."""
+    return os.getenv(primary) or os.getenv(fallback) or default
 
 def _get_connection_pool() -> pool.SimpleConnectionPool:
     """
     Get or create the global connection pool (thread-safe, created once).
     Uses a small pool since we are read-only and calls are infrequent (auth only).
+    DB_* vars take priority; POSTGRES_* vars (set by Docker Compose) are the fallback.
     """
     global _connection_pool
 
