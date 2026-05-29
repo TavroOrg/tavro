@@ -13,6 +13,10 @@ DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 
+CREWAI_LLM_MODEL=anthropic/claude-sonnet-4-6
+CREWAI_MAX_TOKENS=4096
+CREWAI_TXT_SEARCH_EMBEDDER=onnx
+
 AZURE_AI_FOUNDRY_ENDPOINT=https://tavro-portal-development.services.ai.azure.com/api/projects/proj-default
 AZURE_AI_FOUNDRY_KEY=
 AZURE_AI_FOUNDRY_API_VERSION=2024-02-15-preview

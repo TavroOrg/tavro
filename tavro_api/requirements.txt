@@ -11,7 +11,7 @@ openpyxl
 
 # ── Risk Stack ────────────────────────────────────────────────────────────────
 temporalio
-crewai
+crewai[anthropic]
 crewai_tools
 psycopg2-binary
 cvss
