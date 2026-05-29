@@ -610,18 +610,19 @@ const SparkPage: React.FC = () => {
     return () => clearTimeout(timer);
   }, [companyId, search]);
 
-  // Generate fresh ideas (user-initiated only)
+  // Generate fresh ideas via SSE — ideas appear progressively as they stream in
   const inspire = useCallback(async () => {
     if (!companyId) return;
     setIdeas([]);
     setGenerating(true);
     setError(null);
+    setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
-      const data = await sparkApi.generateIdeas(companyId, dims, direction.trim() || undefined);
-      setIdeas(data);
-      setHasLibrary(data.length > 0);
-      setSearch('');
+      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined)) {
+        setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
+        setHasLibrary(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate ideas');
     } finally {
@@ -890,9 +891,10 @@ const SparkPage: React.FC = () => {
         </button>
 
         {/* Count */}
-        {!loading && !generating && hasLibrary && (
+        {!loading && filteredIdeas.length > 0 && (
           <span className="text-xs text-slate-400 hidden sm:block flex-shrink-0 tabular-nums">
             {filteredIdeas.length} {filteredIdeas.length === 1 ? 'idea' : 'ideas'}
+            {generating && <span className="ml-1 text-violet-400">…</span>}
           </span>
         )}
 
@@ -974,8 +976,8 @@ const SparkPage: React.FC = () => {
         </div>
       )}
 
-      {/* ── Loading skeleton ── */}
-      {(loading || generating) && (
+      {/* ── Loading skeleton — shown while loading/generating with no ideas yet ── */}
+      {(loading || (generating && ideas.length === 0)) && (
         viewMode === 'list' ? (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-pulse">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -1013,8 +1015,8 @@ const SparkPage: React.FC = () => {
         )
       )}
 
-      {/* ── Idea board ── */}
-      {!loading && !generating && filteredIdeas.length > 0 && (
+      {/* ── Idea board — visible as soon as ideas start streaming in ── */}
+      {!loading && filteredIdeas.length > 0 && (
         viewMode === 'list' ? (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             {/* List header */}
@@ -1082,7 +1084,7 @@ const SparkPage: React.FC = () => {
       )}
 
       {/* ── Empty state: no library yet ── */}
-      {!loading && !generating && !hasLibrary && companyId && (
+      {!loading && !generating && !hasLibrary && ideas.length === 0 && companyId && (
         <div className="py-24 flex flex-col items-center justify-center gap-4 text-slate-400 bg-slate-50 dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
           <div className="p-5 bg-white dark:bg-slate-800 rounded-full shadow-sm">
             <Zap size={32} className="text-violet-300" />
@@ -1095,7 +1097,7 @@ const SparkPage: React.FC = () => {
       )}
 
       {/* ── Empty state: filters or search returned nothing ── */}
-      {!loading && !generating && hasLibrary && filteredIdeas.length === 0 && (
+      {!loading && !generating && (hasLibrary || ideas.length > 0) && filteredIdeas.length === 0 && (
         <div className="py-16 flex flex-col items-center gap-3 text-slate-400">
           <Search size={28} className="text-slate-300" />
           {search

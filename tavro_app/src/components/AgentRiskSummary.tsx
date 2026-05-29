@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { mcpClient } from '../services/mcpClient';
-import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff, Download } from 'lucide-react';
+import { generateRiskReportPDF } from '../utils/riskReportPDF';
 
 interface AgentRiskSummaryProps {
     agentId: string;
@@ -41,14 +42,8 @@ function normalizeRiskSummaryPayload(payload: any, fallbackAgentId: string): Ris
     };
 }
 
-function formatScore(raw: string): string {
-    const score = parseFloat(raw);
-    if (!Number.isFinite(score)) return 'N/A';
-    return score.toFixed(2).replace(/\.?0+$/, '');
-}
-
-function extractHeadline(html: string): { level: string; aivss: string; cvss: string } {
-    if (!html) return { level: 'Unknown', aivss: 'N/A', cvss: 'N/A' };
+function extractHeadline(html: string): { level: string; aivss: string } {
+    if (!html) return { level: 'Unknown', aivss: 'N/A' };
 
     const levelMatch =
         html.match(/<b[^>]*>'?([^'<]+Risk[^'<]*)'?<\/b>/i) ??
@@ -59,24 +54,9 @@ function extractHeadline(html: string): { level: string; aivss: string; cvss: st
     const aivssMatch = html.match(/AIVSS score of\s*<b[^>]*>([\d.]+\/\d+)<\/b>/i)
         ?? html.match(/AIVSS score of\s*([\d.]+\/\d+)/i)
         ?? html.match(/AIVSS Score[^:]*:\s*([\d.]+(?:\/\d+)?)/i);
-    const aivss = aivssMatch?.[1] ? formatScore(aivssMatch[1]) : 'N/A';
+    const aivss = aivssMatch?.[1] ?? 'N/A';
 
-    const cvssMatch = html.match(/CVSS score of\s*<b[^>]*>([\d.]+\/\d+)<\/b>/i)
-        ?? html.match(/CVSS score of\s*([\d.]+\/\d+)/i)
-        ?? html.match(/CVSS Score[^:]*:\s*([\d.]+(?:\/\d+)?)/i);
-    let cvss = cvssMatch?.[1] ? formatScore(cvssMatch[1]) : 'N/A';
-
-    if (cvss === 'N/A' && aivss !== 'N/A') {
-        const aarsMatch = html.match(/AARS Score[^:]*:\s*([\d.]+)/i);
-        const aivssValue = parseFloat(aivss);
-        const aarsValue = aarsMatch?.[1] ? parseFloat(aarsMatch[1]) : NaN;
-        const derivedCvss = (2 * aivssValue) - aarsValue;
-        if (Number.isFinite(derivedCvss) && derivedCvss >= 0) {
-            cvss = `${Math.round(derivedCvss * 100) / 100}`;
-        }
-    }
-
-    return { level, aivss, cvss };
+    return { level, aivss };
 }
 
 function riskColor(level: string) {
@@ -87,21 +67,23 @@ function riskColor(level: string) {
     return { badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', icon: 'text-emerald-600', bar: 'bg-emerald-500' };
 }
 
-function ScoreMetric({ label, value }: { label: string; value: string }) {
-    return (
-        <div className="flex flex-col gap-1 min-w-[180px]">
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-            <span className="text-base font-bold text-slate-900 leading-none">{value}</span>
-        </div>
-    );
-}
-
 const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
     const [data, setData] = useState<RiskSummaryData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState(false);
     const [noAssessment, setNoAssessment] = useState(false);
+    const [downloading, setDownloading] = useState(false);
+
+    const handleDownloadReport = async () => {
+        if (!data || !headline) return;
+        setDownloading(true);
+        try {
+            await generateRiskReportPDF(data.agent_name, data.agent_id, headline.level, headline.aivss, data.risk_summary);
+        } finally {
+            setDownloading(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -152,6 +134,19 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
                     <h2 className="text-sm font-bold text-slate-800">AI Risk Assessment</h2>
                     <p className="text-xs text-slate-400">EU AI Act | OWASP AIVSS</p>
                 </div>
+                {data && headline && (
+                    <button
+                        onClick={handleDownloadReport}
+                        disabled={downloading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {downloading
+                            ? <RefreshCw size={12} className="animate-spin" />
+                            : <Download size={12} />
+                        }
+                        Download Report
+                    </button>
+                )}
             </div>
 
             <div className="p-5">
@@ -181,26 +176,25 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
 
                 {!loading && !error && data && headline && (
                     <div className="flex flex-col gap-4">
-                        <div className="grid grid-cols-1 md:grid-cols-[minmax(360px,1.25fr)_minmax(220px,0.75fr)] gap-6 max-w-[760px]">
-                            <div className="flex flex-col gap-2">
-                                <span className="text-sm font-medium text-slate-700">Security</span>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                                    <ScoreMetric label="AIVSS Score" value={headline.aivss} />
-                                    <ScoreMetric label="CVSS Score" value={headline.cvss} />
-                                </div>
+                        <div className="flex items-center gap-4">
+                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${colors.badge}`}>
+                                <RiskIcon size={13} />
+                                {headline.level}
                             </div>
-                            <div className="flex flex-col gap-2 md:border-l md:border-slate-300 md:pl-6">
-                                <span className="text-sm font-medium text-slate-700">Regulatory Risk</span>
-                                <div className="flex flex-col gap-1">
-                                    <div className="flex flex-col items-start gap-1.5">
-                                        <span className="text-xs text-slate-500 font-medium">Risk Classification Score</span>
-                                        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${colors.badge}`}>
-                                            <RiskIcon size={13} />
-                                            {headline.level}
-                                        </span>
+                            <div className="flex flex-col">
+                                <span className="text-xs text-slate-400 font-medium">AIVSS Score</span>
+                                <span className="text-sm font-bold text-slate-800">{headline.aivss}</span>
+                            </div>
+                            {headline.aivss !== 'N/A' && (() => {
+                                const score = parseFloat(headline.aivss);
+                                const max = headline.aivss.includes('/') ? (parseFloat(headline.aivss.split('/')[1]) || 10) : 10;
+                                const pct = Number.isFinite(score) ? Math.round((score / max) * 100) : 0;
+                                return (
+                                    <div className="flex-1 bg-slate-100 rounded-full h-1.5">
+                                        <div className={`h-full rounded-full ${colors.bar}`} style={{ width: `${pct}%` }} />
                                     </div>
-                                </div>
-                            </div>
+                                );
+                            })()}
                         </div>
 
                         <button

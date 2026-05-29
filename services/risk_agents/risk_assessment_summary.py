@@ -111,14 +111,6 @@ def generate_risk_summary(data: dict) -> str:
     aivss_score      = core_ra.get("aivss_score")
     aivss_class      = core_ra.get("aivss_class")
     aars_score       = detail.get("aars_score")
-    scenario_cvss_scores = []
-    for scenario in scenarios:
-        try:
-            scenario_cvss_scores.append(float(scenario.get("cvss_score")))
-        except (TypeError, ValueError):
-            pass
-    cvss_score = f"{max(scenario_cvss_scores):.2f}".rstrip("0").rstrip(".") if scenario_cvss_scores else "N/A"
-
  
     pii              = detail.get("personally_identifiable_information")
     phi              = detail.get("protected_health_information")
@@ -185,18 +177,13 @@ def generate_risk_summary(data: dict) -> str:
     scenario_rows = []
     for idx, s in enumerate(scenarios, start=1):
         risk_name       = s.get("agentic_ai_core_security_risks", "N/A")
-        s_cvss          = s.get("cvss_score", "N/A")
         s_aivss         = s.get("aivss_score", "N/A")
         threat_mult     = s.get("threat_multiplier", "N/A")
-        # AARS Score per scenario = aivss_score × threat_multiplier
-        try:
-            s_aars = f"{float(s_aivss) * float(threat_mult):.2f}"
-        except (TypeError, ValueError):
-            s_aars = "N/A"
-        scenario_rows.append([str(idx), risk_name, str(s_cvss), str(s_aivss), str(threat_mult), s_aars])
+        s_aars          = fmt_score(aars_score)
+        scenario_rows.append([str(idx), risk_name, str(s_aivss), str(threat_mult), s_aars])
  
     scenario_table = make_table(
-        ["S.No", "Risk Scenario", "CVSS Score", "AIVSS Score", "Threat Multiplier", "AARS Score"],
+        ["S.No", "Risk Scenario", "AIVSS Score", "Threat Multiplier", "AARS Score"],
         scenario_rows,
     )
  
@@ -210,7 +197,7 @@ Agent Owner Name: {agent_owner}
  
 The agent was assessed based on the EU AI Act and the AI Vulnerability Scoring System (AIVSS).
 The agent is designated as '{risk_class}' under the EU AI Act, a classification reinforced by
-an AIVSS score of {aivss_score}/10 and a CVSS score of {cvss_score}/10, placing it in the '{aivss_class} Risk' category.
+an AIVSS score of {aivss_score}/10, placing it in the '{aivss_class} Risk' category.
 A detailed breakdown of the assessment is provided in the following sections.
  
 ==============================
