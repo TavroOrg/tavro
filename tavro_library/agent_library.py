@@ -4,54 +4,49 @@ import json
 import uuid
 import requests
 import threading
-import psycopg2
 from pathlib import Path
-from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from rapidfuzz import process, fuzz
 from typing import Dict, Any, List, Optional
+from contextlib import contextmanager
+from utils.db import DATABASE_URL, SyncSessionLocal
 from utils.set_environment import set_environment
 
 set_environment('databases')
-set_environment('postgres')
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
     RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_DB_NAME"))
 
-    @staticmethod
-    def _get_pg_config() -> Dict[str, Any]:
-        return {
-            "host": os.getenv("POSTGRES_HOST", os.getenv("PGHOST", "localhost")),
-            "port": int(os.getenv("POSTGRES_PORT", os.getenv("PGPORT", "5432"))),
-            "dbname": os.getenv("POSTGRES_DB", os.getenv("PGDATABASE", "postgres")),
-            "user": os.getenv("POSTGRES_USER", os.getenv("PGUSER", "postgres")),
-            "password": os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", "")),
-        }
-
     @classmethod
-    def _get_pg_connection(cls):
+    @contextmanager
+    def _get_db_cursor(cls):
+        """Borrow a psycopg2 cursor from the SQLAlchemy sync session pool."""
+        session = SyncSessionLocal()
         try:
-            return psycopg2.connect(**cls._get_pg_config())
-        except psycopg2.OperationalError as e:
-            raise ConnectionError(f"Failed to connect to PostgreSQL: {e}")
+            conn = session.connection()
+            cursor = conn.connection.cursor()
+            try:
+                yield cursor
+                conn.commit()
+            finally:
+                cursor.close()
+        finally:
+            session.close()
 
     @classmethod
     def execute_select(cls, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        with cls._get_pg_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+        with cls._get_db_cursor() as cursor:
+            cursor.execute(query, params)
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     @classmethod
     def execute_dml(cls, query: str, params: Optional[tuple] = None) -> int:
-        with cls._get_pg_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                affected = cur.rowcount
-            conn.commit()
-            return affected
+        with cls._get_db_cursor() as cursor:
+            cursor.execute(query, params)
+            return cursor.rowcount
 
     @classmethod
     def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None) -> Optional[str]:

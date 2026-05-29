@@ -96,10 +96,16 @@ const PlaygroundPage: React.FC = () => {
 
   // Load from URL params (launched from agent detail page)
   useEffect(() => {
-    const id    = searchParams.get('useCase');
-    const title = searchParams.get('title');
-    const desc  = searchParams.get('desc');
-    if (id && title) loadFromAgent(id, decodeURIComponent(title), desc ? decodeURIComponent(desc) : undefined);
+    const id          = searchParams.get('useCase');
+    const title       = searchParams.get('title');
+    const desc        = searchParams.get('desc');
+    const instruction = searchParams.get('instruction');
+    if (id && title) loadFromAgent(
+      id,
+      decodeURIComponent(title),
+      desc ? decodeURIComponent(desc) : undefined,
+      instruction ? decodeURIComponent(instruction) : undefined,
+    );
   }, []);
 
   // Inject blueprint context into system prompt when company changes

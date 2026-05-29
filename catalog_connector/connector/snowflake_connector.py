@@ -5,7 +5,7 @@ from pathlib import Path
 import requests
 
 from .base_connector import BaseConnector
-from utils.config_loader import load_config
+from utils.db import DATABASE_URL
 from ..transformers.agent_transformer import transform_to_agent_cards
 from worker import init_pool, process_card
 
@@ -20,36 +20,8 @@ class SnowflakeConnector(BaseConnector):
         self.base_url = ""
         self.headers = {}
 
-        full_config = load_config()
-        self.postgres_config = full_config.get("postgres", {})
-
-    def get_postgres_config(self):
-        required_keys = [
-            "POSTGRES_HOST",
-            "POSTGRES_PORT",
-            "POSTGRES_USER",
-            "POSTGRES_PASSWORD",
-            "POSTGRES_DB",
-        ]
-        missing_keys = [
-            key for key in required_keys
-            if not self.postgres_config.get(key)
-        ]
-        if missing_keys:
-            raise ValueError(
-                "Missing postgres config keys: " + ", ".join(missing_keys)
-            )
-        return self.postgres_config
-
     def get_pg_dsn(self):
-        postgres_config = self.get_postgres_config()
-        return (
-            f"postgresql://{postgres_config['POSTGRES_USER']}:"
-            f"{postgres_config['POSTGRES_PASSWORD']}@"
-            f"{postgres_config['POSTGRES_HOST']}:"
-            f"{postgres_config['POSTGRES_PORT']}/"
-            f"{postgres_config['POSTGRES_DB']}"
-        )
+        return DATABASE_URL
 
     def validate_config(self):
         required = ["account", "database", "schema", "token"]
@@ -197,9 +169,6 @@ class SnowflakeConnector(BaseConnector):
             card_data = card.get("data", {})
             card_data.setdefault("provider", {})
             card_data["provider"]["organization"] = "Snowflake"
-
-        if not os.getenv("PG_DSN"):
-            os.environ["PG_DSN"] = self.get_pg_dsn()
 
         init_pool()
         for agent in agent_cards:
