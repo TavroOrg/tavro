@@ -1,29 +1,23 @@
-import os
 import threading
 import asyncio
 from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import psycopg2
 import psycopg2.extras
 from psycopg2 import pool
 
-from utils.set_environment import set_environment
-
-set_environment("db")
+from utils.db import DATABASE_URL
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 _connection_pool: pool.SimpleConnectionPool | None = None
 _pool_lock = threading.Lock()
 
-def _env(primary: str, fallback: str, default: str = "") -> str:
-    """Return first non-empty value among primary env var, fallback env var, default."""
-    return os.getenv(primary) or os.getenv(fallback) or default
 
 def _get_connection_pool() -> pool.SimpleConnectionPool:
     """
     Get or create the global connection pool (thread-safe, created once).
     Uses a small pool since we are read-only and calls are infrequent (auth only).
-    DB_* vars take priority; POSTGRES_* vars (set by Docker Compose) are the fallback.
     """
     global _connection_pool
 
@@ -31,14 +25,15 @@ def _get_connection_pool() -> pool.SimpleConnectionPool:
         with _pool_lock:
             if _connection_pool is None:  # double-checked locking
                 try:
+                    _url = urlparse(DATABASE_URL)
                     _connection_pool = pool.SimpleConnectionPool(
                         minconn=2,
                         maxconn=10,   # small — this is auth only, not a data API
-                        dbname=os.getenv("DB_NAME"),
-                        user=os.getenv("DB_USER",),
-                        password=os.getenv("DB_PASSWORD"),
-                        host=os.getenv("DB_HOST"),
-                        port=int(os.getenv("DB_PORT")),
+                        host=_url.hostname,
+                        port=_url.port or 5432,
+                        dbname=_url.path.lstrip("/"),
+                        user=_url.username,
+                        password=_url.password,
                         sslmode=os.getenv("DB_SSLMODE", "prefer"),
                         options="-c default_transaction_read_only=on",  # read-only session
                         connect_timeout=5,

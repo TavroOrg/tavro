@@ -14,47 +14,18 @@ import os
 import json
 import hashlib
 import tempfile
-from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+from utils.db import db_connection as _db
 from utils.set_environment import set_environment
 
 set_environment("databases")
-set_environment("postgres")
-
 
 CORE = os.getenv("CORE_DB_NAME", "core")
-
-# ---------------------------------------------------------------------------
-# DB connection
-# ---------------------------------------------------------------------------
-
-def _make_dsn() -> str:
-    return (
-        f"host={os.environ['POSTGRES_HOST']} "
-        f"port={os.environ.get('POSTGRES_PORT', '5432')} "
-        f"dbname={os.environ['POSTGRES_DB']} "
-        f"user={os.environ['POSTGRES_USER']} "
-        f"password={os.environ['POSTGRES_PASSWORD']}"
-    )
-
-
-@contextmanager
-def _db():
-    """Single-use connection that auto-commits on success or rolls back on error."""
-    conn = psycopg2.connect(_make_dsn())
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def _exec(conn, sql: str, label: str = "") -> None:
