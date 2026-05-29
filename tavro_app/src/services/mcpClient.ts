@@ -714,7 +714,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 (context.systemPrompt ||
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
                 toolGuidance +
-                blueprintToolGuidance;
+                blueprintToolGuidance +
                 MULTI_AGENT_DEFAULTS +
                 toolGuidance;
 
