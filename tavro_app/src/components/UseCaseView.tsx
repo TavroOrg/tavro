@@ -416,13 +416,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
                                                 )}
                                                 {ra.aivss_score && (
                                                     <div className="flex flex-col gap-0.5">
-                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">AIVSS Score</span>
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Information Security Score</span>
+                                                        <span className="flex items-center gap-1">
+                                                            <span className="text-[9px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5">AIVSS</span>
+                                                            <span className="text-[9px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5">CVSS</span>
+                                                        </span>
                                                         <span className="text-sm font-bold text-slate-800">{ra.aivss_score}</span>
+                                                    </div>
+                                                )}
+                                                {ra.regulatory_risk_score && (
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Regulatory Score</span>
+                                                        <span className="text-sm font-bold text-slate-800">{ra.regulatory_risk_score}</span>
                                                     </div>
                                                 )}
                                                 {ra.aivss_classification && (
                                                     <div className="flex flex-col gap-0.5">
-                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">AIVSS Class</span>
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Info Security Class</span>
                                                         <span className="text-sm font-semibold text-slate-700">{ra.aivss_classification}</span>
                                                     </div>
                                                 )}
