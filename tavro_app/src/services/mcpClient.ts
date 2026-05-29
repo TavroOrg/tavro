@@ -41,6 +41,12 @@ type ChatViewContext = {
     viewData?: any;
     /** Pre-built system prompt from buildSystemPrompt() — takes precedence over default */
     systemPrompt?: string;
+    blueprintData?: {
+        companyName: string;
+        industry: string;
+        region: string;
+        dimensions: { label: string; category: string; summary?: string | null }[];
+    } | null;
 };
 
 type UseCaseActionFields = {
@@ -661,9 +667,54 @@ Only ask the user for clarification if they have given you no context at all (no
 ${toolSummary}`;
             })() : '';
 
+            const blueprintToolGuidance = context.blueprintData ? (() => {
+                const bp = context.blueprintData!;
+
+                const writePattern = /\b(create|add|register|onboard|update|modify|edit|rename|remove|delete|link|associate|connect|detach|unlink)\b/i;
+                const writeTools = mcpTools.filter(t =>
+                    writePattern.test(t.name) || writePattern.test(t.description ?? '')
+                );
+
+                if (!writeTools.length) return '';
+
+                const grouped = bp.dimensions.reduce<Record<string, string[]>>((acc, d) => {
+                    (acc[d.category] ??= []).push(d.label + (d.summary ? ` — ${d.summary.slice(0, 100)}` : ''));
+                    return acc;
+                }, {});
+                const dimBlock = Object.entries(grouped)
+                    .map(([cat, items]) => `  [${cat}]: ${items.join(' | ')}`)
+                    .join('\n');
+
+                const writeToolList = writeTools.map(t => `  • ${t.name}`).join('\n');
+
+                return `
+
+## Blueprint-Grounded Tool Parameters
+Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}
+
+Blueprint dimensions active for this company:
+${dimBlock}
+
+### Intent-based parameter enrichment — MANDATORY for write operations
+The following tools (detected from the live tool list) create or modify resources:
+${writeToolList}
+
+When calling any of these tools, derive generated parameter values from the blueprint dimensions above using this field-level mapping:
+- Parameters describing purpose, role, or behaviour (e.g. \`description\`, \`instructions\`, \`summary\`): ground in [strategy] and [process] dimensions.
+- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions.
+- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions.
+- Parameters describing technical context (e.g. \`tools\`, \`integrations\`, \`platform\`): ground in [technology] and [integration] dimensions.
+- Parameters describing industry or geography (e.g. \`industry\`, \`region\`, \`sector\`): always use "${bp.industry}" and "${bp.region}" from the blueprint — never override these.
+
+For read-only or list tools not in the write list above, no blueprint enrichment is needed.
+Every generated value must be coherent with the blueprint. Do not fabricate data that contradicts the company's profile.`;
+            })() : '';
+
             const baseSystemPrompt =
                 (context.systemPrompt ||
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
+                toolGuidance +
+                blueprintToolGuidance;
                 MULTI_AGENT_DEFAULTS +
                 toolGuidance;
 

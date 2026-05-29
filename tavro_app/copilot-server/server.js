@@ -2,6 +2,44 @@ import express from 'express';
 import cors from 'cors';
 import { EventEmitter } from 'events';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
+import { readFileSync, readdirSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SKILLS_DIR = join(__dirname, 'skills');
+
+// Strip YAML frontmatter (--- ... ---) from a SKILL.md file.
+function stripSkillFrontmatter(markdown) {
+    return markdown.replace(/^---[\s\S]*?---\n*/, '').trim();
+}
+
+// Load and concatenate all SKILL.md files found in immediate subdirectories of SKILLS_DIR.
+function loadSkillsContent() {
+    try {
+        if (!existsSync(SKILLS_DIR)) return null;
+        const parts = readdirSync(SKILLS_DIR, { withFileTypes: true })
+            .filter(e => e.isDirectory())
+            .map(e => {
+                try {
+                    return stripSkillFrontmatter(
+                        readFileSync(join(SKILLS_DIR, e.name, 'SKILL.md'), 'utf-8')
+                    );
+                } catch { return null; }
+            })
+            .filter(Boolean);
+        return parts.length ? parts.join('\n\n') : null;
+    } catch {
+        return null;
+    }
+}
+
+const SKILL_CONTENT = loadSkillsContent();
+if (SKILL_CONTENT) {
+    console.log(`[copilot-proxy] Loaded skill instructions (${SKILL_CONTENT.length} chars)`);
+} else {
+    console.log('[copilot-proxy] No skill instructions loaded');
+}
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -195,6 +233,50 @@ function buildModelCapabilities(provider) {
 }
 
 /**
+ * Inject SKILL_CONTENT into a pre-formatted BYOK request body.
+ * Handles both Anthropic (system string) and OpenAI/Azure (messages array) formats.
+ */
+function injectSkillIntoByokBody(providerType, body) {
+    if (!SKILL_CONTENT || !body) return body;
+    console.log(`[skill] injecting into byok body (type=${providerType})`);
+    const modified = { ...body };
+    if (providerType === 'anthropic') {
+        const existing = typeof modified.system === 'string' ? modified.system : '';
+        modified.system = existing ? `${SKILL_CONTENT}\n\n${existing}` : SKILL_CONTENT;
+    } else {
+        // OpenAI / Azure: prepend or insert a system message
+        const messages = Array.isArray(modified.messages) ? [...modified.messages] : [];
+        const sysIdx = messages.findIndex(m => m.role === 'system');
+        if (sysIdx >= 0) {
+            const existing = typeof messages[sysIdx].content === 'string' ? messages[sysIdx].content : '';
+            messages[sysIdx] = {
+                ...messages[sysIdx],
+                content: existing ? `${SKILL_CONTENT}\n\n${existing}` : SKILL_CONTENT,
+            };
+        } else {
+            messages.unshift({ role: 'system', content: SKILL_CONTENT });
+        }
+        modified.messages = messages;
+    }
+    return modified;
+}
+
+/**
+ * Inject SKILL_CONTENT into a Gemini API request body via systemInstruction.
+ */
+function injectSkillIntoGeminiBody(body) {
+    if (!SKILL_CONTENT || !body) return body;
+    console.log('[skill] injecting into gemini body');
+    const modified = { ...body };
+    const existing = modified.systemInstruction?.parts?.[0]?.text;
+    modified.systemInstruction = {
+        role: 'user',
+        parts: [{ text: existing ? `${SKILL_CONTENT}\n\n${existing}` : SKILL_CONTENT }],
+    };
+    return modified;
+}
+
+/**
  * Build the session config, merging GitHub auth, optional BYOK provider, and
  * optional Tavro MCP server credentials.
  *
@@ -214,11 +296,20 @@ function buildSessionConfig(model, authToken, provider, systemPrompt, sessionId,
         // availableTools not restricted — SDK uses all tools exposed by registered
         // MCP servers and its own built-in capabilities.
     };
-    if (systemPrompt) {
+    // Prepend skill instructions to the system prompt for all SDK sessions.
+    // skillDirectories also registers the skills natively with the Copilot SDK.
+    if (SKILL_CONTENT) console.log('[skill] injecting into SDK session config');
+    const effectiveSystemPrompt = SKILL_CONTENT
+        ? (systemPrompt ? `${SKILL_CONTENT}\n\n${systemPrompt}` : SKILL_CONTENT)
+        : systemPrompt;
+    if (effectiveSystemPrompt) {
         cfg.systemMessage = {
             mode: 'replace',
-            content: systemPrompt,
+            content: effectiveSystemPrompt,
         };
+    }
+    if (existsSync(SKILLS_DIR)) {
+        cfg.skillDirectories = [SKILLS_DIR];
     }
     if (authToken) {
         cfg.gitHubToken = authToken;
@@ -558,10 +649,11 @@ app.post('/chat/byok/complete', async (req, res) => {
     console.log(`[copilot-byok] /chat/byok/complete type=${providerType} endpoint=${endpoint}`);
 
     try {
+        const enrichedBody = injectSkillIntoByokBody(providerType, body);
         const upstream = await fetch(endpoint, {
             method:  'POST',
             headers: buildUpstreamHeaders(providerType, apiKey, bearerToken),
-            body:    JSON.stringify(body),
+            body:    JSON.stringify(enrichedBody),
         });
 
         const data = await upstream.json().catch(() => ({}));
@@ -602,10 +694,11 @@ app.post('/chat/byok/stream', async (req, res) => {
     console.log(`[copilot-byok] /chat/byok/stream type=${providerType} endpoint=${endpoint}${requestId ? ` rid=${requestId}` : ''}`);
 
     try {
+        const enrichedBody = injectSkillIntoByokBody(providerType, body);
         const upstream = await fetch(endpoint, {
             method:  'POST',
             headers: buildUpstreamHeaders(providerType, apiKey, bearerToken),
-            body:    JSON.stringify({ ...body, stream: true }),
+            body:    JSON.stringify({ ...enrichedBody, stream: true }),
         });
 
         if (!upstream.ok) {
@@ -677,10 +770,11 @@ app.post('/chat/proxy/gemini', async (req, res) => {
     console.log(`[copilot-proxy] /chat/proxy/gemini model=${model}${requestId ? ` rid=${requestId}` : ''}`);
 
     try {
+        const enrichedGeminiBody = injectSkillIntoGeminiBody(geminiBody);
         const upstream = await fetch(url, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(geminiBody),
+            body:    JSON.stringify(enrichedGeminiBody),
         });
 
         if (!upstream.ok) {
@@ -770,6 +864,17 @@ app.get('/chat/resume/:requestId', (req, res) => {
 // ── GET /health ────────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => res.status(200).send('ok'));
+
+// ── GET /debug/skills — confirm loaded skill content (dev/debug only) ──────────
+
+app.get('/debug/skills', (_req, res) => {
+    res.json({
+        loaded: !!SKILL_CONTENT,
+        charCount: SKILL_CONTENT?.length ?? 0,
+        skillsDir: SKILLS_DIR,
+        preview: SKILL_CONTENT ? SKILL_CONTENT.slice(0, 300) + '…' : null,
+    });
+});
 
 app.listen(PORT, () => {
     console.log(`[copilot-proxy] listening on port ${PORT}`);
