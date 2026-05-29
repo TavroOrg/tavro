@@ -35,6 +35,76 @@ import {
   IMPACT_META,
 } from '../types/spark';
 
+type AgentTool = { name: string; description: string };
+type AgentKnowledgeSource = { name: string; description: string };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractStringByKeys(value: unknown, keys: string[]): string | null {
+  const visited = new Set<unknown>();
+  const queue: unknown[] = [value];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object' || visited.has(current)) continue;
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current) queue.push(item);
+      continue;
+    }
+
+    const record = current as Record<string, unknown>;
+    for (const key of keys) {
+      const found = asNonEmptyString(record[key]);
+      if (found) return found;
+    }
+
+    for (const nested of Object.values(record)) {
+      if (nested && typeof nested === 'object') queue.push(nested);
+    }
+  }
+
+  return null;
+}
+
+function normalizeAgentTools(value: unknown): AgentTool[] {
+  if (!Array.isArray(value)) return [];
+
+  const tools: AgentTool[] = [];
+  for (const rawTool of value) {
+    const tool = asRecord(rawTool);
+    if (!tool) continue;
+    const name = asNonEmptyString(tool.name);
+    if (!name) continue;
+    const description = asNonEmptyString(tool.description) ?? `Integration with ${name}`;
+    tools.push({ name, description });
+  }
+  return tools;
+}
+
+function normalizeKnowledgeSource(value: unknown): AgentKnowledgeSource | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+
+  const name = asNonEmptyString(source.name);
+  if (!name) return undefined;
+
+  return {
+    name,
+    description: asNonEmptyString(source.description) ?? `Primary data source for ${name}`,
+  };
+}
+
 // ── Idea Card ─────────────────────────────────────────────────────────────────
 
 const IdeaCard: React.FC<{
@@ -251,7 +321,7 @@ const IdeaModal: React.FC<{
     setConvertError(null);
     try {
       // Step 1: Enrich idea into use case fields + agent recommendation via Claude
-      const { use_case_fields: fields, agent_recommendation: agentRec } = await sparkApi.convertIdea({
+      const { use_case_fields: fields, agent_recommendation: agentRecRaw } = await sparkApi.convertIdea({
         idea_id: idea.idea_id,
         company_id: companyId,
         title: idea.title,
@@ -262,41 +332,62 @@ const IdeaModal: React.FC<{
         complexity: idea.complexity,
         estimated_impact: idea.estimated_impact,
       });
+      const agentRec = asRecord(agentRecRaw);
 
       // Step 2: Create the AI use case via MCP
       const created = await mcpClient.createAiUseCase({
         ...fields,
         original_prompt: `Convert Spark idea to AI use case: ${idea.title}`,
       });
-      if (!created?.use_case_id) {
+      const useCaseId = extractStringByKeys(created, ['use_case_id', 'ai_use_case_id', 'identifier', 'id']);
+      if (!useCaseId) {
         throw new Error(created?.details || created?.error || 'Use case creation failed');
       }
-      const useCaseId = created.use_case_id as string;
 
       // Step 3: Create agent and link it (best-effort — don't block navigation on failure)
-      if (agentRec?.agent_name) {
+      const agentName =
+        asNonEmptyString(agentRec?.agent_name) ??
+        asNonEmptyString(agentRec?.name) ??
+        asNonEmptyString(idea.title ? `${idea.title} Agent` : '') ??
+        'Spark Use Case Agent';
+      if (agentName) {
         try {
           // Fetch company applications to enrich generic tool names with real assets
-          let enrichedTools = (agentRec.tools ?? []) as { name: string; description: string }[];
+          let enrichedTools = normalizeAgentTools(agentRec?.tools);
           try {
             const appCatalog = await mcpClient.getApplicationCatalog({
               original_prompt: `Find applications relevant to: ${idea.title}`,
               start_record: 1,
               record_range: '1-20',
             });
-            const apps: { application_name?: string; description?: string }[] =
-              appCatalog?.agents ?? appCatalog?.applications ?? appCatalog?.items ?? [];
+            const appCatalogRecord = asRecord(appCatalog);
+            const appRows =
+              (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
+              [];
+
+            const apps: { application_name: string; description: string }[] = [];
+            for (const row of appRows) {
+              const app = asRecord(row);
+              if (!app) continue;
+              const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
+              if (!applicationName) continue;
+              apps.push({
+                application_name: applicationName,
+                description: asNonEmptyString(app.description) ?? '',
+              });
+            }
 
             if (apps.length > 0) {
               // Replace generic tool entries with real company application names where a match is plausible
-              enrichedTools = enrichedTools.map((tool: { name: string; description: string }) => {
+              enrichedTools = enrichedTools.map((tool: AgentTool) => {
                 const match = apps.find(a =>
-                  a.application_name &&
-                  (tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
-                   a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0]))
+                  tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
+                  a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0])
                 );
                 return match
-                  ? { name: match.application_name!, description: match.description ?? tool.description }
+                  ? { name: match.application_name, description: match.description || tool.description }
                   : tool;
               });
             }
@@ -305,16 +396,17 @@ const IdeaModal: React.FC<{
           }
 
           const agent = await mcpClient.createAgent({
-            agent_name: agentRec.agent_name,
-            description: agentRec.description ?? '',
-            instruction: agentRec.instruction ?? agentRec.description ?? '',
+            agent_name: agentName,
+            description: asNonEmptyString(agentRec?.description) ?? agentName,
+            instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
             tools: enrichedTools.length > 0 ? enrichedTools : undefined,
-            knowledge_source: agentRec.knowledge_source ?? undefined,
+            knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
             original_prompt: `Create agent for AI use case: ${idea.title}`,
           });
 
-          if (agent?.agent_id) {
-            await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agent.agent_id);
+          const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
+          if (agentId) {
+            await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
           }
         } catch {
           // Agent creation is best-effort; use case was created successfully
