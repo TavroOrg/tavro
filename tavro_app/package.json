@@ -7,7 +7,18 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test:portal": "playwright test tests/e2e/portal-smoke.spec.ts",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report",
+    "test:e2e": "playwright test --config=playwright.e2e.config.ts",
+    "test:e2e:ui": "playwright test --config=playwright.e2e.config.ts --ui",
+    "test:e2e:headed": "playwright test --config=playwright.e2e.config.ts --headed",
+    "test:e2e:debug": "playwright test --config=playwright.e2e.config.ts --debug",
+    "test:e2e:report": "playwright show-report test-results-e2e/html-report"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -23,6 +34,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^25.9.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
