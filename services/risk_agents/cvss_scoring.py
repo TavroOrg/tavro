@@ -4,11 +4,11 @@ from pathlib import Path
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import TXTSearchTool
 from services.db.db_functions import calculate_cvss_score, generate_cvss_vector
+from services.risk_agents.llm_config import get_crewai_llm
 from pydantic import BaseModel
 from utils.set_environment import set_environment
 
-set_environment('secrets')
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DEFAULT_TXT_SEARCH_EMBEDDER = "onnx"
 
 
 # ---------- CVSS 4.0 Base Metrics schema ----------
@@ -140,13 +140,29 @@ def score_cvss(agent_name: str, agent_description: str, agent_instructions: str,
         }
     """
 
+    set_environment("secrets")
     base_path = Path(__file__).resolve().parent.parent / "skills"
 
     owasp_file = base_path / "OWASP Risks Scenarios.txt"
     cvss_file  = base_path / "CVSS Base Metric.txt"
 
-    owasp_tool = TXTSearchTool(txt=str(owasp_file))
-    cvss_tool  = TXTSearchTool(txt=str(cvss_file))
+    txt_search_config = {
+        "embedding_model": {
+            "provider": os.getenv("CREWAI_TXT_SEARCH_EMBEDDER", DEFAULT_TXT_SEARCH_EMBEDDER).strip() or DEFAULT_TXT_SEARCH_EMBEDDER,
+            "config": {},
+        },
+    }
+    owasp_tool = TXTSearchTool(
+        txt=str(owasp_file),
+        collection_name="owasp_risks_scenarios",
+        config=txt_search_config,
+    )
+    cvss_tool = TXTSearchTool(
+        txt=str(cvss_file),
+        collection_name="cvss_base_metric",
+        config=txt_search_config,
+    )
+
 
     # ── Step 2 — Mechanical baseline selection ───────────────────────────
     has_sensitive_data = any(
@@ -180,7 +196,7 @@ def score_cvss(agent_name: str, agent_description: str, agent_instructions: str,
             "consistency and reproducibility are your highest priority."
         ),
         verbose=True,
-        memory=True,
+        memory=False,
         backstory=(
             "You are a senior cybersecurity risk analyst specialised in AI system "
             "security with deep expertise in CVSS 4.0 and the OWASP Agentic AI "
@@ -194,7 +210,7 @@ def score_cvss(agent_name: str, agent_description: str, agent_instructions: str,
             "When in doubt, keep the baseline. Always."
         ),
         tools=[owasp_tool, cvss_tool],
-        llm="gpt-5-mini"
+        llm=get_crewai_llm()
     )
 
     # ── Task ─────────────────────────────────────────────────────────────

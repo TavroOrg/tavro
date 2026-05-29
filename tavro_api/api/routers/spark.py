@@ -109,34 +109,65 @@ def _idea_id(node_id: str, signal_type: str, direction: str | None = None) -> st
 
 
 def _extract_json(raw: str) -> str:
-    fenced = re.search(r'```(?:json)?[\s\n]*(\[[\s\S]*?\])[\s\n]*```', raw)
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
     if fenced:
-        return fenced.group(1).strip()
-    start = raw.find('[')
-    if start != -1:
-        depth = 0
-        for i, ch in enumerate(raw[start:], start):
-            if ch == '[':
-                depth += 1
-            elif ch == ']':
-                depth -= 1
-                if depth == 0:
-                    return raw[start:i + 1]
+        fenced_payload = fenced.group(1).strip()
+        extracted = _extract_balanced_json(fenced_payload, "[", "]")
+        if extracted is not None:
+            return extracted
+
+    extracted = _extract_balanced_json(raw, "[", "]")
+    if extracted is not None:
+        return extracted
     return raw.strip()
 
 
 def _extract_json_object(raw: str) -> str:
-    start = raw.find('{')
-    if start != -1:
-        depth = 0
-        for i, ch in enumerate(raw[start:], start):
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    return raw[start:i + 1]
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
+    if fenced:
+        fenced_payload = fenced.group(1).strip()
+        extracted = _extract_balanced_json(fenced_payload, "{", "}")
+        if extracted is not None:
+            return extracted
+
+    extracted = _extract_balanced_json(raw, "{", "}")
+    if extracted is not None:
+        return extracted
     return raw.strip()
+
+
+def _extract_balanced_json(raw: str, opening: str, closing: str) -> str | None:
+    depth = 0
+    start_idx = -1
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(raw):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == opening:
+            if depth == 0:
+                start_idx = i
+            depth += 1
+            continue
+
+        if ch == closing and depth > 0:
+            depth -= 1
+            if depth == 0 and start_idx != -1:
+                return raw[start_idx:i + 1]
+
+    return None
 
 
 async def _call_anthropic(
@@ -177,6 +208,127 @@ def _basic_idea(_node_id: str, label: str, category: str, summary: str | None, _
 
 
 # ── Gap analysis queries ───────────────────────────────────────────────────────
+
+def _to_text(value: Any, default: str = "") -> str:
+    if isinstance(value, list):
+        value = ", ".join(str(v) for v in value if v is not None)
+    text = str(value) if value is not None else ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or default
+
+
+def _to_agent_name(seed: str) -> str:
+    words = re.findall(r"[A-Za-z0-9]+", seed)
+    if not words:
+        return "Spark Use Case Agent"
+
+    base = words[:6]
+    if "agent" not in {w.lower() for w in base}:
+        base = (words[:5] if len(words) >= 5 else words[:]) + ["Agent"]
+    return " ".join(base[:6])
+
+
+def _sanitize_tools(tools: Any) -> list[dict[str, str]]:
+    if not isinstance(tools, list):
+        return []
+
+    cleaned: list[dict[str, str]] = []
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        name = _to_text(item.get("name"))
+        if not name:
+            continue
+        desc = _to_text(item.get("description"), f"Integration with {name}")
+        cleaned.append({"name": name, "description": desc})
+    return cleaned[:4]
+
+
+def _sanitize_knowledge_source(source: Any) -> dict[str, str] | None:
+    if not isinstance(source, dict):
+        return None
+    name = _to_text(source.get("name"))
+    if not name:
+        return None
+    return {
+        "name": name,
+        "description": _to_text(source.get("description"), f"Primary knowledge source for {name}"),
+    }
+
+
+def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[str, Any]) -> dict[str, Any]:
+    use_case_title = _to_text(fields.get("title"), request.title)
+    use_case_desc = _to_text(fields.get("description"), request.description)
+    dimensions = [d for d in request.target_dimensions if _to_text(d)]
+    dim_text = ", ".join(dimensions) if dimensions else "process"
+    context_label = _to_text(request.signal_label, dim_text)
+
+    return {
+        "agent_name": _to_agent_name(use_case_title),
+        "description": (
+            f"Executes the '{use_case_title}' use case by analyzing {context_label.lower()} signals, "
+            "surfacing prioritized actions, and tracking outcomes."
+        ),
+        "instruction": (
+            f"Monitor operational data relevant to {use_case_title} and identify high-priority events. "
+            "Correlate findings with business context and produce actionable recommendations with rationale. "
+            "Trigger alerts when confidence thresholds are met and persist decision traces for governance review. "
+            "Escalate uncertain or high-impact cases to human owners and incorporate feedback in future runs."
+        ),
+        "tools": [
+            {
+                "name": "Use Case Catalog API",
+                "description": "Read and update AI use case metadata, status, and relationship context.",
+            },
+            {
+                "name": "Operational Data API",
+                "description": f"Fetch source records and event signals for {dim_text} workflows.",
+            },
+            {
+                "name": "Notification Service",
+                "description": "Send prioritized alerts and workflow tasks to relevant stakeholders.",
+            },
+        ],
+        "knowledge_source": {
+            "name": "Company Blueprint Context",
+            "description": f"Spark context for {use_case_title}: {use_case_desc or request.rationale}",
+        },
+    }
+
+
+def _normalize_agent_recommendation(
+    candidate: Any,
+    request: SparkConvertRequest,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    fallback = _fallback_agent_recommendation(request, fields)
+    if not isinstance(candidate, dict):
+        return fallback
+
+    result = dict(fallback)
+
+    name = _to_text(candidate.get("agent_name"))
+    if name:
+        result["agent_name"] = _to_agent_name(name)
+
+    description = _to_text(candidate.get("description"))
+    if description:
+        result["description"] = description
+
+    instruction = _to_text(candidate.get("instruction"))
+    if instruction:
+        result["instruction"] = instruction
+
+    tools = _sanitize_tools(candidate.get("tools"))
+    if tools:
+        result["tools"] = tools
+
+    knowledge_source = _sanitize_knowledge_source(candidate.get("knowledge_source"))
+    if knowledge_source:
+        result["knowledge_source"] = knowledge_source
+
+    return result
+
 
 async def _fetch_dim_node_candidates(
     db: AsyncSession,
@@ -631,14 +783,18 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
     priority = priority_map.get(request.estimated_impact or "Medium", "3 - Moderate")
 
     if not api_key:
-        return SparkConvertResponse(use_case_fields={
+        no_llm_fields = {
             "title": request.title,
             "description": request.description,
             "business_problem_statement": request.rationale,
             "expected_benefits": f"AI-driven improvements for: {request.title}",
             "priority": priority,
             "solution_approach": "",
-        })
+        }
+        return SparkConvertResponse(
+            use_case_fields=no_llm_fields,
+            agent_recommendation=_fallback_agent_recommendation(request, no_llm_fields),
+        )
 
     system = (
         "You are an AI governance expert who writes structured AI use case documentation. "
@@ -669,7 +825,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         fields = json.loads(_extract_json_object(raw_text))
         if not isinstance(fields, dict):
             raise ValueError("Non-dict response")
-    except Exception:
+    except Exception as exc:
+        logger.warning("spark.convert_idea use-case expansion fallback: %s", exc)
         fields = {
             "title": request.title,
             "description": request.description,
@@ -688,7 +845,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
     safe_fields = {k: _to_str(v) for k, v in fields.items()}
 
     # Second Claude call: design the agent that implements this use case
-    agent_rec = None
+    agent_rec: dict[str, Any] | None = None
     if api_key:
         agent_system = (
             "You are an AI solutions architect. Design a specific AI agent that implements the given use case. "
@@ -709,14 +866,22 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             "Return ONLY the JSON object. No prose."
         )
         try:
-            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=600)
-            agent_raw = "".join(
-                block.get("text", "") for block in agent_data.get("content", []) if block.get("type") == "text"
-            )
-            agent_rec = json.loads(_extract_json_object(agent_raw))
-            if not isinstance(agent_rec, dict):
-                agent_rec = None
-        except Exception:
-            agent_rec = None
+            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1200)
+            agent_raw = "".join(block.get("text", "") for block in agent_data.get("content", []) if block.get("type") == "text")
+            extracted_agent = _extract_json_object(agent_raw)
+
+            if agent_data.get("stop_reason") == "max_tokens" and _extract_balanced_json(extracted_agent, "{", "}") is None:
+                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1200; retrying with larger budget")
+                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2200)
+                agent_raw = "".join(block.get("text", "") for block in retry_data.get("content", []) if block.get("type") == "text")
+                extracted_agent = _extract_json_object(agent_raw)
+
+            candidate = json.loads(extracted_agent)
+            agent_rec = _normalize_agent_recommendation(candidate, request, safe_fields)
+        except Exception as exc:
+            logger.warning("spark.convert_idea agent recommendation fallback: %s", exc)
+
+    if agent_rec is None:
+        agent_rec = _fallback_agent_recommendation(request, safe_fields)
 
     return SparkConvertResponse(use_case_fields=safe_fields, agent_recommendation=agent_rec)
