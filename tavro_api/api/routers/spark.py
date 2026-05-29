@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ CURRENT_YEAR = datetime.datetime.now().year
 
 import httpx
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -166,6 +167,147 @@ async def _call_anthropic(
     return resp.json()
 
 
+async def _stream_anthropic(
+    api_key: str,
+    messages: list[dict],
+    system: str,
+    max_tokens: int = SPARK_MAX_TOKENS,
+) -> AsyncGenerator[str, None]:
+    """Yield raw text delta chunks from Anthropic's streaming API."""
+    payload: dict[str, Any] = {
+        "model":      ANTHROPIC_MODEL,
+        "max_tokens": max_tokens,
+        "system":     system,
+        "messages":   messages,
+        "stream":     True,
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            ANTHROPIC_API_URL,
+            headers={
+                "x-api-key":         api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json=payload,
+        ) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                raise RuntimeError(f"Anthropic {resp.status_code}: {body.decode()[:300]}")
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    try:
+                        data = json.loads(line[6:])
+                        if data.get("type") == "content_block_delta":
+                            text_chunk = data.get("delta", {}).get("text", "")
+                            if text_chunk:
+                                yield text_chunk
+                    except json.JSONDecodeError:
+                        pass
+
+
+def _extract_complete_objects(buffer: str) -> tuple[list[dict], str]:
+    """
+    Parse any complete JSON objects out of a streaming buffer.
+    Returns (list_of_parsed_objects, remaining_unparsed_buffer).
+    Handles arrays like [{...}, {...}] arriving token by token.
+    """
+    objects: list[dict] = []
+    i = 0
+    n = len(buffer)
+
+    # Skip preamble to find '[' or '{'
+    while i < n and buffer[i] not in "[{":
+        i += 1
+    if i >= n:
+        return objects, buffer
+
+    # Consume the opening '[' of an array
+    if buffer[i] == "[":
+        i += 1
+
+    while i < n:
+        # Skip whitespace and commas between objects
+        while i < n and buffer[i] in " \t\n\r,":
+            i += 1
+        if i >= n:
+            break
+        if buffer[i] == "]":
+            return objects, ""
+        if buffer[i] != "{":
+            break
+
+        # Track depth to find the matching '}'
+        depth = 0
+        in_string = False
+        escape_next = False
+        obj_start = i
+        j = i
+
+        while j < n:
+            c = buffer[j]
+            if escape_next:
+                escape_next = False
+            elif c == "\\" and in_string:
+                escape_next = True
+            elif c == '"':
+                in_string = not in_string
+            elif not in_string:
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            obj = json.loads(buffer[obj_start : j + 1])
+                            objects.append(obj)
+                        except json.JSONDecodeError:
+                            pass
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            # Incomplete object — keep from obj_start for next chunk
+            return objects, buffer[obj_start:]
+
+    return objects, buffer[i:] if i < n else ""
+
+
+def _build_direction_prompt(company_nodes: list[dict], direction: str, count: int) -> tuple[str, str]:
+    """Return (system, user) prompts for direction-mode idea generation."""
+    context_lines = "\n".join(
+        f"  [{c['category'].upper()}] {c['label']}"
+        + (f": {c['summary']}" if c.get("summary") else "")
+        for c in company_nodes
+    )
+    system = (
+        f"You are a senior AI implementation consultant specialising in manufacturing operations. "
+        f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
+        "Generate specific, concrete, buildable AI agent ideas with measurable ROI. "
+        "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
+    )
+    user = (
+        f"FOCUS: Generate exactly {count} distinct AI agent ideas, ALL specifically about: \"{direction}\"\n\n"
+        f"Company context (systems, processes, and integrations — reference them where applicable):\n"
+        f"{context_lines}\n\n"
+        "For each idea return a JSON object with:\n"
+        "- title: specific agent name, max 8 words "
+        "(good: 'OData Quality Gate Anomaly Detector'; bad: 'AI for OData')\n"
+        "- description: exactly 2 sentences — "
+        "sentence 1: what the agent does and which system/integration it connects to; "
+        "sentence 2: what output it produces and how it is acted on\n"
+        "- rationale: 1 sentence — specific ROI, quantified where possible "
+        "(e.g. 'reduces manual data reconciliation by ~4 hrs/week')\n"
+        "- complexity: exactly 'Low', 'Medium', or 'High'\n"
+        "- estimated_impact: exactly 'Low', 'Medium', or 'High'\n"
+        "- category: one of: process, integration, application, risk, strategy\n\n"
+        f"ALL {count} ideas MUST be about \"{direction}\". "
+        "Return ONLY a JSON array. No prose, no markdown fences."
+    )
+    return system, user
+
+
 def _basic_idea(_node_id: str, label: str, category: str, summary: str | None, _signal_type: str, signal_label: str) -> dict:
     return {
         "title": f"AI automation for {label}",
@@ -227,7 +369,8 @@ async def _fetch_agents(db: AsyncSession) -> list[SparkSimilarAgent]:
 
 # ── LLM enrichment ─────────────────────────────────────────────────────────────
 
-async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: str | None = None) -> list[dict]:
+def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> tuple[str, str]:
+    """Return (system, user) prompts for gap-analysis idea generation."""
     signals = [
         {
             "index": i,
@@ -238,7 +381,6 @@ async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: s
         }
         for i, c in enumerate(candidates)
     ]
-
     direction_clause = (
         f"\n\nFOCUS DIRECTION (user-specified): \"{direction}\"\n"
         "All ideas MUST be relevant to this focus area. If a signal is not naturally connected to it, "
@@ -284,7 +426,11 @@ async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: s
         f"Signals:\n{json.dumps(signals, indent=2)}\n\n"
         "Return ONLY a JSON array with one object per signal, same order. No prose, no markdown fences."
     )
+    return system, user
 
+
+async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: str | None = None) -> list[dict]:
+    system, user = _build_gap_prompt(candidates, direction)
     try:
         data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system)
         raw_text = ""
@@ -361,37 +507,7 @@ async def _generate_direction_ideas(
     count: int = SPARK_MAX_IDEAS,
 ) -> list[SparkIdea]:
     """Direction-first generation: Claude produces ideas about the topic using company context."""
-    context_lines = "\n".join(
-        f"  [{c['category'].upper()}] {c['label']}"
-        + (f": {c['summary']}" if c.get("summary") else "")
-        for c in company_nodes
-    )
-
-    system = (
-        f"You are a senior AI implementation consultant specialising in manufacturing operations. "
-        f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
-        "Generate specific, concrete, buildable AI agent ideas with measurable ROI. "
-        "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
-    )
-
-    user = (
-        f"FOCUS: Generate exactly {count} distinct AI agent ideas, ALL specifically about: \"{direction}\"\n\n"
-        f"Company context (systems, processes, and integrations — reference them where applicable):\n"
-        f"{context_lines}\n\n"
-        "For each idea return a JSON object with:\n"
-        "- title: specific agent name, max 8 words "
-        "(good: 'OData Quality Gate Anomaly Detector'; bad: 'AI for OData')\n"
-        "- description: exactly 2 sentences — "
-        "sentence 1: what the agent does and which system/integration it connects to; "
-        "sentence 2: what output it produces and how it is acted on\n"
-        "- rationale: 1 sentence — specific ROI, quantified where possible "
-        "(e.g. 'reduces manual data reconciliation by ~4 hrs/week')\n"
-        "- complexity: exactly 'Low', 'Medium', or 'High'\n"
-        "- estimated_impact: exactly 'Low', 'Medium', or 'High'\n"
-        "- category: one of: process, integration, application, risk, strategy\n\n"
-        f"ALL {count} ideas MUST be about \"{direction}\". "
-        "Return ONLY a JSON array. No prose, no markdown fences."
-    )
+    system, user = _build_direction_prompt(company_nodes, direction, count)
 
     try:
         data = await _call_anthropic(
@@ -620,6 +736,155 @@ async def generate_spark_ideas(
 
     await _upsert_ideas(company_id, ideas)
     return ideas
+
+
+@router.post("/generate/stream")
+async def generate_spark_ideas_stream(
+    company_id: str = Query(..., description="Company UUID"),
+    dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
+    direction: str | None = Query(None, description="User-specified focus area"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    SSE stream of spark ideas.
+    Both direction mode and gap-analysis mode emit 'idea' events progressively
+    as each object is parsed from the Anthropic token stream.
+    Always ends with a 'done' event (or 'error' on failure).
+    """
+    dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
+    direction_clean = direction.strip() if direction and direction.strip() else None
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        collected: list[SparkIdea] = []
+        try:
+            if direction_clean and api_key:
+                company_nodes = await _fetch_all_company_nodes(db, company_id)
+                count = SPARK_MAX_IDEAS
+                system, user = _build_direction_prompt(company_nodes, direction_clean, count)
+
+                buffer = ""
+                async for chunk in _stream_anthropic(
+                    api_key,
+                    [{"role": "user", "content": user}],
+                    system,
+                    SPARK_MAX_TOKENS_DIR,
+                ):
+                    buffer += chunk
+                    new_objects, buffer = _extract_complete_objects(buffer)
+                    for obj in new_objects:
+                        category = obj.get("category", "process")
+                        signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
+                        node_id = f"dir:{hashlib.sha256(f'{direction_clean}:{len(collected)}'.encode()).hexdigest()[:8]}"
+                        idea = SparkIdea(
+                            idea_id=_idea_id(node_id, signal_type, direction_clean),
+                            title=obj.get("title") or f"AI for {direction_clean}",
+                            description=obj.get("description") or "",
+                            rationale=obj.get("rationale") or "",
+                            signal_type=signal_type,
+                            signal_label=f"Focus: {direction_clean.strip()}",
+                            target_dimensions=[category],
+                            target_nodes=[],
+                            complexity=obj.get("complexity", "Medium"),
+                            estimated_impact=obj.get("estimated_impact", "Medium"),
+                            similar_agents=[],
+                        )
+                        collected.append(idea)
+                        yield f"event: idea\ndata: {idea.model_dump_json()}\n\n"
+
+            else:
+                # Gap-analysis mode: stream ideas as each enriched object arrives
+                unique = await _collect_candidates(db, company_id, dim_filter)
+                if unique:
+                    all_agents = await _fetch_agents(db)
+
+                    if api_key:
+                        system, user = _build_gap_prompt(unique)
+                        buffer = ""
+                        obj_index = 0
+                        async for chunk in _stream_anthropic(
+                            api_key,
+                            [{"role": "user", "content": user}],
+                            system,
+                        ):
+                            buffer += chunk
+                            new_objects, buffer = _extract_complete_objects(buffer)
+                            for obj in new_objects:
+                                if obj_index >= len(unique):
+                                    break
+                                candidate = unique[obj_index]
+                                obj_index += 1
+                                idea = SparkIdea(
+                                    idea_id=_idea_id(candidate["node_id"], candidate["signal_type"], None),
+                                    title=obj.get("title") or f"AI automation for {candidate['label']}",
+                                    description=obj.get("description") or "",
+                                    rationale=obj.get("rationale") or candidate["signal_label"],
+                                    signal_type=candidate["signal_type"],
+                                    signal_label=candidate["signal_label"],
+                                    target_dimensions=[candidate["category"]],
+                                    target_nodes=[SparkTargetNode(
+                                        id=candidate["node_id"],
+                                        label=candidate["label"],
+                                        category=candidate["category"],
+                                        summary=candidate.get("summary"),
+                                    )],
+                                    complexity=obj.get("complexity", "Medium"),
+                                    estimated_impact=obj.get("estimated_impact", "Medium"),
+                                    similar_agents=all_agents[:2],
+                                )
+                                collected.append(idea)
+                                yield f"event: idea\ndata: {idea.model_dump_json()}\n\n"
+                    else:
+                        # No API key — emit basic fallback ideas immediately
+                        for candidate in unique:
+                            e = _basic_idea(candidate["node_id"], candidate["label"], candidate["category"], candidate.get("summary"), candidate["signal_type"], candidate["signal_label"])
+                            idea = SparkIdea(
+                                idea_id=_idea_id(candidate["node_id"], candidate["signal_type"], None),
+                                title=e["title"],
+                                description=e["description"],
+                                rationale=e["rationale"],
+                                signal_type=candidate["signal_type"],
+                                signal_label=candidate["signal_label"],
+                                target_dimensions=[candidate["category"]],
+                                target_nodes=[SparkTargetNode(
+                                    id=candidate["node_id"],
+                                    label=candidate["label"],
+                                    category=candidate["category"],
+                                    summary=candidate.get("summary"),
+                                )],
+                                complexity="Medium",
+                                estimated_impact="Medium",
+                                similar_agents=all_agents[:2],
+                            )
+                            collected.append(idea)
+                            yield f"event: idea\ndata: {idea.model_dump_json()}\n\n"
+
+            # Persist to DB
+            if collected:
+                if not direction_clean:
+                    async with AsyncSessionLocal() as clear_db:
+                        await clear_db.execute(
+                            text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
+                            {"company_id": company_id},
+                        )
+                        await clear_db.commit()
+                await _upsert_ideas(company_id, collected)
+
+            yield "event: done\ndata: {}\n\n"
+
+        except Exception as exc:
+            logger.error("[spark/stream] %s", exc)
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/convert", response_model=SparkConvertResponse)
