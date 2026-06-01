@@ -745,7 +745,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             const effectiveSystemPrompt = exportFormat
                 ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
                 : systemPrompt;
-            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt }, requestId);
+            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt, blueprintData: blueprintCtx }, requestId);
             let firstToken = true;
             let accumulated = '';
 

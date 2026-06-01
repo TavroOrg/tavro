@@ -6,11 +6,47 @@ import { copilotOrchestrator } from './llm/copilotOrchestrator';
 import type { ToolDefinition } from './llm/types';
 import { isAccessTokenExpired, refreshAccessToken } from './auth';
 
+const MULTI_AGENT_DEFAULTS = `
+
+## Multi-Agent Design Defaults
+
+When the user requests help building agents, tools, workflows, or systems designed to monitor, audit, evaluate, detect, categorize, prioritize, analyze, or govern any business or AI process — apply the following defaults automatically.
+
+### 1. Architecture: Multi-Agent with Orchestrator (when >1 agent)
+
+Always design using an orchestrator pattern:
+
+- **Orchestrator Agent**: Responsible for task decomposition, routing subtasks to specialist agents, aggregating results, and producing a final consolidated report or action. Describe its decision logic explicitly — which conditions trigger which specialist, how results are merged, and when the orchestrator acts directly vs. delegates.
+- **Specialist Agents**: Each agent has a single, clearly scoped responsibility. Never assign overlapping roles. Name each agent by its specific function (e.g., "Issue Categorization Agent", "Prioritization Agent", "Solution Design Agent", "Data Quality Analyzer Agent").
+- **Communication Protocol**: Specify how agents communicate (structured JSON handoffs, shared memory, or message queue) and in what order — sequential, parallel, or conditional branching.
+- **Failure Handling**: Define what the orchestrator does if a specialist agent fails, times out, or returns low-confidence output (e.g., retry with adjusted parameters, escalate to human, skip and flag in report).
+
+### 2. Tools: List Every Tool
+
+For every tool available to any agent, specify:
+- **Tool name**: A precise, functional name (e.g., \`fetch_issue_backlog\`, \`classify_issue_type\`, \`score_issue_priority\`)
+- **Description**: What the tool does and why this agent needs it
+
+### 3. Always Produce
+
+When designing a multi-agent system, always output all of the following:
+1. A named list of all agents with their single responsibility
+2. A flow description showing agent execution order and data flow (orchestrator → specialists → aggregation)
+3. Tool specifications for each agent
+4. The orchestrator's aggregation and final reporting logic
+5. Error and fallback handling per agent`;
+
 type ChatViewContext = {
     viewType?: string;
     viewData?: any;
     /** Pre-built system prompt from buildSystemPrompt() — takes precedence over default */
     systemPrompt?: string;
+    blueprintData?: {
+        companyName: string;
+        industry: string;
+        region: string;
+        dimensions: { label: string; category: string; summary?: string | null }[];
+    } | null;
 };
 
 type UseCaseActionFields = {
@@ -252,6 +288,7 @@ class McpClientService {
     private _agentCacheGen = 0;
     private _useCaseCacheGen = 0;
     private _connectPromise: Promise<void> | null = null;
+    private _requestIdCounter = 0;
     private _mcpTools: Array<{ name: string; description?: string; inputSchema?: any }> | null = null;
 
     private getMcpUrl(): string {
@@ -356,9 +393,7 @@ class McpClientService {
                 throw new Error(`MCP initialization failed: HTTP ${res.status}: ${body}`);
             }
 
-            // Capture session metadata. Do NOT accept tenant_id from the MCP
-            // response headers — tenant mapping must originate from Zitadel or
-            // the client-side admin switch. Prefer the saved client-side tenant.
+            // Capture session and tenant metadata from headers
             this.sessionId = res.headers.get('mcp-session-id');
             this.tenantId = savedTenantId || null;
 
@@ -388,7 +423,7 @@ class McpClientService {
         };
         const requestBody = {
             jsonrpc: '2.0',
-            id: Date.now(),
+            id: ++this._requestIdCounter,
             method: 'tools/call',
             params: { name, arguments: toolArgs }
         };
@@ -632,9 +667,55 @@ Only ask the user for clarification if they have given you no context at all (no
 ${toolSummary}`;
             })() : '';
 
+            const blueprintToolGuidance = context.blueprintData ? (() => {
+                const bp = context.blueprintData!;
+
+                const writePattern = /\b(create|add|register|onboard|update|modify|edit|rename|remove|delete|link|associate|connect|detach|unlink)\b/i;
+                const writeTools = mcpTools.filter(t =>
+                    writePattern.test(t.name) || writePattern.test(t.description ?? '')
+                );
+
+                if (!writeTools.length) return '';
+
+                const grouped = bp.dimensions.reduce<Record<string, string[]>>((acc, d) => {
+                    (acc[d.category] ??= []).push(d.label + (d.summary ? ` — ${d.summary.slice(0, 100)}` : ''));
+                    return acc;
+                }, {});
+                const dimBlock = Object.entries(grouped)
+                    .map(([cat, items]) => `  [${cat}]: ${items.join(' | ')}`)
+                    .join('\n');
+
+                const writeToolList = writeTools.map(t => `  • ${t.name}`).join('\n');
+
+                return `
+
+## Blueprint-Grounded Tool Parameters
+Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}
+
+Blueprint dimensions active for this company:
+${dimBlock}
+
+### Intent-based parameter enrichment — MANDATORY for write operations
+The following tools (detected from the live tool list) create or modify resources:
+${writeToolList}
+
+When calling any of these tools, derive generated parameter values from the blueprint dimensions above using this field-level mapping:
+- Parameters describing purpose, role, or behaviour (e.g. \`description\`, \`instructions\`, \`summary\`): ground in [strategy] and [process] dimensions.
+- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions.
+- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions.
+- Parameters describing technical context (e.g. \`tools\`, \`integrations\`, \`platform\`): ground in [technology] and [integration] dimensions.
+- Parameters describing industry or geography (e.g. \`industry\`, \`region\`, \`sector\`): always use "${bp.industry}" and "${bp.region}" from the blueprint — never override these.
+
+For read-only or list tools not in the write list above, no blueprint enrichment is needed.
+Every generated value must be coherent with the blueprint. Do not fabricate data that contradicts the company's profile.`;
+            })() : '';
+
             const baseSystemPrompt =
                 (context.systemPrompt ||
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
+                toolGuidance +
+                blueprintToolGuidance +
+                MULTI_AGENT_DEFAULTS +
                 toolGuidance;
 
             if (toolDefs.length === 0) {
@@ -1106,6 +1187,14 @@ ${toolSummary}`;
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
         return data;
+    }
+
+    async getApplicationCatalog(args: { original_prompt: string; start_record?: number; record_range?: string }): Promise<any> {
+        return await this.callTool('get_application_catalog', {
+            original_prompt: args.original_prompt,
+            start_record: args.start_record ?? 1,
+            record_range: args.record_range ?? '1-20',
+        });
     }
 
     async createRiskAssessment(agent_id: string): Promise<any> {

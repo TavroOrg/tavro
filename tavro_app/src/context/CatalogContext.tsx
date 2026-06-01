@@ -88,12 +88,16 @@ function workflowMatchesAgent(workflow: TemporalWorkflowRecord, agent: AgentData
 
 function sameLogicalAgent(a: AgentData, b: AgentData): boolean {
     const aId = norm(a.identification?.agent_id);
-    const aName = norm(a.name);
     const bId = norm(b.identification?.agent_id);
+    // If both have real IDs, use only ID comparison — same name is not enough.
+    if (aId && bId) return aId === bId;
+    const aName = norm(a.name);
     const bName = norm(b.name);
+    // Fall back to cross-field matching only when one side lacks an ID (e.g. optimistic pending agents).
     return Boolean(
-        (aId && (aId === bId || aId === bName)) ||
-        (aName && (aName === bId || aName === bName))
+        (aId && (aId === bName)) ||
+        (bId && (bId === aName)) ||
+        (!aId && !bId && aName && aName === bName)
     );
 }
 
@@ -190,8 +194,9 @@ function toPendingAgentFromWorkflow(record: TemporalWorkflowRecord): AgentData {
         description: record.description || record.name,
         version: '1.0',
         identification: {
-            // Keep the real agent id visible while the assessment is running.
-            agent_id: record.agent_internal_id || record.agent_id || record.name,
+            // Prefer the external agent_id so it aligns with the catalog's agent_id
+            // and deduplication logic (sameLogicalAgent, identityKey) can match it.
+            agent_id: record.agent_id || record.agent_internal_id || record.name,
             role: null,
             instruction: null,
             governance_status: 'Risk Assessment is running',
@@ -286,13 +291,17 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 });
 
                 const temporalPending = runningRecords
-                    .map(toPendingAgentFromWorkflow)
-                    .filter(a => {
-                        const matched = findLogicalMatch(a, merged);
+                    .filter(record => {
+                        // Use workflowMatchesAgent (flexible cross-field ID/name matching)
+                        // rather than sameLogicalAgent, which is now strict ID-only when
+                        // both sides carry an ID. The workflow's agent_internal_id can
+                        // differ from the catalog's agent_id, so strict comparison would
+                        // miss the match and produce a duplicate tile.
+                        const matched = merged.find(m => workflowMatchesAgent(record, m));
                         if (!matched) return true;
-                        // If the matched catalog record already has resolved risk, do not show a stale running pill.
                         return !hasRiskClassification(matched);
-                    });
+                    })
+                    .map(toPendingAgentFromWorkflow);
 
                 const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
                 const now = Date.now();
@@ -324,6 +333,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         let timer: number | null = null;
         let active = true;
 
+        const POLL_FAST = 5_000;   // while workflows are running
+        const POLL_IDLE = 30_000;  // nothing in flight
+
+        const schedule = (delay: number) => {
+            if (timer) window.clearInterval(timer);
+            timer = window.setInterval(syncTemporalWorkflows, delay);
+        };
+
         const syncTemporalWorkflows = async () => {
             try {
                 const workflows = await agentApi.getRiskWorkflows();
@@ -343,13 +360,16 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     localStorage.setItem(TEMPORAL_WORKFLOW_KEY, snapshot);
                     window.dispatchEvent(new Event('tavro_temporal_workflow_update'));
                 }
+                // Slow down when there are no running workflows
+                const hasRunning = normalized.some(w => w.status === 'running');
+                schedule(hasRunning ? POLL_FAST : POLL_IDLE);
             } catch {
                 // ignore transient endpoint errors
             }
         };
 
         syncTemporalWorkflows();
-        timer = window.setInterval(syncTemporalWorkflows, 5000);
+        timer = window.setInterval(syncTemporalWorkflows, POLL_IDLE);
 
         return () => {
             active = false;

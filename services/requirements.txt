@@ -1,4 +1,4 @@
-crewai
+crewai[anthropic]
 crewai_tools
 requests
 pydantic

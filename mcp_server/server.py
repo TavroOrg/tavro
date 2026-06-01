@@ -380,6 +380,10 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
         agent_name (str): Unique name of the agent.
         description (str): Brief description of the agent’s purpose.
         instruction (str): Behavioral instructions that define how the agent operates.
+                           IMPORTANT: Do NOT invent or reference other agent names (e.g. "Intelligence Agent",
+                           "Revenue Agent") unless the user has explicitly named them or they are confirmed to
+                           exist in the catalog context. If the agent coordinates with upstream agents, describe
+                           their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
 
@@ -727,7 +731,9 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
         agent_id (Optional[str]): Unique identifier of the agent to update.
         agent_name (Optional[str]): New agent name.
         description (Optional[str]): Updated description.
-        instruction (Optional[str]): Updated behavior instructions.
+        instruction (Optional[str]): Updated behavior instructions. Do NOT invent or reference
+                           other agent names unless the user has explicitly named them or they are
+                           confirmed to exist. Describe inter-agent dependencies generically if unknown.
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
 
@@ -1188,7 +1194,7 @@ zitadel_mcp = FastMCP(
 
 zitadel_mcp.mount(core)
 
-zitadel_app = zitadel_mcp.http_app(path=MCP_PATH)
+zitadel_app = zitadel_mcp.http_app(path=MCP_PATH, json_response=True)
 
 # ---------------------------
 # Parent lifespan

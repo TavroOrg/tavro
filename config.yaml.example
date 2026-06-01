@@ -47,6 +47,12 @@ mcp_connectors:
     token: YOUR_GITHUB_MCP_TOKEN
 
 secrets:
+  ANTHROPIC_API_KEY: ""
+  # CrewAI uses Claude by default. Override only if you need a different Claude model.
+  CREWAI_LLM_MODEL: "anthropic/claude-sonnet-4-6"
+  CREWAI_MAX_TOKENS: "4096"
+  # TXTSearchTool still needs embeddings. Use a non-OpenAI embedder by default.
+  CREWAI_TXT_SEARCH_EMBEDDER: "onnx"
   OPENAI_API_KEY: ""
 
 fastapi:
@@ -91,16 +97,6 @@ databases:
   CURATED_DB_NAME: "curated"
   RISK_MANAGEMENT_DB_NAME: "risk_management"
 
-postgres:
-  POSTGRES_HOST: "tavro-postgres"
-  POSTGRES_PORT: "5432"
-  POSTGRES_USER: "admin"
-  POSTGRES_PASSWORD: "admin"
-  POSTGRES_DB: "agent_db"
-
-db:
-  DB_Name: ""
-  DB_USER: ""
-  DB_PASSWORD: ""
-  DB_HOST: "tavro-postgres"
-  DB_PORT: "5432"
+# Database credentials are no longer read from config.yaml.
+# Set DATABASE_URL in your environment or .env file:
+#   DATABASE_URL=postgresql://user:password@host:5432/dbname

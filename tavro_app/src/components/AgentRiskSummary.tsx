@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { mcpClient } from '../services/mcpClient';
-import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff, Download } from 'lucide-react';
+import { generateRiskReportPDF } from '../utils/riskReportPDF';
 
 interface AgentRiskSummaryProps {
     agentId: string;
@@ -72,6 +73,17 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState(false);
     const [noAssessment, setNoAssessment] = useState(false);
+    const [downloading, setDownloading] = useState(false);
+
+    const handleDownloadReport = async () => {
+        if (!data || !headline) return;
+        setDownloading(true);
+        try {
+            await generateRiskReportPDF(data.agent_name, data.agent_id, headline.level, headline.aivss, data.risk_summary);
+        } finally {
+            setDownloading(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -122,6 +134,19 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
                     <h2 className="text-sm font-bold text-slate-800">AI Risk Assessment</h2>
                     <p className="text-xs text-slate-400">EU AI Act | OWASP AIVSS</p>
                 </div>
+                {data && headline && (
+                    <button
+                        onClick={handleDownloadReport}
+                        disabled={downloading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {downloading
+                            ? <RefreshCw size={12} className="animate-spin" />
+                            : <Download size={12} />
+                        }
+                        Download Report
+                    </button>
+                )}
             </div>
 
             <div className="p-5">

@@ -4,12 +4,12 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
 
-import psycopg2
 import requests
 
 from ..base_connector import BaseConnector
-from utils.config_loader import load_config
+from utils.db import DATABASE_URL, SyncSessionLocal
 
 
 class GithubConnector(BaseConnector):
@@ -19,36 +19,24 @@ class GithubConnector(BaseConnector):
         self.token = config.get("token")
         self.session = None
 
-        full_config = load_config()
-        self.postgres_config = full_config.get("postgres", {})
-
-    def get_postgres_config(self):
-        required_keys = [
-            "POSTGRES_HOST",
-            "POSTGRES_PORT",
-            "POSTGRES_USER",
-            "POSTGRES_PASSWORD",
-            "POSTGRES_DB",
-        ]
-        missing_keys = [
-            key for key in required_keys
-            if not self.postgres_config.get(key)
-        ]
-        if missing_keys:
-            raise ValueError(
-                "Missing postgres config keys: " + ", ".join(missing_keys)
-            )
-        return self.postgres_config
-
     def get_pg_dsn(self):
-        postgres_config = self.get_postgres_config()
-        return (
-            f"postgresql://{postgres_config['POSTGRES_USER']}:"
-            f"{postgres_config['POSTGRES_PASSWORD']}@"
-            f"{postgres_config['POSTGRES_HOST']}:"
-            f"{postgres_config['POSTGRES_PORT']}/"
-            f"{postgres_config['POSTGRES_DB']}"
-        )
+        return DATABASE_URL
+
+    @staticmethod
+    @contextmanager
+    def _get_db_cursor():
+        """Borrow a psycopg2 cursor from the SQLAlchemy sync session pool."""
+        session = SyncSessionLocal()
+        try:
+            conn = session.connection()
+            cursor = conn.connection.cursor()
+            try:
+                yield cursor
+                conn.commit()
+            finally:
+                cursor.close()
+        finally:
+            session.close()
 
     def validate_config(self):
         required = ["base_url", "token"]
@@ -505,51 +493,45 @@ class GithubConnector(BaseConnector):
         source_hash = self._hash_payload(card)
         now_ts = datetime.utcnow()
 
-        dsn = os.getenv("PG_DSN") or self.get_pg_dsn()
-        conn = psycopg2.connect(dsn)
-        try:
-            with conn:
-                with conn.cursor() as cursor:
-                    existing = self._fetch_existing_parent(cursor, server_name, server_url)
-                    parent_id = existing[0] if existing else str(uuid.uuid4())
-                    existing_hash = existing[1] if existing else None
-                    created_ts = existing[2] if existing and existing[2] else now_ts
+        with self._get_db_cursor() as cursor:
+            existing = self._fetch_existing_parent(cursor, server_name, server_url)
+            parent_id = existing[0] if existing else str(uuid.uuid4())
+            existing_hash = existing[1] if existing else None
+            created_ts = existing[2] if existing and existing[2] else now_ts
 
-                    if existing_hash == source_hash:
-                        return {
-                            "status": "SKIPPED",
-                            "identifier": parent_id,
-                            "source_hash": source_hash,
-                            "tools": 0,
-                            "prompts": 0,
-                            "resources": 0,
-                        }
+            if existing_hash == source_hash:
+                return {
+                    "status": "SKIPPED",
+                    "identifier": parent_id,
+                    "source_hash": source_hash,
+                    "tools": 0,
+                    "prompts": 0,
+                    "resources": 0,
+                }
 
-                    self._upsert_parent(
-                        cursor,
-                        parent_id,
-                        card,
-                        source_hash,
-                        created_ts,
-                        now_ts,
-                    )
-                    tools_count, prompts_count, resources_count = self._replace_child_rows(
-                        cursor,
-                        parent_id,
-                        card,
-                        now_ts,
-                    )
+            self._upsert_parent(
+                cursor,
+                parent_id,
+                card,
+                source_hash,
+                created_ts,
+                now_ts,
+            )
+            tools_count, prompts_count, resources_count = self._replace_child_rows(
+                cursor,
+                parent_id,
+                card,
+                now_ts,
+            )
 
-                    return {
-                        "status": "PROCESSED",
-                        "identifier": parent_id,
-                        "source_hash": source_hash,
-                        "tools": tools_count,
-                        "prompts": prompts_count,
-                        "resources": resources_count,
-                    }
-        finally:
-            conn.close()
+            return {
+                "status": "PROCESSED",
+                "identifier": parent_id,
+                "source_hash": source_hash,
+                "tools": tools_count,
+                "prompts": prompts_count,
+                "resources": resources_count,
+            }
 
     def execute(self):
         print("Running GitHub MCP Connector")

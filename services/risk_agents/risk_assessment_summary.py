@@ -2,55 +2,15 @@ import os
 import json
 import psycopg2
 from psycopg2 import sql
-from contextlib import contextmanager
 from datetime import datetime
+from utils.db import db_connection as _db_connection
+from contextlib import contextmanager
 from utils.set_environment import set_environment
 
-# Initialize environments
-set_environment("postgres")
 set_environment("databases")
 
-# DB Configuration constants (matching db_functions.py)
-DB_NAME = os.getenv("POSTGRES_DB")
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB_HOST = os.getenv("POSTGRES_HOST")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 CORE_SCHEMA = os.getenv("CORE_DB_NAME", "core")
 RISK_MANAGEMENT_SCHEMA = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
-
-# ---------------------------------------------------------------------------
-# Connection helper (Identical to db_functions.py for consistency)
-# ---------------------------------------------------------------------------
-@contextmanager
-def _db_connection():
-    missing = [
-        name for name, value in {
-            "POSTGRES_DB": DB_NAME,
-            "POSTGRES_USER": DB_USER,
-            "POSTGRES_PASSWORD": DB_PASSWORD,
-            "POSTGRES_HOST": DB_HOST,
-        }.items() if not value
-    ]
-    if missing:
-        raise RuntimeError(f"Missing Postgres config values: {', '.join(missing)}")
-
-    connection = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
-    try:
-        yield connection
-        # Read-only operations technically don't need commit, but kept for pattern alignment
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
 
 def _table(schema_name: str, table_name: str) -> sql.Composed:
     return sql.SQL("{}.{}").format(sql.Identifier(schema_name), sql.Identifier(table_name))
@@ -198,6 +158,12 @@ def generate_risk_summary(data: dict) -> str:
         lines.append(sep)
         return "\n".join(lines)
  
+    def fmt_score(score) -> str:
+        try:
+            return f"{float(score):.2f}"
+        except (TypeError, ValueError):
+            return "N/A"
+        
     # ── Build AIVSS Capability table ────────────────────────────
     cap_rows = []
     for label, score_key, rationale_key in CAPABILITIES:
@@ -213,11 +179,7 @@ def generate_risk_summary(data: dict) -> str:
         risk_name       = s.get("agentic_ai_core_security_risks", "N/A")
         s_aivss         = s.get("aivss_score", "N/A")
         threat_mult     = s.get("threat_multiplier", "N/A")
-        # AARS Score per scenario = aivss_score × threat_multiplier
-        try:
-            s_aars = f"{float(s_aivss) * float(threat_mult):.2f}"
-        except (TypeError, ValueError):
-            s_aars = "N/A"
+        s_aars          = fmt_score(aars_score)
         scenario_rows.append([str(idx), risk_name, str(s_aivss), str(threat_mult), s_aars])
  
     scenario_table = make_table(
