@@ -3,8 +3,8 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Home, Bot, Workflow, BarChart2, Settings,
     LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
-    AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, BriefcaseBusiness, Paperclip, Network, Zap, Plug
+    ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
+    AppWindow, Paperclip, Network, Zap, Plug, CircleHelp
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -43,7 +43,6 @@ function isProcessPage(pathname: string): boolean {
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
-const MAX_PANEL_WIDTH = 640;
 
 /** Returns a human-readable "X min ago" string, refreshed every 30s. */
 function useTimeSince(date: Date | null): string {
@@ -82,11 +81,6 @@ const Layout: React.FC = () => {
     // ── Right panel state ────────────────────────────────────────────────────
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);
     const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
-
-    // Toggle a panel tab — clicking the same tab again closes the panel
-    const togglePanel = (panel: 'chat' | 'devlog') => {
-        setActivePanel(prev => (prev === panel ? null : panel));
-    };
 
     // ── Drag-to-resize ───────────────────────────────────────────────────────
     const isDragging = useRef(false);
@@ -394,6 +388,14 @@ const Layout: React.FC = () => {
 
                     {/* Bottom Actions */}
                     <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                        <button
+                            onClick={() => window.open('/help/user-guide', '_blank', 'noopener,noreferrer')}
+                            className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white`}
+                            title={!isLeftPanelOpen ? "Help" : undefined}
+                        >
+                            <CircleHelp size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-300" />
+                            <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Help</span>
+                        </button>
                         <button
                             onClick={() => navigate('/settings')}
                             className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
