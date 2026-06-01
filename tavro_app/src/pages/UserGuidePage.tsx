@@ -1128,8 +1128,28 @@ const UserGuidePage: React.FC = () => {
                         </div>
                     </div>
 
+                    {/* Contact */}
+                    <div className="mt-16 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/40 border border-blue-100 dark:border-blue-900 px-8 py-6 flex items-center justify-between gap-6">
+                        <div>
+                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-1">Have a question?</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                                For any queries, feedback, or support requests, please reach out to us at{' '}
+                                <a href="mailto:info@tavro.ai" className="text-blue-600 dark:text-blue-400 font-semibold hover:underline">
+                                    info@tavro.ai
+                                </a>
+                            </p>
+                        </div>
+                        <a
+                            href="mailto:info@tavro.ai"
+                            className="flex-shrink-0 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+                        >
+                            <Globe size={14} />
+                            Contact Support
+                        </a>
+                    </div>
+
                     {/* Footer */}
-                    <div className="mt-16 pt-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
                         <div>
                             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Tavro Agent BizOps · User Guide</p>
                             <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">v3.1 · © 2026 Tavro AI</p>
