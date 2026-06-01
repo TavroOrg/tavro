@@ -715,8 +715,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
                 toolGuidance +
                 blueprintToolGuidance +
-                MULTI_AGENT_DEFAULTS +
-                toolGuidance;
+                MULTI_AGENT_DEFAULTS;
 
             if (toolDefs.length === 0) {
                 // No MCP tools — enrich context with catalog snapshot and stream directly.

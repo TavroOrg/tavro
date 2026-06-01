@@ -253,6 +253,18 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const temporalRecords = readTemporalRecords();
             const runningRecords = temporalRecords.filter(r => r.status === 'running');
 
+            // Agents registered locally as pending (e.g. just created) but whose
+            // temporal workflow hasn't been polled yet — don't prematurely clear
+            // their "Risk Assessment is running" status.
+            let locallyPendingIds: Set<string>;
+            try {
+                const raw = localStorage.getItem('tavro_pending_assessment_agents');
+                const arr = raw ? (JSON.parse(raw) as string[]) : [];
+                locallyPendingIds = new Set(arr.map(norm));
+            } catch {
+                locallyPendingIds = new Set();
+            }
+
             setAgents(prev => {
                 const prevMap = mapByIdentity(prev);
                 const merged = data.map(agent => {
@@ -260,7 +272,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     const old = key ? prevMap.get(key) : undefined;
                     const base = old ? mergeAgent(agent, old) : agent;
                     const runningForAgent = runningRecords.some(wf => workflowMatchesAgent(wf, base));
-                    if (!runningForAgent) {
+                    const agentIsPendingLocally = locallyPendingIds.has(norm(base.identification?.agent_id || ''));
+                    if (!runningForAgent && !agentIsPendingLocally) {
                         if (base.identification?.governance_status === 'Risk Assessment is running') {
                             return {
                                 ...base,
