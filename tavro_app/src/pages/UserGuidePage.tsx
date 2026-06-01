@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    BookOpen, ChevronRight, ChevronDown, Search, X, Copy, Check,
-    Info, AlertTriangle, Lightbulb, Terminal, ExternalLink,
+    BookOpen, ChevronRight, ChevronDown, Search, X,
+    Info, Lightbulb, AlertTriangle,
     Bot, ClipboardList, AppWindow, Workflow, Plug, Zap,
     BarChart2, Network, Scale, ShieldCheck, FlaskConical,
-    Settings, MessageCircle, Database, Package, Globe,
-    Lock, RefreshCw, FileText, Layers, GitBranch, Code2,
-    Hash, ArrowRight, CheckCircle2, AlertCircle, Star
+    Settings, MessageCircle,
+    ArrowRight, CheckCircle2,
+    Home, Play, LayoutGrid, List, Plus, Link2,
+    ShieldAlert, Unlink2, PlusCircle, Settings2, MessageSquare,
+    ClipboardCheck, Loader2, Send, Paperclip,
+    Building2, Globe, RefreshCw, Hash, Layers
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
 interface TocSection {
     id: string;
     label: string;
@@ -21,35 +23,14 @@ interface TocSection {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const Callout: React.FC<{
-    type: 'info' | 'warning' | 'tip' | 'note';
+    type: 'info' | 'warning' | 'tip';
     title?: string;
     children: React.ReactNode;
 }> = ({ type, title, children }) => {
     const styles = {
-        info: {
-            wrap: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800',
-            icon: <Info size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />,
-            titleColor: 'text-blue-700 dark:text-blue-300',
-            textColor: 'text-blue-800 dark:text-blue-200',
-        },
-        warning: {
-            wrap: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800',
-            icon: <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />,
-            titleColor: 'text-amber-700 dark:text-amber-300',
-            textColor: 'text-amber-800 dark:text-amber-200',
-        },
-        tip: {
-            wrap: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800',
-            icon: <Lightbulb size={16} className="text-emerald-500 flex-shrink-0 mt-0.5" />,
-            titleColor: 'text-emerald-700 dark:text-emerald-300',
-            textColor: 'text-emerald-800 dark:text-emerald-200',
-        },
-        note: {
-            wrap: 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700',
-            icon: <Star size={16} className="text-slate-500 flex-shrink-0 mt-0.5" />,
-            titleColor: 'text-slate-700 dark:text-slate-300',
-            textColor: 'text-slate-700 dark:text-slate-300',
-        },
+        info:    { wrap: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800',    icon: <Info size={15} className="text-blue-500 flex-shrink-0 mt-0.5" />,    titleColor: 'text-blue-700 dark:text-blue-300',    text: 'text-blue-800 dark:text-blue-200' },
+        warning: { wrap: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800', icon: <AlertTriangle size={15} className="text-amber-500 flex-shrink-0 mt-0.5" />, titleColor: 'text-amber-700 dark:text-amber-300', text: 'text-amber-800 dark:text-amber-200' },
+        tip:     { wrap: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800', icon: <Lightbulb size={15} className="text-emerald-500 flex-shrink-0 mt-0.5" />, titleColor: 'text-emerald-700 dark:text-emerald-300', text: 'text-emerald-800 dark:text-emerald-200' },
     };
     const s = styles[type];
     return (
@@ -57,124 +38,415 @@ const Callout: React.FC<{
             {s.icon}
             <div className="min-w-0">
                 {title && <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${s.titleColor}`}>{title}</p>}
-                <div className={`text-sm leading-relaxed ${s.textColor}`}>{children}</div>
+                <div className={`text-sm leading-relaxed ${s.text}`}>{children}</div>
             </div>
         </div>
     );
 };
 
-const CodeBlock: React.FC<{ lang?: string; children: string }> = ({ lang, children }) => {
-    const [copied, setCopied] = useState(false);
-    const copy = () => {
-        navigator.clipboard.writeText(children.trim());
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-    return (
-        <div className="relative group my-4 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
-            {lang && (
-                <div className="flex items-center justify-between bg-slate-800 dark:bg-slate-900 px-4 py-2 border-b border-slate-700">
-                    <span className="text-[11px] font-mono text-slate-400 uppercase tracking-widest">{lang}</span>
-                    <button
-                        onClick={copy}
-                        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
-                    >
-                        {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                        <span>{copied ? 'Copied' : 'Copy'}</span>
-                    </button>
-                </div>
-            )}
-            <pre className="bg-slate-900 text-slate-100 text-sm font-mono leading-relaxed p-4 overflow-x-auto whitespace-pre-wrap">
-                <code>{children.trim()}</code>
-            </pre>
-        </div>
-    );
-};
-
 const InlineCode: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-    <code className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-blue-700 dark:text-blue-300 text-[13px] font-mono border border-slate-200 dark:border-slate-700">
-        {children}
-    </code>
+    <code className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-blue-700 dark:text-blue-300 text-[13px] font-mono border border-slate-200 dark:border-slate-700">{children}</code>
 );
 
-const SectionHeading: React.FC<{ id: string; level?: 1 | 2 | 3; children: React.ReactNode; icon?: React.ReactNode }> = ({
-    id, level = 2, children, icon
-}) => {
-    if (level === 1) return (
-        <h1 id={id} className="flex items-center gap-3 text-3xl font-bold text-slate-900 dark:text-white mt-2 mb-4 scroll-mt-6">
-            {icon && <span className="text-blue-600 dark:text-blue-400">{icon}</span>}
-            {children}
-        </h1>
-    );
+const SectionHeading: React.FC<{ id: string; level?: 1 | 2 | 3; children: React.ReactNode; icon?: React.ReactNode }> = ({ id, level = 2, children, icon }) => {
     if (level === 2) return (
-        <h2 id={id} className="flex items-center gap-2.5 text-xl font-semibold text-slate-800 dark:text-slate-100 mt-10 mb-4 pt-6 border-t border-slate-100 dark:border-slate-800 scroll-mt-6">
+        <h2 id={id} className="flex items-center gap-2.5 text-xl font-bold text-slate-900 dark:text-slate-100 mt-12 mb-4 pt-8 border-t border-slate-100 dark:border-slate-800 scroll-mt-6">
             {icon && <span className="text-blue-500 dark:text-blue-400 flex-shrink-0">{icon}</span>}
             {children}
         </h2>
     );
     return (
-        <h3 id={id} className="text-base font-semibold text-slate-700 dark:text-slate-200 mt-6 mb-2.5 scroll-mt-6">
-            {children}
-        </h3>
+        <h3 id={id} className="text-base font-semibold text-slate-800 dark:text-slate-200 mt-7 mb-3 scroll-mt-6">{children}</h3>
     );
 };
 
-const Badge: React.FC<{ color?: 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'; children: React.ReactNode }> = ({
-    color = 'blue', children
-}) => {
-    const colors = {
-        blue: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700',
-        green: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-700',
-        amber: 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700',
-        red: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-700',
-        violet: 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-700',
-        slate: 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
-    };
-    return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${colors[color]}`}>
+const Badge: React.FC<{ color?: 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate' | 'rose'; children: React.ReactNode }> = ({ color = 'blue', children }) => {
+    const c = { blue: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-700', green: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-700', amber: 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700', red: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-700', violet: 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-700', slate: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600', rose: 'bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-700' };
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${c[color]}`}>{children}</span>;
+};
+
+const Step: React.FC<{ n: number; title?: string; children: React.ReactNode }> = ({ n, title, children }) => (
+    <div className="flex gap-4 mb-5">
+        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center mt-0.5">{n}</div>
+        <div className="flex-1 text-sm text-slate-700 dark:text-slate-300 leading-relaxed pt-0.5">
+            {title && <strong className="text-slate-900 dark:text-slate-100 block mb-0.5">{title}</strong>}
             {children}
+        </div>
+    </div>
+);
+
+const UIButton: React.FC<{ color?: 'blue' | 'violet' | 'red' | 'slate' | 'rose'; icon?: React.ReactNode; children: React.ReactNode }> = ({ color = 'blue', icon, children }) => {
+    const c = { blue: 'bg-blue-600 text-white', violet: 'bg-violet-600 text-white', red: 'bg-red-50 border border-red-300 text-red-700', rose: 'bg-rose-600 text-white', slate: 'bg-white border border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300' };
+    return (
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${c[color]}`}>
+            {icon}<span>{children}</span>
         </span>
     );
 };
 
-const Step: React.FC<{ n: number; children: React.ReactNode }> = ({ n, children }) => (
-    <div className="flex gap-4 mb-4">
-        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center mt-0.5">
-            {n}
+// ─── Screen Mockups ───────────────────────────────────────────────────────────
+
+const ScreenFrame: React.FC<{ title: string; subtitle?: string; children: React.ReactNode }> = ({ title, subtitle, children }) => (
+    <div className="my-6 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-lg">
+        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+            <div className="flex gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-red-400" />
+                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+            </div>
+            <div className="flex-1 text-center">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{title}</span>
+            </div>
+            {subtitle && <span className="text-[10px] text-slate-400 font-medium">{subtitle}</span>}
         </div>
-        <div className="flex-1 text-sm text-slate-700 dark:text-slate-300 leading-relaxed pt-0.5">{children}</div>
+        <div className="bg-slate-50 dark:bg-slate-900">{children}</div>
     </div>
 );
 
-const DataTable: React.FC<{
-    headers: string[];
-    rows: (string | React.ReactNode)[][];
-}> = ({ headers, rows }) => (
-    <div className="my-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-        <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-                <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
-                        {headers.map((h, i) => (
-                            <th key={i} className="text-left px-4 py-3 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap">
-                                {h}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows.map((row, ri) => (
-                        <tr key={ri} className="border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                            {row.map((cell, ci) => (
-                                <td key={ci} className="px-4 py-3 text-slate-700 dark:text-slate-300 align-top">
-                                    {cell}
-                                </td>
-                            ))}
-                        </tr>
+// Mockup: App Layout
+const LayoutMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Agent BizOps">
+        <div className="flex h-48 text-[10px]">
+            {/* Left rail */}
+            <div className="w-28 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700 flex flex-col p-2 gap-1 flex-shrink-0">
+                <div className="flex items-center gap-1.5 px-1 py-1.5 mb-1 border-b border-slate-100 dark:border-slate-800">
+                    <div className="w-5 h-5 rounded bg-blue-600 flex-shrink-0" />
+                    <span className="font-bold text-slate-800 dark:text-slate-200 text-[9px]">Tavro BizOps</span>
+                </div>
+                {[{ icon: <Home size={10} />, label: 'Home' }, { icon: <ClipboardList size={10} />, label: 'AI Use Cases', active: true }, { icon: <Bot size={10} />, label: 'Agents' }, { icon: <Network size={10} />, label: 'Blueprint' }, { icon: <Scale size={10} />, label: 'Compliance' }, { icon: <ShieldCheck size={10} />, label: 'Audit Center' }].map(item => (
+                    <div key={item.label} className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${item.active ? 'bg-blue-50 text-blue-700' : 'text-slate-500 dark:text-slate-400'}`}>
+                        {item.icon}<span>{item.label}</span>
+                    </div>
+                ))}
+            </div>
+            {/* Main */}
+            <div className="flex-1 p-3 overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                    <div>
+                        <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">AI Use Cases</div>
+                        <div className="text-slate-400 text-[9px]">12 active initiatives</div>
+                    </div>
+                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded-md text-[9px] font-semibold flex items-center gap-1"><Plus size={8} />New Use Case</div>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                    {['Invoice Automation', 'Customer Churn Prediction', 'Contract Review'].map(name => (
+                        <div key={name} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+                            <div className="w-3 h-3 rounded bg-blue-500 mb-1" />
+                            <div className="font-semibold text-slate-700 dark:text-slate-300 leading-tight text-[9px]">{name}</div>
+                            <div className="mt-1 flex gap-1">
+                                <span className="bg-emerald-100 text-emerald-700 rounded px-1 text-[8px]">Active</span>
+                                <span className="bg-amber-100 text-amber-700 rounded px-1 text-[8px]">High</span>
+                            </div>
+                        </div>
                     ))}
-                </tbody>
-            </table>
+                </div>
+            </div>
+            {/* Right rail */}
+            <div className="w-12 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 flex flex-col items-center pt-4 gap-3 flex-shrink-0">
+                <div className="flex flex-col items-center gap-1 p-1.5 rounded-xl border border-blue-200 text-blue-500">
+                    <MessageCircle size={14} />
+                    <span className="text-[7px] font-semibold">Chat</span>
+                </div>
+                <div className="flex flex-col items-center gap-1 p-1.5 rounded-xl border border-slate-200 text-slate-400">
+                    <FlaskConical size={14} />
+                    <span className="text-[7px] font-semibold">Logs</span>
+                </div>
+            </div>
         </div>
+    </ScreenFrame>
+);
+
+// Mockup: Agent Catalog (real agents from DB)
+const AgentCatalogMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Agent Catalog" subtitle="288 agents total">
+        <div className="p-3 text-[10px]">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 w-48">
+                    <Search size={9} className="text-slate-400" />
+                    <span className="text-slate-400">Search 288 agents…</span>
+                </div>
+                <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold">+ New Agent</div>
+            </div>
+            <div className="space-y-1.5">
+                {[
+                    { name: 'Business Data Intelligence Agent', desc: 'Large-scale data analysis, pattern recognition and business intelligence…', risk: '7.76', cls: 'High', clsColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', tools: 5, pii: true },
+                    { name: 'ColdChain AI — Perishable Intelligence Agent', desc: 'Forecasts demand, monitors perishable inventory, USDA FSIS & HACCP compliance…', risk: '4.56', cls: 'Medium', clsColor: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300', tools: 6, pii: false },
+                    { name: 'Sentiment Agent', desc: 'Classifies customer feedback sentiment and escalates negative or urgent cases…', risk: '—', cls: 'Pending', clsColor: 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400', tools: 2, pii: false },
+                ].map(a => (
+                    <div key={a.name} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                                <Bot size={11} className="text-slate-500" />
+                            </div>
+                            <div className="min-w-0">
+                                <div className="font-semibold text-slate-800 dark:text-slate-200 text-[9px] truncate">{a.name}</div>
+                                <div className="text-slate-400 text-[8px] truncate">{a.desc}</div>
+                                <div className="flex gap-1 mt-0.5">
+                                    <span className="bg-slate-100 dark:bg-slate-700 text-slate-500 rounded px-1 text-[7px]">{a.tools} tools</span>
+                                    {a.pii && <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-600 rounded px-1 text-[7px]">PII</span>}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                            <span className={`${a.clsColor} rounded-full px-1.5 py-0.5 text-[8px] font-semibold`}>{a.cls}</span>
+                            <span className="text-slate-400 text-[8px]">Score: {a.risk}</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+// Mockup: Use Case Detail
+const UseCaseDetailMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — AI-Powered Customer Support Chatbot · Use Case">
+        <div className="p-3 text-[10px]">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">AI-Powered Customer Support Chatbot</div>
+                    <div className="text-slate-500 dark:text-slate-400 text-[9px] mt-0.5">Owner: System Administrator</div>
+                    <div className="flex gap-1 mt-1">
+                        <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-full px-2 py-0.5 text-[9px]">New</span>
+                        <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full px-2 py-0.5 text-[9px]">2 - High</span>
+                    </div>
+                </div>
+                <div className="flex gap-1.5">
+                    <div className="bg-blue-600 text-white px-2 py-1 rounded-md text-[9px] font-semibold flex items-center gap-1"><ShieldCheck size={8} />Audit</div>
+                    <div className="bg-white border border-slate-300 dark:bg-slate-800 dark:border-slate-600 px-2 py-1 rounded-md text-[9px] text-slate-600 dark:text-slate-300">Edit</div>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
+                    <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center gap-1"><Bot size={9} />Currently Related Agents (2)</div>
+                    {['Sentiment Agent', 'Business Data Intelligence Agent'].map(a => (
+                        <div key={a} className="flex items-center justify-between py-0.5">
+                            <span className="text-blue-600 dark:text-blue-400 text-[9px] truncate max-w-[110px]">{a}</span>
+                            <span className="text-red-400 text-[8px] flex items-center gap-0.5 flex-shrink-0"><Unlink2 size={7} />Remove</span>
+                        </div>
+                    ))}
+                    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2">
+                        <div className="text-slate-400 text-[9px] mb-1">Add Agent Relation</div>
+                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
+                            <Search size={8} className="text-slate-400" /><span className="text-slate-400">Filter agents…</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
+                    <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center gap-1"><Workflow size={9} />Currently Related Processes (1)</div>
+                    <div className="flex items-center justify-between py-0.5">
+                        <span className="text-blue-600 dark:text-blue-400 text-[9px]">Customer Support Operations</span>
+                        <span className="text-red-400 text-[8px] flex items-center gap-0.5"><Unlink2 size={7} />Remove</span>
+                    </div>
+                    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2">
+                        <div className="text-slate-400 text-[9px] mb-1">Add Process Relation</div>
+                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
+                            <Search size={8} className="text-slate-400" /><span className="text-slate-400">Filter processes…</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+// Mockup: Agent view — Business Data Intelligence Agent (real DB record)
+const AgentViewMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Business Data Intelligence Agent · Agent">
+        <div className="text-[10px]">
+            <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-slate-200 dark:border-slate-700">
+                <div>
+                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">Business Data Intelligence Agent</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-slate-400 text-[9px]">5 tools · 5 data sources</span>
+                        <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full px-1.5 py-0.5 text-[8px] font-semibold">High Risk · 7.76</span>
+                        <span className="bg-amber-50 dark:bg-amber-900/20 text-amber-600 border border-amber-200 dark:border-amber-800 rounded-full px-1.5 py-0.5 text-[8px]">PII</span>
+                    </div>
+                </div>
+                <div className="flex gap-1.5">
+                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><FlaskConical size={8} />Playground</div>
+                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldAlert size={8} />Risk Assessment</div>
+                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldCheck size={8} />Audit</div>
+                </div>
+            </div>
+            <div className="flex border-b border-slate-200 dark:border-slate-700 px-3">
+                {['Overview', 'Context Graph', 'Related'].map((tab, i) => (
+                    <div key={tab} className={`px-3 py-2 text-[9px] font-semibold border-b-2 ${i === 1 ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500'}`}>{tab}</div>
+                ))}
+            </div>
+            {/* Context Graph — real rings: Technical (blue), Functional (purple), Business (orange), Risk (rose) */}
+            <div className="p-3 flex items-center justify-center bg-slate-50 dark:bg-slate-900/50">
+                <div className="relative w-56 h-36">
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-9 bg-slate-700 dark:bg-slate-600 rounded-xl flex items-center justify-center z-10 border-2 border-slate-500">
+                        <span className="text-white text-[7px] font-bold text-center leading-tight px-1">Business Data<br/>Intelligence</span>
+                    </div>
+                    {[
+                        { label: '5 Tools', color: 'bg-blue-500',   top: '6%',  left: '12%' },
+                        { label: 'Analytics DB', color: 'bg-blue-400', top: '6%', right: '12%' },
+                        { label: '5 Data Sources', color: 'bg-violet-500', top: '42%', left: '0%' },
+                        { label: 'Data Platform', color: 'bg-orange-500', top: '42%', right: '0%' },
+                        { label: 'Risk: 7.76 High', color: 'bg-rose-500', bottom: '6%', left: '12%' },
+                        { label: 'PII Exposure', color: 'bg-rose-400', bottom: '6%', right: '12%' },
+                    ].map(n => (
+                        <div key={n.label} className="absolute flex items-center justify-center z-10"
+                            style={{ top: n.top, bottom: (n as any).bottom, left: (n as any).left, right: (n as any).right }}>
+                            <div className={`${n.color} text-white rounded-md px-1.5 py-0.5 text-[7px] font-semibold shadow-sm whitespace-nowrap`}>{n.label}</div>
+                        </div>
+                    ))}
+                    <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 5 }}>
+                        {[[112,70, 44,16],[112,70,180,16],[112,70,8,56],[112,70,216,56],[112,70,44,124],[112,70,180,124]].map(([x1,y1,x2,y2],i) => (
+                            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#94a3b8" strokeWidth="0.6" strokeDasharray="2,2"/>
+                        ))}
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+// Mockup: Risk Score Breakdown — real AIVSS data from ColdChain AI agent
+const RiskScoreMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Risk Assessment · ColdChain AI — Perishable Intelligence Agent" subtitle="AIVSS 4.65 · Medium">
+        <div className="p-3 text-[10px]">
+            <div className="grid grid-cols-3 gap-2 mb-3">
+                {[
+                    { label: 'Blended Risk', value: '4.56', cls: 'Medium', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700' },
+                    { label: 'AIVSS Score', value: '4.65', cls: 'Medium', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700' },
+                    { label: 'Regulatory', value: 'Other', cls: 'EU AI Act', color: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-600' },
+                ].map(s => (
+                    <div key={s.label} className={`rounded-xl border p-2 ${s.bg}`}>
+                        <div className="text-slate-500 dark:text-slate-400 text-[8px] mb-0.5">{s.label}</div>
+                        <div className={`font-bold text-sm ${s.color}`}>{s.value}</div>
+                        <div className="text-slate-400 text-[8px]">{s.cls}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2 mb-2">
+                <div className="font-semibold text-slate-600 dark:text-slate-400 mb-2 text-[9px]">AIVSS Capability Breakdown</div>
+                {[
+                    { cap: 'Autonomy of Action', score: 0.50, note: 'Human approval required for irreversible actions' },
+                    { cap: 'Goal-Driven Planning', score: 0.50, note: '7-day demand forecasts, multi-step plans' },
+                    { cap: 'Non-Determinism',     score: 0.50, note: 'Hybrid structured + natural language output' },
+                    { cap: 'Opacity & Reflexivity',score: 0.50, note: 'Summarized internal reasoning' },
+                    { cap: 'Contextual Awareness', score: 0.00, note: 'No unfiltered external data access' },
+                    { cap: 'Memory Use',            score: 0.00, note: 'Stateless / ephemeral processing' },
+                ].map(row => (
+                    <div key={row.cap} className="flex items-center gap-2 mb-1">
+                        <div className="w-28 text-slate-600 dark:text-slate-400 text-[8px] flex-shrink-0">{row.cap}</div>
+                        <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full ${row.score > 0 ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600'}`} style={{ width: `${row.score * 100}%` }} />
+                        </div>
+                        <div className="w-6 text-right text-slate-500 dark:text-slate-400 text-[8px]">{row.score.toFixed(2)}</div>
+                        <div className="w-32 text-slate-400 text-[7px] truncate">{row.note}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
+                <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 text-[9px]">Top Scenario Risks (OWASP)</div>
+                {[
+                    { scenario: 'Agent Supply Chain & Dependency Attacks', score: '5.45', color: 'text-amber-600' },
+                    { scenario: 'Insecure Critical Systems Interaction',    score: '4.65', color: 'text-amber-500' },
+                    { scenario: 'Agent Memory & Context Manipulation',      score: '4.55', color: 'text-amber-500' },
+                ].map(r => (
+                    <div key={r.scenario} className="flex items-center justify-between py-0.5">
+                        <span className="text-slate-600 dark:text-slate-400 text-[8px]">{r.scenario}</span>
+                        <span className={`font-bold text-[9px] ${r.color}`}>{r.score}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+
+
+// Mockup: Spark
+const SparkMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Spark">
+        <div className="p-3 text-[10px]">
+            <div className="flex items-center justify-between mb-2">
+                <div>
+                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5"><Zap size={12} className="text-violet-500" />Spark</div>
+                    <div className="text-slate-400 text-[9px]">6 ideas · Page 1 of 1</div>
+                </div>
+                <div className="bg-violet-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><Zap size={8} />Inspire Me</div>
+            </div>
+            <div className="flex items-center gap-2 mb-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1">
+                <Hash size={8} className="text-slate-400" />
+                <span className="text-slate-400">Focus direction — e.g. "Quality management"…</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+                {[{ title: 'Automated PO Matching', signal: 'Gap Coverage', signalColor: 'bg-blue-100 text-blue-700', complexity: 'Medium', impact: 'High' }, { title: 'Vendor Risk Scoring', signal: 'Risk Hotspot', signalColor: 'bg-rose-100 text-rose-700', complexity: 'High', impact: 'High' }, { title: 'Payment Terms Optimizer', signal: 'Strategic Gap', signalColor: 'bg-slate-100 text-slate-600', complexity: 'Low', impact: 'Medium' }].map(idea => (
+                    <div key={idea.title} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                        <div className="h-4 bg-gradient-to-r from-violet-500 to-indigo-600" />
+                        <div className="p-2">
+                            <div className="font-semibold text-slate-800 dark:text-slate-200 text-[9px] leading-tight mb-1">{idea.title}</div>
+                            <span className={`${idea.signalColor} text-[7px] px-1 py-0.5 rounded-full font-semibold`}>{idea.signal}</span>
+                            <div className="flex justify-between mt-1.5">
+                                <span className="text-slate-400 text-[7px]">Complex: {idea.complexity}</span>
+                                <span className="text-slate-400 text-[7px]">Impact: {idea.impact}</span>
+                            </div>
+                            <div className="mt-1.5 w-full bg-violet-600 text-white rounded text-[7px] text-center py-0.5 font-semibold flex items-center justify-center gap-0.5"><ArrowRight size={7} />View &amp; Develop</div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+// Mockup: Audit Center
+const AuditMockup: React.FC = () => (
+    <ScreenFrame title="tavro.ai — Audit Center">
+        <div className="p-3 text-[10px]">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5"><ShieldCheck size={12} className="text-blue-500" />Audit Center</div>
+                    <div className="text-slate-400 text-[9px]">4 completed runs · 2 critical · 5 high findings</div>
+                </div>
+                <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldCheck size={8} />New Audit</div>
+            </div>
+            <div className="space-y-1.5">
+                {[
+                    { name: 'AI Customer Support Chatbot', vs: 'vs. EU AI Act', risk: 'Medium', riskColor: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300', pct: 100, status: '✓' },
+                    { name: 'Large-Scale Data Processing', vs: 'vs. GDPR', risk: 'High', riskColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', pct: 72, status: '⟳', live: true },
+                    { name: 'Business Data Intelligence Agent', vs: 'vs. EU AI Act', risk: 'High', riskColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', pct: 100, status: '✓' },
+                ].map(run => (
+                    <div key={run.name} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
+                        <div className="flex items-center justify-between mb-1">
+                            <div>
+                                <span className={`${run.status === '⟳' ? 'text-blue-500' : 'text-emerald-500'} mr-1.5`}>{run.status}</span>
+                                <span className="font-semibold text-slate-700 dark:text-slate-300">{run.name}</span>
+                                <span className="text-slate-400 ml-1">{run.vs}</span>
+                            </div>
+                            <span className={`${run.riskColor} rounded-full px-1.5 py-0.5 text-[8px] font-semibold`}>{run.risk}</span>
+                        </div>
+                        <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1">
+                            <div className="bg-blue-500 h-1 rounded-full" style={{ width: `${run.pct}%` }} />
+                        </div>
+                        {run.live && <div className="text-[8px] text-blue-500 mt-0.5 animate-pulse">● 3 findings so far…</div>}
+                    </div>
+                ))}
+            </div>
+        </div>
+    </ScreenFrame>
+);
+
+
+
+// ─── Flow Diagram ─────────────────────────────────────────────────────────────
+
+const FlowDiagram: React.FC<{ steps: { icon: React.ReactNode; label: string; color: string }[] }> = ({ steps }) => (
+    <div className="flex items-center flex-wrap gap-2 my-5 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
+        {steps.map((step, i) => (
+            <React.Fragment key={step.label}>
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${step.color} text-sm font-semibold`}>
+                    <span className="flex-shrink-0">{step.icon}</span>
+                    <span>{step.label}</span>
+                </div>
+                {i < steps.length - 1 && <ArrowRight size={16} className="text-slate-400 flex-shrink-0" />}
+            </React.Fragment>
+        ))}
     </div>
 );
 
@@ -182,93 +454,66 @@ const DataTable: React.FC<{
 
 const TOC_SECTIONS: TocSection[] = [
     {
-        id: 'overview', label: 'Product Overview', icon: <BookOpen size={14} />,
-        children: [
-            { id: 'what-is-tavro', label: 'What is Tavro?' },
-            { id: 'key-capabilities', label: 'Key Capabilities' },
+        id: 'nav-overview', label: 'Navigation', icon: <Layers size={14} />,
+        children: [            
+            { id: 'nav-sidebar', label: 'Navigation Sidebar' },
+            { id: 'three-panel', label: 'Layout' },
         ],
     },
     {
-        id: 'getting-started', label: 'Getting Started', icon: <Package size={14} />,
+        id: 'use-case-discovery', label: 'Use Case Discovery', icon: <ClipboardList size={14} />,
         children: [
-            { id: 'prerequisites', label: 'Prerequisites' },
-            { id: 'installation', label: 'Installation' },
-            { id: 'env-config', label: 'Environment Configuration' },
-            { id: 'authentication', label: 'Authentication' },
+            { id: 'uc-via-ui', label: 'Creating via the UI' },
+            { id: 'uc-via-ai', label: 'Discovering via AI Assistant' },
         ],
     },
     {
-        id: 'ui-walkthrough', label: 'UI Walkthrough', icon: <Layers size={14} />,
+        id: 'agents-blueprint', label: 'Use Case → Agent → Blueprint', icon: <Bot size={14} />,
         children: [
-            { id: 'layout-overview', label: 'Layout Overview' },
-            { id: 'left-sidebar', label: 'Left Navigation Sidebar' },
-            { id: 'right-panel', label: 'Right Panel' },
-            { id: 'catalog-sync', label: 'Catalog Sync Widget' },
+            { id: 'linking-agents', label: 'Linking Agents to a Use Case' },
+            { id: 'agent-detail', label: 'Exploring Agent Detail' },
+            { id: 'context-graph', label: 'Agent Context Graph' },
+            { id: 'blueprint-map', label: 'Blueprint Organization Map' },
         ],
     },
     {
-        id: 'features', label: 'Core Features', icon: <Star size={14} />,
+        id: 'risk-analysis', label: 'Risk Analysis', icon: <ShieldCheck size={14} />,
         children: [
-            { id: 'home', label: 'Home Dashboard' },
-            { id: 'use-cases', label: 'AI Use Cases' },
-            { id: 'agents', label: 'Agent Catalog' },
-            { id: 'applications', label: 'Applications' },
-            { id: 'processes', label: 'Business Processes' },
-            { id: 'integrations', label: 'Integrations' },
-            { id: 'spark', label: 'Spark – AI Ideas' },
-            { id: 'insights', label: 'Insights' },
-            { id: 'blueprint', label: 'Blueprint (Digital Twin)' },
-            { id: 'compliance', label: 'Compliance' },
-            { id: 'audit', label: 'Audit Center' },
-            { id: 'playground', label: 'Agent Playground' },
+            { id: 'agent-risk', label: 'Agent Risk Assessment' },
+            { id: 'compliance-audit', label: 'Running a Compliance Audit' },
+            { id: 'reading-findings', label: 'Reading Audit Findings' },
         ],
     },
     {
-        id: 'ai-assistant', label: 'AI Assistant', icon: <MessageCircle size={14} />,
+        id: 'playground', label: 'Agent Playground', icon: <FlaskConical size={14} />,
         children: [
-            { id: 'chat-panel', label: 'Chat Panel' },
-            { id: 'context-awareness', label: 'Context Awareness' },
+            { id: 'pg-launch', label: 'Launching from an Agent' },
+            { id: 'pg-configure', label: 'Configuring the Agent' },
+            { id: 'pg-interact', label: 'Running a Test Session' },
+            { id: 'pg-observations', label: 'Observations & Summary' },
         ],
     },
     {
-        id: 'settings-config', label: 'Settings & Configuration', icon: <Settings size={14} />,
+        id: 'spark', label: 'Spark — AI Ideas', icon: <Zap size={14} />,
         children: [
-            { id: 'llm-config', label: 'LLM Provider Setup' },
-            { id: 'mcp-connection', label: 'MCP Connection' },
-            { id: 'dev-settings', label: 'Developer Settings' },
-            { id: 'appearance', label: 'Appearance' },
+            { id: 'spark-generate', label: 'Generating Ideas' },
+            { id: 'spark-convert', label: 'Converting to a Use Case' },
         ],
     },
     {
-        id: 'api-reference', label: 'API Reference', icon: <Code2 size={14} />,
+        id: 'settings-overview', label: 'Settings', icon: <Settings size={14} />,
         children: [
-            { id: 'api-auth', label: 'Authentication' },
-            { id: 'api-endpoints', label: 'Endpoint Index' },
+            { id: 'llm-setup', label: 'LLM Provider Setup' },
+            { id: 'theme', label: 'Appearance & Dev Tools' },
         ],
-    },
-    {
-        id: 'architecture', label: 'Architecture Overview', icon: <GitBranch size={14} />,
-        children: [
-            { id: 'tech-stack', label: 'Technology Stack' },
-            { id: 'data-flow', label: 'Data Flow' },
-            { id: 'file-structure', label: 'File Structure' },
-        ],
-    },
-    {
-        id: 'troubleshooting', label: 'Troubleshooting', icon: <Terminal size={14} />,
-    },
-    {
-        id: 'glossary', label: 'Glossary', icon: <Hash size={14} />,
     },
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const UserGuidePage: React.FC = () => {
-    const [activeSection, setActiveSection] = useState('overview');
-    const [expandedSections, setExpandedSections] = useState<Set<string>>(
-        new Set(TOC_SECTIONS.map(s => s.id))
-    );
+    const [activeSection, setActiveSection] = useState('nav-overview');
+    const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(TOC_SECTIONS.map(s => s.id)));
     const [searchQuery, setSearchQuery] = useState('');
     const contentRef = useRef<HTMLDivElement>(null);
 
@@ -290,14 +535,8 @@ const UserGuidePage: React.FC = () => {
 
     useEffect(() => {
         const observer = new IntersectionObserver(
-            entries => {
-                for (const entry of entries) {
-                    if (entry.isIntersecting) {
-                        setActiveSection(entry.target.id);
-                    }
-                }
-            },
-            { rootMargin: '-20% 0px -70% 0px', threshold: 0 }
+            entries => { for (const e of entries) { if (e.isIntersecting) setActiveSection(e.target.id); } },
+            { rootMargin: '-15% 0px -75% 0px', threshold: 0 }
         );
         const els = contentRef.current?.querySelectorAll('[id]') ?? [];
         els.forEach(el => observer.observe(el));
@@ -305,31 +544,23 @@ const UserGuidePage: React.FC = () => {
     }, []);
 
     const filteredToc = searchQuery.trim()
-        ? TOC_SECTIONS.map(s => ({
-            ...s,
-            children: s.children?.filter(c =>
-                c.label.toLowerCase().includes(searchQuery.toLowerCase())
-            ),
-        })).filter(s =>
-            s.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (s.children && s.children.length > 0)
-        )
+        ? TOC_SECTIONS.map(s => ({ ...s, children: s.children?.filter(c => c.label.toLowerCase().includes(searchQuery.toLowerCase())) })).filter(s => s.label.toLowerCase().includes(searchQuery.toLowerCase()) || (s.children && s.children.length > 0))
         : TOC_SECTIONS;
 
     return (
         <div className="flex gap-0 h-screen overflow-hidden bg-white dark:bg-slate-950">
 
             {/* ── Left TOC ──────────────────────────────────────────────────── */}
-            <aside className="w-[260px] flex-shrink-0 h-screen overflow-y-auto border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <aside className="w-[255px] flex-shrink-0 h-screen overflow-y-auto border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                 <div className="p-4">
                     {/* Header */}
-                    <div className="flex items-center gap-2.5 mb-4">
+                    <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
                         <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center flex-shrink-0">
                             <BookOpen size={15} className="text-white" />
                         </div>
                         <div>
                             <p className="text-sm font-bold text-slate-900 dark:text-white leading-none">User Guide</p>
-                            <p className="text-[10px] text-slate-400 mt-0.5">v 3.1 · Tavro BizOps</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">Tavro Agent BizOps · v3.1</p>
                         </div>
                     </div>
 
@@ -340,38 +571,26 @@ const UserGuidePage: React.FC = () => {
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Search guide…"
-                            className="w-full pl-8 pr-7 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder-slate-400 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors"
+                            className="w-full pl-8 pr-7 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder-slate-400 outline-none focus:border-blue-400 transition-colors"
                         />
-                        {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                                <X size={12} />
-                            </button>
-                        )}
+                        {searchQuery && <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={12} /></button>}
                     </div>
 
-                    {/* TOC */}
+                    {/* TOC Nav */}
                     <nav className="space-y-0.5">
                         {filteredToc.map(section => (
                             <div key={section.id}>
                                 <div className="flex items-center">
                                     <button
                                         onClick={() => scrollTo(section.id)}
-                                        className={`flex-1 flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-semibold transition-colors text-left ${activeSection === section.id
-                                            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                            }`}
+                                        className={`flex-1 flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-semibold transition-colors text-left ${activeSection === section.id ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                     >
                                         <span className="flex-shrink-0 opacity-70">{section.icon}</span>
                                         {section.label}
                                     </button>
-                                    {section.children && section.children.length > 0 && (
-                                        <button
-                                            onClick={() => toggleSection(section.id)}
-                                            className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                                        >
-                                            {expandedSections.has(section.id)
-                                                ? <ChevronDown size={12} />
-                                                : <ChevronRight size={12} />}
+                                    {section.children && (
+                                        <button onClick={() => toggleSection(section.id)} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                                            {expandedSections.has(section.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                         </button>
                                     )}
                                 </div>
@@ -381,10 +600,7 @@ const UserGuidePage: React.FC = () => {
                                             <button
                                                 key={child.id}
                                                 onClick={() => scrollTo(child.id)}
-                                                className={`w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-colors ${activeSection === child.id
-                                                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
-                                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-medium'
-                                                    }`}
+                                                className={`w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-colors ${activeSection === child.id ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-medium'}`}
                                             >
                                                 {child.label}
                                             </button>
@@ -401,915 +617,525 @@ const UserGuidePage: React.FC = () => {
             <div ref={contentRef} className="flex-1 overflow-y-auto">
                 <div className="max-w-4xl mx-auto px-10 py-8 pb-24">
 
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 1 · PRODUCT OVERVIEW
-                    ══════════════════════════════════════════════════════════ */}
-                    <div id="overview">
-                        <div className="mb-8 pb-6 border-b border-slate-200 dark:border-slate-800">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Badge color="blue">v3.1</Badge>
-                                <Badge color="green">Generally Available</Badge>
+                    {/* Hero Banner */}
+                    <div className="mb-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-7 text-white">
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">v3.1</span>
+                                    <span className="bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">User Guide</span>
+                                </div>
+                                <h1 className="text-2xl font-extrabold mb-2 leading-tight">Tavro Agent BizOps</h1>
+                                <p className="text-blue-100 text-sm leading-relaxed max-w-xl">
+                                    Your step-by-step guide to navigating the portal — from discovering AI use cases and building your agent roster, to mapping your organization's digital twin and running compliance audits.
+                                </p>
                             </div>
-                            <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white mb-3 leading-tight">
-                                Tavro Agent BizOps
-                                <span className="block text-xl font-normal text-slate-500 dark:text-slate-400 mt-1">
-                                    Enterprise User Guide
-                                </span>
-                            </h1>
-                            <p className="text-base text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
-                                The complete reference for deploying, configuring, and operating Tavro — an enterprise-grade AI agent lifecycle management and governance platform built for modern business operations.
-                            </p>
-                        </div>
+                            <BookOpen size={48} className="text-white/20 flex-shrink-0" />
+                        </div>                        
                     </div>
 
-                    <SectionHeading id="what-is-tavro" level={2} icon={<BookOpen size={18} />}>
-                        What is Tavro Agent BizOps?
-                    </SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
-                        Tavro Agent BizOps is a centralized platform for managing the full lifecycle of AI agents across your enterprise — from discovery and prototyping to compliance auditing and real-time monitoring. It bridges the gap between AI engineering and business governance by linking agents directly to the business processes, applications, and regulations they affect.
-                    </p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
-                        At its core, Tavro maintains a <strong className="text-slate-800 dark:text-slate-200">Digital Twin</strong> of your organization — a live graph of business dimensions (applications, processes, teams, risk areas, integrations) that every agent, use case, and compliance rule is mapped against. This gives leadership a single source of truth for AI risk exposure, operational coverage, and regulatory readiness.
-                    </p>
 
-                    <SectionHeading id="key-capabilities" level={3}>Key Capabilities</SectionHeading>
-                    <DataTable
-                        headers={['Capability', 'Description']}
-                        rows={[
-                            [<span className="flex items-center gap-2"><Bot size={14} className="text-blue-500" /><strong>Agent Catalog</strong></span>, 'Centralized registry of all AI agents with risk scores, governance status, and business linkages.'],
-                            [<span className="flex items-center gap-2"><ClipboardList size={14} className="text-blue-500" /><strong>AI Use Cases</strong></span>, 'Structured documentation of AI initiatives tied to business problems, priorities, and expected outcomes.'],
-                            [<span className="flex items-center gap-2"><Network size={14} className="text-blue-500" /><strong>Digital Twin (Blueprint)</strong></span>, 'Interactive graph of your organization\'s dimensions — applications, processes, teams, strategy, and more.'],
-                            [<span className="flex items-center gap-2"><Scale size={14} className="text-blue-500" /><strong>Compliance Framework</strong></span>, 'Track regulations and internal policies, map impacts to business dimensions, and monitor gap closure.'],
-                            [<span className="flex items-center gap-2"><ShieldCheck size={14} className="text-blue-500" /><strong>Audit Engine</strong></span>, 'AI-powered compliance audits that evaluate use cases against regulations with live progress streaming.'],
-                            [<span className="flex items-center gap-2"><Zap size={14} className="text-violet-500" /><strong>Spark</strong></span>, 'AI idea generator that surfaces new agent opportunities from gaps in your current coverage.'],
-                            [<span className="flex items-center gap-2"><FlaskConical size={14} className="text-blue-500" /><strong>Agent Playground</strong></span>, 'Prototype and test agents against real business context before committing to production deployment.'],
-                            [<span className="flex items-center gap-2"><BarChart2 size={14} className="text-blue-500" /><strong>Insights</strong></span>, 'Cross-portfolio analytics — risk exposure, agent coverage, and compliance readiness at a glance.'],
-                        ]}
-                    />
+                    {/* ════════════════════════════════════════════════════════
+                        1 · PORTAL NAVIGATION
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="nav-overview" level={2} icon={<Layers size={18} />}>Portal Navigation</SectionHeading>                 
 
-                    <Callout type="info" title="Who Should Use This Guide">
-                        This guide is written for <strong>platform administrators</strong>, <strong>AI governance leads</strong>, <strong>solution architects</strong>, and <strong>business analysts</strong> responsible for deploying or operating Tavro within their organization. Some sections (Installation, API Reference) are intended for DevOps and engineering teams.
-                    </Callout>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 2 · GETTING STARTED
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="getting-started" level={2} icon={<Package size={18} />}>
-                        Getting Started
-                    </SectionHeading>
-
-                    <SectionHeading id="prerequisites" level={3}>Prerequisites</SectionHeading>
-                    <DataTable
-                        headers={['Requirement', 'Version / Notes']}
-                        rows={[
-                            ['Node.js', '≥ 18.x LTS'],
-                            ['npm / pnpm', '≥ 9.x (npm) or 8.x (pnpm)'],
-                            ['Git', 'Any recent version'],
-                            ['ZITADEL Identity Provider', 'Self-hosted or cloud — required for OIDC authentication'],
-                            ['Tavro Backend API', 'Running on a reachable host (default: localhost:8000)'],
-                            ['MCP Server', 'Tavro MCP service (default: localhost:9001) — required for AI Assistant & Playground context'],
-                            ['PostgreSQL', '≥ 14, required by backend API (default port 5433)'],
-                        ]}
-                    />
-
-                    <SectionHeading id="installation" level={3}>Installation</SectionHeading>
-                    <Step n={1}><strong>Clone the repository</strong></Step>
-                    <CodeBlock lang="bash">{`git clone https://github.com/your-org/tavro.git
-cd tavro/tavro_app`}</CodeBlock>
-
-                    <Step n={2}><strong>Install dependencies</strong></Step>
-                    <CodeBlock lang="bash">{`npm install`}</CodeBlock>
-
-                    <Step n={3}><strong>Copy the environment template and fill in your values</strong> (see Environment Configuration below)</Step>
-                    <CodeBlock lang="bash">{`cp .env.example .env`}</CodeBlock>
-
-                    <Step n={4}><strong>Start the development server</strong> — the app runs on port 9000 by default</Step>
-                    <CodeBlock lang="bash">{`npm run dev
-# → http://localhost:9000`}</CodeBlock>
-
-                    <Step n={5}><strong>Build for production</strong></Step>
-                    <CodeBlock lang="bash">{`npm run build
-# Output in dist/`}</CodeBlock>
-
-                    <SectionHeading id="env-config" level={3}>Environment Configuration</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Create a <InlineCode>.env</InlineCode> file in the <InlineCode>tavro_app/</InlineCode> directory with the following variables:
-                    </p>
-                    <CodeBlock lang=".env">{`# ── API ──────────────────────────────────────────────────────────────
-VITE_TWIN_API_URL=http://localhost:8000      # Tavro backend REST API
-VITE_MCP_URL=http://localhost:9001/zitadel/mcp  # MCP server endpoint
-
-# ── ZITADEL Identity Provider ────────────────────────────────────────
-VITE_ZITADEL_ISSUER=https://your-zitadel-domain.com
-VITE_ZITADEL_CLIENT_ID=<your-application-client-id>
-VITE_ZITADEL_REDIRECT_PATH=/auth/callback
-VITE_ZITADEL_SCOPE=openid profile email urn:zitadel:iam:user:resourceowner
-
-# ── LLM Keys (server-side / playground backend) ──────────────────────
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-proj-...
-AZURE_AI_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com
-AZURE_AI_FOUNDRY_KEY=<azure-key>
-
-# ── Database (backend only) ──────────────────────────────────────────
-DATABASE_URL=postgresql://tavro:postgres@localhost:5433/tavro`}</CodeBlock>
-
-                    <DataTable
-                        headers={['Variable', 'Required', 'Description']}
-                        rows={[
-                            ['VITE_TWIN_API_URL', <Badge color="red">Required</Badge>, 'Base URL of the Tavro REST API. All /agents, /use-cases, /compliance, etc. calls go here.'],
-                            ['VITE_MCP_URL', <Badge color="amber">Recommended</Badge>, 'MCP server endpoint. Required for Blueprint context in the AI Assistant and Playground.'],
-                            ['VITE_ZITADEL_ISSUER', <Badge color="red">Required</Badge>, 'OIDC issuer URL from your ZITADEL instance.'],
-                            ['VITE_ZITADEL_CLIENT_ID', <Badge color="red">Required</Badge>, 'OAuth2 client ID registered in ZITADEL for this application.'],
-                            ['VITE_ZITADEL_REDIRECT_PATH', <Badge color="red">Required</Badge>, 'Callback path after successful login (register this URI in ZITADEL).'],
-                            ['VITE_ZITADEL_SCOPE', <Badge color="red">Required</Badge>, 'OAuth2 scopes — must include openid and the ZITADEL resource owner scope.'],
-                            ['ANTHROPIC_API_KEY', <Badge color="slate">Optional</Badge>, 'Required only if using Anthropic (Claude) as the Playground LLM backend.'],
-                            ['AZURE_AI_FOUNDRY_ENDPOINT / KEY', <Badge color="slate">Optional</Badge>, 'Required only if using Azure AI Foundry as the Playground LLM backend.'],
-                        ]}
-                    />
-
-                    <SectionHeading id="authentication" level={3}>Authentication</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Tavro uses <strong className="text-slate-800 dark:text-slate-200">OIDC with PKCE</strong> (Proof Key for Code Exchange) for secure authentication — no client secret is stored in the browser. Here is the complete login flow:
-                    </p>
-                    <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 p-4 my-4 font-mono text-xs text-slate-600 dark:text-slate-300 space-y-2">
-                        <div className="flex items-center gap-2"><span className="text-blue-500 font-bold">1</span> Browser → ZITADEL: Authorization request + PKCE challenge</div>
-                        <div className="flex items-center gap-2 pl-4"><ArrowRight size={10} className="text-slate-400" /> ZITADEL: User logs in, returns authorization code</div>
-                        <div className="flex items-center gap-2"><span className="text-blue-500 font-bold">2</span> Browser → ZITADEL: Exchange code + PKCE verifier for tokens</div>
-                        <div className="flex items-center gap-2 pl-4"><ArrowRight size={10} className="text-slate-400" /> Receives: access_token, id_token, refresh_token</div>
-                        <div className="flex items-center gap-2"><span className="text-blue-500 font-bold">3</span> Tokens stored in localStorage under tavro_* keys</div>
-                        <div className="flex items-center gap-2"><span className="text-blue-500 font-bold">4</span> All API calls include: <code className="text-blue-400">Authorization: Bearer &lt;access_token&gt;</code></div>
-                        <div className="flex items-center gap-2"><span className="text-blue-500 font-bold">5</span> Silent token refresh via refresh_token when access_token expires</div>
-                    </div>
-                    <Callout type="warning" title="Session Expiry">
-                        If a token refresh attempt fails, Tavro automatically fires a <InlineCode>tavro:session_expired</InlineCode> event, clears all auth tokens from localStorage, and redirects the user to the login page. No manual intervention is required.
-                    </Callout>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 3 · UI WALKTHROUGH
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="ui-walkthrough" level={2} icon={<Layers size={18} />}>
-                        UI Walkthrough
-                    </SectionHeading>
-
-                    <SectionHeading id="layout-overview" level={3}>Layout Overview</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">
-                        The Tavro interface is divided into three horizontal zones that respond to user interaction:
-                    </p>
-                    <div className="grid grid-cols-3 gap-3 my-4">
+                    
+                    <div className="grid grid-cols-3 gap-3 mt-4">
                         {[
-                            { label: 'Left Sidebar', desc: 'Collapsible navigation — 280px expanded, 72px collapsed', color: 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30' },
-                            { label: 'Main Content', desc: 'Scrollable page content — grows to fill available space (max 1600px)', color: 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30' },
-                            { label: 'Right Panel', desc: 'Resizable AI chat / logs / attachments — 72px when closed, 300–640px when open', color: 'border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30' },
+                            { title: 'Left Sidebar', color: 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30', desc: 'Primary navigation — links to every module. Collapse it using the chevron button on its right edge to gain more space. Collapsed icons show tooltips on hover.' },
+                            { title: 'Main Content', color: 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30', desc: 'Where all page content renders — use case lists, agent details, blueprint graphs, audit results. Scrolls independently of both sidebars.' },
+                            { title: 'Right Panel', color: 'border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30', desc: 'Contextual workspace — AI Chat, Dev Logs, and Attachments. Stays open while you work. Resize by dragging the left edge of the panel.' },
                         ].map(z => (
-                            <div key={z.label} className={`rounded-xl border p-4 ${z.color}`}>
-                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-1">{z.label}</p>
+                            <div key={z.title} className={`rounded-xl border p-3.5 ${z.color}`}>
+                                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">{z.title}</p>
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{z.desc}</p>
                             </div>
                         ))}
                     </div>
-                    <Callout type="tip" title="Responsive Resizing">
-                        Both sidebars update CSS custom properties (<InlineCode>--tavro-left-rail-width</InlineCode> and <InlineCode>--tavro-right-rail-width</InlineCode>) so any child component can react to layout changes without prop drilling.
-                    </Callout>
 
-                    <SectionHeading id="left-sidebar" level={3}>Left Navigation Sidebar</SectionHeading>
+                    <SectionHeading id="nav-sidebar" level={3}>Navigation Sidebar</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The left sidebar contains all primary navigation and a live Catalog Sync widget. Collapse or expand it using the <strong>chevron button</strong> on its right edge (near the top). When collapsed, nav items show icon-only with tooltips on hover.
+                        Every module is one click away from the left sidebar. Here's what each entry does:
                     </p>
-                    <DataTable
-                        headers={['Nav Item', 'Route', 'Description']}
-                        rows={[
-                            ['Home', '/', 'Landing dashboard with quick-access cards'],
-                            ['AI Use Cases', '/use-cases', 'All AI initiative records'],
-                            ['Agents', '/catalog', 'Agent catalog grid/list'],
-                            ['Applications', '/applications', 'Business application registry'],
-                            ['Processes', '/processes', 'Business process hierarchy'],
-                            ['Integrations', '/integrations', 'System integration catalog'],
-                            ['Spark', '/spark', 'AI idea generation studio'],
-                            ['Insights', '/insights', 'Portfolio analytics & risk reports'],
-                            ['Blueprint', '/blueprint', 'Digital twin graph explorer'],
-                            ['Compliance', '/compliance', 'Regulations & policies'],
-                            ['Audit Center', '/audit', 'Audit runs and findings'],
-                            ['Agent Playground', '/playground', 'Agent prototype & test environment'],
-                            ['Help', '/help', 'This user guide'],
-                            ['Settings', '/settings', 'Platform configuration'],
-                            ['Sign Out', '—', 'Clears session and redirects to login'],
-                        ]}
-                    />
-
-                    <SectionHeading id="right-panel" level={3}>Right Panel</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The right panel is a multi-tab workspace that provides contextual tools without leaving the current page. It has three tabs:
-                    </p>
-                    <DataTable
-                        headers={['Tab', 'Icon', 'When Available', 'Description']}
-                        rows={[
-                            ['AI Assistant', 'MessageCircle', 'Always', 'Context-aware chat powered by your configured LLM provider'],
-                            ['Dev Logs', 'Terminal', 'When Show Logs is enabled in Settings', 'Structured real-time log stream from the MCP layer and API calls'],
-                            ['Attachments', 'Paperclip', 'On Agent, Use Case, Application, and Process pages', 'Upload and manage reference documents for the current entity'],
-                        ]}
-                    />
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The panel can be <strong>resized</strong> by dragging the handle on its left edge. It will occupy between 300px and 50% of your screen width. A collapse button appears on the drag handle on hover.
-                    </p>
-
-                    <SectionHeading id="catalog-sync" level={3}>Catalog Sync Widget</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Located at the bottom of the left sidebar (visible only when expanded), the Catalog Sync widget shows:
-                    </p>
-                    <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1.5 ml-4 mb-4">
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Live agent and use case counts from the latest catalog fetch</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> "Last synced X minutes ago" timestamp that updates every 30 seconds</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> A <strong>Refresh Catalog</strong> button that simultaneously re-fetches agents and use cases</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Animated spinner during active fetch — the button is disabled while syncing</li>
-                    </ul>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 4 · CORE FEATURES
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="features" level={2} icon={<Star size={18} />}>
-                        Core Features
-                    </SectionHeading>
-
-                    {/* Home */}
-                    <SectionHeading id="home" level={3}>Home Dashboard</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The home page provides a quick-action landing pad. From here you can jump directly to Use Cases, the Agent Catalog, or Insights. It is the default destination after login and after the Tavro logo is clicked.
-                    </p>
-
-                    {/* Use Cases */}
-                    <SectionHeading id="use-cases" level={3}>AI Use Cases</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Use Cases are the central unit of AI initiative planning in Tavro. Each use case documents a specific business problem that AI is intended to solve, along with its expected benefits, priority, and the agents, applications, and processes involved.
-                    </p>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Creating a Use Case</p>
-                    <Step n={1}>Navigate to <strong>AI Use Cases</strong> → click <strong>+ New Use Case</strong></Step>
-                    <Step n={2}>Fill in <strong>Title</strong>, <strong>Problem Statement</strong>, and <strong>Expected Benefits</strong></Step>
-                    <Step n={3}>Set <strong>Priority</strong> (High / Medium / Low) and <strong>Status</strong> (Proposed / Active / In Review / Deprecated)</Step>
-                    <Step n={4}>Link <strong>Agents</strong>, <strong>Applications</strong>, and <strong>Business Processes</strong> to contextualize scope</Step>
-                    <Step n={5}>Add <strong>Controls</strong> and trigger a <strong>Risk Assessment</strong> once agents are linked</Step>
-                    <DataTable
-                        headers={['Field', 'Type', 'Description']}
-                        rows={[
-                            ['Title', 'Text', 'Short name for the use case — shown in catalog and search'],
-                            ['Description', 'Text', 'Executive summary of what the AI initiative does'],
-                            ['Problem Statement', 'Text', 'The business problem or pain point being addressed'],
-                            ['Expected Benefits', 'Text', 'Measurable or qualitative outcomes expected'],
-                            ['Priority', 'Enum', 'High / Medium / Low — drives ranking in the catalog'],
-                            ['Status', 'Enum', 'Proposed → Active → In Review → Deprecated lifecycle'],
-                            ['Function', 'Text', 'Business function (e.g. Finance, HR, Operations)'],
-                            ['Overall Risk', 'Computed', 'Aggregated from linked agent risk assessments'],
-                        ]}
-                    />
-
-                    {/* Agents */}
-                    <SectionHeading id="agents" level={3}>Agent Catalog</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The Agent Catalog is the authoritative registry of every AI agent in your enterprise. Each entry captures the agent's identity, technical configuration, risk profile, and its relationships to business systems and regulations.
-                    </p>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Agent Detail Tabs</p>
-                    <DataTable
-                        headers={['Tab', 'Contents']}
-                        rows={[
-                            ['Identification', 'Role, instructions, goal orientation, environment, owner, governance tags, governance status badge'],
-                            ['Technology Config', 'Autonomy level, access scope, memory type, data freshness policy, reasoning model, tools, MCP servers, guardrails, security schemes'],
-                            ['Related', 'Linked applications, business processes, use cases, knowledge sources, skills, prompt templates'],
-                            ['Risk Assessment', 'Risk scores (Blended, AIVSS, Regulatory), risk classification badges, assessment date, state, and assessor'],
-                        ]}
-                    />
-                    <Callout type="info" title="Risk Assessment Workflow">
-                        Triggering a risk assessment sends the agent's full profile to the AI assessment engine. Results return asynchronously — the catalog polls for completion and displays a spinner on the agent card until the assessment completes. Risk scores include <strong>Blended Risk</strong>, <strong>AIVSS</strong> (AI Vulnerability Scoring System), and <strong>Regulatory Risk</strong> classifications.
-                    </Callout>
-
-                    {/* Applications */}
-                    <SectionHeading id="applications" level={3}>Business Applications</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The Applications module tracks every software system in your enterprise that AI agents interact with. Key fields include:
-                    </p>
-                    <DataTable
-                        headers={['Field', 'Description']}
-                        rows={[
-                            ['Application Name', 'Official system name (e.g. Salesforce CRM, SAP ERP)'],
-                            ['Business Criticality', 'Impact level if the system becomes unavailable'],
-                            ['Emergency Tier', 'Urgency classification for incident response'],
-                            ['Business Owner', 'Named accountable executive or team'],
-                            ['Vendor Name', 'Third-party vendor if applicable'],
-                            ['Embedded AI', 'Flag indicating the application has built-in AI features'],
-                            ['Data Excluded from AI Training', 'Whether data in this app is excluded from model training'],
-                            ['Privacy Policy URL', 'Link to the application\'s privacy/data handling documentation'],
-                            ['Related Agents', 'Count and list of agents that interact with this application'],
-                        ]}
-                    />
-
-                    {/* Processes */}
-                    <SectionHeading id="processes" level={3}>Business Processes</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Business Processes allow you to model your organizational workflows and understand where AI agents are embedded. Processes support a <strong>parent–child hierarchy</strong> — a top-level process (e.g. "Order to Cash") can contain sub-processes (e.g. "Invoice Processing", "Payment Reconciliation").
-                    </p>
-                    <DataTable
-                        headers={['Field', 'Description']}
-                        rows={[
-                            ['Process Name / Number', 'Identifier and human-readable name'],
-                            ['Criticality', 'How critical this process is to business operations'],
-                            ['Impact Dimensions', 'Separate ratings for Reputational, Financial, and Regulatory impact'],
-                            ['SLA', 'Service level agreement for process completion'],
-                            ['Process Health State', 'Current operational status (Healthy, Degraded, At Risk)'],
-                            ['Stakeholders / Operators', 'Named individuals or teams who own and run the process'],
-                            ['Parent Process', 'Links this process into a hierarchy'],
-                            ['Related Use Cases', 'AI use cases that automate or support this process'],
-                        ]}
-                    />
-
-                    {/* Integrations */}
-                    <SectionHeading id="integrations" level={3}>Integrations</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Integrations catalog the APIs, webhooks, data feeds, and connectors that AI agents use to exchange data with external systems. Each integration record includes:
-                    </p>
-                    <DataTable
-                        headers={['Field', 'Description']}
-                        rows={[
-                            ['Protocol', 'REST, GraphQL, SOAP, gRPC, WebSocket, etc.'],
-                            ['Authentication Method', 'OAuth2, API Key, Basic Auth, mTLS, etc.'],
-                            ['Endpoint URL', 'Base URL of the integration target'],
-                            ['Data Sensitivity', 'Classification of data flowing through this integration'],
-                            ['Rate Limit', 'Requests per second / per minute allowed'],
-                            ['Availability Status', 'Live operational status (Online, Degraded, Offline)'],
-                            ['SLA', 'Uptime or response time commitment'],
-                            ['Parent Application', 'The business application this integration belongs to'],
-                        ]}
-                    />
-
-                    {/* Spark */}
-                    <SectionHeading id="spark" level={3}>Spark — AI Idea Generation</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Spark is Tavro's AI-powered brainstorming studio. It analyzes your current Blueprint, agent coverage, and compliance landscape to surface high-value opportunities where new AI agents could add business value.
-                    </p>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Generating Ideas</p>
-                    <Step n={1}>Navigate to <strong>Spark</strong></Step>
-                    <Step n={2}>Select <strong>Target Dimensions</strong> from your Blueprint that you want ideas focused on</Step>
-                    <Step n={3}>Click <strong>Generate Ideas</strong> — Spark sends your company context to Claude and streams back a batch of opportunities</Step>
-                    <Step n={4}>Review each idea card: <strong>Signal Type</strong>, <strong>Complexity</strong>, <strong>Estimated Impact</strong>, and <strong>Similar Agents</strong> already in your catalog</Step>
-                    <Step n={5}>Save interesting ideas, then <strong>Convert to Use Case</strong> to promote them into the full AI use case workflow</Step>
-                    <DataTable
-                        headers={['Signal Type', 'Meaning']}
-                        rows={[
-                            [<Badge color="blue">Gap Coverage</Badge>, 'A process or dimension that has no agent support yet'],
-                            [<Badge color="red">Risk Hotspot</Badge>, 'An area of high risk exposure that could benefit from AI monitoring'],
-                            [<Badge color="amber">Integration Surface</Badge>, 'An integration point that is under-leveraged by current agents'],
-                            [<Badge color="violet">Compliance Gap</Badge>, 'A compliance requirement with no corresponding AI control'],
-                            [<Badge color="slate">Strategic Gap</Badge>, 'A strategic initiative without AI acceleration'],
-                        ]}
-                    />
-
-                    {/* Insights */}
-                    <SectionHeading id="insights" level={3}>Insights</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Insights provides cross-portfolio analytics for AI governance reporting. From this page, leadership can review the overall risk landscape, agent coverage across business dimensions, and compliance readiness metrics.
-                    </p>
-
-                    {/* Blueprint */}
-                    <SectionHeading id="blueprint" level={3}>Blueprint — Digital Twin</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Blueprint is Tavro's <strong>organizational digital twin</strong> — a queryable graph of every significant dimension in your business. It acts as the connective tissue linking agents, use cases, compliance rules, and real-world systems together.
-                    </p>
-                    <Callout type="note" title="First-Time Setup">
-                        Before using Blueprint, complete the <strong>Blueprint Setup</strong> wizard (<InlineCode>/blueprint/setup</InlineCode>) to register your company and define your initial dimension types.
-                    </Callout>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2 mt-4">Dimension Categories</p>
-                    <DataTable
-                        headers={['Category', 'Description', 'Examples']}
-                        rows={[
-                            [<Badge color="blue">profile</Badge>, 'Core company identity', 'Legal entity, industry, region'],
-                            [<Badge color="slate">strategy</Badge>, 'Strategic objectives & OKRs', 'Growth targets, digital transformation pillars'],
-                            [<Badge color="green">process</Badge>, 'Business workflows', 'Order management, HR onboarding'],
-                            [<Badge color="amber">application</Badge>, 'Software systems', 'Salesforce, SAP, custom apps'],
-                            [<Badge color="slate">organisation</Badge>, 'Teams & org structure', 'Finance Dept, CISO Office'],
-                            [<Badge color="red">risk</Badge>, 'Risk domains', 'Operational risk, data breach risk'],
-                            [<Badge color="slate">finance</Badge>, 'Financial dimensions', 'Cost centers, revenue streams'],
-                            [<Badge color="violet">integration</Badge>, 'System integrations', 'REST API connections, data feeds'],
-                            [<Badge color="slate">technology</Badge>, 'Technology stack components', 'Cloud infrastructure, ML platforms'],
-                            [<Badge color="slate">custom</Badge>, 'User-defined dimensions', 'Any business-specific concept'],
-                        ]}
-                    />
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2 mt-4">Relationship Types</p>
-                    <DataTable
-                        headers={['Relationship', 'Meaning']}
-                        rows={[
-                            ['depends_on', 'Node A requires Node B to function'],
-                            ['owned_by', 'Node A is owned/governed by Node B'],
-                            ['supports', 'Node A provides support or capability to Node B'],
-                            ['risks', 'Node A introduces risk to Node B'],
-                            ['enables', 'Node A makes Node B possible'],
-                            ['part_of', 'Node A is a component of Node B'],
-                            ['governed_by', 'Node A is governed by regulation or policy Node B'],
-                            ['replaced_by', 'Node A is being replaced by Node B'],
-                            ['custom', 'User-defined relationship type'],
-                        ]}
-                    />
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2 mt-4">Views</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Blueprint supports three viewing modes — switch between them using the toolbar:
-                    </p>
-                    <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1.5 ml-4 mb-4">
-                        <li className="flex items-start gap-2"><span className="text-blue-500 font-bold flex-shrink-0">Graph</span> Interactive node-link diagram powered by React Flow with automatic Dagre layout</li>
-                        <li className="flex items-start gap-2"><span className="text-blue-500 font-bold flex-shrink-0">Grid</span> Card grid view — useful for quickly browsing all nodes in a category</li>
-                        <li className="flex items-start gap-2"><span className="text-blue-500 font-bold flex-shrink-0">List</span> Tabular view — best for bulk operations and exports</li>
-                    </ul>
-
-                    {/* Compliance */}
-                    <SectionHeading id="compliance" level={3}>Compliance</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The Compliance module tracks <strong>Regulations</strong> (external requirements like GDPR, SOC 2, ISO 27001) and <strong>Policies</strong> (internal governance rules). For each item, you document dimensions, map impacts to Blueprint nodes, and track gap closure status.
-                    </p>
-                    <DataTable
-                        headers={['Concept', 'Description']}
-                        rows={[
-                            ['Compliance Item', 'A regulation or internal policy with scope, status, and lifecycle dates'],
-                            ['Dimension', 'A structured aspect of the regulation (requirement, control, deadline, penalty, audit, etc.)'],
-                            ['Impact', 'A mapping from this compliance item to a specific Blueprint node, with gap status and remediation plan'],
-                            ['Document', 'Attached source documents — can be typed as source text, guidance, evidence, audit trail, or policy text'],
-                            ['Gap Status', 'open → in_progress → closed / accepted / not_applicable'],
-                            ['Impact Level', 'critical / high / medium / low / none — drives risk prioritization'],
-                        ]}
-                    />
-                    <Callout type="tip" title="AI Research">
-                        For regulations, use the <strong>AI Research</strong> button to automatically fetch and summarize public regulatory sources. Tavro will populate dimensions, summaries, and source references from publicly available documentation.
-                    </Callout>
-
-                    {/* Audit */}
-                    <SectionHeading id="audit" level={3}>Audit Center</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The Audit Center runs AI-powered compliance audits that systematically evaluate your AI use cases against compliance requirements. Audits stream results in real-time using <strong>Server-Sent Events (SSE)</strong>.
-                    </p>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Audit Scope Types</p>
-                    <DataTable
-                        headers={['Scope', 'Coverage']}
-                        rows={[
-                            [<Badge color="blue">single</Badge>, '1 specific use case × 1 specific compliance item — targeted spot check'],
-                            [<Badge color="amber">use_case_all</Badge>, '1 specific use case × all compliance items — full compliance picture for a single initiative'],
-                            [<Badge color="amber">catalog_single</Badge>, 'All use cases × 1 compliance item — impact analysis for a new regulation or policy'],
-                            [<Badge color="red">full</Badge>, 'All use cases × all compliance items — complete enterprise-wide compliance audit'],
-                        ]}
-                    />
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2 mt-4">Reading Audit Findings</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">Each finding produced by an audit contains:</p>
-                    <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1.5 ml-4 mb-4">
-                        <li className="flex items-start gap-2"><AlertCircle size={14} className="text-red-400 mt-0.5 flex-shrink-0" /> <strong>Risk Level</strong> — critical / high / medium / low / none</li>
-                        <li className="flex items-start gap-2"><AlertCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" /> <strong>Gaps</strong> — identified compliance gaps with severity</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-400 mt-0.5 flex-shrink-0" /> <strong>Compliant Areas</strong> — requirements already satisfied</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={14} className="text-blue-400 mt-0.5 flex-shrink-0" /> <strong>Recommendations</strong> — prioritized action items (immediate / short-term / long-term)</li>
-                    </ul>
-
-                    {/* Playground */}
-                    <SectionHeading id="playground" level={3}>Agent Playground</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The Agent Playground is a prototyping environment for designing and testing agents before they are formally catalogued. You can configure a complete agent runtime — system prompt, tools, LLM provider, temperature — and run test conversations against real business context.
-                    </p>
-                    <DataTable
-                        headers={['Configuration', 'Description']}
-                        rows={[
-                            ['Infrastructure Provider', 'Choose between Claude (Anthropic) or Azure AI Foundry'],
-                            ['Model', 'Select the specific model for the chosen provider'],
-                            ['System Prompt', 'Free-form agent instruction — use Blueprint context to inject real company data'],
-                            ['Tools', 'Enable built-in tools: web_search, code_interpreter, file_search, blueprint_context (MCP)'],
-                            ['Temperature', 'Controls response creativity (0 = deterministic, 1 = highly creative)'],
-                            ['Max Tokens', 'Maximum response length per turn'],
-                        ]}
-                    />
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2 mt-4">Observations</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        While chatting, you can attach <strong>Observations</strong> to any message — structured annotations that capture your notes about the agent's behavior:
-                    </p>
-                    <DataTable
-                        headers={['Observation Type', 'Use When']}
-                        rows={[
-                            [<Badge color="red">gap</Badge>, 'The agent failed to handle a scenario or gave an incomplete answer'],
-                            [<Badge color="green">works_well</Badge>, 'The agent performed exactly as expected'],
-                            [<Badge color="amber">needs_info</Badge>, 'The agent needed more context to respond correctly'],
-                            [<Badge color="violet">unexpected</Badge>, 'The agent produced a surprising or out-of-scope response'],
-                            [<Badge color="slate">note</Badge>, 'General note for review during session summary'],
-                        ]}
-                    />
-                    <Callout type="tip" title="Session Summary">
-                        At the end of a session, click <strong>Generate Summary</strong> to have the AI summarize the conversation, key observations, and recommended improvements to the agent's system prompt or toolset.
-                    </Callout>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 5 · AI ASSISTANT
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="ai-assistant" level={2} icon={<MessageCircle size={18} />}>
-                        AI Assistant
-                    </SectionHeading>
-
-                    <SectionHeading id="chat-panel" level={3}>Chat Panel</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The AI Assistant is accessible from the right panel on every page. It provides a persistent chat interface powered by your configured LLM — conversations are preserved across page navigations within a session.
-                    </p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Key behaviors:
-                    </p>
-                    <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1.5 ml-4 mb-4">
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Streams responses in real-time — switching to the Dev Logs tab does not interrupt an active stream</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Supports file attachments — upload documents to include in the conversation context</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Multiple named sessions — create and switch between separate conversation threads</li>
-                        <li className="flex items-start gap-2"><CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> Sessions persist in localStorage — they survive page refresh but are cleared on Sign Out</li>
-                    </ul>
-
-                    <SectionHeading id="context-awareness" level={3}>Context Awareness</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Tavro automatically injects the current page context into the AI Assistant's system prompt, so it always understands what you're looking at:
-                    </p>
-                    <DataTable
-                        headers={['Current Page', 'Injected Context']}
-                        rows={[
-                            ['Agent Detail', 'Full agent record: role, instructions, tools, models, risk assessments, related entities'],
-                            ['Use Case Detail', 'Use case name, description, problem statement, linked agents and processes'],
-                            ['Blueprint', 'Compressed list of up to 30 key nodes from the current company\'s digital twin'],
-                            ['Settings', 'Platform configuration context — useful for asking configuration questions'],
-                            ['All other pages', 'Generic Tavro platform context'],
-                        ]}
-                    />
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 6 · SETTINGS
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="settings-config" level={2} icon={<Settings size={18} />}>
-                        Settings &amp; Configuration
-                    </SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Access Settings from the bottom of the left sidebar. Settings are divided into four sections:
-                    </p>
-
-                    <SectionHeading id="llm-config" level={3}>LLM Provider Setup</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The AI Assistant uses a configurable LLM provider. Tavro currently ships with <strong>Copilot SDK</strong> as the default provider, which supports four BYOK (Bring Your Own Key) backend types:
-                    </p>
-                    <DataTable
-                        headers={['Backend Type', 'Required Fields', 'Notes']}
-                        rows={[
-                            ['GitHub Copilot', 'API Key, Model', 'Default model: gpt-4.1'],
-                            ['OpenAI', 'API Key, Model', 'Supports gpt-4o, gpt-5.5'],
-                            ['Azure OpenAI', 'API Key, Base URL, Model', 'Base URL must be your Azure resource endpoint'],
-                            ['Anthropic', 'API Key, Model', 'Supports claude-sonnet-4-6, claude-sonnet-4-5'],
-                        ]}
-                    />
-                    <Step n={1}>In Settings, expand the <strong>Copilot SDK</strong> provider card</Step>
-                    <Step n={2}>Select your <strong>Provider Type</strong> (GitHub / OpenAI / Azure / Anthropic)</Step>
-                    <Step n={3}>If Azure: enter your <strong>Base URL</strong></Step>
-                    <Step n={4}>Enter your <strong>API Key</strong> and select a <strong>Model</strong></Step>
-                    <Step n={5}>Click <strong>Save</strong>, then click <strong>Use this LLM</strong> to activate it</Step>
-                    <Callout type="warning" title="API Key Storage">
-                        API keys are stored in browser <InlineCode>localStorage</InlineCode>. They are never sent to Tavro's backend — they are transmitted directly from your browser to the LLM provider endpoint. Do not use production keys on shared or public machines.
-                    </Callout>
-
-                    <SectionHeading id="mcp-connection" level={3}>MCP Connection</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        The <strong>Model Context Protocol (MCP)</strong> server provides the AI Assistant and Playground with real-time access to your Blueprint data and other tools. The MCP server URL is read from <InlineCode>VITE_MCP_URL</InlineCode> and is displayed read-only in Settings. Authentication is handled automatically via the same OIDC tokens used for the REST API.
-                    </p>
-
-                    <SectionHeading id="dev-settings" level={3}>Developer Settings</SectionHeading>
-                    <DataTable
-                        headers={['Setting', 'Default', 'Effect']}
-                        rows={[
-                            ['Show Logs', 'Off', 'Enables the Dev Logs tab in the right panel. Displays structured MCP and API log events in a scrollable ring buffer (up to 500 entries).'],
-                        ]}
-                    />
-
-                    <SectionHeading id="appearance" level={3}>Appearance</SectionHeading>
-                    <DataTable
-                        headers={['Theme', 'Description']}
-                        rows={[
-                            ['Light', 'Default white/slate UI — best for well-lit environments'],
-                            ['Dark', 'Dark slate background — reduced eye strain in low-light settings'],
-                            ['System', 'Follows your operating system\'s light/dark mode preference automatically'],
-                        ]}
-                    />
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 7 · API REFERENCE
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="api-reference" level={2} icon={<Code2 size={18} />}>
-                        API Reference
-                    </SectionHeading>
-
-                    <SectionHeading id="api-auth" level={3}>Authentication</SectionHeading>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        All Tavro API endpoints require a valid Bearer token and a tenant identifier:
-                    </p>
-                    <CodeBlock lang="http">{`GET /api/agents HTTP/1.1
-Host: your-tavro-backend.com
-Authorization: Bearer <access_token>
-x-tenant-id: <your-tenant-uuid>
-Content-Type: application/json`}</CodeBlock>
-                    <Callout type="note" title="Tenant Isolation">
-                        Every request must include the <InlineCode>x-tenant-id</InlineCode> header. This is automatically extracted from the ZITADEL access token claims and stored in localStorage as <InlineCode>tavro_tenant_id</InlineCode> after login.
-                    </Callout>
-
-                    <SectionHeading id="api-endpoints" level={3}>Endpoint Index</SectionHeading>
-                    <DataTable
-                        headers={['Module', 'Base Path', 'Key Operations']}
-                        rows={[
-                            ['Agents', '/agents', 'GET (list, paginated), GET /:id, POST, PUT /:id, DELETE /:id, POST /suggest-description'],
-                            ['Use Cases', '/use-cases', 'GET (list), GET /:id, POST, PUT /:id, DELETE /:id, attachments CRUD'],
-                            ['Applications', '/applications', 'GET (list, paginated), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Processes', '/processes', 'GET (list), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Integrations', '/integrations', 'GET (list), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Blueprint – Companies', '/companies', 'GET (list), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Blueprint – Dim Types', '/dim-types', 'GET (list), POST, PUT /:id, DELETE /:id'],
-                            ['Blueprint – Nodes', '/dim-nodes', 'GET (list by company), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Blueprint – Edges', '/dim-edges', 'GET (list by company), POST, DELETE /:id'],
-                            ['Blueprint – Graph', '/graphs/:company_id', 'GET — returns full node + edge graph for React Flow'],
-                            ['Compliance Items', '/compliance/items', 'GET (list), GET /:id, POST, PUT /:id, DELETE /:id'],
-                            ['Compliance Dimensions', '/compliance/dimensions', 'GET (by item), POST, PUT /:id, DELETE /:id'],
-                            ['Compliance Impacts', '/compliance/impacts', 'GET (by item & company), POST, PUT /:id, DELETE /:id'],
-                            ['Compliance Documents', '/compliance/documents', 'GET (by item), POST (multipart), DELETE /:id'],
-                            ['Audit Runs', '/audit/runs', 'GET (list), GET /:id, POST (initiate)'],
-                            ['Audit Stream', '/audit/runs/:id/stream', 'GET — SSE stream of live audit progress events'],
-                            ['Spark Ideas', '/spark/ideas', 'GET (list), DELETE /:id'],
-                            ['Spark Generate', '/spark/generate', 'POST — returns array of SparkIdea'],
-                            ['Spark Convert', '/spark/convert', 'POST — converts idea to UseCaseDetail'],
-                        ]}
-                    />
-
-                    <Callout type="info" title="Audit Streaming">
-                        The audit stream endpoint (<InlineCode>GET /audit/runs/:id/stream</InlineCode>) uses <strong>Server-Sent Events</strong>. The Vite dev proxy is pre-configured to pass SSE headers through correctly. Each event carries a JSON payload with the finding result or a <InlineCode>done</InlineCode> / <InlineCode>error</InlineCode> sentinel.
-                    </Callout>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 8 · ARCHITECTURE
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="architecture" level={2} icon={<GitBranch size={18} />}>
-                        Architecture Overview
-                    </SectionHeading>
-
-                    <SectionHeading id="tech-stack" level={3}>Technology Stack</SectionHeading>
-                    <DataTable
-                        headers={['Layer', 'Technology', 'Version']}
-                        rows={[
-                            ['UI Framework', 'React', '18.3.1'],
-                            ['Routing', 'React Router', '7.x'],
-                            ['Language', 'TypeScript', '5.x'],
-                            ['Build Tool', 'Vite', '6.x'],
-                            ['Styling', 'TailwindCSS', '3.4.x'],
-                            ['Icons', 'Lucide React', '1.x'],
-                            ['Graph Visualization', '@xyflow/react (React Flow)', '12.x'],
-                            ['Graph Layout Engine', '@dagrejs/dagre', '3.x'],
-                            ['AI Protocol', '@modelcontextprotocol/sdk', '1.27.x'],
-                            ['Markdown Rendering', 'react-markdown + remark-gfm', '10.x / 4.x'],
-                            ['PDF Export', 'jsPDF', '4.x'],
-                            ['Auth', 'Custom PKCE / OIDC (ZITADEL)', '—'],
-                        ]}
-                    />
-
-                    <SectionHeading id="data-flow" level={3}>Data Flow</SectionHeading>
-                    <CodeBlock lang="text">{`Browser (React SPA)
-├── Context Providers (React Context API)
-│   ├── CatalogContext    → Agent catalog, risk polling
-│   ├── UseCaseContext    → Use case CRUD
-│   ├── BlueprintContext  → Companies, dim types, nodes/edges, graph
-│   ├── ComplianceContext → Compliance items (scoped to active company)
-│   ├── PlaygroundContext → Session state, messages, observations
-│   ├── ChatContext       → AI assistant view context
-│   ├── ChatSessionContext→ Chat session lifecycle
-│   └── ThemeContext      → Dark/light/system theme
-│
-├── Service Layer (TypeScript singletons)
-│   ├── agentApi          → /agents REST endpoints
-│   ├── useCaseApi        → /use-cases REST endpoints
-│   ├── blueprintApi      → /companies, /dim-* REST endpoints
-│   ├── complianceApi     → /compliance/* REST endpoints
-│   ├── auditApi          → /audit/* + SSE streaming
-│   ├── sparkApi          → /spark/* REST endpoints
-│   ├── businessRelationsApi → /applications, /processes, /integrations
-│   ├── llmService        → localStorage-backed LLM config
-│   └── mcpClient         → MCP WebSocket/HTTP connection
-│
-├── All API calls → VITE_TWIN_API_URL + x-tenant-id header + Bearer token
-└── MCP calls    → VITE_MCP_URL + Bearer token`}</CodeBlock>
-
-                    <SectionHeading id="file-structure" level={3}>File Structure</SectionHeading>
-                    <CodeBlock lang="text">{`tavro_app/
-├── public/                     # Static assets served at root
-├── src/
-│   ├── assets/                 # Images, icons (travo_logo.png, etc.)
-│   ├── components/             # Reusable React components
-│   │   ├── Layout.tsx          # App shell: left nav, right panel, footer
-│   │   ├── ChatPanel.tsx       # AI assistant right panel
-│   │   ├── DevLogPanel.tsx     # Developer log viewer
-│   │   ├── AttachmentPanel.tsx # Document upload panel
-│   │   ├── AgentCatalog.tsx    # Agent grid/list component
-│   │   ├── AgentView.tsx       # Agent detail view component
-│   │   ├── BlueprintGraph.tsx  # React Flow graph wrapper
-│   │   ├── BlueprintDimPanel.tsx # Node editor side panel
-│   │   └── audit/
-│   │       └── AuditInitModal.tsx
-│   ├── context/                # React Context providers
-│   │   ├── CatalogContext.tsx
-│   │   ├── UseCaseContext.tsx
-│   │   ├── BlueprintContext.tsx
-│   │   ├── ComplianceContext.tsx
-│   │   ├── PlaygroundContext.tsx
-│   │   ├── ChatContext.tsx
-│   │   ├── ChatSessionContext.tsx
-│   │   └── ThemeContext.tsx
-│   ├── hooks/                  # Custom React hooks
-│   │   ├── useChatSync.ts      # Page → chat context sync
-│   │   ├── useShowLogs.ts      # Dev log panel toggle
-│   │   └── useInspectJson.ts   # JSON inspector toggle
-│   ├── pages/                  # Route-level page components
-│   │   ├── HomePage.tsx
-│   │   ├── Dashboard.tsx       # /catalog
-│   │   ├── AgentViewPage.tsx
-│   │   ├── CreateAgentPage.tsx
-│   │   ├── UseCasePage.tsx
-│   │   ├── UseCaseViewPage.tsx
-│   │   ├── CreateUseCasePage.tsx
-│   │   ├── BlueprintPage.tsx
-│   │   ├── BlueprintSetupPage.tsx
-│   │   ├── PlaygroundPage.tsx
-│   │   ├── CompliancePage.tsx
-│   │   ├── ComplianceItemPage.tsx
-│   │   ├── ComplianceSetupPage.tsx
-│   │   ├── AuditCenterPage.tsx
-│   │   ├── AuditRunDetailPage.tsx
-│   │   ├── BusinessApplicationsPage.tsx
-│   │   ├── BusinessApplicationViewPage.tsx
-│   │   ├── BusinessProcessesPage.tsx
-│   │   ├── BusinessProcessViewPage.tsx
-│   │   ├── IntegrationsPage.tsx
-│   │   ├── IntegrationViewPage.tsx
-│   │   ├── SparkPage.tsx
-│   │   ├── InsightsPage.tsx
-│   │   ├── Settings.tsx
-│   │   ├── UserGuidePage.tsx   # This page
-│   │   ├── Login.tsx
-│   │   └── AuthCallback.tsx
-│   ├── services/               # API clients and utilities
-│   │   ├── agentApi.ts
-│   │   ├── useCaseApi.ts
-│   │   ├── blueprintApi.ts
-│   │   ├── complianceApi.ts
-│   │   ├── auditApi.ts
-│   │   ├── sparkApi.ts
-│   │   ├── businessRelationsApi.ts
-│   │   ├── llmService.ts       # LLM config (localStorage)
-│   │   ├── mcpClient.ts        # MCP protocol client
-│   │   ├── auth.ts             # OIDC token management
-│   │   ├── authConfig.ts       # ZITADEL config
-│   │   ├── pkce.ts             # PKCE code challenge
-│   │   ├── buildSystemPrompt.ts# AI system prompt builder
-│   │   └── logger.ts           # Ring-buffer logger
-│   ├── store/
-│   │   └── chatSessionStore.ts # Persisted chat sessions
-│   ├── types/                  # TypeScript interfaces
-│   │   ├── agent.ts
-│   │   ├── useCase.ts
-│   │   ├── blueprint.ts
-│   │   ├── compliance.ts
-│   │   ├── audit.ts
-│   │   ├── spark.ts
-│   │   ├── playground.ts
-│   │   └── businessRelations.ts
-│   ├── utils/
-│   │   └── agentRisk.ts        # Risk assessment utilities
-│   ├── App.tsx                 # Root router + providers
-│   ├── App.css
-│   ├── main.tsx                # React DOM entry point
-│   └── index.css               # Tailwind directives
-├── index.html
-├── vite.config.ts              # Dev proxy + port config
-├── tailwind.config.js
-├── tsconfig.json
-└── package.json`}</CodeBlock>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 9 · TROUBLESHOOTING
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="troubleshooting" level={2} icon={<Terminal size={18} />}>
-                        Troubleshooting
-                    </SectionHeading>
-
-                    <DataTable
-                        headers={['Symptom', 'Likely Cause', 'Resolution']}
-                        rows={[
-                            [
-                                'Redirected to /login immediately after opening the app',
-                                'No valid session in localStorage or token expired with no refresh token',
-                                'Clear localStorage and complete a fresh login. Verify VITE_ZITADEL_ISSUER and VITE_ZITADEL_CLIENT_ID are correct.',
-                            ],
-                            [
-                                '"401 Unauthorized" errors in all API calls',
-                                'Access token expired and silent refresh failed, or tenant ID not set',
-                                'Sign out and back in. Check that tavro_tenant_id exists in localStorage after login.',
-                            ],
-                            [
-                                'Agent Catalog shows 0 agents after load',
-                                'VITE_TWIN_API_URL is misconfigured or the backend is not running',
-                                'Open browser DevTools → Network. Check that /agents returns 200 with data. Verify the API URL in .env.',
-                            ],
-                            [
-                                'AI Assistant shows "No LLM configured"',
-                                'No active provider has been saved in Settings',
-                                'Go to Settings → Chat AI Configuration → configure a provider and click "Use this LLM".',
-                            ],
-                            [
-                                'Blueprint graph appears empty',
-                                'No active company selected, or company has no nodes',
-                                'Ensure you have completed Blueprint Setup. Use the company switcher at the top of the Blueprint page.',
-                            ],
-                            [
-                                'Audit run stays "pending" indefinitely',
-                                'MCP/audit backend is down, or SSE connection is blocked by a proxy',
-                                'Check the Dev Logs panel for errors. Ensure the Vite proxy passes SSE Content-Type through (check vite.config.ts).',
-                            ],
-                            [
-                                'MCP tools unavailable in Playground',
-                                'VITE_MCP_URL is unreachable or authentication to MCP server failed',
-                                'Verify the MCP server is running and accessible. Check VITE_MCP_URL in .env. Review Dev Logs for MCP connection errors.',
-                            ],
-                            [
-                                'Dark mode not persisting on refresh',
-                                'ThemeContext persists theme in localStorage as tavro_theme',
-                                'Check that localStorage is not being cleared between sessions (private/incognito mode clears on close).',
-                            ],
-                            [
-                                'Spark idea generation returns no results',
-                                'No Blueprint nodes exist, or the AI research call is failing',
-                                'Ensure Blueprint has nodes in at least 3+ dimension categories. Check network tab for /spark/generate errors.',
-                            ],
-                            [
-                                '"Failed to fetch" on all API calls',
-                                'CORS issue or backend is not running',
-                                'In development, Vite proxies API calls — verify vite.config.ts proxy targets match your backend ports.',
-                            ],
-                        ]}
-                    />
-
-                    <Callout type="tip" title="Using Dev Logs for Debugging">
-                        Enable <strong>Show Logs</strong> in Settings to open the Dev Logs panel. It shows a live ring-buffer of the last 500 log entries from MCP calls, API errors, and auth events — far faster than scanning browser DevTools for specific Tavro events.
-                    </Callout>
-
-
-                    {/* ══════════════════════════════════════════════════════════
-                        SECTION 10 · GLOSSARY
-                    ══════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="glossary" level={2} icon={<Hash size={18} />}>
-                        Glossary
-                    </SectionHeading>
-
-                    <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2 my-4">
                         {[
-                            { term: 'Agent', def: 'An autonomous or semi-autonomous AI system that performs tasks using tools, data, and instructions. In Tavro, agents are registered in the catalog with full governance metadata.' },
-                            { term: 'AIVSS', def: 'AI Vulnerability Scoring System — a standardized scoring framework for assessing the risk profile of an AI agent, analogous to CVSS for software vulnerabilities.' },
-                            { term: 'Audit Run', def: 'An AI-powered compliance evaluation that systematically checks use cases against compliance items and produces structured findings with gaps and recommendations.' },
-                            { term: 'BYOK', def: 'Bring Your Own Key — the ability to configure Tavro with your own API key for a third-party LLM provider (OpenAI, Anthropic, Azure) rather than using a shared key.' },
-                            { term: 'Blueprint', def: 'Tavro\'s organizational digital twin — a live graph of business dimensions (applications, processes, teams, strategy, etc.) that connects all entities in the platform.' },
-                            { term: 'Compliance Item', def: 'A regulation (external) or policy (internal) tracked in Tavro. Each item has dimensions, impacts, documents, and lifecycle dates.' },
-                            { term: 'Catalog Sync', def: 'The background process that fetches the latest agent and use case data from the backend API and updates the in-memory context providers.' },
-                            { term: 'Dimension', def: 'A structured node in the Blueprint graph representing a named business concept. Each dimension belongs to a category (application, process, risk, etc.) and can have relationships to other dimensions.' },
-                            { term: 'Digital Twin', def: 'A virtual representation of an organization\'s structure, processes, and systems — in Tavro, this is the Blueprint. It provides the shared context that connects agents to business reality.' },
-                            { term: 'Gap', def: 'A compliance deficiency — a requirement that is not currently met by the organization\'s controls or AI use cases. Gaps have status (open, in_progress, closed, etc.) and remediation plans.' },
-                            { term: 'Governance Status', def: 'The lifecycle state of an agent from a governance perspective (e.g., draft, approved, under review, deprecated).' },
-                            { term: 'Impact', def: 'In Compliance: a mapping between a compliance item and a Blueprint node, documenting how that regulation affects that dimension and the current gap status.' },
-                            { term: 'MCP', def: 'Model Context Protocol — an open standard for connecting AI models to tools and data sources. Tavro uses MCP to give the AI Assistant and Playground access to live Blueprint data and other capabilities.' },
-                            { term: 'Observation', def: 'An annotation added to a Playground message during a test session. Observations classify agent behavior (gap, works_well, needs_info, unexpected, note) and feed into session summaries.' },
-                            { term: 'OIDC', def: 'OpenID Connect — the identity protocol used for authentication in Tavro. ZITADEL is the configured identity provider.' },
-                            { term: 'PKCE', def: 'Proof Key for Code Exchange — a security extension to OAuth2 that prevents authorization code interception attacks. Used in Tavro\'s login flow (no client secret in the browser).' },
-                            { term: 'Playground', def: 'A sandboxed environment for prototyping AI agents with real business context before formal catalog registration.' },
-                            { term: 'Risk Assessment', def: 'A structured evaluation of an agent\'s risk profile, producing Blended Risk, AIVSS, and Regulatory Risk scores with a classification (Critical / High / Medium / Low).' },
-                            { term: 'Source Reference', def: 'In Blueprint: a pointer from a dimension node to its authoritative data source in an external system (identified by MCP tool + external ID).' },
-                            { term: 'Spark', def: 'Tavro\'s AI idea generation feature. It analyzes your current coverage and surfaces new agent opportunities categorized by signal type.' },
-                            { term: 'SSE', def: 'Server-Sent Events — a browser API for receiving streaming data from a server over HTTP. Used in Tavro for real-time audit progress updates.' },
-                            { term: 'Tenant', def: 'An isolated organizational unit in Tavro. All data is scoped to a tenant ID, which is included in every API request via the x-tenant-id header.' },
-                            { term: 'Use Case', def: 'A documented AI initiative — a structured record linking a business problem, its expected benefits, priority, status, and the agents, applications, and processes involved.' },
-                            { term: 'ZITADEL', def: 'The open-source identity provider used for authentication and authorization in Tavro. It issues OIDC tokens and provides user management.' },
-                        ].map(({ term, def }) => (
-                            <div key={term} className="flex gap-4 p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
-                                <div className="w-36 flex-shrink-0">
-                                    <span className="text-xs font-bold text-slate-900 dark:text-white">{term}</span>
+                            { icon: <Home size={14} />, path: '/', label: 'Home', desc: 'Landing dashboard with quick access to key modules' },
+                            { icon: <ClipboardList size={14} />, path: '/use-cases', label: 'AI Use Cases', desc: 'All AI initiatives — create, browse, link to agents & processes' },
+                            { icon: <Bot size={14} />, path: '/catalog', label: 'Agents', desc: 'Full agent catalog with risk scores and governance status' },
+                            { icon: <AppWindow size={14} />, path: '/applications', label: 'Applications', desc: 'Software systems your agents interact with' },
+                            { icon: <Workflow size={14} />, path: '/processes', label: 'Processes', desc: 'Business workflows and their AI exposure' },
+                            { icon: <Plug size={14} />, path: '/integrations', label: 'Integrations', desc: 'APIs and connectors used by agents' },
+                            { icon: <Zap size={14} className="text-violet-500" />, path: '/spark', label: 'Spark', desc: 'AI-generated use case ideas from your business context' },
+                            { icon: <BarChart2 size={14} />, path: '/insights', label: 'Insights', desc: 'Cross-portfolio risk and coverage analytics' },
+                            { icon: <Network size={14} />, path: '/blueprint', label: 'Blueprint', desc: 'Interactive digital twin graph of your organization' },
+                            { icon: <Scale size={14} />, path: '/compliance', label: 'Compliance', desc: 'Regulations and internal policies with gap tracking' },
+                            { icon: <ShieldCheck size={14} />, path: '/audit', label: 'Audit Center', desc: 'AI-powered compliance audits with live streaming results' },
+                            { icon: <FlaskConical size={14} />, path: '/playground', label: 'Agent Playground', desc: 'Prototype and test agents before committing to the catalog' },
+                        ].map(item => (
+                            <div key={item.path} className="flex items-start gap-3 p-3 rounded-xl bg-white dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-colors">
+                                <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center flex-shrink-0 text-slate-500 dark:text-slate-400 mt-0.5">{item.icon}</div>
+                                <div>
+                                    <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">{item.label} <span className="text-slate-400 font-normal">{item.path}</span></div>
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{item.desc}</div>
                                 </div>
-                                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">{def}</p>
                             </div>
                         ))}
                     </div>
 
+
+                    {/* ════════════════════════════════════════════════════════
+                        2 · USE CASE DISCOVERY
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="use-case-discovery" level={2} icon={<ClipboardList size={18} />}>Use Case Discovery</SectionHeading>
+                    <SectionHeading id="three-panel" level={3}>Layout</SectionHeading>
+                    <LayoutMockup />
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        A <strong className="text-slate-800 dark:text-slate-200">Use Case</strong> is the starting point for every AI initiative in Tavro. It documents the business problem, expected benefits, and priority — and acts as the anchor that links agents, processes, applications, and compliance rules together. There are two ways to create one.
+                    </p>
+
+                    <SectionHeading id="uc-via-ui" level={3}>Path 1 — Creating a Use Case via the UI</SectionHeading>                    
+                    <FlowDiagram steps={[
+                        { icon: <ClipboardList size={14} />, label: 'AI Use Cases', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <Plus size={14} />, label: '+ New Use Case', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <Settings2 size={14} />, label: 'Fill Details', color: 'bg-slate-50 border-slate-200 text-slate-700' },
+                        { icon: <Link2 size={14} />, label: 'Link Entities', color: 'bg-slate-50 border-slate-200 text-slate-700' },
+                        { icon: <CheckCircle2 size={14} />, label: 'Save', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                    ]} />
+                    <Step n={1} title="Navigate to AI Use Cases">
+                        Click <strong>AI Use Cases</strong> in the left sidebar. You'll see a grid of all existing initiatives with their status and priority badges.
+                    </Step>
+                    <Step n={2} title="Open the creation form">
+                        Click the <UIButton color="blue" icon={<Plus size={10} />}>New Use Case</UIButton> button in the top-right of the page.
+                    </Step>
+                    <Step n={3} title="Fill in the required fields">
+                        <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                            <table className="w-full text-xs">
+                                <thead><tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700"><th className="text-left px-3 py-2 text-slate-500 font-semibold">Field</th><th className="text-left px-3 py-2 text-slate-500 font-semibold">What to enter</th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {[
+                                        ['Title', '"AI-Powered Customer Support Chatbot"'],
+                                        ['Problem Statement', '"Customer support teams face high volumes of repetitive queries, leading to long response times, increased operational costs, and inconsistent customer experiences."'],
+                                        ['Expected Benefits', '"Reduced response time (instant replies), lower operational costs, improved customer satisfaction, 24/7 availability, allows human agents to focus on complex interactions."'],
+                                        ['Priority', '2 - High (drives ordering in the catalog)'],
+                                        ['Status', 'New — use Proposed for ideas, Active once approved, In Review if under evaluation'],
+                                        ['Function', 'Customer Operations / Support'],
+                                    ].map(([f, d]) => (
+                                        <tr key={f} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30"><td className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{f}</td><td className="px-3 py-2 text-slate-500 dark:text-slate-400">{d}</td></tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Step>
+                    <Step n={4} title="Save and open the detail view">
+                        Click <UIButton color="blue">Save</UIButton>. You'll land on the Use Case detail page where you can link agents, processes Under Business Imapc
+                    </Step>
+
+                    <SectionHeading id="uc-via-ai" level={3}>Path 2 — Creating AI use cases via the AI Assistant</SectionHeading>
+                        Click the <UIButton color="slate" icon={<MessageCircle size={10} />}>Chat</UIButton> button in the right rail (the icon column on the far right). The panel will expand with the AI Assistant tab active.
+                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">
+                        User can pass a prompt to create AI Use cases eg. Generate a detailed AI Use Case for a supply chain organization to optimize its order management process.
+                    </p>
+                  
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">
+                        The AI Assistant is context-aware — it knows which page you're on and what data is loaded. You can use it to brainstorm, identify gaps, and even ask it to draft use case content for you.
+                    </p>
+                    <Step n={1} title="Open the AI Assistant">
+                        Click the <UIButton color="slate" icon={<MessageCircle size={10} />}>Chat</UIButton> button in the right rail (the icon column on the far right). The panel will expand with the AI Assistant tab active.
+                    </Step>
+                    <Step n={2} title="Ask a discovery question">
+                        Try prompts like:
+                        <div className="mt-2 space-y-1.5">
+                            {['"Which use cases are highest priority?"', '"We have an agent for invoice processing — what related use cases are we missing?"', '"Suggest 3 high-priority AI initiatives for a mid-size manufacturing company."'].map(p => (
+                                <div key={p} className="flex items-start gap-2 bg-slate-800 text-slate-100 rounded-lg px-3 py-2 text-xs font-mono">{p}</div>
+                            ))}
+                        </div>
+                    </Step>                    
+                    <Callout type="tip" title="Spark for Structured AI Ideas">
+                        For a more structured approach, use <strong>Spark</strong> (left sidebar → Spark). It analyzes your entire Blueprint and automatically generates prioritized use case ideas — see the <em>Spark</em> section below.
+                    </Callout>
+
+
+                    {/* ════════════════════════════════════════════════════════
+                        3 · AGENTS → BLUEPRINT
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="agents-blueprint" level={2} icon={<Bot size={18} />}>Use Case → Agent → Blueprint</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        Once a use case exists, the next step is to populate it with agents. 
+                    </p>
+                    <FlowDiagram steps={[
+                        { icon: <ClipboardList size={14} />, label: 'Use Case', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <Link2 size={14} />, label: 'Link Agents', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <Bot size={14} />, label: 'Agent Detail', color: 'bg-slate-50 border-slate-200 text-slate-700' }
+                    ]} />
+
+                    <SectionHeading id="linking-agents" level={3}>Linking Agents to a Use Case</SectionHeading>                    
+                    <AgentCatalogMockup />
+                    <UseCaseDetailMockup />
+                    <Step n={1} title="Open the Use Case">
+                        From <strong>AI Use Cases</strong>, click <em>AI-Powered Customer Support Chatbot</em>. You'll see its detail page with two relationship sections: <em>Currently Related Agents</em> and <em>Business Imapact Currently Related Processes</em>.
+                    </Step>
+                    <Step n={2} title="Find an agent to link">
+                        Under <strong>Add Agent Relation</strong>, use the <UIButton color="slate" icon={<Search size={10} />}>Filter agents…</UIButton> search box to find an agent by name.
+                    </Step>
+                    <Step n={3} title="Link the agent">
+                        Click the <UIButton color="blue" icon={<PlusCircle size={10} />}>Link</UIButton> button next to the agent. It moves immediately into the <em>Currently Related Agents</em> section above.
+                    </Step>
+                    <Step n={4} title="Link related processes">
+                        Repeat for the <strong>Add Process Relation</strong> section. Use <UIButton color="blue" icon={<PlusCircle size={10} />}>Create Process</UIButton> if the process doesn't exist yet — it opens the process form with the use case pre-filled.
+                    </Step>
+                    <Callout type="info" title="Unlinking">
+                        To remove a relationship, click the <UIButton color="red" icon={<Unlink2 size={10} />}>Remove</UIButton> button next to the agent or process. The change is immediate.
+                    </Callout>
+
+                    <SectionHeading id="agent-detail" level={3}>Exploring Agent Detail</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        Click any agent name in the <em>Currently Related Agents</em> list to open its full detail page. The agent page has three key tabs:
+                    </p>
+                    <div className="grid grid-cols-3 gap-2 my-4">
+                        {[
+                            { tab: 'Overview', desc: 'Role, instructions, goal, environment, owner, governance status, and key governance tags. This is the agent\'s identity card.' },
+                            { tab: 'Context Graph', desc: 'An interactive radial graph showing every connection this agent has — tools, data sources, applications, processes, use cases, and risk scores.' },
+            
+                        ].map(t => (
+                            <div key={t.tab} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-3.5">
+                                <div className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1.5">{t.tab}</div>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        From the agent page you can also trigger key actions using the buttons in the top-right:
+                    </p>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                        <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton>
+                        <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton>
+                        <UIButton color="blue" icon={<ShieldCheck size={10} />}>Audit</UIButton>
+                        <UIButton color="slate">Edit</UIButton>
+                        <UIButton color="red">Delete</UIButton>
+                    </div>
+
+                    <SectionHeading id="context-graph" level={3}>Agent Context Graph</SectionHeading>
+                    <AgentViewMockup />
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        The <strong>Context Graph</strong> tab renders a live radial diagram of everything the agent is connected to. It's the fastest way to understand an agent's full blast radius across your organization.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 my-4">
+                        {[
+                            { ring: 'Technical', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800', textColor: 'text-blue-700 dark:text-blue-300', items: 'Tools the agent uses, its reasoning model, autonomy level, memory type, access scope' },
+                            { ring: 'Functional', color: 'border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-800', textColor: 'text-violet-700 dark:text-violet-300', items: 'Data sources — tables and columns the agent reads from or writes to' },
+                            { ring: 'Business', color: 'border-orange-200 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800', textColor: 'text-orange-700 dark:text-orange-300', items: 'Connected applications, business processes, and AI use cases' },
+                            { ring: 'Risk', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800', textColor: 'text-rose-700 dark:text-rose-300', items: 'Blended Risk score, AIVSS score, Regulatory Risk classification' },
+                        ].map(r => (
+                            <div key={r.ring} className={`rounded-xl border p-3.5 ${r.color}`}>
+                                <p className={`text-xs font-bold mb-1 ${r.textColor}`}>{r.ring}</p>
+                                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">{r.items}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <Callout type="tip" title="Navigate from the Graph">
+                        Every leaf node in the Context Graph is clickable. Clicking an Application node takes you to that application's detail page; clicking a Use Case node takes you to the use case — making it a powerful jump-pad for cross-navigation.
+                    </Callout>
+
+                    <SectionHeading id="blueprint-map" level={3}>Blueprint — Your Organization Map</SectionHeading>                    
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        Blueprint is Tavro's <strong>digital twin</strong> of your organization. It holds all the business dimensions — applications, processes, teams, strategy pillars, risk domains — as nodes in an interactive graph, with relationships connecting them.
+                    </p>
+                    <Callout type="warning" title="First-Time Setup Required">
+                        Before using Blueprint, you must register your company. Navigate to <strong>Blueprint</strong> and if no company exists, click <strong>Add company</strong> in the company dropdown — it opens the setup wizard at <InlineCode>/blueprint/setup</InlineCode>.
+                    </Callout>
+                    <Step n={1} title="Select your company">
+                        In the Blueprint header, click the company dropdown (<Building2 size={12} className="inline" /> icon) and select your organization.
+                    </Step>
+                    <Step n={2} title="Choose a view mode">
+                        Use the <UIButton color="slate" icon={<Network size={10} />}>Graph</UIButton> / <UIButton color="slate" icon={<LayoutGrid size={10} />}>Grid</UIButton> / <UIButton color="slate" icon={<List size={10} />}>List</UIButton> toggle. Start with Graph to see the full picture, switch to Grid or List for bulk operations.
+                    </Step>
+                    <Step n={3} title="Add a dimension (node)">
+                        Click <UIButton color="blue" icon={<Plus size={10} />}>Add dimension</UIButton>. In the modal, choose a <strong>Category</strong> (Application, Process, Risk, Strategy, etc.), enter a <strong>Label</strong> and optional <strong>Summary</strong> and <strong>Tags</strong>, then click Create.
+                    </Step>
+                    <Step n={4} title="Add a relationship (edge)">
+                        Click <UIButton color="slate" icon={<Link2 size={10} />}>Add relationship</UIButton>. Pick the <strong>Source</strong> node, <strong>Target</strong> node, and <strong>Relationship Type</strong> (depends_on, supports, risks, enables, etc.).
+                    </Step>
+                    <Step n={5} title="Explore and filter">
+                        In Grid or List view, use the category filter pills at the top to focus on a single dimension type. Click any node card to open the detail panel on the right and edit its summary, tags, or relationships.
+                    </Step>
+
+
+                    {/* ════════════════════════════════════════════════════════
+                        4 · RISK ANALYSIS
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="risk-analysis" level={2} icon={<ShieldCheck size={18} />}>Risk Analysis</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        Tavro provides two layers of risk analysis: individual <strong>Agent Risk Assessments</strong> (AI-evaluated risk scores per agent) and <strong>Compliance Audits</strong> (AI-evaluated checks of use cases against regulations or policies).
+                    </p>
+
+                    <SectionHeading id="agent-risk" level={3}>Agent Risk Assessment</SectionHeading>                  
+                    <FlowDiagram steps={[
+                        { icon: <Bot size={14} />, label: 'Agent Detail', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <ShieldAlert size={14} />, label: 'Risk Assessment', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <RefreshCw size={14} />, label: 'Processing…', color: 'bg-amber-50 border-amber-200 text-amber-700' },
+                        { icon: <CheckCircle2 size={14} />, label: 'Scores Appear', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                    ]} />
+                    <Step n={1} title="Open the Agent">
+                        Navigate to <strong>Agents</strong> and click the <em>Sentiment Agent</em> card — its risk class shows <strong>Pending</strong> because no assessment has run yet.
+                    </Step>
+                    <Step n={2} title="Trigger the assessment">
+                        Click <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton> in the top-right. The button shows a spinner labeled <em>"Assessing…"</em> while the AI evaluates the agent against the EU AI Act and AIVSS framework.
+                    </Step>
+                    <Step n={3} title="Wait for results">
+                        The assessment runs asynchronously. The agent card pulses while processing. When complete, Blended Risk, AIVSS Score, and Regulatory Risk appear in the <strong>Overview</strong> tab.
+                    </Step>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 mt-4 leading-relaxed">
+                        The assessment produces three scores. The example below shows real output from the <strong>ColdChain AI — Perishable Intelligence Agent</strong> (6 tools, 6 data sources, Medium risk):
+                    </p>
+                    <RiskScoreMockup />
+                    <div className="grid grid-cols-3 gap-2 my-3">
+                        {[
+                            { label: 'Blended Risk', desc: 'Combined score: access scope, autonomy level, data sensitivity, tool capabilities. ColdChain: 4.56 Medium. Business Data Intelligence: 7.76 High.', color: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800' },
+                            { label: 'AIVSS Score', desc: 'AI Vulnerability Scoring System — 10 capability dimensions (autonomy, memory, tool use, multi-agent, etc.) each scored 0–1. ColdChain: 4.65. BDI Agent: 8.95.', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800' },
+                            { label: 'Regulatory Risk', desc: 'EU AI Act classification — Other, High Risk, or Prohibited. Driven by PII/PHI/PCI flags and Article 5/6 evaluation. BDI Agent: High Risk (PII: Yes).', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800' },
+                        ].map(s => (
+                            <div key={s.label} className={`rounded-xl border p-3.5 ${s.color}`}>
+                                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">{s.label}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{s.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    <SectionHeading id="compliance-audit" level={3}>Running a Compliance Audit</SectionHeading>
+                    <AuditMockup />
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        Compliance audits can be launched from three places: the <strong>Audit Center</strong> page, a <strong>Use Case</strong> detail page, or an <strong>Agent</strong> detail page. Results stream live as the AI processes each assessment pair.
+                    </p>
+                    <Step n={1} title="Open the audit dialog">
+                        From any of the three locations, click <UIButton color="blue" icon={<ShieldCheck size={10} />}>Audit</UIButton> (or <UIButton color="blue" icon={<ShieldCheck size={10} />}>New Audit</UIButton> on the Audit Center page).
+                    </Step>
+                    <Step n={2} title="Choose your scope">
+                        <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                            <table className="w-full text-xs">
+                                <thead><tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700"><th className="text-left px-3 py-2 text-slate-500 font-semibold">Scope</th><th className="text-left px-3 py-2 text-slate-500 font-semibold">Best for</th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {[['Single use case × single regulation', 'Targeted spot-check before a product launch or deployment'], ['Single use case × all regulations', 'Full compliance picture for one AI initiative'], ['All use cases × single regulation', 'Impact analysis when a new regulation comes into effect'], ['Full catalog × all regulations', 'Quarterly enterprise-wide compliance review']].map(([scope, use]) => (
+                                        <tr key={scope} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30"><td className="px-3 py-2.5 text-slate-700 dark:text-slate-300 font-medium">{scope}</td><td className="px-3 py-2.5 text-slate-500 dark:text-slate-400">{use}</td></tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Step>
+                    <Step n={3} title="Select compliance items">
+                        Pick the regulations or policies to audit against from the multi-select list. Your Compliance module must have items loaded — navigate to <strong>Compliance</strong> to add them first if needed.
+                    </Step>
+                    <Step n={4} title="Launch the audit">
+                        Click <UIButton color="blue" icon={<ShieldCheck size={10} />}>Launch audit</UIButton>. The run appears in the Audit Center with a live progress bar. Findings appear in real time as the AI evaluates each pair.
+                    </Step>
+
+                    <SectionHeading id="reading-findings" level={3}>Reading Audit Findings</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        Click any completed audit run to drill into its findings report. Each finding covers one use case × compliance item pair and contains:
+                    </p>
+                    <div className="space-y-2 my-4">
+                        {[
+                            { label: 'Risk Level', badge: <Badge color="red">Critical / High / Medium / Low</Badge>, desc: 'Overall severity of the compliance exposure for this pair' },
+                            { label: 'Gaps', badge: <Badge color="amber">Gap</Badge>, desc: 'Specific compliance requirements that the use case does not currently satisfy, each with a severity rating' },
+                            { label: 'Compliant Areas', badge: <Badge color="green">Compliant</Badge>, desc: 'Requirements that the use case already satisfies — positive evidence for audit reporting' },
+                            { label: 'Recommendations', badge: <Badge color="blue">Action Items</Badge>, desc: 'Prioritized next steps — Immediate (fix now), Short-term (within quarter), Long-term (roadmap item)' },
+                        ].map(f => (
+                            <div key={f.label} className="flex gap-3 p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-800">
+                                <div className="w-28 flex-shrink-0 pt-0.5">{f.badge}</div>
+                                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">{f.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+
+
+                    {/* ════════════════════════════════════════════════════════
+                        5 · PLAYGROUND
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="playground" level={2} icon={<FlaskConical size={18} />}>Agent Playground</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        The Playground is where you prototype and test AI agents before formally registering them in the catalog. You bring a use case or agent into a sandboxed environment, configure the agent runtime, and run test conversations to see how it behaves with real business context.
+                    </p>
+                    <FlowDiagram steps={[
+                        { icon: <Bot size={14} />, label: 'Agent', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <FlaskConical size={14} />, label: 'Playground button', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+                        { icon: <Settings2 size={14} />, label: 'Configure', color: 'bg-slate-50 border-slate-200 text-slate-700' },
+                        { icon: <Play size={14} />, label: 'Start session', color: 'bg-violet-50 border-violet-200 text-violet-700' },
+                        { icon: <MessageSquare size={14} />, label: 'Interact', color: 'bg-violet-50 border-violet-200 text-violet-700' },
+                        { icon: <ClipboardCheck size={14} />, label: 'Summarise', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                    ]} />
+
+                    <SectionHeading id="pg-launch" level={3}>Launching from an Agent</SectionHeading>                  
+                    <Step n={1} title="Open the Sentiment Agent">
+                        Go to <strong>Agents</strong> → search for <em>"Sentiment Agent"</em> → click the card.
+                    </Step>
+                    <Step n={2} title="Click Playground">
+                        Click <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton> in the top-right. The Playground opens with the agent's name and description pre-loaded from the catalog record.
+                    </Step>
+                    <Callout type="tip" title="Launching from the sidebar">
+                        You can also open <strong>Agent Playground</strong> directly from the left sidebar to prototype a brand-new agent from scratch without a catalog record.
+                    </Callout>
+                    
+                                    
+                    <div className="space-y-3 my-4">
+                        {[
+                            { section: 'Infrastructure', desc: 'Choose between Claude (Anthropic) or Azure AI Foundry. For the Sentiment Agent, select Claude and pick claude-sonnet-4.' },
+                            { section: 'Model', desc: 'Select the model — e.g. claude-sonnet-4, claude-opus-4.1. Options update based on the provider.' },
+                            { section: 'Agent Name', desc: 'Pre-filled as "Sentiment Agent" from the catalog. This appears in the session header and downloaded transcript filename.' },
+                            { section: 'System Prompt', desc: 'Write the agent\'s instructions. If your company Blueprint is loaded, Tavro automatically injects organizational context at the bottom of this prompt — you\'ll see a note confirming this.' },
+                            { section: 'Temperature', desc: 'Drag the slider from 0 (Precise — deterministic responses) to 1 (Creative — more varied responses). For business-critical agents, stay at 0.1–0.3.' },
+                            { section: 'Max Tokens', desc: 'Cap the response length. 1024 is good for structured extractions; 4096+ for conversational agents that need to write detailed analysis.' },
+                            { section: 'Tools & Capabilities', desc: 'Toggle the checkboxes to enable tools: web_search (live internet), code_interpreter (run Python), file_search (search attached documents), blueprint_context (pull live data from your company Blueprint via MCP).' },
+                        ].map(s => (
+                            <div key={s.section} className="flex gap-3 text-sm">
+                                <div className="w-36 flex-shrink-0 font-semibold text-slate-700 dark:text-slate-300 pt-0.5">{s.section}</div>
+                                <p className="flex-1 text-slate-500 dark:text-slate-400 leading-relaxed">{s.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    <SectionHeading id="pg-interact" level={3}>Running a Test Session</SectionHeading>
+                    <Step n={1} title="Start the session">
+                        Click <UIButton color="blue" icon={<Play size={10} />}>Start session</UIButton> in the header, or click <UIButton color="violet" icon={<Play size={10} />}>Start session and interact</UIButton> at the bottom of the Configure tab. The session indicator turns green.
+                    </Step>
+                    <Step n={2} title="Switch to the Interact tab">
+                        Click the <strong>Interact</strong> tab. You'll see the message thread. Type a test message in the input box and press Send.
+                    </Step>
+                    <Step n={3} title="Interact naturally">
+                        The agent streams responses in real time. Test it against realistic scenarios — use actual data samples if possible.
+                    </Step>
+                    <Step n={4} title="Export the transcript">
+                        Click <UIButton color="slate">Copy transcript</UIButton> to copy to clipboard, or <UIButton color="slate">Download</UIButton> to save a <InlineCode>.txt</InlineCode> file named <em>tavro-session-{'{agentName}'}-{'{timestamp}'}.txt</em>.
+                    </Step>
+
+                    <SectionHeading id="pg-observations" level={3}>Observations &amp; Summary</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        As the agent responds, you can tag each response with a quick observation using the buttons below each assistant message. These feed into the session summary.
+                    </p>
+                    <div className="flex flex-wrap gap-2 my-3">
+                        {[{ l: '+ Gap', c: 'rose' as const }, { l: '+ Works well', c: 'green' as const }, { l: '+ Needs info', c: 'amber' as const }, { l: '+ Unexpected', c: 'violet' as const }, { l: '+ Note', c: 'slate' as const }].map(b => <Badge key={b.l} color={b.c}>{b.l}</Badge>)}
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        For longer written observations, switch to the <strong>Observations</strong> tab and click <UIButton color="slate" icon={<Plus size={10} />}>Add observation</UIButton>. Select a type, write your note, and click Save.
+                    </p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        When done, click the <strong>Summary</strong> tab. Click <UIButton color="violet" icon={<Loader2 size={10} />}>Generate session summary</UIButton> to have the AI produce a structured report:
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 my-3">
+                        {[['Overall Assessment', 'Prose summary of the agent\'s suitability'], ['Works Well', 'Capabilities confirmed during the session'], ['Gaps Found', 'Areas where the agent underperformed'], ['Recommended Next Steps', 'Numbered action items for improving the agent']].map(([title, desc]) => (
+                            <div key={title} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">{title}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">{desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <Step n={5} title="End the session">
+                        Click <UIButton color="rose" icon={<Play size={10} />}>End session</UIButton> in the header. The session is archived, and all observations and the summary are preserved for review.
+                    </Step>
+
+
+                    {/* ════════════════════════════════════════════════════════
+                        6 · SPARK
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="spark" level={2} icon={<Zap size={18} />}>Spark — AI Idea Generation</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        Spark analyzes your company's Blueprint, existing agents, and compliance landscape to surface high-value AI use case opportunities you haven't identified yet. It's the fastest way to populate your use case backlog with data-driven ideas.
+                    </p>
+                    <SparkMockup />
+
+                    <SectionHeading id="spark-generate" level={3}>Generating Ideas</SectionHeading>
+                    <Step n={1} title="Navigate to Spark">
+                        Click <strong>Spark</strong> in the left sidebar (violet Zap icon).
+                    </Step>
+                    <Step n={2} title="Optionally set a focus direction">
+                        Type a focus area into the direction field (e.g. <em>"predictive maintenance"</em>, <em>"customer onboarding automation"</em>). Leave it blank to scan your entire Blueprint.
+                    </Step>
+                    <Step n={3} title="Optionally filter by Blueprint dimensions">
+                        Click <UIButton color="slate">Filters</UIButton> to expand the dimension panel. Select specific Blueprint nodes to focus the ideation on those areas. A badge shows how many filters are active.
+                    </Step>
+                    <Step n={4} title="Generate">
+                        Click <UIButton color="violet" icon={<Zap size={10} />}>Inspire Me</UIButton>. Spark sends your company context to Claude and streams back a set of ideas. Each idea card shows:
+                        <div className="mt-2 space-y-1">
+                            {[['Signal type', 'Why Spark thinks this opportunity exists (Gap Coverage, Risk Hotspot, Integration Surface, Compliance Gap, Strategic Gap)'], ['Complexity', 'Estimated implementation effort: Low / Medium / High'], ['Impact', 'Expected business impact: Low / Medium / High'], ['Similar agents', 'Agents already in your catalog that are related — avoid duplicates']].map(([f, d]) => (
+                                <div key={f} className="flex gap-2 text-xs"><span className="w-28 font-semibold text-slate-700 dark:text-slate-300 flex-shrink-0">{f}</span><span className="text-slate-500 dark:text-slate-400">{d}</span></div>
+                            ))}
+                        </div>
+                    </Step>
+                    <Step n={5} title="Save interesting ideas">
+                        Click the bookmark icon on a card to save it. Saved ideas appear in the <strong>Saved ideas strip</strong> at the top of the page so you can return to them later.
+                    </Step>
+
+                    <SectionHeading id="spark-convert" level={3}>Converting an Idea to a Use Case</SectionHeading>
+                    <Step n={1} title="Open the idea">
+                        Click <UIButton color="violet" icon={<ArrowRight size={10} />}>View &amp; Develop</UIButton> on any idea card. The idea modal opens with the full description, rationale, target dimensions, and similar agents.
+                    </Step>
+                    <Step n={2} title="Review the details">
+                        Read the <em>Description</em>, <em>Why this matters</em> section, and the <em>Source context</em> (the Blueprint nodes that triggered this idea). Check <em>Similar agents</em> to confirm no duplicate work exists.
+                    </Step>
+                    <Step n={3} title="Convert to Use Case">
+                        Click <UIButton color="violet" icon={<Zap size={10} />}>Convert to Use Case</UIButton>. Tavro automatically:
+                        <div className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                            <div className="flex items-center gap-2"><CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />Enriches the idea into a full use case record via Claude</div>
+                            <div className="flex items-center gap-2"><CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />Creates the use case and navigates you directly to it</div>
+                            <div className="flex items-center gap-2"><CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />Attempts to create and pre-link a suggested agent (best-effort)</div>
+                        </div>
+                    </Step>
+                    <Step n={4} title="Refine the use case">
+                        On the new use case page, review the AI-generated content, edit any fields that need adjusting, and link additional agents, processes, and applications as described in the <em>Use Case → Agent → Blueprint</em> section.
+                    </Step>
+
+
+                    {/* ════════════════════════════════════════════════════════
+                        7 · SETTINGS
+                    ════════════════════════════════════════════════════════ */}
+                    <SectionHeading id="settings-overview" level={2} icon={<Settings size={18} />}>Settings</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                        Access Settings via the bottom of the left sidebar. It has four sections that control how Tavro behaves for you personally.
+                    </p>
+
+                    <SectionHeading id="llm-setup" level={3}>LLM Provider Setup</SectionHeading>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
+                        The AI Assistant in the right panel uses the LLM you configure here. Tavro currently supports the <strong>Copilot SDK</strong> provider with four backend options:
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 my-3">
+                        {[['GitHub Copilot', 'API Key + Model', 'Default: gpt-4.1'], ['OpenAI', 'API Key + Model', 'gpt-4o, gpt-5.5'], ['Azure OpenAI', 'API Key + Base URL + Model', 'Your Azure resource endpoint'], ['Anthropic', 'API Key + Model', 'claude-sonnet-4-6, claude-sonnet-4-5']].map(([name, fields, note]) => (
+                            <div key={name} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">{name}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{fields}</p>
+                                <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">{note}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <Step n={1} title="Expand the Copilot SDK card">In Settings → Chat AI Configuration, click the provider card to expand it.</Step>
+                    <Step n={2} title="Choose your backend type">Select GitHub / OpenAI / Azure / Anthropic from the Provider Type selector.</Step>
+                    <Step n={3} title="Enter credentials">Fill in the API Key (and Base URL if Azure). Use the eye icon to reveal/hide the key.</Step>
+                    <Step n={4} title="Activate">Click <UIButton color="blue">Save</UIButton>, then click <UIButton color="blue">Use this LLM</UIButton>. The AI Assistant will now use this provider.</Step>
+
+                    <SectionHeading id="theme" level={3}>Appearance &amp; Developer Tools</SectionHeading>
+                    <div className="grid grid-cols-2 gap-3 my-3">
+                        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Theme</p>
+                            <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                                <div className="flex items-center gap-2"><span className="w-16 font-semibold">Light</span>White/slate — best for bright environments</div>
+                                <div className="flex items-center gap-2"><span className="w-16 font-semibold">Dark</span>Reduced eye strain for low-light work</div>
+                                <div className="flex items-center gap-2"><span className="w-16 font-semibold">System</span>Follows your OS light/dark setting</div>
+                            </div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Developer Settings</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                                Toggle <strong>Show Logs</strong> to enable the <strong>Dev Logs</strong> tab in the right panel. It shows a live stream of MCP calls, API events, and auth activity — useful for diagnosing connection issues.
+                            </p>
+                        </div>
+                    </div>
+
                     {/* Footer */}
-                    <div className="mt-16 pt-8 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div className="mt-16 pt-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
                         <div>
-                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Tavro Agent BizOps</p>
-                            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">User Guide · v3.1 · © 2026 Tavro AI</p>
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Tavro Agent BizOps · User Guide</p>
+                            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">v3.1 · © 2026 Tavro AI</p>
                         </div>
                         <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                            <Globe size={12} />
-                            <span>tavro.ai</span>
+                            <Globe size={12} /><span>tavro.ai</span>
                         </div>
                     </div>
 
