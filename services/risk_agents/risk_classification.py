@@ -3,10 +3,11 @@ from pathlib import Path
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import TXTSearchTool
 from pydantic import BaseModel
+from services.risk_agents.llm_config import get_crewai_llm
 from utils.set_environment import set_environment
 
-set_environment('secrets')
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DEFAULT_TXT_SEARCH_EMBEDDER = "onnx"
+
 # ---------- Output schemas ----------
 class Article5Output(BaseModel):
     subliminal_and_manipulative_techniques: str
@@ -44,8 +45,18 @@ class RiskClassificationOutput(BaseModel):
     risk_rating_rationale: str
 
 def classify_risk(agent_name: str, agent_description: str, agent_instructions: str):
+    set_environment("secrets")
     skills_file = Path(__file__).resolve().parent.parent / "skills" / "EU_AI_Act.txt"
-    txt_tool = TXTSearchTool(txt=str(skills_file))
+    txt_tool = TXTSearchTool(
+        txt=str(skills_file),
+        collection_name="eu_ai_act_risk_classification",
+        config={
+            "embedding_model": {
+                "provider": os.getenv("CREWAI_TXT_SEARCH_EMBEDDER", DEFAULT_TXT_SEARCH_EMBEDDER).strip() or DEFAULT_TXT_SEARCH_EMBEDDER,
+                "config": {},
+            },
+        },
+    )
     
     risk_classification_agent = Agent(
         role="Risk Classification Agent",
@@ -53,12 +64,13 @@ def classify_risk(agent_name: str, agent_description: str, agent_instructions: s
             "Analyze the provided agent name or use case and its description to determine the risk classification based on the EU_AI_Act.txt Fill the JSON fields for Articles 5 and 6 with detailed assessments and justifications, including a classification based on PII, PHI, and PCI information."
         ),
         verbose=True,
-        memory=True,
+        memory=False,
         backstory=(
             "You specialize in evaluating AI agents and use cases in the context of the EU AI Act." 
             "By analyzing functionalities, purposes, and compliance requirements, you provide well-reasoned risk classifications with detailed justifications."
         ),
-        tools=[txt_tool]
+        tools=[txt_tool],
+        llm=get_crewai_llm()
     )
 
     risk_classification_task = Task(

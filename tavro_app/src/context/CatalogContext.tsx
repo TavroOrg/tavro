@@ -194,8 +194,9 @@ function toPendingAgentFromWorkflow(record: TemporalWorkflowRecord): AgentData {
         description: record.description || record.name,
         version: '1.0',
         identification: {
-            // Keep the real agent id visible while the assessment is running.
-            agent_id: record.agent_internal_id || record.agent_id || record.name,
+            // Prefer the external agent_id so it aligns with the catalog's agent_id
+            // and deduplication logic (sameLogicalAgent, identityKey) can match it.
+            agent_id: record.agent_id || record.agent_internal_id || record.name,
             role: null,
             instruction: null,
             governance_status: 'Risk Assessment is running',
@@ -290,13 +291,17 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 });
 
                 const temporalPending = runningRecords
-                    .map(toPendingAgentFromWorkflow)
-                    .filter(a => {
-                        const matched = findLogicalMatch(a, merged);
+                    .filter(record => {
+                        // Use workflowMatchesAgent (flexible cross-field ID/name matching)
+                        // rather than sameLogicalAgent, which is now strict ID-only when
+                        // both sides carry an ID. The workflow's agent_internal_id can
+                        // differ from the catalog's agent_id, so strict comparison would
+                        // miss the match and produce a duplicate tile.
+                        const matched = merged.find(m => workflowMatchesAgent(record, m));
                         if (!matched) return true;
-                        // If the matched catalog record already has resolved risk, do not show a stale running pill.
                         return !hasRiskClassification(matched);
-                    });
+                    })
+                    .map(toPendingAgentFromWorkflow);
 
                 const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
                 const now = Date.now();

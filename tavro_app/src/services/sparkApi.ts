@@ -22,7 +22,13 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+    const isHtml = body.trimStart().startsWith('<');
+    const message = isHtml
+      ? res.status === 504
+        ? 'The request timed out. Please try again.'
+        : `Unexpected error (${res.status}). Please try again.`
+      : body.slice(0, 250);
+    throw new Error(`API ${res.status}: ${message}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -48,6 +54,70 @@ class SparkApi {
     const result = await req<SparkIdea[]>(path);
     appLogger.res('Spark getIdeas', { count: result.length }, Date.now() - t0);
     return result;
+  }
+
+  /** Stream fresh ideas via SSE — yields each SparkIdea as it arrives from the server. */
+  async *generateIdeasStream(
+    companyId: string,
+    dimensions?: string[],
+    direction?: string,
+  ): AsyncGenerator<SparkIdea> {
+    const params = new URLSearchParams({ company_id: companyId });
+    if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
+    if (direction && direction.trim()) params.set('direction', direction.trim());
+
+    const res = await fetch(`${V1}/spark/generate/stream?${params}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+
+    if (!res.ok || !res.body) {
+      const body = await res.text();
+      const isHtml = body.trimStart().startsWith('<');
+      const message = isHtml
+        ? res.status === 504
+          ? 'The request timed out. Please try again.'
+          : `Unexpected error (${res.status}). Please try again.`
+        : body.slice(0, 250);
+      throw new Error(`API ${res.status}: ${message}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastEvent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          lastEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const raw = line.slice(6).trim();
+          if (lastEvent === 'error') {
+            try {
+              const err = JSON.parse(raw);
+              throw new Error(err.message || 'Generation failed');
+            } catch (e) {
+              if (e instanceof SyntaxError) throw new Error('Generation failed');
+              throw e;
+            }
+          }
+          if (lastEvent === 'idea' && raw && raw !== '{}') {
+            try {
+              yield JSON.parse(raw) as SparkIdea;
+            } catch { /* skip malformed */ }
+          }
+          lastEvent = '';
+        }
+      }
+    }
   }
 
   /** Generate fresh ideas, persist to DB, return them. */

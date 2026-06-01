@@ -1,11 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import {
   Zap,
   RefreshCw,
   X,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Bot,
   ArrowRight,
   Lightbulb,
@@ -31,6 +34,76 @@ import {
   COMPLEXITY_META,
   IMPACT_META,
 } from '../types/spark';
+
+type AgentTool = { name: string; description: string };
+type AgentKnowledgeSource = { name: string; description: string };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractStringByKeys(value: unknown, keys: string[]): string | null {
+  const visited = new Set<unknown>();
+  const queue: unknown[] = [value];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object' || visited.has(current)) continue;
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current) queue.push(item);
+      continue;
+    }
+
+    const record = current as Record<string, unknown>;
+    for (const key of keys) {
+      const found = asNonEmptyString(record[key]);
+      if (found) return found;
+    }
+
+    for (const nested of Object.values(record)) {
+      if (nested && typeof nested === 'object') queue.push(nested);
+    }
+  }
+
+  return null;
+}
+
+function normalizeAgentTools(value: unknown): AgentTool[] {
+  if (!Array.isArray(value)) return [];
+
+  const tools: AgentTool[] = [];
+  for (const rawTool of value) {
+    const tool = asRecord(rawTool);
+    if (!tool) continue;
+    const name = asNonEmptyString(tool.name);
+    if (!name) continue;
+    const description = asNonEmptyString(tool.description) ?? `Integration with ${name}`;
+    tools.push({ name, description });
+  }
+  return tools;
+}
+
+function normalizeKnowledgeSource(value: unknown): AgentKnowledgeSource | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+
+  const name = asNonEmptyString(source.name);
+  if (!name) return undefined;
+
+  return {
+    name,
+    description: asNonEmptyString(source.description) ?? `Primary data source for ${name}`,
+  };
+}
 
 // ── Idea Card ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +198,7 @@ const IdeaCard: React.FC<{
 // ── Idea List Row (list-view variant) ────────────────────────────────────────
 
 const LIST_GRID = 'grid-cols-[32px_1fr_160px_180px_100px_80px_32px]';
+const PAGE_SIZE = 10;
 
 const IdeaListRow: React.FC<{
   idea: SparkIdea;
@@ -227,12 +301,27 @@ const IdeaModal: React.FC<{
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
 
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
   const handleConvert = async () => {
     setConverting(true);
     setConvertError(null);
     try {
       // Step 1: Enrich idea into use case fields + agent recommendation via Claude
-      const { use_case_fields: fields, agent_recommendation: agentRec } = await sparkApi.convertIdea({
+      const { use_case_fields: fields, agent_recommendation: agentRecRaw } = await sparkApi.convertIdea({
         idea_id: idea.idea_id,
         company_id: companyId,
         title: idea.title,
@@ -243,41 +332,62 @@ const IdeaModal: React.FC<{
         complexity: idea.complexity,
         estimated_impact: idea.estimated_impact,
       });
+      const agentRec = asRecord(agentRecRaw);
 
       // Step 2: Create the AI use case via MCP
       const created = await mcpClient.createAiUseCase({
         ...fields,
         original_prompt: `Convert Spark idea to AI use case: ${idea.title}`,
       });
-      if (!created?.use_case_id) {
+      const useCaseId = extractStringByKeys(created, ['use_case_id', 'ai_use_case_id', 'identifier', 'id']);
+      if (!useCaseId) {
         throw new Error(created?.details || created?.error || 'Use case creation failed');
       }
-      const useCaseId = created.use_case_id as string;
 
       // Step 3: Create agent and link it (best-effort — don't block navigation on failure)
-      if (agentRec?.agent_name) {
+      const agentName =
+        asNonEmptyString(agentRec?.agent_name) ??
+        asNonEmptyString(agentRec?.name) ??
+        asNonEmptyString(idea.title ? `${idea.title} Agent` : '') ??
+        'Spark Use Case Agent';
+      if (agentName) {
         try {
           // Fetch company applications to enrich generic tool names with real assets
-          let enrichedTools = (agentRec.tools ?? []) as { name: string; description: string }[];
+          let enrichedTools = normalizeAgentTools(agentRec?.tools);
           try {
             const appCatalog = await mcpClient.getApplicationCatalog({
               original_prompt: `Find applications relevant to: ${idea.title}`,
               start_record: 1,
               record_range: '1-20',
             });
-            const apps: { application_name?: string; description?: string }[] =
-              appCatalog?.agents ?? appCatalog?.applications ?? appCatalog?.items ?? [];
+            const appCatalogRecord = asRecord(appCatalog);
+            const appRows =
+              (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
+              [];
+
+            const apps: { application_name: string; description: string }[] = [];
+            for (const row of appRows) {
+              const app = asRecord(row);
+              if (!app) continue;
+              const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
+              if (!applicationName) continue;
+              apps.push({
+                application_name: applicationName,
+                description: asNonEmptyString(app.description) ?? '',
+              });
+            }
 
             if (apps.length > 0) {
               // Replace generic tool entries with real company application names where a match is plausible
-              enrichedTools = enrichedTools.map((tool: { name: string; description: string }) => {
+              enrichedTools = enrichedTools.map((tool: AgentTool) => {
                 const match = apps.find(a =>
-                  a.application_name &&
-                  (tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
-                   a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0]))
+                  tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
+                  a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0])
                 );
                 return match
-                  ? { name: match.application_name!, description: match.description ?? tool.description }
+                  ? { name: match.application_name, description: match.description || tool.description }
                   : tool;
               });
             }
@@ -286,16 +396,17 @@ const IdeaModal: React.FC<{
           }
 
           const agent = await mcpClient.createAgent({
-            agent_name: agentRec.agent_name,
-            description: agentRec.description ?? '',
-            instruction: agentRec.instruction ?? agentRec.description ?? '',
+            agent_name: agentName,
+            description: asNonEmptyString(agentRec?.description) ?? agentName,
+            instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
             tools: enrichedTools.length > 0 ? enrichedTools : undefined,
-            knowledge_source: agentRec.knowledge_source ?? undefined,
+            knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
             original_prompt: `Create agent for AI use case: ${idea.title}`,
           });
 
-          if (agent?.agent_id) {
-            await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agent.agent_id);
+          const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
+          if (agentId) {
+            await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
           }
         } catch {
           // Agent creation is best-effort; use case was created successfully
@@ -310,16 +421,18 @@ const IdeaModal: React.FC<{
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div
-        className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="h-1.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-t-2xl" />
+  return createPortal(
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+        <div className="min-h-full flex items-start sm:items-center justify-center">
+          <div
+            className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="h-1.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-t-2xl" />
 
-        <div className="p-6 flex flex-col gap-5">
+            <div className="p-6 flex flex-col gap-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-violet-50 dark:bg-violet-900/20 text-violet-600 rounded-xl">
@@ -421,10 +534,13 @@ const IdeaModal: React.FC<{
             >
               Close
             </button>
+            </div>
+          </div>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -445,6 +561,7 @@ const SparkPage: React.FC = () => {
   const [direction, setDirection] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectMode, setSelectMode] = useState(false);
+  const [page, setPage] = useState(1);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
@@ -493,18 +610,19 @@ const SparkPage: React.FC = () => {
     return () => clearTimeout(timer);
   }, [companyId, search]);
 
-  // Generate fresh ideas (user-initiated only)
+  // Generate fresh ideas via SSE — ideas appear progressively as they stream in
   const inspire = useCallback(async () => {
     if (!companyId) return;
     setIdeas([]);
     setGenerating(true);
     setError(null);
+    setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
-      const data = await sparkApi.generateIdeas(companyId, dims, direction.trim() || undefined);
-      setIdeas(data);
-      setHasLibrary(data.length > 0);
-      setSearch('');
+      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined)) {
+        setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
+        setHasLibrary(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate ideas');
     } finally {
@@ -559,6 +677,28 @@ const SparkPage: React.FC = () => {
     ? ideas.filter(i => i.target_dimensions.some(d => activeDimensions.has(d)))
     : ideas;
 
+  const isSearching = search.trim().length > 0;
+  const totalPages = Math.max(1, Math.ceil(filteredIdeas.length / PAGE_SIZE));
+  const hasMore = page < totalPages;
+
+  const visibleIdeas = useMemo(() => {
+    if (isSearching) return filteredIdeas;
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredIdeas.slice(start, start + PAGE_SIZE);
+  }, [filteredIdeas, isSearching, page]);
+
+  useEffect(() => {
+    if (!isSearching) return;
+    setPage(1);
+  }, [isSearching]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const handlePrev = () => setPage(prev => Math.max(1, prev - 1));
+  const handleNext = () => setPage(prev => Math.min(totalPages, prev + 1));
+
   const selectAll = () => setSelectedForDelete(new Set(filteredIdeas.map(i => i.idea_id)));
   const deselectAll = () => setSelectedForDelete(new Set());
   const allSelected = filteredIdeas.length > 0 && filteredIdeas.every(i => selectedForDelete.has(i.idea_id));
@@ -585,6 +725,12 @@ const SparkPage: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Spark</h1>
           </div>
+          <p className="text-sm text-slate-500">
+            {isSearching
+              ? `${filteredIdeas.length} result${filteredIdeas.length === 1 ? '' : 's'} for "${search}"`
+              : `Page ${page} of ${totalPages} · ${visibleIdeas.length} idea${visibleIdeas.length === 1 ? '' : 's'} of ${filteredIdeas.length} total`
+            }
+          </p>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             AI ideation hub — AI Use Case candidates that fits your business vision and your enteprise portfolio of assets
           </p>
@@ -612,6 +758,30 @@ const SparkPage: React.FC = () => {
               : <Zap size={16} />}
             {generating ? 'Generating…' : 'Inspire Me'}
           </button>
+
+          {!loading && !generating && !isSearching && totalPages > 1 && (
+            <div className="hidden md:flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={handlePrev}
+                disabled={page === 1 || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronLeft size={14} />
+                Prev
+              </button>
+              <span className="px-2.5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg min-w-[2.5rem] text-center">
+                {page}
+              </span>
+              <button
+                onClick={handleNext}
+                disabled={!hasMore || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Next
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -721,9 +891,10 @@ const SparkPage: React.FC = () => {
         </button>
 
         {/* Count */}
-        {!loading && !generating && hasLibrary && (
+        {!loading && filteredIdeas.length > 0 && (
           <span className="text-xs text-slate-400 hidden sm:block flex-shrink-0 tabular-nums">
             {filteredIdeas.length} {filteredIdeas.length === 1 ? 'idea' : 'ideas'}
+            {generating && <span className="ml-1 text-violet-400">…</span>}
           </span>
         )}
 
@@ -805,8 +976,8 @@ const SparkPage: React.FC = () => {
         </div>
       )}
 
-      {/* ── Loading skeleton ── */}
-      {(loading || generating) && (
+      {/* ── Loading skeleton — shown while loading/generating with no ideas yet ── */}
+      {(loading || (generating && ideas.length === 0)) && (
         viewMode === 'list' ? (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-pulse">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -844,8 +1015,8 @@ const SparkPage: React.FC = () => {
         )
       )}
 
-      {/* ── Idea board ── */}
-      {!loading && !generating && filteredIdeas.length > 0 && (
+      {/* ── Idea board — visible as soon as ideas start streaming in ── */}
+      {!loading && filteredIdeas.length > 0 && (
         viewMode === 'list' ? (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             {/* List header */}
@@ -858,7 +1029,7 @@ const SparkPage: React.FC = () => {
               <span className="text-center">Impact</span>
               <span />
             </div>
-            {filteredIdeas.map(idea => (
+            {visibleIdeas.map(idea => (
               <IdeaListRow
                 key={idea.idea_id}
                 idea={idea}
@@ -873,7 +1044,7 @@ const SparkPage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredIdeas.map(idea => (
+            {visibleIdeas.map(idea => (
               <IdeaCard
                 key={idea.idea_id}
                 idea={idea}
@@ -889,8 +1060,31 @@ const SparkPage: React.FC = () => {
         )
       )}
 
+      {/* ── Pagination ── */}
+      {!loading && !generating && !isSearching && visibleIdeas.length > 0 && totalPages > 1 && (
+        <div className="flex justify-center items-center gap-2 pb-4">
+          <button
+            onClick={handlePrev}
+            disabled={page === 1 || deleting}
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            <ChevronLeft size={16} />
+            Previous
+          </button>
+          <span className="text-sm text-slate-500 dark:text-slate-400 px-3">Page {page} of {totalPages}</span>
+          <button
+            onClick={handleNext}
+            disabled={!hasMore || deleting}
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            Next
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+
       {/* ── Empty state: no library yet ── */}
-      {!loading && !generating && !hasLibrary && companyId && (
+      {!loading && !generating && !hasLibrary && ideas.length === 0 && companyId && (
         <div className="py-24 flex flex-col items-center justify-center gap-4 text-slate-400 bg-slate-50 dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
           <div className="p-5 bg-white dark:bg-slate-800 rounded-full shadow-sm">
             <Zap size={32} className="text-violet-300" />
@@ -903,7 +1097,7 @@ const SparkPage: React.FC = () => {
       )}
 
       {/* ── Empty state: filters or search returned nothing ── */}
-      {!loading && !generating && hasLibrary && filteredIdeas.length === 0 && (
+      {!loading && !generating && (hasLibrary || ideas.length > 0) && filteredIdeas.length === 0 && (
         <div className="py-16 flex flex-col items-center gap-3 text-slate-400">
           <Search size={28} className="text-slate-300" />
           {search

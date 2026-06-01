@@ -47,6 +47,12 @@ mcp_connectors:
     token: YOUR_GITHUB_MCP_TOKEN
 
 secrets:
+  ANTHROPIC_API_KEY: ""
+  # CrewAI uses Claude by default. Override only if you need a different Claude model.
+  CREWAI_LLM_MODEL: "anthropic/claude-sonnet-4-6"
+  CREWAI_MAX_TOKENS: "4096"
+  # TXTSearchTool still needs embeddings. Use a non-OpenAI embedder by default.
+  CREWAI_TXT_SEARCH_EMBEDDER: "onnx"
   OPENAI_API_KEY: ""
 
 fastapi:
