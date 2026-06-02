@@ -334,7 +334,23 @@ async def list_use_cases(
                         u.solution_approach,
                         u.created_ts,
                         u.updated_ts,
-                        ROW_NUMBER() OVER (ORDER BY created_ts DESC) AS rn,
+                        COALESCE((
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {CORE}.agent_ai_use_cases rel
+                            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                        ), 0) AS related_agent_count,
+                        COALESCE((
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {CORE}.agent_ai_use_cases rel
+                            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                        ), 0) AS no_of_associated_agents,
+                        ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records
                     FROM {CORE}.ai_use_cases u
                     WHERE u.ai_use_case_id IS NOT NULL

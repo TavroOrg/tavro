@@ -3,7 +3,7 @@ import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Code2,
     BotMessageSquare, Eye, EyeOff, Trash2, Terminal,
-    Database, CircleHelp, ExternalLink
+    Database
 } from 'lucide-react';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
@@ -404,25 +404,6 @@ const Settings: React.FC = () => {
                             <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${showLogs ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                     </div>
-                </div>
-            </div>
-
-            {/* Help */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-5 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <CircleHelp size={16} className="text-blue-500" />
-                        <span className="font-bold text-slate-800 dark:text-white">Help</span>
-                    </div>
-                    <a
-                        href="https://www.tavro.ai/wp-content/uploads/2026/04/Tavro_2.1-Getting-Started-User-Guide.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
-                        title="Open guide in new tab"
-                    >
-                        <ExternalLink size={16} />
-                    </a>
                 </div>
             </div>
 

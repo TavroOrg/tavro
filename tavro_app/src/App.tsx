@@ -39,6 +39,7 @@ import BusinessProcessViewPage from './pages/BusinessProcessViewPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
+import UserGuidePage from './pages/UserGuidePage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -166,6 +167,9 @@ function App() {
                 <Route path="spark" element={<SparkPage />} />
 
               </Route>
+
+              {/* Standalone — renders without the Layout shell */}
+              <Route path="/help/user-guide" element={<UserGuidePage />} />
             </Routes>
           </div>
         </ChatProvider>

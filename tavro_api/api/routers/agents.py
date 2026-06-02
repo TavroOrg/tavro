@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -176,6 +177,137 @@ async def get_agent_catalog(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _agent_card_dir() -> Path:
+    return Path(os.getenv("LOCAL_AGENT_CARD_DIR", "./agent_cards"))
+
+
+def _write_agent_card(
+    agent_id: str,
+    agent_internal_id: str,
+    agent_name: str,
+    description: str,
+    instruction: str,
+    tools: Optional[List[Dict[str, str]]] = None,
+    knowledge_source: Optional[Dict[str, str]] = None,
+) -> None:
+    """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
+    try:
+        card_dir = _agent_card_dir()
+        card_dir.mkdir(parents=True, exist_ok=True)
+
+        tool_entries = []
+        data_source_entries = []
+        if tools:
+            for tool in tools:
+                tool_id = str(uuid.uuid4())
+                tool_entries.append({
+                    "identifier": tool_id,
+                    "name": tool.get("name"),
+                    "description": tool.get("description"),
+                    "delegation_possible": None,
+                    "allowed_delegates": None,
+                    "parameter_name": None,
+                    "parameter_type": None,
+                    "default_value": None,
+                    "input_schema": None,
+                    "output_schema": None,
+                })
+                data_source_entries.append({
+                    "relationship_id": None,
+                    "parent_relationship_id": None,
+                    "source_object_id": agent_id,
+                    "source_object_domain": None,
+                    "source_object_name": agent_name,
+                    "source_object_type": "Agent",
+                    "target_object_id": tool_id,
+                    "target_object_domain": None,
+                    "target_object_name": tool.get("name"),
+                    "target_object_type": "Tool",
+                    "access_level": None,
+                    "uses_pii": None,
+                    "uses_phi": None,
+                    "uses_pci": None,
+                })
+
+        ks_entry = None
+        if knowledge_source:
+            ks_entry = {
+                "identifier": None,
+                "name": knowledge_source.get("name"),
+                "access_mechanism": None,
+            }
+
+        card = {
+            "capabilities": {"streaming": False},
+            "defaultInputModes": ["text"],
+            "defaultOutputModes": ["text"],
+            "name": agent_name,
+            "description": description,
+            "preferredTransport": None,
+            "protocol_version": None,
+            "instruction_sets": [],
+            "skills": [],
+            "provider": {"organization": None, "url": ""},
+            "url": "",
+            "documentation_url": None,
+            "icon_url": None,
+            "security": None,
+            "security_schemes": None,
+            "signatures": None,
+            "supports_authenticated_extended_card": None,
+            "additional_interfaces": None,
+            "version": "1.0",
+            "identification": {
+                "agent_id": agent_id,
+                "agent_internal_id": agent_internal_id,
+                "goal_orientation": None,
+                "role": None,
+                "instruction": instruction,
+                "owner": None,
+                "environment": None,
+                "tags": None,
+                "governance_status": "Risk Assessment is running",
+                "reviewer": None,
+                "cost_center": None,
+            },
+            "configuration": {
+                "access_scope": None,
+                "memory_type": None,
+                "data_freshness_policy": None,
+                "autonomy_level": None,
+                "reasoning_model": None,
+            },
+            "ai_use_case": [{"identifier": None, "name": None, "description": None, "proposed_by": None, "owner": None, "business_function": None, "problem_statement": None, "expected_benefits": None, "priority": None, "status": None}],
+            "application": [{"identifier": None, "name": None, "description": None, "business_criticality": None, "emergency_tier": None}],
+            "ai_model": [{"name": None, "owner": None, "department_executive": None, "description": None}],
+            "business_process": [{"identifier": None, "name": None, "description": None, "business_criticality": None}],
+            "physical_ai": [{"identifier": None, "name": None, "type": None, "sensory_input_source": None}],
+            "llm_model": [{"name": None, "version_number": None}],
+            "guardrail": {"name": None, "description": None, "model": None},
+            "mcp_server": {"name": None, "url": None, "version_number": None},
+            "tool": tool_entries,
+            "data_source": data_source_entries,
+            "knowledge_source": ks_entry,
+            "prompt_template": {"identifier": None, "name": None, "description": None},
+            "memory": {"identifier": None, "name": None, "type": None},
+            "regulation_or_framework": {"name": None, "type": None, "regulatory_authority": None, "jurisdiction": None, "requirement": None},
+            "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
+            "risk_assessment": None,
+        }
+
+        card_path = card_dir / f"{agent_id}_agent_card.json"
+        with card_path.open("w", encoding="utf-8") as f:
+            json.dump(card, f, indent=2, ensure_ascii=False)
+        print(f"[create_agent] Agent card written: {card_path}")
+
+    except Exception as e:
+        print(f"[create_agent] Warning: failed to write agent card file: {e}")
+
+
+# ---------------------------------------------------------------------------
 # POST /  — create agent
 # ---------------------------------------------------------------------------
 
@@ -276,6 +408,16 @@ async def create_agent(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+    _write_agent_card(
+        agent_id=agent_id,
+        agent_internal_id=agent_internal_id,
+        agent_name=body.agent_name,
+        description=body.description,
+        instruction=body.instruction,
+        tools=body.tools,
+        knowledge_source=body.knowledge_source,
+    )
 
     background_tasks.add_task(
         _fire_risk,

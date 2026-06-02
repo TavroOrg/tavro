@@ -612,6 +612,130 @@ class AgentMetadataExporter:
         }
     
     @classmethod
+    def _write_agent_card(
+        cls,
+        agent_id: str,
+        agent_internal_id: str,
+        agent_name: str,
+        description: str,
+        instruction: str,
+        tools: Optional[List[Dict[str, str]]] = None,
+        knowledge_source: Optional[Dict[str, str]] = None,
+        tool_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
+        try:
+            card_dir = cls._agent_card_dir()
+            card_dir.mkdir(parents=True, exist_ok=True)
+
+            tool_entries = []
+            data_source_entries = []
+            if tools and tool_ids:
+                for tool, tool_id in zip(tools, tool_ids):
+                    tool_entries.append({
+                        "identifier": tool_id,
+                        "name": tool.get("name"),
+                        "description": tool.get("description"),
+                        "delegation_possible": None,
+                        "allowed_delegates": None,
+                        "parameter_name": None,
+                        "parameter_type": None,
+                        "default_value": None,
+                        "input_schema": None,
+                        "output_schema": None,
+                    })
+                    data_source_entries.append({
+                        "relationship_id": None,
+                        "parent_relationship_id": None,
+                        "source_object_id": agent_id,
+                        "source_object_domain": None,
+                        "source_object_name": agent_name,
+                        "source_object_type": "Agent",
+                        "target_object_id": tool_id,
+                        "target_object_domain": None,
+                        "target_object_name": tool.get("name"),
+                        "target_object_type": "Tool",
+                        "access_level": None,
+                        "uses_pii": None,
+                        "uses_phi": None,
+                        "uses_pci": None,
+                    })
+
+            ks_entry = None
+            if knowledge_source:
+                ks_entry = {
+                    "identifier": None,
+                    "name": knowledge_source.get("name"),
+                    "access_mechanism": None,
+                }
+
+            card = {
+                "capabilities": {"streaming": False},
+                "defaultInputModes": ["text"],
+                "defaultOutputModes": ["text"],
+                "name": agent_name,
+                "description": description,
+                "preferredTransport": None,
+                "protocol_version": None,
+                "instruction_sets": [],
+                "skills": [],
+                "provider": {"organization": None, "url": ""},
+                "url": "",
+                "documentation_url": None,
+                "icon_url": None,
+                "security": None,
+                "security_schemes": None,
+                "signatures": None,
+                "supports_authenticated_extended_card": None,
+                "additional_interfaces": None,
+                "version": "1.0",
+                "identification": {
+                    "agent_id": agent_id,
+                    "agent_internal_id": agent_internal_id,
+                    "goal_orientation": None,
+                    "role": None,
+                    "instruction": instruction,
+                    "owner": None,
+                    "environment": None,
+                    "tags": None,
+                    "governance_status": "Risk Assessment is running",
+                    "reviewer": None,
+                    "cost_center": None,
+                },
+                "configuration": {
+                    "access_scope": None,
+                    "memory_type": None,
+                    "data_freshness_policy": None,
+                    "autonomy_level": None,
+                    "reasoning_model": None,
+                },
+                "ai_use_case": [{"identifier": None, "name": None, "description": None, "proposed_by": None, "owner": None, "business_function": None, "problem_statement": None, "expected_benefits": None, "priority": None, "status": None}],
+                "application": [{"identifier": None, "name": None, "description": None, "business_criticality": None, "emergency_tier": None}],
+                "ai_model": [{"name": None, "owner": None, "department_executive": None, "description": None}],
+                "business_process": [{"identifier": None, "name": None, "description": None, "business_criticality": None}],
+                "physical_ai": [{"identifier": None, "name": None, "type": None, "sensory_input_source": None}],
+                "llm_model": [{"name": None, "version_number": None}],
+                "guardrail": {"name": None, "description": None, "model": None},
+                "mcp_server": {"name": None, "url": None, "version_number": None},
+                "tool": tool_entries,
+                "data_source": data_source_entries,
+                "knowledge_source": ks_entry,
+                "prompt_template": {"identifier": None, "name": None, "description": None},
+                "memory": {"identifier": None, "name": None, "type": None},
+                "regulation_or_framework": {"name": None, "type": None, "regulatory_authority": None, "jurisdiction": None, "requirement": None},
+                "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
+                "risk_assessment": None,
+            }
+
+            card_path = card_dir / f"{agent_id}_agent_card.json"
+            with card_path.open("w", encoding="utf-8") as f:
+                json.dump(card, f, indent=2, ensure_ascii=False)
+            print(f"[create_agent] Agent card written: {card_path}")
+
+        except Exception as e:
+            print(f"[create_agent] Warning: failed to write agent card file: {e}")
+
+    @classmethod
     def create_agent(
         cls,
         agent_name: str,
@@ -638,6 +762,7 @@ class AgentMetadataExporter:
 
         queries = []
         data_source_values = []
+        tool_ids_for_card: List[str] = []
 
         # 1. agents table
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
@@ -692,6 +817,7 @@ class AgentMetadataExporter:
             values_list = []
             for tool in tools:
                 tool_id = str(uuid.uuid4())
+                tool_ids_for_card.append(tool_id)
                 name = cls.sanitize(tool.get("name"))
                 desc = cls.sanitize(tool.get("description"))
 
@@ -788,7 +914,19 @@ class AgentMetadataExporter:
         # 5. Execute
         for query in queries:
             cls.execute_dml(query)
-        
+
+        # 6. Write agent card JSON so get_agent_card returns full details immediately
+        cls._write_agent_card(
+            agent_id=agent_id,
+            agent_internal_id=agent_internal_id,
+            agent_name=raw_agent_name,
+            description=raw_description,
+            instruction=raw_instruction,
+            tools=tools,
+            knowledge_source=knowledge_source,
+            tool_ids=tool_ids_for_card,
+        )
+
         payload = {
             "agent_internal_id": agent_internal_id,
             "agent_id": agent_id,
@@ -1156,6 +1294,28 @@ class AgentMetadataExporter:
                     u.status,
                     u.solution_approach,
                     u.created_ts,
+                    COALESCE(
+                        (
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                            WHERE rel.ai_use_case_id = u.ai_use_case_id
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {rel_tenant_where}
+                        ),
+                        0
+                    ) AS related_agent_count,
+                    COALESCE(
+                        (
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                            WHERE rel.ai_use_case_id = u.ai_use_case_id
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {rel_tenant_where}
+                        ),
+                        0
+                    ) AS no_of_associated_agents,
                     ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                     COUNT(*) OVER () AS total_records
                 FROM {cls.CORE_DB_NAME}.ai_use_cases u
@@ -1189,6 +1349,8 @@ class AgentMetadataExporter:
                 "status": row_dict.get("status"),
                 "solution_approach": row_dict.get("solution_approach"),
                 "created_ts": row_dict.get("created_ts"),
+                "related_agent_count": row_dict.get("related_agent_count"),
+                "no_of_associated_agents": row_dict.get("no_of_associated_agents"),
             })
 
         # ---------- 6. Response ----------
