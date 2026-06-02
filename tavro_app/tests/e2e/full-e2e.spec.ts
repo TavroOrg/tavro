@@ -307,33 +307,19 @@ async function apiPut(
   return { status: res.status(), body: resBody };
 }
 
-// ── Spark → AI Use Case — advanced flow ──────────────────────────────────────
+// ── Spark to Agent Playground E2E Testing ───────────────────────────────────
 
-test.describe.serial('Spark → AI Use Case — advanced flow', () => {
+test.describe.serial('Spark to Agent Playground E2E Testing', () => {
   let useCaseId    = '';
   let agentId      = '';
   let agentName    = '';
   let processId    = '';
   let applicationId = '';
-  let sessionId    = '';
   let hasRegisteredCompany = false;
   let companyIds: string[] = [];
   let activeCompanyId = '';
 
   const noCompanyMessage = 'Set up your Company Blueprint first — Spark uses your company profile as context for idea generation.';
-
-  const base = () => process.env.E2E_API_URL || process.env.E2E_BASE_URL || 'http://localhost:9000';
-
-  async function authHeaders(page: Page): Promise<Record<string, string>> {
-    const token    = await getToken(page);
-    const tenantId = await getTenantId(page);
-    const h: Record<string, string> = {
-      Authorization:  `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-    if (tenantId) h['x-tenant-id'] = tenantId;
-    return h;
-  }
 
   function requireRegisteredCompany() {
     if (!hasRegisteredCompany) {
@@ -741,23 +727,23 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
     await expect(azureCard, 'Azure Foundry provider card not visible').toBeVisible({ timeout: 8_000 });
     await azureCard.click();
 
-    // Start session
-    const startBtn = page.getByRole('button', { name: /start session/i });
-    await expect(startBtn, '"Start Session" button not found').toBeVisible({ timeout: 8_000 });
+    // Start session from the configure CTA so the UI moves into the Interact tab.
+    const startInteractBtn = page.getByRole('button', { name: /^start session and interact$/i });
+    const startBtn = await startInteractBtn.isVisible().catch(() => false)
+      ? startInteractBtn
+      : page.getByRole('button', { name: /^start session$/i }).first();
+    await expect(startBtn, '"Start session and interact" button not found').toBeVisible({ timeout: 8_000 });
     await startBtn.click();
     await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+    await expect(page.getByText(/session active/i), 'Playground session did not become active').toBeVisible({ timeout: 10_000 });
 
     // Type the interaction prompt
-    const msgInput = page.getByRole('textbox').last()
-      .or(page.locator('textarea').last())
-      .or(page.locator('[placeholder*="message" i], [placeholder*="type" i]').first());
+    const msgInput = page.locator('input[placeholder*="message" i], input[placeholder*="agent" i]').last();
     await expect(msgInput, 'Message input not found in Playground').toBeVisible({ timeout: 10_000 });
     await msgInput.fill(`Generate synthetic data as required for the agent: ${agentName}`);
 
     // Send
-    const sendBtn = page.getByRole('button', { name: /send/i })
-      .or(page.locator('[aria-label="send" i]'))
-      .or(page.getByTitle(/send/i));
+    const sendBtn = msgInput.locator('xpath=following-sibling::button[1]');
     await expect(sendBtn, 'Send button not found').toBeVisible({ timeout: 5_000 });
     await sendBtn.click();
 

@@ -8,7 +8,6 @@ const CSV_FILE    = path.join(RESULTS_DIR, 'results.csv');
 type Row = {
   Environment:        string;
   Project:            string;
-  File:               string;
   Suite:              string;
   Test:               string;
   Status:             string;
@@ -25,6 +24,13 @@ function cleanError(msg: string | undefined): string {
     .replace(/\x1b\[[0-9;]*m/g, '')
     .replace(/\r\n|\n|\r/g, ' ')
     .slice(0, 250);
+}
+
+function formatStatus(status: string): string {
+  if (status === 'passed') return 'Pass';
+  if (status === 'failed') return 'Fail';
+  if (status === 'timedOut') return 'TimedOut';
+  return status;
 }
 
 function likelyCause(status: string, file: string, err: string): string {
@@ -70,10 +76,9 @@ class CsvReporter implements Reporter {
     this.rows.push({
       Environment:        process.env.E2E_BASE_URL || 'http://localhost:9000',
       Project:            test.parent?.project()?.name ?? '',
-      File:               file,
       Suite:              suite,
       Test:               test.title,
-      Status:             result.status.toUpperCase(),
+      Status:             formatStatus(result.status),
       Duration_s:         (result.duration / 1000).toFixed(2),
       Error:              err,
       Likely_Cause:       likelyCause(result.status, file, err),
@@ -88,7 +93,7 @@ class CsvReporter implements Reporter {
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
 
     const headers: (keyof Row)[] = [
-      'Project', 'File', 'Suite', 'Test', 'Status',
+      'Project', 'Suite', 'Test', 'Status',
       'Duration_s', 'Error', 'Likely_Cause', 'Recommended_Action', 'Next_Step', 'Environment',
     ];
     const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -100,9 +105,9 @@ class CsvReporter implements Reporter {
     // BOM tells Excel to read the file as UTF-8 instead of Windows-1252
     fs.writeFileSync(CSV_FILE, '﻿' + lines.join('\n'), 'utf8');
 
-    const passed   = this.rows.filter(r => r.Status === 'PASSED').length;
-    const failed   = this.rows.filter(r => r.Status === 'FAILED').length;
-    const timedOut = this.rows.filter(r => r.Status === 'TIMEDOUT').length;
+    const passed   = this.rows.filter(r => r.Status === 'Pass').length;
+    const failed   = this.rows.filter(r => r.Status === 'Fail').length;
+    const timedOut = this.rows.filter(r => r.Status === 'TimedOut').length;
 
     console.log(`\n[csv-reporter] Results saved → ${CSV_FILE}`);
     console.log(`               Total: ${this.rows.length}  Passed: ${passed}  Failed: ${failed}  TimedOut: ${timedOut}`);
