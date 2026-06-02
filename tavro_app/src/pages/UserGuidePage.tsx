@@ -9,7 +9,8 @@ import {
     Home, Play, LayoutGrid, List, Plus, Link2,
     ShieldAlert, Unlink2, PlusCircle, Settings2, MessageSquare,
     ClipboardCheck, Loader2,
-    Building2, Globe, RefreshCw, Layers
+    Building2, Globe, RefreshCw, Layers,
+    Code2
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -148,7 +149,7 @@ const TOC_SECTIONS: TocSection[] = [
         ],
     },
     {
-        id: 'spark', label: 'Spark — AI Ideas', icon: <Zap size={14} />,
+        id: 'spark', label: 'Spark — Ideas', icon: <Zap size={14} />,
         children: [
             { id: 'spark-generate', label: 'Generating Ideas' },
             { id: 'spark-convert', label: 'Converting to a Use Case' },
@@ -362,6 +363,22 @@ const UserGuidePage: React.FC = () => {
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
                         A <strong className="text-slate-800 dark:text-slate-200">Use Case</strong> is the starting point for every AI initiative in Tavro. It documents the business problem, expected benefits, and priority — and acts as the anchor that links agents, processes, applications, and compliance rules together. There are two ways to create one.
                     </p>
+                    {/* AI Use Case screenshot */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">AI Use Cases</span>
+                        </div>
+                        <img
+                            src="/assets/images/AI Use Cases.png"
+                            alt="AI Use Cases"
+                            className="w-full block"
+                        />
+                    </div>
 
                     <SectionHeading id="uc-via-ui" level={3}>Path 1 — Creating a Use Case via the UI</SectionHeading>                    
                     <FlowDiagram steps={[
@@ -420,7 +437,7 @@ const UserGuidePage: React.FC = () => {
                             ))}
                         </div>
                     </Step>                    
-                    <Callout type="tip" title="Spark for Structured AI Ideas">
+                    <Callout type="tip" title="Spark for Structured Ideas">
                         For a more structured approach, use <strong>Spark</strong> (left sidebar → Spark). It analyzes your entire Blueprint and automatically generates prioritized use case ideas — see the <em>Spark</em> section below.
                     </Callout>
 
@@ -457,20 +474,25 @@ const UserGuidePage: React.FC = () => {
 
                     <SectionHeading id="agent-detail" level={3}>Exploring Agent Detail</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Click any agent name in the <em>Currently Related Agents</em> list to open its full detail page. The agent page has three key tabs:
+                        Click any agent name in the <em>Currently Related Agents</em> list to open its full detail page.
                     </p>
-                    <div className="grid grid-cols-3 gap-2 my-4">
-                        {[
-                            { tab: 'Overview', desc: 'Role, instructions, goal, environment, owner, governance status, and key governance tags. This is the agent\'s identity card.' },
-                            { tab: 'Context Graph', desc: 'An interactive radial graph showing every connection this agent has — tools, data sources, applications, processes, use cases, and risk scores.' },
-            
-                        ].map(t => (
-                            <div key={t.tab} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-3.5">
-                                <div className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1.5">{t.tab}</div>
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t.desc}</p>
+                    {/* Agent Detail */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
                             </div>
-                        ))}
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Agent</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Detail Page.png"
+                            alt="Agent"
+                            className="w-full block"
+                        />
                     </div>
+                  
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
                         From the agent page you can also trigger key actions using the buttons in the top-right:
                     </p>
@@ -478,6 +500,7 @@ const UserGuidePage: React.FC = () => {
                         <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton>
                         <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton>
                         <UIButton color="blue" icon={<ShieldCheck size={10} />}>Audit</UIButton>
+                        <UIButton color="slate" icon={<Code2 size={10} />}>Agent Card</UIButton>
                         <UIButton color="slate">Edit</UIButton>
                         <UIButton color="red">Delete</UIButton>
                     </div>
@@ -486,6 +509,22 @@ const UserGuidePage: React.FC = () => {
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
                         The <strong>Context Graph</strong> tab renders a live radial diagram of everything the agent is connected to. It's the fastest way to understand an agent's full blast radius across your organization.
                     </p>
+                    {/* Agent Context Graph */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Context Graph</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Context Graph.png"
+                            alt="Context Graph"
+                            className="w-full block"
+                        />
+                    </div>
                     <div className="grid grid-cols-2 gap-2 my-4">
                         {[
                             { ring: 'Technical', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800', textColor: 'text-blue-700 dark:text-blue-300', items: 'Tools the agent uses, its reasoning model, autonomy level, memory type, access scope' },
@@ -498,10 +537,7 @@ const UserGuidePage: React.FC = () => {
                                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">{r.items}</p>
                             </div>
                         ))}
-                    </div>
-                    <Callout type="tip" title="Navigate from the Graph">
-                        Every leaf node in the Context Graph is clickable. Clicking an Application node takes you to that application's detail page; clicking a Use Case node takes you to the use case — making it a powerful jump-pad for cross-navigation.
-                    </Callout>
+                    </div>                    
 
                     <SectionHeading id="blueprint-map" level={3}>Blueprint — Your Organization Map</SectionHeading>                    
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
@@ -543,22 +579,37 @@ const UserGuidePage: React.FC = () => {
                         { icon: <CheckCircle2 size={14} />, label: 'Scores Appear', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
                     ]} />
                     <Step n={1} title="Open the Agent">
-                        Navigate to <strong>Agents</strong> and click the <em>Sentiment Agent</em> card — its risk class shows <strong>Pending</strong> because no assessment has run yet.
+                        Navigate to <strong>Agents</strong> and click the <em>SPC Multivariate Anomaly Detection Agent</em> card — its risk class shows <strong>Pending</strong> because no assessment has run yet.
                     </Step>
                     <Step n={2} title="Trigger the assessment">
                         Click <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton> in the top-right. The button shows a spinner labeled <em>"Assessing…"</em> while the AI evaluates the agent against the EU AI Act and AIVSS framework.
                     </Step>
                     <Step n={3} title="Wait for results">
-                        The assessment runs asynchronously. The agent card pulses while processing. When complete, Blended Risk, AIVSS Score, and Regulatory Risk appear in the <strong>Overview</strong> tab.
+                        The assessment runs asynchronously. The agent card pulses while processing. When complete, Blended Risk, AIVSS Score, and Regulatory Risk appear in the <strong>AI Risk Assessment</strong> tab.
                     </Step>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 mt-4 leading-relaxed">
-                        The assessment produces three scores. The example below shows real output from the <strong>ColdChain AI — Perishable Intelligence Agent</strong> (6 tools, 6 data sources, Medium risk):
-                    </p>
+
+                    {/* AI Risk Assessment */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Risk Assessment</span>
+                        </div>
+                        <img
+                            src="/assets/images/AI Risk Assessment.png"
+                            alt="Risk Assessment"
+                            className="w-full block"
+                        />
+                    </div>
+                    
                     <div className="grid grid-cols-3 gap-2 my-3">
                         {[
-                            { label: 'Blended Risk', desc: 'Combined score: access scope, autonomy level, data sensitivity, tool capabilities. ColdChain: 4.56 Medium. Business Data Intelligence: 7.76 High.', color: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800' },
-                            { label: 'AIVSS Score', desc: 'AI Vulnerability Scoring System — 10 capability dimensions (autonomy, memory, tool use, multi-agent, etc.) each scored 0–1. ColdChain: 4.65. BDI Agent: 8.95.', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800' },
-                            { label: 'Regulatory Risk', desc: 'EU AI Act classification — Other, High Risk, or Prohibited. Driven by PII/PHI/PCI flags and Article 5/6 evaluation. BDI Agent: High Risk (PII: Yes).', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800' },
+                            { label: 'Blended Risk', desc: 'Combined score: access scope, autonomy level, data sensitivity, tool capabilities.', color: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800' },
+                            { label: 'AIVSS Score', desc: 'AI Vulnerability Scoring System — 10 capability dimensions (autonomy, memory, tool use, multi-agent, etc.).', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800' },
+                            { label: 'Regulatory Risk', desc: 'EU AI Act classification — Other, High Risk, or Prohibited. Driven by PII/PHI/PCI flags and Article 5/6 evaluation.', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800' },
                         ].map(s => (
                             <div key={s.label} className={`rounded-xl border p-3.5 ${s.color}`}>
                                 <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">{s.label}</p>
@@ -629,8 +680,8 @@ const UserGuidePage: React.FC = () => {
                     ]} />
 
                     <SectionHeading id="pg-launch" level={3}>Launching from an Agent</SectionHeading>                  
-                    <Step n={1} title="Open the Sentiment Agent">
-                        Go to <strong>Agents</strong> → search for <em>"Sentiment Agent"</em> → click the card.
+                    <Step n={1} title="Open the SPC Multivariate Anomaly Detection Agent">
+                        Go to <strong>Agents</strong> → search for <em>"SPC Multivariate Anomaly Detection Agent"</em> → click the card.
                     </Step>
                     <Step n={2} title="Click Playground">
                         Click <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton> in the top-right. The Playground opens with the agent's name and description pre-loaded from the catalog record.
@@ -638,13 +689,29 @@ const UserGuidePage: React.FC = () => {
                     <Callout type="tip" title="Launching from the sidebar">
                         You can also open <strong>Agent Playground</strong> directly from the left sidebar to prototype a brand-new agent from scratch without a catalog record.
                     </Callout>
+                    {/* Agent Playground */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Agent Playground</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Playground.png"
+                            alt="Agent Playground"
+                            className="w-full block"
+                        />
+                    </div>
                     
                                     
                     <div className="space-y-3 my-4">
                         {[
-                            { section: 'Infrastructure', desc: 'Choose between Claude (Anthropic) or Azure AI Foundry. For the Sentiment Agent, select Claude and pick claude-sonnet-4.' },
+                            { section: 'Infrastructure', desc: 'Choose between Claude (Anthropic) or Azure AI Foundry. For the SPC Multivariate Anomaly Detection Agent, select Claude and pick claude-sonnet-4.' },
                             { section: 'Model', desc: 'Select the model — e.g. claude-sonnet-4, claude-opus-4.1. Options update based on the provider.' },
-                            { section: 'Agent Name', desc: 'Pre-filled as "Sentiment Agent" from the catalog. This appears in the session header and downloaded transcript filename.' },
+                            { section: 'Agent Name', desc: 'Pre-filled as "SPC Multivariate Anomaly Detection Agent" from the catalog. This appears in the session header and downloaded transcript filename.' },
                             { section: 'System Prompt', desc: 'Write the agent\'s instructions. If your company Blueprint is loaded, Tavro automatically injects organizational context at the bottom of this prompt — you\'ll see a note confirming this.' },
                             { section: 'Temperature', desc: 'Drag the slider from 0 (Precise — deterministic responses) to 1 (Creative — more varied responses). For business-critical agents, stay at 0.1–0.3.' },
                             { section: 'Max Tokens', desc: 'Cap the response length. 1024 is good for structured extractions; 4096+ for conversational agents that need to write detailed analysis.' },
@@ -700,17 +767,34 @@ const UserGuidePage: React.FC = () => {
                     {/* ════════════════════════════════════════════════════════
                         6 · SPARK
                     ════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="spark" level={2} icon={<Zap size={18} />}>Spark — AI Idea Generation</SectionHeading>
+                    <SectionHeading id="spark" level={2} icon={<Zap size={18} />}>Spark — Idea Generation</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
                         Spark analyzes your company's Blueprint, existing agents, and compliance landscape to surface high-value AI use case opportunities you haven't identified yet. It's the fastest way to populate your use case backlog with data-driven ideas.
                     </p>
+
+                    {/* Spark */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Spark</span>
+                        </div>
+                        <img
+                            src="/assets/images/Spark Ideas.png"
+                            alt="Spark"
+                            className="w-full block"
+                        />
+                    </div>
 
                     <SectionHeading id="spark-generate" level={3}>Generating Ideas</SectionHeading>
                     <Step n={1} title="Navigate to Spark">
                         Click <strong>Spark</strong> in the left sidebar (violet Zap icon).
                     </Step>
-                    <Step n={2} title="Optionally set a focus direction">
-                        Type a focus area into the direction field (e.g. <em>"predictive maintenance"</em>, <em>"customer onboarding automation"</em>). Leave it blank to scan your entire Blueprint.
+                    <Step n={2} title="Set a focus direction">
+                        Type a focus area into the direction field (e.g. <em>"predictive maintenance"</em>, <em>"customer onboarding automation"</em>).
                     </Step>
                     <Step n={3} title="Optionally filter by Blueprint dimensions">
                         Click <UIButton color="slate">Filters</UIButton> to expand the dimension panel. Select specific Blueprint nodes to focus the ideation on those areas. A badge shows how many filters are active.
@@ -742,6 +826,22 @@ const UserGuidePage: React.FC = () => {
                             <div className="flex items-center gap-2"><CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />Attempts to create and pre-link a suggested agent (best-effort)</div>
                         </div>
                     </Step>
+                    {/* Convert to Use Case */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Convert to Use Case</span>
+                        </div>
+                        <img
+                            src="/assets/images/Convert to Use Case.png"
+                            alt="Convert to Use Case"
+                            className="w-full block"
+                        />
+                    </div>
                     <Step n={4} title="Refine the use case">
                         On the new use case page, review the AI-generated content, edit any fields that need adjusting, and link additional agents, processes, and applications as described in the <em>Use Case → Agent → Blueprint</em> section.
                     </Step>
