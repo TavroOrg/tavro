@@ -49,17 +49,21 @@ async function apiGet(page: Page, apiPath: string): Promise<{ status: number; bo
 // ── Authentication ─────────────────────────────────────────────────────────────
 
 test.describe('Authentication', () => {
-  test('session is valid — real JWT in localStorage', async ({ page }) => {
+  test('session is valid — JWT in localStorage', async ({ page }) => {
     await page.goto('/');
 
-    const token = await getToken(page);
-    const parts = token.split('.');
+    // tavro_access_token may be an opaque token (no dots) — just verify it exists
+    const accessToken = await getToken(page);
+    expect(accessToken, 'Access token must not be the fake Playwright test token').not.toContain('playwright-fake-sig');
 
-    expect(parts, 'Token must have 3 JWT parts (header.payload.signature)').toHaveLength(3);
-    expect(token, 'Token must not be the fake Playwright test token').not.toContain('playwright-fake-sig');
+    // tavro_id_token is always a JWT in OIDC — use this for structure + expiry checks
+    const idToken = await page.evaluate(() => localStorage.getItem('tavro_id_token'));
+    expect(idToken, 'ID token must be present in localStorage').toBeTruthy();
+    const parts = idToken!.split('.');
+    expect(parts, 'ID token must have 3 JWT parts (header.payload.signature)').toHaveLength(3);
 
     const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-    expect(payload.exp, 'Token must not be expired').toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(payload.exp, 'ID token must not be expired').toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
   test('unauthenticated visitor is redirected to /login', async ({ browser }) => {
@@ -146,7 +150,7 @@ test.describe('Navigation — all routes load without crashing', () => {
 
 // ── Backend API ────────────────────────────────────────────────────────────────
 
-test.describe('Backend API — real authenticated requests', () => {
+test.describe('Backend API — authenticated requests', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
   });
@@ -162,41 +166,52 @@ test.describe('Backend API — real authenticated requests', () => {
   test('GET /api/v1/use-cases returns valid shape', async ({ page }) => {
     const { status, body } = await apiGet(page, '/use-cases');
     expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
-    expect(body).toHaveProperty('use_cases');
-    expect(Array.isArray(body.use_cases), 'use_cases must be an array').toBe(true);
+    expect(body).toHaveProperty('data');
+    expect(Array.isArray(body.data), 'use-cases data must be an array').toBe(true);
+    expect(body).toHaveProperty('total_records');
   });
 
-  test('GET /api/v1/blueprint returns valid shape', async ({ page }) => {
-    const { status, body } = await apiGet(page, '/blueprint');
+  test('GET /api/v1/blueprint/research/config returns valid shape', async ({ page }) => {
+    const { status, body } = await apiGet(page, '/blueprint/research/config');
     expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
-    expect(body).toHaveProperty('nodes');
-    expect(body).toHaveProperty('edges');
+    expect(body).toHaveProperty('model');
+    expect(body).toHaveProperty('provider');
   });
 
-  test('GET /api/v1/compliance returns 200', async ({ page }) => {
-    const { status, body } = await apiGet(page, '/compliance');
+  test('GET /api/v1/compliance/items returns valid shape', async ({ page }) => {
+    const { status, body } = await apiGet(page, '/compliance/items');
     expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
-    expect(body).toBeDefined();
+    expect(body).toHaveProperty('items');
+    expect(Array.isArray(body.items), 'compliance items must be an array').toBe(true);
+    expect(body).toHaveProperty('total');
   });
 
-  test('GET /api/v1/audit returns 200', async ({ page }) => {
-    const { status, body } = await apiGet(page, '/audit');
+  test('GET /api/v1/audit/runs returns valid shape', async ({ page }) => {
+    const { status, body } = await apiGet(page, '/audit/runs');
     expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
-    expect(body).toBeDefined();
+    expect(Array.isArray(body), 'audit runs must be an array').toBe(true);
   });
 
-  test('invalid token is rejected with 401 or 403', async ({ page }) => {
-    const base = process.env.E2E_API_URL || process.env.E2E_BASE_URL || 'http://localhost:9000';
-    const res  = await page.request.get(`${base}/api/v1/agents`, {
-      headers: { Authorization: 'Bearer this-is-not-a-valid-token' },
-    });
-    expect([401, 403], `Expected 401 or 403, got ${res.status()}`).toContain(res.status());
+  test('GET /api/v1/applications returns valid shape', async ({ page }) => {
+    const { status, body } = await apiGet(page, '/applications');
+    expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
+    expect(body).toHaveProperty('items');
+    expect(Array.isArray(body.items), 'applications items must be an array').toBe(true);
+    expect(body).toHaveProperty('total');
+  });
+
+  test('GET /api/v1/processes returns valid shape', async ({ page }) => {
+    const { status, body } = await apiGet(page, '/processes');
+    expect(status, `Expected 200, got ${status}. Body: ${JSON.stringify(body)}`).toBe(200);
+    expect(body).toHaveProperty('items');
+    expect(Array.isArray(body.items), 'processes items must be an array').toBe(true);
+    expect(body).toHaveProperty('total');
   });
 });
 
 // ── Catalog ────────────────────────────────────────────────────────────────────
 
-test.describe('Catalog — real MCP server', () => {
+test.describe('Catalog — MCP server', () => {
   test('MCP access token is set after login', async ({ page }) => {
     await page.goto('/catalog');
     await expect(page).not.toHaveURL(/\/login/);

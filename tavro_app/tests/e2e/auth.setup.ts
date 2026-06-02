@@ -3,12 +3,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const REAL_AUTH_FILE = path.join(__dirname, '../../playwright/.auth/real-user.json');
+export const AUTH_FILE = path.join(__dirname, '../../playwright/.auth/user.json');
 
 const USERNAME = process.env.E2E_USERNAME;
 const PASSWORD = process.env.E2E_PASSWORD;
 
-setup('real Zitadel login', async ({ page }) => {
+setup('Zitadel login', async ({ page }) => {
   if (!USERNAME || !PASSWORD) {
     throw new Error(
       'E2E_USERNAME and E2E_PASSWORD must be set.\n' +
@@ -50,8 +50,9 @@ setup('real Zitadel login', async ({ page }) => {
   // Flow: Zitadel (8080) → /auth/callback (9000) → / (9000)
   // Using a single waitForURL avoids a race where the callback→home navigation
   // completes before the second waitForURL is even registered.
+  const appHostname = new URL(process.env.E2E_BASE_URL || 'http://localhost:9000').hostname;
   await page.waitForURL(
-    (url) => url.port === '9000' && url.pathname === '/',
+    (url) => url.hostname === appHostname && url.pathname === '/',
     { timeout: 30_000 },
   );
 
@@ -69,5 +70,5 @@ setup('real Zitadel login', async ({ page }) => {
 
   // Save the entire browser storage state (cookies + localStorage) so all test
   // files can start already authenticated without repeating the login flow.
-  await page.context().storageState({ path: REAL_AUTH_FILE });
+  await page.context().storageState({ path: AUTH_FILE });
 });

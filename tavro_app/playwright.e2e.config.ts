@@ -20,15 +20,12 @@ if (fs.existsSync(envFile)) {
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:9000';
 
 export default defineConfig({
-  testDir: './tests/e2e-real',
+  testDir: './tests/e2e',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   timeout: 60_000,
-
-  // globalTeardown runs after all tests finish — converts JSON report to CSV.
-  globalTeardown: './tests/e2e-real/teardown.ts',
 
   outputDir: 'test-results-e2e',
 
@@ -36,6 +33,7 @@ export default defineConfig({
     ['html', { open: 'never', outputFolder: 'test-results-e2e/html-report' }],
     ['json', { outputFile: 'test-results-e2e/results.json' }],
     ['list'],
+    ['./tests/e2e/csv-reporter.ts'],
   ],
 
   use: {
@@ -48,25 +46,25 @@ export default defineConfig({
 
   projects: [
     {
-      name: 'real-setup',
-      testMatch: /auth\.real\.setup\.ts/,
+      name: 'setup',
+      testMatch: /auth\.setup\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        storageState: 'playwright/.auth/real-user.json',
+        storageState: 'playwright/.auth/user.json',
       },
-      dependencies: ['real-setup'],
+      dependencies: ['setup'],
     },
     {
       name: 'firefox',
       use: {
         ...devices['Desktop Firefox'],
-        storageState: 'playwright/.auth/real-user.json',
+        storageState: 'playwright/.auth/user.json',
       },
-      dependencies: ['real-setup'],
+      dependencies: ['setup'],
     },
   ],
 });
