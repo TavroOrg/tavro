@@ -116,10 +116,22 @@ def _extract_json_files_from_html(html: str) -> list[dict]:
     return files
 
 
-async def _download_public_file(client: httpx.AsyncClient, file_id: str) -> bytes:
+def _filename_from_response(resp) -> Optional[str]:
+    """Extract the real filename from the Content-Disposition response header."""
+    cd = resp.headers.get("content-disposition", "")
+    # Handles both filename= and filename*=UTF-8'' forms
+    m = re.search(r"filename\*?=['\"]?(?:UTF-\d+'[^']*')?([^'\";\r\n]+)", cd, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip("\"'")
+    return None
+
+
+async def _download_public_file(client: httpx.AsyncClient, file_id: str) -> tuple:
     """
     Download a file from Google Drive using the public export URL.
     Handles the virus-scan confirmation page for files Google hasn't scanned.
+
+    Returns (content_bytes, actual_filename_or_None).
     """
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     resp = await client.get(url, headers=_BROWSER_HEADERS, follow_redirects=True)
@@ -144,7 +156,7 @@ async def _download_public_file(client: httpx.AsyncClient, file_id: str) -> byte
     if resp.status_code != 200:
         raise ValueError(f"HTTP {resp.status_code}")
 
-    return resp.content
+    return resp.content, _filename_from_response(resp)
 
 
 def _is_agent_card(card: dict) -> bool:
@@ -274,16 +286,18 @@ async def import_from_drive(
         )
 
     # ── 2. Download and classify each file ────────────────────────────────────
-    agent_cards: List[dict] = []
+    agent_cards: List[tuple] = []       # (card_dict, drive_filename)
     use_case_cards: List[dict] = []
     download_errors: List[str] = []
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         for entry in json_entries:
-            fname = entry.get("name") or entry["id"]
             try:
-                raw = await _download_public_file(client, entry["id"])
+                raw, actual_name = await _download_public_file(client, entry["id"])
+                # Prefer: name from HTML parse → name from Content-Disposition → file ID
+                fname = entry.get("name") or actual_name or entry["id"]
             except Exception as exc:
+                fname = entry.get("name") or entry["id"]
                 download_errors.append(f"Could not download '{fname}': {exc}")
                 continue
 
@@ -304,7 +318,7 @@ async def import_from_drive(
 
             for card in cards:
                 if _is_agent_card(card):
-                    agent_cards.append(card)
+                    agent_cards.append((card, fname))
                 else:
                     use_case_cards.append(card)
 
@@ -313,16 +327,27 @@ async def import_from_drive(
     agents_imported = 0
     agent_errors: List[str] = []
 
-    for card in agent_cards:
+    # Per-file validation tracking for the UI
+    from collections import defaultdict as _defaultdict
+    agent_file_map: dict = _defaultdict(lambda: {"valid_count": 0, "invalid_count": 0, "errors": []})
+
+    for card, fname in agent_cards:
         try:
             ok = await loop.run_in_executor(_drive_executor, _process_agent_sync, card, tenant_id)
             if ok:
                 agents_imported += 1
+                agent_file_map[fname]["valid_count"] += 1
             else:
                 agent_id = (card.get("identification") or {}).get("agent_id", "?")
-                agent_errors.append(f"Agent '{agent_id}' failed — check server logs.")
+                err = f"Agent '{agent_id}' failed processing — check server logs."
+                agent_errors.append(err)
+                agent_file_map[fname]["invalid_count"] += 1
+                agent_file_map[fname]["errors"].append(err)
         except Exception as exc:
-            agent_errors.append(str(exc))
+            err = str(exc)
+            agent_errors.append(err)
+            agent_file_map[fname]["invalid_count"] += 1
+            agent_file_map[fname]["errors"].append(err)
 
     # ── 4. Process use case cards (async SQLAlchemy) ───────────────────────────
     use_cases_imported = 0
@@ -438,19 +463,48 @@ async def import_from_drive(
             detail=f"All {len(agent_cards) + len(use_case_cards)} card(s) failed to process. Check server logs.",
         )
 
+    # Build per-file results in the order they were encountered
+    seen_fnames: set = set()
+    file_results: List[dict] = []
+    for _, fname in agent_cards:
+        if fname not in seen_fnames:
+            seen_fnames.add(fname)
+            entry = agent_file_map[fname]
+            file_results.append({
+                "filename": fname,
+                "valid_count": entry["valid_count"],
+                "invalid_count": entry["invalid_count"],
+                "errors": entry["errors"],
+            })
+    # Files that only had download/parse errors (never reached agent_cards)
+    for err_msg in download_errors:
+        # Extract filename from error message pattern "Could not download 'fname': …"
+        import re as _re
+        m = _re.search(r"'([^']+)'", err_msg)
+        fname = m.group(1) if m else "unknown"
+        if fname not in seen_fnames:
+            seen_fnames.add(fname)
+            file_results.append({"filename": fname, "valid_count": 0, "invalid_count": 1, "errors": [err_msg]})
+
     parts = []
     if agents_imported:
         parts.append(f"{agents_imported} agent{'s' if agents_imported != 1 else ''}")
     if use_cases_imported:
         parts.append(f"{use_cases_imported} use case{'s' if use_cases_imported != 1 else ''}")
 
+    total_agent_cards = len(agent_cards)
+    summary = (
+        f"Imported {' and '.join(parts)} from {len(json_entries)} file(s)."
+        if parts else "No records were imported."
+    )
+    if total_agent_cards and agents_imported < total_agent_cards:
+        summary += f" {total_agent_cards - agents_imported} agent card(s) failed validation."
+
     return {
         "total_files": len(json_entries),
         "agents_imported": agents_imported,
         "use_cases_imported": use_cases_imported,
         "errors": all_errors,
-        "message": (
-            f"Imported {' and '.join(parts)} from {len(json_entries)} file(s)."
-            if parts else "No records were imported."
-        ),
+        "file_results": file_results,
+        "message": summary,
     }

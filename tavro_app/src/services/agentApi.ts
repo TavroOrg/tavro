@@ -122,7 +122,12 @@ class AgentApiService {
         });
     }
 
-    async uploadAgents(files: File[]): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
+    async uploadAgents(files: File[]): Promise<{
+        uploaded_count: number;
+        total_submitted: number;
+        file_results: Array<{ filename: string; valid_count: number; invalid_count: number; errors: string[] }>;
+        message: string;
+    }> {
         const formData = new FormData();
         for (const file of files) {
             formData.append('files', file, file.name);
