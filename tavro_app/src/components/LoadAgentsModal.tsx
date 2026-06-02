@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Upload, X, FileJson, AlertCircle, CheckCircle2, Loader2, Trash2, FolderOpen, Link2 } from 'lucide-react';
+import { Upload, X, FileJson, AlertCircle, CheckCircle2, Loader2, Trash2, FolderOpen, Link2, XCircle } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
-import { driveApi } from '../services/driveApi';
+import { driveApi, FileValidationResult } from '../services/driveApi';
 
 interface LoadAgentsModalProps {
     onClose: () => void;
@@ -13,7 +13,94 @@ interface FileEntry {
     error?: string;
 }
 
+interface UploadResult {
+    message: string;
+    uploaded_count: number;
+    total_submitted: number;
+    file_results: FileValidationResult[];
+}
+
 type Tab = 'files' | 'drive';
+
+// ── Validation result panel ────────────────────────────────────────────────────
+
+interface ValidationResultPanelProps {
+    result: UploadResult;
+}
+
+const ValidationResultPanel: React.FC<ValidationResultPanelProps> = ({ result }) => {
+    const allValid = result.uploaded_count === result.total_submitted;
+    const anyInvalid = result.file_results.some(f => f.invalid_count > 0);
+
+    return (
+        <div className="flex flex-col gap-3">
+            {/* Summary banner */}
+            <div className={`flex items-start gap-3 rounded-xl px-4 py-3 border ${
+                allValid
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
+                    : anyInvalid && result.uploaded_count > 0
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+                        : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+            }`}>
+                {allValid
+                    ? <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                    : anyInvalid && result.uploaded_count > 0
+                        ? <AlertCircle size={18} className="text-amber-500 mt-0.5 shrink-0" />
+                        : <XCircle size={18} className="text-red-500 mt-0.5 shrink-0" />
+                }
+                <p className={`text-sm font-semibold ${
+                    allValid
+                        ? 'text-emerald-700 dark:text-emerald-300'
+                        : anyInvalid && result.uploaded_count > 0
+                            ? 'text-amber-700 dark:text-amber-300'
+                            : 'text-red-700 dark:text-red-300'
+                }`}>
+                    {result.uploaded_count} out of {result.total_submitted} JSON file{result.total_submitted !== 1 ? 's' : ''} are valid
+                </p>
+            </div>
+
+            {/* Per-file list */}
+            {result.file_results.length > 0 && (
+                <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-0.5">
+                    {result.file_results.map((f, i) => {
+                        const isValid = f.invalid_count === 0;
+                        return (
+                            <div
+                                key={`${f.filename}-${i}`}
+                                className={`flex flex-col gap-1 px-3 py-2 rounded-lg border text-xs ${
+                                    isValid
+                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
+                                        : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                                }`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    {isValid
+                                        ? <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                        : <XCircle size={13} className="text-red-500 shrink-0" />
+                                    }
+                                    <span className={`font-semibold truncate flex-1 ${
+                                        isValid ? 'text-emerald-800 dark:text-emerald-200' : 'text-red-700 dark:text-red-300'
+                                    }`}>
+                                        {f.filename}
+                                    </span>
+                                    <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                        isValid
+                                            ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
+                                            : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+                                    }`}>
+                                        {isValid ? 'Valid' : 'Invalid'}
+                                    </span>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ── Main modal ─────────────────────────────────────────────────────────────────
 
 const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess }) => {
     const [activeTab, setActiveTab] = useState<Tab>('files');
@@ -21,14 +108,14 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
     // ── File upload state ──────────────────────────────────────────────────────
     const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
     const [uploading, setUploading] = useState(false);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // ── Drive import state ─────────────────────────────────────────────────────
     const [driveUrl, setDriveUrl] = useState('');
     const [driveImporting, setDriveImporting] = useState(false);
-    const [driveSuccess, setDriveSuccess] = useState<string | null>(null);
+    const [driveResult, setDriveResult] = useState<UploadResult | null>(null);
     const [driveError, setDriveError] = useState<string | null>(null);
 
     // ── File upload handlers ───────────────────────────────────────────────────
@@ -76,10 +163,15 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
         if (validFiles.length === 0) return;
         setUploading(true);
         setErrorMessage(null);
-        setSuccessMessage(null);
+        setUploadResult(null);
         try {
             const result = await agentApi.uploadAgents(validFiles);
-            setSuccessMessage(result.message);
+            setUploadResult({
+                message: result.message,
+                uploaded_count: result.uploaded_count,
+                total_submitted: result.total_submitted,
+                file_results: result.file_results ?? [],
+            });
             setFileEntries([]);
             onSuccess();
         } catch (err: any) {
@@ -95,10 +187,15 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
         if (!url) return;
         setDriveImporting(true);
         setDriveError(null);
-        setDriveSuccess(null);
+        setDriveResult(null);
         try {
             const result = await driveApi.importFromDrive(url);
-            setDriveSuccess(result.message);
+            setDriveResult({
+                message: result.message,
+                uploaded_count: result.agents_imported,
+                total_submitted: result.total_files,
+                file_results: result.file_results ?? [],
+            });
             onSuccess();
         } catch (err: any) {
             setDriveError(err?.message ?? 'Drive import failed. Please try again.');
@@ -113,9 +210,9 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
 
     const switchTab = (tab: Tab) => {
         setActiveTab(tab);
-        setSuccessMessage(null);
+        setUploadResult(null);
         setErrorMessage(null);
-        setDriveSuccess(null);
+        setDriveResult(null);
         setDriveError(null);
     };
 
@@ -175,11 +272,8 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                     {/* ── Upload files tab ── */}
                     {activeTab === 'files' && (
                         <>
-                            {successMessage && (
-                                <div className="flex items-start gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-3">
-                                    <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                                    <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">{successMessage}</p>
-                                </div>
+                            {uploadResult && (
+                                <ValidationResultPanel result={uploadResult} />
                             )}
                             {errorMessage && (
                                 <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
@@ -187,7 +281,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                                     <p className="text-sm font-medium text-red-700 dark:text-red-300">{errorMessage}</p>
                                 </div>
                             )}
-                            {!successMessage && (
+                            {!uploadResult && (
                                 <div
                                     onDrop={handleDrop}
                                     onDragOver={handleDragOver}
@@ -215,7 +309,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                                     />
                                 </div>
                             )}
-                            {fileEntries.length > 0 && !successMessage && (
+                            {fileEntries.length > 0 && !uploadResult && (
                                 <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
                                     {fileEntries.map((entry, i) => (
                                         <div
@@ -247,7 +341,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                                     ))}
                                 </div>
                             )}
-                            {hasErrors && !successMessage && (
+                            {hasErrors && !uploadResult && (
                                 <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                                     <AlertCircle size={12} />
                                     Files with errors will be skipped. Only valid .json files will be uploaded.
@@ -259,11 +353,8 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                     {/* ── Google Drive tab ── */}
                     {activeTab === 'drive' && (
                         <>
-                            {driveSuccess && (
-                                <div className="flex items-start gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-3">
-                                    <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                                    <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">{driveSuccess}</p>
-                                </div>
+                            {driveResult && (
+                                <ValidationResultPanel result={driveResult} />
                             )}
                             {driveError && (
                                 <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
@@ -271,7 +362,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                                     <p className="text-sm font-medium text-red-700 dark:text-red-300">{driveError}</p>
                                 </div>
                             )}
-                            {!driveSuccess && (
+                            {!driveResult && (
                                 <>
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
@@ -305,7 +396,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                 </div>
 
                 {/* Footer */}
-                {activeTab === 'files' && !successMessage && (
+                {activeTab === 'files' && !uploadResult && (
                     <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 dark:border-slate-800">
                         <button
                             onClick={onClose}
@@ -328,7 +419,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                     </div>
                 )}
 
-                {activeTab === 'files' && successMessage && (
+                {activeTab === 'files' && uploadResult && (
                     <div className="flex justify-end px-6 py-4 border-t border-slate-100 dark:border-slate-800">
                         <button onClick={onClose} className="px-5 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all">
                             Done
@@ -336,7 +427,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                     </div>
                 )}
 
-                {activeTab === 'drive' && !driveSuccess && (
+                {activeTab === 'drive' && !driveResult && (
                     <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100 dark:border-slate-800">
                         <button
                             onClick={onClose}
@@ -359,7 +450,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
                     </div>
                 )}
 
-                {activeTab === 'drive' && driveSuccess && (
+                {activeTab === 'drive' && driveResult && (
                     <div className="flex justify-end px-6 py-4 border-t border-slate-100 dark:border-slate-800">
                         <button onClick={onClose} className="px-5 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all">
                             Done

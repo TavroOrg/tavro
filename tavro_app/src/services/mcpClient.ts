@@ -977,23 +977,27 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     }
 
     async getAgentRiskSummary(agentId: string): Promise<any> {
-        if (this._riskSummaryCache.has(agentId)) return this._riskSummaryCache.get(agentId);
+        // Always bypass cache so the UI reflects the latest completed assessment.
+        // The MCP tool overlays risk_assessment from DB on every call, so we must
+        // not serve a stale cached copy.
         try {
-            const details = await this.getAgentDetails(agentId);
+            const data = await this.callTool('get_agent_card', { agent_id: agentId });
+            if (data?.error) return undefined;
+            const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
+            if (!agent || agent?.error) return undefined;
+            // Refresh the agent detail cache so other consumers see the latest data too.
+            this._agentDetailCache.set(agentId, agent);
             const summary =
-                (details as any)?.risk_summary ??
-                (details as any)?.summary ??
-                (details as any)?.risk_assessment?.summary ??
+                (agent as any)?.risk_assessment?.summary ??
+                (agent as any)?.risk_summary ??
+                (agent as any)?.summary ??
                 '';
             if (!summary) return undefined;
-
-            const payload = {
-                agent_id: details?.identification?.agent_id || agentId,
-                agent_name: details?.name || agentId,
+            return {
+                agent_id: (agent as any)?.identification?.agent_id || agentId,
+                agent_name: (agent as any)?.name || agentId,
                 risk_summary: String(summary),
             };
-            this._riskSummaryCache.set(agentId, payload);
-            return payload;
         } catch {
             return undefined;
         }
