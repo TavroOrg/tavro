@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { isAccessTokenExpired, refreshAccessToken, clearAuth } from './services/auth';
+import { isAccessTokenExpired, isAccessTokenHardExpired, refreshAccessToken, clearAuth } from './services/auth';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import HomePage from './pages/HomePage';
@@ -40,6 +40,7 @@ import IntegrationsPage from './pages/IntegrationsPage';
 import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
+import ContainerLogsPage from './pages/ContainerLogsPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,16 @@ function useAuthCheck(): AuthStatus {
 
   useEffect(() => {
     if (status !== 'checking') return;
-    refreshAccessToken().then(ok => setStatus(ok ? 'ok' : 'expired'));
+    refreshAccessToken().then(ok => {
+      if (ok) { setStatus('ok'); return; }
+      // Refresh failed. Only force logout when the token is definitively expired
+      // (past its actual exp claim). The 30-second pre-emptive window in
+      // isAccessTokenExpired() can put valid tokens into 'checking'; if the
+      // refresh fails for a transient reason (no refresh token stored yet,
+      // network hiccup) we should NOT log the user out while their token is
+      // still accepted by the server.
+      setStatus(isAccessTokenHardExpired() ? 'expired' : 'ok');
+    });
   }, [status]);
 
   // Re-run the check whenever session_expired fires from an API layer.
@@ -140,6 +150,7 @@ function App() {
                 <Route path="insights" element={<InsightsPage />} />
                 <Route path="agent/:id" element={<AgentViewPage />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="settings/logs" element={<ContainerLogsPage />} />
 
                 {/* ── Blueprint routes (ADD THESE) ── */}
                 <Route path="blueprint" element={<BlueprintPage />} />

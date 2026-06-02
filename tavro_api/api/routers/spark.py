@@ -315,16 +315,18 @@ def _build_direction_prompt(company_nodes: list[dict], direction: str, count: in
     system = (
         f"You are a senior AI implementation consultant specialising in manufacturing operations. "
         f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
-        "Generate specific, concrete, buildable AI agent ideas with measurable ROI. "
+        "Generate specific, concrete, buildable AI use case ideas with measurable ROI. "
+        "Do not generate agents here. Do not include agent names in titles. "
         "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
     )
     user = (
-        f"FOCUS: Generate exactly {count} distinct AI agent ideas, ALL specifically about: \"{direction}\"\n\n"
+        f"FOCUS: Generate exactly {count} distinct AI use case ideas, ALL specifically about: \"{direction}\"\n\n"
         f"Company context (systems, processes, and integrations — reference them where applicable):\n"
         f"{context_lines}\n\n"
         "For each idea return a JSON object with:\n"
-        "- title: specific agent name, max 8 words "
-        "(good: 'OData Quality Gate Anomaly Detector'; bad: 'AI for OData')\n"
+        "- title: formal AI use case title, max 8 words. "
+        "Do NOT include the word 'Agent'. Do NOT write an agent name. "
+        "(good: 'OData Quality Gate Anomaly Detection'; bad: 'OData Quality Gate Agent')\n"
         "- description: exactly 2 sentences — "
         "sentence 1: what the agent does and which system/integration it connects to; "
         "sentence 2: what output it produces and how it is acted on\n"
@@ -541,7 +543,7 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
 
     system = (
         f"You are a senior AI implementation consultant specialising in manufacturing operations. "
-        f"Your job is to identify specific, high-ROI AI agent ideas that can realistically be built and deployed in 3–18 months. "
+        f"Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months. "
         f"Today's year is {CURRENT_YEAR}. "
         f"NEVER reference goals, targets, revenue plans, or milestones tied to years before {CURRENT_YEAR}. "
         f"If a signal mentions a past-year goal (e.g. FY2024, FY2025), ignore the goal framing and focus on the underlying system or process instead."
@@ -559,9 +561,10 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
         "  • Disconnected: idea has no real link to the specific system named in the context signal"
     )
     user = (
-        "For each signal below, generate ONE specific AI agent idea as a JSON object with exactly these fields:\n"
-        "- title: specific agent name, max 8 words "
-        "(good: 'MES Downtime Root-Cause Classifier'; bad: 'AI for Manufacturing Operations')\n"
+        "For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n"
+        "- title: formal AI use case title, max 8 words. "
+        "Do NOT include the word 'Agent'. Do NOT write an agent name. "
+        "(good: 'MES Downtime Root-Cause Classification'; bad: 'MES Downtime Agent')\n"
         "- description: exactly 2 sentences — "
         "sentence 1: what the agent does and which specific system/process it connects to; "
         "sentence 2: what output it produces and how a user or downstream system acts on it\n"
@@ -1073,7 +1076,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Context: {request.signal_label or ''}\n"
         f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
         "Return a single JSON object with exactly these fields:\n"
-        "- title: formal use case name (keep close to the idea title)\n"
+        "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
         "- business_problem_statement: the specific business problem or gap being addressed\n"
         "- expected_benefits: concrete outcomes (efficiency %, cost reduction, risk reduction, etc.)\n"

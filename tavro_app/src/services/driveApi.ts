@@ -3,11 +3,19 @@ import { getValidToken } from './auth';
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
+export interface FileValidationResult {
+    filename: string;
+    valid_count: number;
+    invalid_count: number;
+    errors: string[];
+}
+
 export interface DriveImportResult {
     total_files: number;
     agents_imported: number;
     use_cases_imported: number;
     errors: string[];
+    file_results: FileValidationResult[];
     message: string;
 }
 
