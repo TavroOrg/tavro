@@ -7,6 +7,7 @@ import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import { getValidToken } from './auth';
 
 export interface AgentAttachmentRecord {
   id: string;
@@ -41,17 +42,20 @@ export interface ProcessAttachmentRecord {
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('tavro_access_token');
-  return token
-    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    : { 'Content-Type': 'application/json' };
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getValidToken();
+  const tenantId = localStorage.getItem('tavro_tenant_id');
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+  };
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${V1}${path}`, {
     ...init,
-    headers: { ...authHeaders(), ...(init.headers ?? {}) },
+    headers: { ...(await authHeaders()), ...(init.headers ?? {}) },
   });
   if (!res.ok) {
     const body = await res.text();
@@ -153,7 +157,7 @@ class BusinessRelationsApi {
   }
 
   async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
-    return req(`/agents/${encodeURIComponent(agentId)}`);
+    return req(`/agent-relations/${encodeURIComponent(agentId)}`);
   }
 
   async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
@@ -178,7 +182,7 @@ class BusinessRelationsApi {
 
   async downloadAgentAttachment(agentId: string, attachmentId: string): Promise<Blob> {
     const res = await fetch(`${V1}/agents/${encodeURIComponent(agentId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
-      headers: authHeaders(),
+      headers: await authHeaders(),
     });
     if (!res.ok) {
       const body = await res.text();
@@ -209,7 +213,7 @@ class BusinessRelationsApi {
 
   async downloadApplicationAttachment(applicationId: string, attachmentId: string): Promise<Blob> {
     const res = await fetch(`${V1}/applications/${encodeURIComponent(applicationId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
-      headers: authHeaders(),
+      headers: await authHeaders(),
     });
     if (!res.ok) {
       const body = await res.text();
@@ -240,7 +244,7 @@ class BusinessRelationsApi {
 
   async downloadProcessAttachment(processId: string, attachmentId: string): Promise<Blob> {
     const res = await fetch(`${V1}/processes/${encodeURIComponent(processId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
-      headers: authHeaders(),
+      headers: await authHeaders(),
     });
     if (!res.ok) {
       const body = await res.text();

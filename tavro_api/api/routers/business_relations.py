@@ -2303,7 +2303,7 @@ async def delete_process_attachment(
 
 
 @router.get(
-    "/agents/{agent_id}",
+    "/agent-relations/{agent_id}",
     tags=["Applications", "Processes"],
     summary="Get Agent Applications and Processes",
 )
@@ -2333,11 +2333,25 @@ async def get_agent_relations(
             FROM core.agent_business_applications aba
             LEFT JOIN core.business_applications ba
                 ON ba.business_application_id = aba.business_application_id
-            WHERE aba.agent_internal_id = :agent_internal_id
+            WHERE (
+                aba.agent_internal_id = :agent_internal_id
+                OR aba.agent_id = :agent_id
+            )
+              AND (
+                CAST(:tenant_id AS text) IS NULL
+                OR aba.tenant_id = CAST(:tenant_id AS text)
+                OR aba.tenant_id IS NULL
+                OR aba.tenant_id = ''
+                OR aba.tenant_id = 'None'
+              )
             ORDER BY LOWER(COALESCE(ba.application_name, aba.application_name, aba.business_application_id))
             """
         ),
-        {"agent_internal_id": agent["agent_internal_id"]},
+        {
+            "agent_internal_id": agent["agent_internal_id"],
+            "agent_id": agent["agent_id"],
+            "tenant_id": agent.get("tenant_id"),
+        },
     )
     applications = [dict(r._mapping) for r in app_rows]
 
@@ -2389,11 +2403,25 @@ async def get_agent_relations(
                 WHERE linked.other_process_id IS NOT NULL
                   AND linked.other_process_id <> abp.business_process_id
             ) proc_rel ON TRUE
-            WHERE abp.agent_internal_id = :agent_internal_id
+            WHERE (
+                abp.agent_internal_id = :agent_internal_id
+                OR abp.agent_id = :agent_id
+            )
+              AND (
+                CAST(:tenant_id AS text) IS NULL
+                OR abp.tenant_id = CAST(:tenant_id AS text)
+                OR abp.tenant_id IS NULL
+                OR abp.tenant_id = ''
+                OR abp.tenant_id = 'None'
+              )
             ORDER BY LOWER(COALESCE(bp.process_name, abp.process_name, abp.business_process_id))
             """
         ),
-        {"agent_internal_id": agent["agent_internal_id"]},
+        {
+            "agent_internal_id": agent["agent_internal_id"],
+            "agent_id": agent["agent_id"],
+            "tenant_id": agent.get("tenant_id"),
+        },
     )
     business_processes = []
     for row in process_rows:
@@ -2469,7 +2497,7 @@ async def get_agent_relations(
                           {tenant_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
-                        ORDER BY LOWER(name)
+                        ORDER BY name
                         """
                     ),
                     params,

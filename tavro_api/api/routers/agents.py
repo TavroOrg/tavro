@@ -25,6 +25,7 @@ CORE    = os.getenv("CORE_DB_NAME",       "core")
 CURATED = os.getenv("CURATED_DB_NAME",    "curated")
 RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
 _RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+_TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -51,6 +52,42 @@ def _require_tenant(request: Request) -> str:
     if not tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant context.")
     return tenant_id
+
+
+async def _table_columns(db: AsyncSession, schema: str, table: str) -> set[str]:
+    cache_key = (schema, table)
+    if cache_key in _TABLE_COLUMNS_CACHE:
+        return _TABLE_COLUMNS_CACHE[cache_key]
+
+    result = await db.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema
+              AND table_name = :table
+            """
+        ),
+        {"schema": schema, "table": table},
+    )
+    columns = {str(row[0]) for row in result.fetchall()}
+    _TABLE_COLUMNS_CACHE[cache_key] = columns
+    return columns
+
+
+def _coalesce_columns(cols: set[str], names: tuple[str, ...], alias: str, fallback: str = "NULL::text") -> str:
+    existing = [name for name in names if name in cols]
+    if not existing:
+        return f"{fallback} AS {alias}"
+    if len(existing) == 1:
+        return f"{existing[0]} AS {alias}"
+    return f"COALESCE({', '.join(existing)}) AS {alias}"
+
+
+def _column_or_null(cols: set[str], name: str, fallback: str = "NULL::text") -> str:
+    if name in cols:
+        return name
+    return f"{fallback} AS {name}"
 
 
 def _risk_payload(agent_internal_id: str, agent_id: str, agent_name: str,
@@ -476,6 +513,16 @@ Return ONLY the JSON object with the "description" field."""
 async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     tenant_id = _require_tenant(request)
     try:
+        risk_cols = await _table_columns(db, CORE, "agent_risk_assessments")
+        risk_class_expr = _coalesce_columns(
+            risk_cols,
+            ("risk_classification", "blended_risk_class", "aivss_class", "regulatory_risk_class"),
+            "risk_classification",
+        )
+        blended_score_expr = _column_or_null(risk_cols, "blended_risk_score", "NULL::numeric")
+        pii_expr = _column_or_null(risk_cols, "pii_flag", "NULL::boolean")
+        phi_expr = _column_or_null(risk_cols, "phi_flag", "NULL::boolean")
+        pci_expr = _column_or_null(risk_cols, "pci_flag", "NULL::boolean")
         result = await db.execute(
             text(f"""
                 SELECT
@@ -494,7 +541,12 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     LIMIT 1
                 ) i ON true
                 LEFT JOIN LATERAL (
-                    SELECT risk_classification, blended_risk_score, pii_flag, phi_flag, pci_flag
+                    SELECT
+                        {risk_class_expr},
+                        {blended_score_expr},
+                        {pii_expr},
+                        {phi_expr},
+                        {pci_expr}
                     FROM {CORE}.agent_risk_assessments
                     WHERE agent_internal_id = a.agent_internal_id
                       AND COALESCE(is_current, true) = true
