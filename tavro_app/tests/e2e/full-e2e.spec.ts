@@ -310,25 +310,11 @@ async function apiPut(
 // ── Spark → AI Use Case — advanced flow ──────────────────────────────────────
 
 test.describe.serial('Spark → AI Use Case — advanced flow', () => {
-  let useCaseId    = '';
-  let agentId      = '';
-  let agentName    = '';
-  let processId    = '';
+  let useCaseId     = '';
+  let agentId       = '';
+  let agentName     = '';
+  let processId     = '';
   let applicationId = '';
-  let sessionId    = '';
-
-  const base = () => process.env.E2E_API_URL || process.env.E2E_BASE_URL || 'http://localhost:9000';
-
-  async function authHeaders(page: Page): Promise<Record<string, string>> {
-    const token    = await getToken(page);
-    const tenantId = await getTenantId(page);
-    const h: Record<string, string> = {
-      Authorization:  `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-    if (tenantId) h['x-tenant-id'] = tenantId;
-    return h;
-  }
 
   // ── 1. Blueprint — select a company ─────────────────────────────────────────
 
@@ -528,45 +514,134 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
     console.log(`[spark] Links verified — ${agents.length} agent(s), ${processes.length} process(es)`);
   });
 
-  // ── 8. AI assistant — business impact prompt ─────────────────────────────────
+  // ── 8. Settings — configure AI assistant provider ────────────────────────────
 
-  test('10 — AI assistant: ask what happens if agent fails', async ({ page }) => {
-    await page.goto('/');
-    const headers = await authHeaders(page);
+  test('10 — settings: configure Anthropic AI assistant and send business impact prompt', async ({ page }) => {
+    test.setTimeout(120_000);
 
-    // Create a playground session (uses ANTHROPIC_API_KEY on the backend)
-    const sessRes = await page.request.post(`${base()}/api/v1/playground/session`, {
-      headers,
-      data: {
-        agent_name:    agentName,
-        system_prompt: `You are a business analyst. Answer questions about the AI agent: ${agentName}.`,
-        provider:      'anthropic',
-        model:         'claude-sonnet-4-6',
-        temperature:   0.7,
-        max_tokens:    512,
-      },
-    });
-    expect([200, 201], `Session creation failed: ${sessRes.status()}`).toContain(sessRes.status());
-    const session = await sessRes.json().catch(() => ({}));
-    sessionId = session.session_id;
-    expect(sessionId, 'No session_id in response').toBeTruthy();
-    console.log(`[spark] Playground session created — id: ${sessionId}`);
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    expect(apiKey, 'ANTHROPIC_API_KEY must be set in .env.e2e').toBeTruthy();
 
-    // Send the business impact question
-    const msgRes = await page.request.post(
-      `${base()}/api/v1/playground/session/${sessionId}/message`,
-      {
-        headers,
-        data: { content: `What is the business impact if ${agentName} fails?` },
-      },
+    // ── Step 1: Configure provider in Settings ──────────────────────────────
+    await page.goto('/settings');
+    await expect(page).not.toHaveURL(/\/login/);
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+    // The heading has a known typo: "Assitant" not "Assistant" — match on the stable subtitle
+    const settingsSection = page.getByText(/chat ai configuration/i);
+    await expect(settingsSection, '"Chat AI Configuration" section not found on /settings').toBeVisible({ timeout: 8_000 });
+    await settingsSection.scrollIntoViewIfNeeded();
+
+    // Select provider: Anthropic (Claude) — native <select> dropdown
+    const providerTypeLabel = page.locator('label').filter({ hasText: /^Provider Type$/i });
+    const providerSelect = providerTypeLabel.locator('xpath=following-sibling::select[1]');
+    await expect(providerSelect, 'Provider type <select> not found').toBeVisible({ timeout: 5_000 });
+    await providerSelect.selectOption({ label: 'Anthropic (Claude)' });
+    await page.waitForTimeout(500); // let the form re-render with Anthropic fields
+
+    // Model defaults to claude-sonnet-4-6 after selecting Anthropic — verify it is set
+    const modelLabel = page.locator('label').filter({ hasText: /^Model$/i }).first();
+    const modelField = modelLabel.locator('xpath=following-sibling::*[1]');
+    await expect(modelField, 'Model field not found').toBeVisible({ timeout: 5_000 });
+    if ((await modelField.evaluate(el => el.tagName.toLowerCase())) === 'select') {
+      await modelField.selectOption('claude-sonnet-4-6').catch(async () => {
+        await modelField.selectOption({ label: 'claude-sonnet-4-6' });
+      });
+    } else if (!(await modelField.inputValue()).includes('sonnet')) {
+      await modelField.fill('claude-sonnet-4-6');
+    }
+    await expect(modelField, 'Anthropic model was not selected').toHaveValue(/claude.*sonnet/i);
+
+    // Enter the Anthropic API key into the password field
+    const apiKeyLabel = page.locator('label').filter({ hasText: /^Anthropic API Key$/i });
+    await expect(apiKeyLabel, 'Anthropic API Key label not found after selecting provider').toBeVisible({ timeout: 5_000 });
+    const configCard = apiKeyLabel.locator('xpath=ancestor::div[contains(@class, "border-2")][1]');
+    const apiKeyInput = apiKeyLabel.locator('xpath=following-sibling::div[1]//input');
+    await expect(apiKeyInput, 'Anthropic API key input not found').toBeVisible({ timeout: 5_000 });
+    await apiKeyInput.clear();
+    await apiKeyInput.fill(apiKey!);
+
+    // Click Save
+    const saveBtn = configCard.getByRole('button', { name: /^save$/i });
+    await expect(saveBtn, 'Save button not found').toBeVisible({ timeout: 5_000 });
+    await saveBtn.click();
+
+    // Verify "Saved" badge/text confirms the key was accepted
+    await expect(
+      page.getByText(/saved/i).first(),
+      '"Saved" confirmation not shown after clicking Save',
+    ).toBeVisible({ timeout: 10_000 });
+
+    const useThisLlmBtn = configCard.getByRole('button', { name: /use this llm/i });
+    if (await useThisLlmBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await useThisLlmBtn.click();
+    }
+    const activeSummary = page.getByText(/active for chat:/i).locator('..');
+    await expect(activeSummary).toContainText(/GitHub Copilot SDK/i, { timeout: 5_000 });
+    await expect(activeSummary).toContainText(/claude-sonnet-4-6/i, { timeout: 5_000 });
+    console.log('[spark] Settings saved — Anthropic claude-sonnet-4-6 configured');
+
+    // ── Step 2: Refresh browser so the new provider is active ──────────────
+    await page.reload();
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+    // ── Step 3: Open the AI Assistant chat panel ────────────────────────────
+    // Chat panel opens via the icon in the top-right corner of the app
+    const chatOpener = page.locator('[aria-label*="chat" i], [aria-label*="assistant" i]')
+      .or(page.getByRole('button', { name: /chat|ai assistant/i }))
+      .or(page.getByTitle(/chat|assistant/i))
+      .or(page.locator('a[href*="chat"], button').filter({ hasText: /chat/i }));
+    await expect(chatOpener.first(), 'AI Assistant chat opener not found').toBeVisible({ timeout: 8_000 });
+    await chatOpener.first().click();
+
+    // Panel should open — wait for the greeting message
+    await expect(
+      page.getByRole('heading', { name: /tavro ai assistant/i }),
+      'AI Assistant panel did not open after clicking chat icon',
+    ).toBeVisible({ timeout: 10_000 });
+    const chatPanel = page.locator('textarea[placeholder*="Ask Tavro AI" i], textarea[placeholder*="Ask about" i]')
+      .locator('xpath=ancestor::div[contains(@class, "flex-col")][1]');
+    console.log('[spark] AI Assistant panel opened');
+
+    // ── Step 4: Send the business impact question ───────────────────────────
+    if (!agentName) {
+      const { body: cat } = await apiGet(page, '/agents?start_record=1&record_range=1-10');
+      agentName = cat?.data?.[0]?.agent_name ?? 'the agent';
+    }
+    const question = `What is the business impact if ${agentName} fails?`;
+    const beforeQuestionText = await chatPanel.innerText().catch(() => '');
+
+    const chatInput = page.locator('textarea[placeholder*="Ask Tavro AI" i], textarea[placeholder*="Ask about" i]').last();
+    await expect(chatInput, 'Chat message input not found').toBeVisible({ timeout: 8_000 });
+    await chatInput.fill(question);
+
+    // Send via button or Enter
+    const sendBtn = page.getByRole('button', { name: /send/i })
+      .or(page.locator('[aria-label="send" i], [title="send" i]'));
+    if (await sendBtn.first().isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await sendBtn.first().click();
+    } else {
+      await chatInput.press('Enter');
+    }
+
+    // ── Step 5: Verify assistant responds ──────────────────────────────────
+    await expect.poll(async () => {
+      const text = await chatPanel.innerText().catch(() => '');
+      return text
+        .replace(beforeQuestionText, '')
+        .replace(question, '')
+        .trim().length;
+    }, {
+      message: 'AI Assistant returned no response text after the question',
+      timeout: 60_000,
+    }).toBeGreaterThan(25);
+
+    await expect(chatPanel, 'AI Assistant returned an error').not.toContainText(
+      /something went wrong|did not receive a response|please check|failed|error/i,
+      { timeout: 1_000 },
     );
-    expect([200, 201], `Message send failed: ${msgRes.status()}`).toContain(msgRes.status());
-    const msg = await msgRes.json().catch(() => ({}));
 
-    const reply = msg.content ?? msg.response ?? '';
-    expect(reply, 'AI assistant returned empty response').toBeTruthy();
-    expect(reply.length, 'AI response too short to be meaningful').toBeGreaterThan(20);
-    console.log(`[spark] AI response: ${reply.slice(0, 120)}...`);
+    console.log('[spark] AI Assistant responded to business impact question');
   });
 
   // ── 9. Playground UI — Azure session ─────────────────────────────────────────
