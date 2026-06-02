@@ -26,8 +26,14 @@ async function apiPost<T>(path: string, body?: any): Promise<T> {
     body:    body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`API ${res.status}: ${err.slice(0, 200)}`);
+    const raw = await res.text();
+    let detail = raw;
+    try {
+      detail = JSON.parse(raw)?.detail || raw;
+    } catch {
+      // Keep the plain-text response.
+    }
+    throw new Error(`API ${res.status}: ${detail}`);
   }
   return res.json();
 }
@@ -97,6 +103,7 @@ interface PlaygroundState {
   tokenCount:    number;
   summary:       SessionSummary | null;
   summaryLoading: boolean;
+  sessionError:  string | null;
 
   setConfig:       (update: Partial<PlaygroundConfig>) => void;
   setProvider:     (provider: InfraProvider) => void;
@@ -127,6 +134,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [tokenCount,     setTokenCount]   = useState(0);
   const [summary,        setSummary]      = useState<SessionSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [sessionError,   setSessionError] = useState<string | null>(null);
 
   // ── Config mutations ───────────────────────────────────────────────────────
 
@@ -158,6 +166,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setSessionActive(false);
     setSessionId(null);
     setTokenCount(0);
+    setSessionError(null);
   }, []);
 
   const resetConfig = useCallback(() => {
@@ -168,11 +177,13 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setSessionActive(false);
     setSessionId(null);
     setTokenCount(0);
+    setSessionError(null);
   }, []);
 
   // ── Session lifecycle ──────────────────────────────────────────────────────
 
   const startSession = useCallback(async () => {
+    setSessionError(null);
     try {
       const systemPromptToUse = config.systemPrompt.trim() || buildFallbackSystemPrompt(config);
       const result = await apiPost<{
@@ -205,6 +216,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         timestamp: new Date(),
       }]);
     } catch (err: any) {
+      setSessionError(err.message);
       setMessages(prev => [...prev, {
         id:        `err-${Date.now()}`,
         role:      'assistant',
@@ -220,6 +232,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     setSessionActive(false);
     setIsRunning(false);
+    setSessionError(null);
   }, [sessionId]);
 
   const clearMessages = useCallback(() => {
@@ -306,7 +319,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   return (
     <PlaygroundContext.Provider value={{
       config, messages, observations, isRunning, sessionActive, sessionId,
-      tokenCount, summary, summaryLoading,
+      tokenCount, summary, summaryLoading, sessionError,
       setConfig, setProvider, loadFromAgent, resetConfig,
       startSession, endSession, sendMessage, clearMessages, generateSummary,
       addObservation, removeObservation,
