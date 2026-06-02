@@ -310,11 +310,65 @@ async function apiPut(
 // ── Spark → AI Use Case — advanced flow ──────────────────────────────────────
 
 test.describe.serial('Spark → AI Use Case — advanced flow', () => {
-  let useCaseId     = '';
-  let agentId       = '';
-  let agentName     = '';
-  let processId     = '';
+  let useCaseId    = '';
+  let agentId      = '';
+  let agentName    = '';
+  let processId    = '';
   let applicationId = '';
+  let sessionId    = '';
+  let hasRegisteredCompany = false;
+  let companyIds: string[] = [];
+  let activeCompanyId = '';
+
+  const noCompanyMessage = 'Set up your Company Blueprint first — Spark uses your company profile as context for idea generation.';
+
+  const base = () => process.env.E2E_API_URL || process.env.E2E_BASE_URL || 'http://localhost:9000';
+
+  async function authHeaders(page: Page): Promise<Record<string, string>> {
+    const token    = await getToken(page);
+    const tenantId = await getTenantId(page);
+    const h: Record<string, string> = {
+      Authorization:  `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (tenantId) h['x-tenant-id'] = tenantId;
+    return h;
+  }
+
+  function requireRegisteredCompany() {
+    if (!hasRegisteredCompany) {
+      throw new Error(noCompanyMessage);
+    }
+  }
+
+  async function switchActiveCompany(page: Page, companyId: string) {
+    await page.goto('/');
+    await page.evaluate((id) => {
+      localStorage.setItem('tavro_active_company_id', id);
+    }, companyId);
+    activeCompanyId = companyId;
+  }
+
+  async function tryInspireMe(page: Page): Promise<boolean> {
+    await page.goto('/spark');
+    await expect(page).not.toHaveURL(/\/login/);
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+    const inspireBtn = page.getByRole('button', { name: /inspire me/i });
+    await expect(inspireBtn).toBeVisible({ timeout: 10_000 });
+    await inspireBtn.click();
+
+    await page.waitForSelector(
+      '[data-testid="idea-card"], .idea-card, [class*="idea"], button:has-text("View")',
+      { timeout: 45_000 },
+    ).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
+
+    return (
+      (await page.getByRole('button', { name: /view.*develop|develop/i }).count()) > 0 ||
+      (await page.getByText(/complexity|estimated impact/i).count()) > 0
+    );
+  }
 
   // ── 1. Blueprint — select a company ─────────────────────────────────────────
 
@@ -328,60 +382,63 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
     const companies: any[] = (status === 200 ? (Array.isArray(body) ? body : body.items ?? []) : []);
     console.log(`[spark] ${companies.length} company/companies available`);
 
-    // Open the company selector dropdown (Building2 icon button in sidebar)
-    const companyBtn = page.locator('button').filter({ hasText: /company|select/i }).first()
-      .or(page.getByRole('button').filter({ has: page.locator('svg') }).first());
+    hasRegisteredCompany = companies.length > 0;
+    companyIds = companies
+      .map((company: any) => company.id ?? company.company_id)
+      .filter((companyId: string | undefined): companyId is string => Boolean(companyId));
 
-    if (await companyBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await companyBtn.click();
-      await page.waitForTimeout(500);
-      // Pick first option in the dropdown
-      const firstOption = page.getByRole('option').first()
-        .or(page.locator('li[role="option"]').first())
-        .or(page.locator('[data-value]').first());
-      if (await firstOption.isVisible({ timeout: 3_000 }).catch(() => false)) {
-        await firstOption.click();
-        console.log('[spark] Company selected via UI dropdown');
-      }
-    }
-
-    // Blueprint page must render without crashing
     const bodyText = await page.locator('body').innerText();
     expect(bodyText.length, 'Blueprint page rendered blank').toBeGreaterThan(0);
+
+    if (!hasRegisteredCompany) {
+      await page.goto('/spark');
+      await expect(page).not.toHaveURL(/\/login/);
+      await expect(page.getByText(noCompanyMessage, { exact: true })).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole('button', { name: /inspire me/i })).toBeDisabled();
+      throw new Error(noCompanyMessage);
+    }
+
+    activeCompanyId = (await page.evaluate(() => localStorage.getItem('tavro_active_company_id'))) ?? '';
+    expect(activeCompanyId, 'Expected an active company to be selected before continuing Spark flow').toBeTruthy();
+    console.log(`[spark] Active company ready — id: ${activeCompanyId}`);
   });
 
   // ── 2. Spark — Inspire Me ────────────────────────────────────────────────────
 
   test('2 — spark: click Inspire Me and wait for ideas to stream in', async ({ page }) => {
-    await page.goto('/spark');
-    await expect(page).not.toHaveURL(/\/login/);
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+    requireRegisteredCompany();
+    const orderedCompanyIds = [
+      activeCompanyId,
+      ...companyIds.filter(companyId => companyId !== activeCompanyId),
+    ].filter(Boolean);
 
-    // Page must load
-    await expect(page.getByRole('button', { name: /inspire me/i })).toBeVisible({ timeout: 10_000 });
-    await page.getByRole('button', { name: /inspire me/i }).click();
+    let ideasLoaded = false;
+    for (const companyId of orderedCompanyIds) {
+      if (companyId !== activeCompanyId) {
+        await switchActiveCompany(page, companyId);
+        console.log(`[spark] Retrying Inspire Me with company: ${companyId}`);
+      }
 
-    // Ideas arrive as an SSE stream — wait up to 45 s for at least one card/row to appear
-    await page.waitForSelector(
-      '[data-testid="idea-card"], .idea-card, [class*="idea"], button:has-text("View")',
-      { timeout: 45_000 },
-    ).catch(() => {});
+      ideasLoaded = await tryInspireMe(page);
+      if (ideasLoaded) {
+        activeCompanyId = companyId;
+        console.log(`[spark] Ideas loaded successfully for company: ${companyId}`);
+        break;
+      }
+    }
 
-    // Fallback: wait for network to settle
-    await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
-
-    // Verify at least one idea is visible
-    const hasIdeas =
-      (await page.getByRole('button', { name: /view.*develop|develop/i }).count()) > 0 ||
-      (await page.getByText(/complexity|estimated impact/i).count()) > 0;
-
-    expect(hasIdeas, 'No ideas appeared after clicking Inspire Me').toBe(true);
-    console.log('[spark] Ideas loaded successfully');
+    expect(
+      ideasLoaded,
+      orderedCompanyIds.length > 1
+        ? `No ideas appeared after clicking Inspire Me for any available company: ${orderedCompanyIds.join(', ')}`
+        : `No ideas appeared after clicking Inspire Me for company: ${activeCompanyId}`,
+    ).toBe(true);
   });
 
   // ── 3. Select idea and convert to AI use case ────────────────────────────────
 
   test('3 — spark: open first idea modal and convert to AI use case', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/spark');
     await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
 
@@ -415,6 +472,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 4. Verify use case and agent exist ──────────────────────────────────────
 
   test('4 — verify use case exists in API and find linked Spark agent', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
     const { status, body } = await apiGet(page, `/use-cases/${useCaseId}`);
     expect(status).toBe(200);
@@ -444,12 +502,13 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 5. Create application and process ───────────────────────────────────────
 
   test('5 — create application and process via API', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
 
     // Create application
     const { status: as, body: app } = await apiPost(page, '/applications', {
-      application_name:     'Spark E2E Test Application',
-      vendor_name:          'E2E Test Vendor',
+      application_name:     'Pearson VUE',
+      vendor_name:          'Pearson VUE',
       business_criticality: 'Tier 1',
     });
     expect(as, `Application creation failed: ${JSON.stringify(app)}`).toBe(201);
@@ -459,8 +518,8 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
 
     // Create process
     const { status: ps, body: proc } = await apiPost(page, '/processes', {
-      process_name:        'Spark E2E Test Process',
-      process_description: 'Process created for Spark-generated use case E2E testing',
+      process_name:        'Pearson VUE Process',
+      process_description: 'Process created for Pearson VUE-generated use case',
     });
     expect(ps, `Process creation failed: ${JSON.stringify(proc)}`).toBe(201);
     expect(proc).toHaveProperty('business_process_id');
@@ -471,6 +530,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 6. Link agent and use case to process and application ───────────────────
 
   test('6 — link agent to process', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
     const { status, body } = await apiPut(page, `/agents/${agentId}/processes/${processId}`);
     expect([200, 201], `Agent→process link failed: ${JSON.stringify(body)}`).toContain(status);
@@ -478,6 +538,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   });
 
   test('7 — link use case to process', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
     const { status, body } = await apiPost(page, `/use-cases/${useCaseId}/processes`, {
       process_id: processId,
@@ -488,6 +549,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   });
 
   test('8 — link agent to application', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
     // PUT /agents/{agentId}/applications/{applicationId}
     const { status, body } = await apiPut(page, `/agents/${agentId}/applications/${applicationId}`);
@@ -498,6 +560,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 7. Verify all links ──────────────────────────────────────────────────────
 
   test('9 — verify use case has agent and process linked', async ({ page }) => {
+    requireRegisteredCompany();
     await page.goto('/');
     const { status, body } = await apiGet(page, `/use-cases/${useCaseId}`);
     expect(status).toBe(200);
@@ -517,6 +580,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 8. Settings — configure AI assistant provider ────────────────────────────
 
   test('10 — settings: configure Anthropic AI assistant and send business impact prompt', async ({ page }) => {
+    requireRegisteredCompany();
     test.setTimeout(120_000);
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -647,6 +711,7 @@ test.describe.serial('Spark → AI Use Case — advanced flow', () => {
   // ── 9. Playground UI — Azure session ─────────────────────────────────────────
 
   test('11 — open agent in catalog, navigate to Playground, select Azure, interact', async ({ page }) => {
+    requireRegisteredCompany();
     // Navigate to catalog and find the Spark-created agent
     await page.goto('/catalog');
     await expect(page).not.toHaveURL(/\/login/);
