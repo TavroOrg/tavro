@@ -16,6 +16,7 @@ import asyncio
 import copy
 import json
 import os
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List
@@ -100,20 +101,28 @@ def _save_card_to_disk(card: dict) -> None:
     print(f"[INFO] Saved agent card to disk: {file_path}")
 
 
-def _process_card_sync(card_dict: dict, tenant_id: str | None) -> bool:
-    """Synchronous wrapper called in the thread executor."""
+def _process_card_sync(card_dict: dict, tenant_id: str | None) -> dict:
+    """Synchronous wrapper called in the thread executor.
+
+    Returns a result dict: {success, validation_error, error}
+      - success=True  → card was accepted and written to DB
+      - validation_error=True → card failed TavroAgentCard schema check
+      - error → human-readable message when success=False
+    """
     try:
         from services.upload_processor import process_card_for_upload
-        # Snapshot before process_card_for_upload mutates the dict (which can reorder keys)
         original = copy.deepcopy(card_dict)
-        success = process_card_for_upload(card_dict, tenant_id)
-        if success:
-            _save_card_to_disk(_strip_risk_fields(original))
-        return success
+        process_card_for_upload(card_dict, tenant_id)
+        _save_card_to_disk(_strip_risk_fields(original))
+        return {"success": True, "validation_error": False, "error": None}
+    except ValueError as e:
+        return {"success": False, "validation_error": True, "error": str(e)}
     except ImportError as e:
         raise RuntimeError(
             f"upload_processor module not available (check services/ volume mount): {e}"
         )
+    except Exception as e:
+        return {"success": False, "validation_error": False, "error": str(e)}
 
 
 @router.post("/upload", summary="Upload Agent JSON Cards")
@@ -144,13 +153,15 @@ async def upload_agents(
             detail=f"Only .json files are accepted. Rejected: {', '.join(non_json)}",
         )
 
-    # --- Read and parse all files ---
-    all_cards: list[dict] = []
+    # --- Read and parse all files, keeping filename attribution per card ---
+    all_cards: list[tuple[dict, str]] = []   # (card_dict, source_filename)
     for upload_file in files:
+        filename = upload_file.filename or "upload.json"
         raw = await upload_file.read()
         try:
-            cards = _parse_cards_from_bytes(upload_file.filename or "upload.json", raw)
-            all_cards.extend(cards)
+            cards = _parse_cards_from_bytes(filename, raw)
+            for card in cards:
+                all_cards.append((card, filename))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -160,23 +171,49 @@ async def upload_agents(
     # --- Process cards concurrently in thread pool (sync psycopg2 calls) ---
     loop = asyncio.get_event_loop()
 
-    async def _process_one(card: dict) -> bool:
-        return await loop.run_in_executor(
+    async def _process_one(card: dict, filename: str) -> dict:
+        res = await loop.run_in_executor(
             _upload_executor,
             _process_card_sync,
             card,
             tenant_id,
         )
+        return {**res, "filename": filename}
 
-    results = await asyncio.gather(*[_process_one(c) for c in all_cards], return_exceptions=True)
-
-    uploaded_count = sum(
-        1 for r in results if r is True
+    results = await asyncio.gather(
+        *[_process_one(c, fn) for c, fn in all_cards],
+        return_exceptions=True,
     )
 
-    errors = [str(r) for r in results if isinstance(r, Exception)]
-    if errors:
-        print(f"[WARN] {len(errors)} card(s) raised exceptions during upload: {errors[:3]}")
+    # --- Aggregate results by filename ---
+    file_map: dict[str, dict] = defaultdict(lambda: {"valid_count": 0, "invalid_count": 0, "errors": []})
+    uploaded_count = 0
+    hard_errors: list[str] = []
+
+    for r in results:
+        if isinstance(r, Exception):
+            hard_errors.append(str(r))
+            continue
+        fn = r["filename"]
+        if r["success"]:
+            file_map[fn]["valid_count"] += 1
+            uploaded_count += 1
+        else:
+            file_map[fn]["invalid_count"] += 1
+            if r.get("error"):
+                file_map[fn]["errors"].append(r["error"])
+
+    if hard_errors:
+        print(f"[WARN] {len(hard_errors)} card(s) raised hard exceptions: {hard_errors[:3]}")
+
+    # Preserve input order so the UI lists files in the same order the user selected
+    seen: set[str] = set()
+    file_results: list[dict] = []
+    for _, fn in all_cards:
+        if fn not in seen:
+            seen.add(fn)
+            entry = file_map.get(fn, {"valid_count": 0, "invalid_count": 0, "errors": []})
+            file_results.append({"filename": fn, **entry})
 
     if uploaded_count == 0 and all_cards:
         raise HTTPException(
@@ -184,11 +221,18 @@ async def upload_agents(
             detail="All agent cards failed to process. Check server logs for details.",
         )
 
+    total = len(all_cards)
     return {
         "uploaded_count": uploaded_count,
-        "total_submitted": len(all_cards),
+        "total_submitted": total,
+        "file_results": file_results,
         "message": (
-            f"{uploaded_count} agent{'s' if uploaded_count != 1 else ''} "
-            f"{'have' if uploaded_count != 1 else 'has'} been uploaded, complete risk assessments."
+            f"{uploaded_count} out of {total} agent card{'s' if total != 1 else ''} "
+            f"uploaded successfully."
+            if uploaded_count < total
+            else (
+                f"{uploaded_count} agent card{'s' if uploaded_count != 1 else ''} "
+                f"uploaded successfully. Complete risk assessments to activate."
+            )
         ),
     }
