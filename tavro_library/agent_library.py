@@ -1294,6 +1294,28 @@ class AgentMetadataExporter:
                     u.status,
                     u.solution_approach,
                     u.created_ts,
+                    COALESCE(
+                        (
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                            WHERE rel.ai_use_case_id = u.ai_use_case_id
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {rel_tenant_where}
+                        ),
+                        0
+                    ) AS related_agent_count,
+                    COALESCE(
+                        (
+                            SELECT COUNT(DISTINCT rel.agent_id)
+                            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                            WHERE rel.ai_use_case_id = u.ai_use_case_id
+                              AND rel.agent_id IS NOT NULL
+                              AND rel.agent_id <> ''
+                              {rel_tenant_where}
+                        ),
+                        0
+                    ) AS no_of_associated_agents,
                     ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                     COUNT(*) OVER () AS total_records
                 FROM {cls.CORE_DB_NAME}.ai_use_cases u
@@ -1327,6 +1349,8 @@ class AgentMetadataExporter:
                 "status": row_dict.get("status"),
                 "solution_approach": row_dict.get("solution_approach"),
                 "created_ts": row_dict.get("created_ts"),
+                "related_agent_count": row_dict.get("related_agent_count"),
+                "no_of_associated_agents": row_dict.get("no_of_associated_agents"),
             })
 
         # ---------- 6. Response ----------

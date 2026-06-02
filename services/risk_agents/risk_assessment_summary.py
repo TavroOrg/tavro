@@ -111,6 +111,13 @@ def generate_risk_summary(data: dict) -> str:
     aivss_score      = core_ra.get("aivss_score")
     aivss_class      = core_ra.get("aivss_class")
     aars_score       = detail.get("aars_score")
+    scenario_cvss_scores = []
+    for scenario in scenarios:
+        try:
+            scenario_cvss_scores.append(float(scenario.get("cvss_score")))
+        except (TypeError, ValueError):
+            pass
+    cvss_score = f"{max(scenario_cvss_scores):.2f}".rstrip("0").rstrip(".") if scenario_cvss_scores else "N/A"
  
     pii              = detail.get("personally_identifiable_information")
     phi              = detail.get("protected_health_information")

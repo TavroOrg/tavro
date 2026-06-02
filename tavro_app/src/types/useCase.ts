@@ -16,6 +16,8 @@ export interface UseCaseSummary {
     status?: string | null;
     /** e.g. "Critical" | "High" | "Medium" | "Low" */
     overall_risk?: string | null;
+    related_agent_count?: number | string | null;
+    no_of_associated_agents?: number | string | null;
 }
 
 // ── Related entities on the detail page ───────────────────────────────────────

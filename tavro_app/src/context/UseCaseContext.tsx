@@ -2,8 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { UseCaseSummary } from '../types/useCase';
 import { mcpClient } from '../services/mcpClient';
 
-const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache';
-const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts';
+const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache_v2';
+const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts_v2';
 const USECASE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 interface UseCaseState {
