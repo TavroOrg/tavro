@@ -275,7 +275,6 @@ const AgentViewPage: React.FC = () => {
             if (resolved) {
                 const overlaid = applyRecentEditOverlay(resolved);
                 setAgent(overlaid);
-                upsertAgent(overlaid);
             }
         } catch (error) {
             console.error("Error fetching agent details", error);
