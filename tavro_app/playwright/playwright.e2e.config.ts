@@ -1,10 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Load .env.e2e if it exists so devs can keep credentials in a local file
 // without exporting env vars manually each time.
-const envFile = path.resolve('.env.e2e');
+const envFile = path.resolve(__dirname, '.env.e2e');
 if (fs.existsSync(envFile)) {
   for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
     const trimmed = line.trim();
@@ -20,7 +23,7 @@ if (fs.existsSync(envFile)) {
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:9000';
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: './tests',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -33,7 +36,7 @@ export default defineConfig({
     ['html', { open: 'never', outputFolder: 'test-results-e2e/html-report' }],
     ['json', { outputFile: 'test-results-e2e/results.json' }],
     ['list'],
-    ['./tests/e2e/csv-reporter.ts'],
+    ['./tests/csv-reporter.ts'],
   ],
 
   use: {
@@ -54,7 +57,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        storageState: 'playwright/.auth/user.json',
+        storageState: path.join(__dirname, '.auth/user.json'),
       },
       dependencies: ['setup'],
     },
@@ -62,7 +65,7 @@ export default defineConfig({
       name: 'firefox',
       use: {
         ...devices['Desktop Firefox'],
-        storageState: 'playwright/.auth/user.json',
+        storageState: path.join(__dirname, '.auth/user.json'),
       },
       dependencies: ['setup'],
     },

@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const AUTH_FILE = path.join(__dirname, '../../playwright/.auth/user.json');
+export const AUTH_FILE = path.join(__dirname, '../.auth/user.json');
 
 const USERNAME = process.env.E2E_USERNAME;
 const PASSWORD = process.env.E2E_PASSWORD;

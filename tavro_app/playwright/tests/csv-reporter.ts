@@ -1,8 +1,10 @@
 import type { Reporter, TestCase, TestResult, FullResult } from '@playwright/test/reporter';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const RESULTS_DIR = path.resolve('test-results-e2e');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const RESULTS_DIR = path.resolve(__dirname, '../test-results-e2e');
 const CSV_FILE    = path.join(RESULTS_DIR, 'results.csv');
 
 type Row = {
