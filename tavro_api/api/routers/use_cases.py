@@ -87,6 +87,10 @@ class LinkProcessRequest(BaseModel):
     process_id: str
 
 
+class LinkApplicationRequest(BaseModel):
+    application_id: str
+
+
 class UseCaseAttachmentCreate(BaseModel):
     filename: str
     mime_type: str
@@ -139,6 +143,31 @@ async def _ensure_use_case_process_relation_table(db: AsyncSession) -> None:
             f"""
             CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_processes
             ON {CORE}.ai_use_case_business_processes (ai_use_case_id, business_process_id, tenant_id)
+            """
+        )
+    )
+
+
+async def _ensure_use_case_application_relation_table(db: AsyncSession) -> None:
+    await db.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {CORE}.ai_use_case_business_applications (
+                tenant_id TEXT,
+                ai_use_case_id TEXT,
+                business_application_id TEXT,
+                application_name TEXT,
+                created_ts TIMESTAMP,
+                updated_ts TIMESTAMP
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_applications
+            ON {CORE}.ai_use_case_business_applications (ai_use_case_id, business_application_id, tenant_id)
             """
         )
     )
@@ -437,6 +466,11 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         if tenant_id
         else ""
     )
+    application_tenant_filter = (
+        "AND (rela.tenant_id = :tid OR rela.tenant_id IS NULL OR rela.tenant_id = '' OR rela.tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
     try:
         result = await db.execute(
             text(f"""
@@ -516,9 +550,47 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
             for r in processes_result.mappings().all()
         ]
 
+        await _ensure_use_case_application_relation_table(db)
+        applications_result = await db.execute(
+            text(
+                f"""
+                SELECT DISTINCT
+                    rela.business_application_id,
+                    COALESCE(ba.application_name, rela.application_name, rela.business_application_id) AS application_name,
+                    ba.application_description AS description,
+                    ba.business_criticality,
+                    ba.emergency_tier,
+                    LOWER(COALESCE(ba.application_name, rela.application_name, rela.business_application_id)) AS application_sort_key
+                FROM {CORE}.ai_use_case_business_applications rela
+                LEFT JOIN {CORE}.business_applications ba
+                    ON ba.business_application_id = rela.business_application_id
+                WHERE LOWER(TRIM(rela.ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND rela.business_application_id IS NOT NULL
+                  AND rela.business_application_id <> ''
+                  {application_tenant_filter}
+                ORDER BY application_sort_key
+                """
+            ),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        linked_applications = [
+            {
+                "identifier": r["business_application_id"],
+                "business_application_id": r["business_application_id"],
+                "name": r["application_name"],
+                "application_name": r["application_name"],
+                "description": r["description"],
+                "business_criticality": r["business_criticality"],
+                "emergency_tier": r["emergency_tier"],
+            }
+            for r in applications_result.mappings().all()
+        ]
+
         data = {
             **dict(row),
             "of_associated_agents": linked_agents,
+            "of_associated_business_applications": linked_applications,
+            "applications": linked_applications,
             "of_associated_business_processes": linked_processes,
         }
         return {"start_record": 1, "end_record": 1, "record_count": 1, "total_records": 1, "data": [data]}
@@ -596,10 +668,15 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
         if not exists.first():
             raise HTTPException(status_code=404, detail=f"AI Use Case '{use_case_id}' not found.")
 
-        await _ensure_use_case_process_relation_table(db)
         await _ensure_use_case_attachments_table(db)
+        await _ensure_use_case_process_relation_table(db)
+        await _ensure_use_case_application_relation_table(db)
         await db.execute(
             text(f"DELETE FROM {CORE}.ai_use_case_business_processes WHERE ai_use_case_id = :uid"),
+            {"uid": use_case_id},
+        )
+        await db.execute(
+            text(f"DELETE FROM {CORE}.ai_use_case_business_applications WHERE ai_use_case_id = :uid"),
             {"uid": use_case_id},
         )
         await db.execute(
@@ -838,6 +915,235 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
 
         await db.commit()
         return {"message": "Relationship removed", "associated_count": new_count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST /{use_case_id}/applications  — link business application
+# ---------------------------------------------------------------------------
+
+@router.post("/{use_case_id}/applications", summary="Link Application to AI Use Case")
+async def link_application(use_case_id: str, body: LinkApplicationRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    await _ensure_use_case_tables(db)
+    normalized_use_case_id = _norm_id(use_case_id)
+    requested_application_id = _norm_id(body.application_id)
+    if not normalized_use_case_id:
+        raise HTTPException(status_code=400, detail="AI Use Case ID is required.")
+    if not requested_application_id:
+        raise HTTPException(status_code=400, detail="Application ID is required.")
+
+    tenant_id = _tenant(request)
+    tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    try:
+        await _ensure_use_case_application_relation_table(db)
+
+        uc_exists = await db.execute(
+            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        if not uc_exists.first():
+            raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
+
+        application_row = await db.execute(
+            text(f"""
+                SELECT business_application_id, application_name
+                FROM {CORE}.business_applications
+                WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                {tenant_filter}
+                LIMIT 1
+            """),
+            {"aid": requested_application_id, "tid": tenant_id},
+        )
+        application = application_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{requested_application_id}' not found.")
+        canonical_application_id = _norm_id(str(application.get("business_application_id") or requested_application_id))
+
+        dup = await db.execute(
+            text(f"""
+                SELECT 1
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+                LIMIT 1
+            """),
+            {"uid": normalized_use_case_id, "aid": canonical_application_id, "tid": tenant_id},
+        )
+        if dup.first():
+            cnt = await db.execute(
+                text(f"""
+                    SELECT COUNT(DISTINCT business_application_id)
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                    {tenant_filter}
+                """),
+                {"uid": normalized_use_case_id, "tid": tenant_id},
+            )
+            return {"message": "Relationship already exists", "associated_count": int(cnt.scalar() or 0)}
+
+        await db.execute(
+            text(f"""
+                INSERT INTO {CORE}.ai_use_case_business_applications (
+                    tenant_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
+                )
+                VALUES (
+                    :tid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+            """),
+            {
+                "tid": tenant_id,
+                "uid": normalized_use_case_id,
+                "aid": canonical_application_id,
+                "aname": application.get("application_name") or canonical_application_id,
+            },
+        )
+
+        cnt = await db.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT business_application_id)
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        await db.commit()
+        return {"message": "Relationship synchronized", "associated_count": int(cnt.scalar() or 0)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{use_case_id}/applications/{application_id}  — unlink business application
+# ---------------------------------------------------------------------------
+
+@router.delete("/{use_case_id}/applications/{application_id}", summary="Unlink Application from AI Use Case")
+async def unlink_application(use_case_id: str, application_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    await _ensure_use_case_tables(db)
+    normalized_use_case_id = _norm_id(use_case_id)
+    normalized_application_id = _norm_id(application_id)
+    if not normalized_use_case_id:
+        raise HTTPException(status_code=400, detail="AI Use Case ID is required.")
+    if not normalized_application_id:
+        raise HTTPException(status_code=400, detail="Application ID is required.")
+
+    tenant_id = _tenant(request)
+    tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    try:
+        await _ensure_use_case_application_relation_table(db)
+
+        uc_exists = await db.execute(
+            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        if not uc_exists.first():
+            raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
+
+        exists = await db.execute(
+            text(f"""
+                SELECT 1
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+                LIMIT 1
+            """),
+            {"uid": normalized_use_case_id, "aid": normalized_application_id, "tid": tenant_id},
+        )
+        if not exists.first():
+            fallback_exists = await db.execute(
+                text(
+                    f"""
+                    SELECT 1
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                      AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                    LIMIT 1
+                    """
+                ),
+                {"uid": normalized_use_case_id, "aid": normalized_application_id},
+            )
+            if fallback_exists.first():
+                await db.execute(
+                    text(
+                        f"""
+                        DELETE FROM {CORE}.ai_use_case_business_applications
+                        WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                          AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                        """
+                    ),
+                    {"uid": normalized_use_case_id, "aid": normalized_application_id},
+                )
+                cnt = await db.execute(
+                    text(f"""
+                        SELECT COUNT(DISTINCT business_application_id)
+                        FROM {CORE}.ai_use_case_business_applications
+                        WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                        {tenant_filter}
+                    """),
+                    {"uid": normalized_use_case_id, "tid": tenant_id},
+                )
+                await db.commit()
+                return {
+                    "message": "Relationship removed",
+                    "associated_count": int(cnt.scalar() or 0),
+                    "rows_deleted": 1,
+                }
+
+            cnt = await db.execute(
+                text(f"""
+                    SELECT COUNT(DISTINCT business_application_id)
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                    {tenant_filter}
+                """),
+                {"uid": normalized_use_case_id, "tid": tenant_id},
+            )
+            return {"message": "Relationship not found", "associated_count": int(cnt.scalar() or 0)}
+
+        delete_result = await db.execute(
+            text(f"""
+                DELETE FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "aid": normalized_application_id, "tid": tenant_id},
+        )
+
+        cnt = await db.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT business_application_id)
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        await db.commit()
+        return {
+            "message": "Relationship removed",
+            "associated_count": int(cnt.scalar() or 0),
+            "rows_deleted": int(delete_result.rowcount or 0),
+        }
     except HTTPException:
         raise
     except Exception as e:
