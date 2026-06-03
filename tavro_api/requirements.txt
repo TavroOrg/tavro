@@ -6,6 +6,7 @@ sqlalchemy[asyncio]
 pydantic
 httpx
 python-dotenv
+azure-identity
 pandas
 openpyxl
 
