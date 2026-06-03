@@ -1849,43 +1849,39 @@ class AgentMetadataExporter:
         """
         Update an existing agent.  Only provided fields are changed.
 
-        ``data_sources`` replaces ALL existing data-source relationships for the
-        agent when supplied.  Pass an empty list ``[]`` to clear all data sources.
-        The format is identical to ``create_agent``:
+        ``tools`` — when provided (including an empty list), replaces all existing
+        tool records and their Agent→Tool data-source entries.  Omit to leave
+        existing tools unchanged.
 
-            [
-              {
-                "table_name":   str,            # required
-                "table_domain": str | None,     # optional
-                "access_level": str | None,     # optional
-                "columns": [
-                    {"column_name": str, "column_domain": str | None},
-                    ...
-                ]
-              }, ...
-            ]
+        ``data_sources`` — when provided (including an empty list), replaces all
+        existing Agent→Table and Table→Column data-source entries.  Agent→Tool
+        entries are NEVER touched by this parameter.  Omit to leave existing
+        data sources unchanged.
 
-        All IDs (table_id, column_id) are auto-generated.
+        All IDs (tool_id, table_id, column_id) are auto-generated.
         uses_pii / uses_phi / uses_pci are always stored as NULL.
         """
+        # tenant_id is mandatory for all updates
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            raise ValueError("tenant_id is required to update an agent.")
+
         if not agent_id and not agent_name:
             raise ValueError("Either agent_id or agent_name is required.")
 
-        # Setup tenant context
-        is_tenant = tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
-        tenant_clean = cls.sanitize(tenant_id) if is_tenant else None
-        tenant_where = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
-        tenant_col = "tenant_id," if is_tenant else ""
-        tenant_val = f"'{tenant_clean}'," if is_tenant else ""
+        # Tenant context — always present after validation above
+        tenant_clean = cls.sanitize(str(tenant_id).strip())
+        tenant_where = f"AND tenant_id = '{tenant_clean}'"
+        tenant_col = "tenant_id,"
+        tenant_val = f"'{tenant_clean}',"
 
-        # Resolve agent ID (1 query)
+        # Resolve agent ID
         if not agent_id:
             agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
             if not agent_id:
                 raise ValueError(f"Agent '{agent_name}' not found.")
         agent_id = cls.sanitize(str(agent_id).strip())
 
-        # Fetch agent info — also grab agent_name for data-source labels
+        # Fetch current agent record
         rows = cls.execute_select(
             f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents "
             f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1"
@@ -1897,52 +1893,117 @@ class AgentMetadataExporter:
         current_agent_name = rows[0].get("agent_name") or ""
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Batch updates into single transaction
+        # Effective name used for data-source source labels
+        effective_agent_name = (
+            str(agent_name).strip()
+            if (agent_name is not None and str(agent_name).strip())
+            else current_agent_name
+        )
+
+        # Update agent_name
         if agent_name is not None and str(agent_name).strip():
-            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agents "
+                f"SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
+            )
 
+        # Update description
         if description is not None and str(description).strip():
-            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agents "
+                f"SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
+            )
 
+        # Update instruction (version the old row, insert a new current one)
         if instruction:
             instr = cls.sanitize(instruction)
-            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
-            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_identifications "
+                f"SET is_current = false, updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
+            )
+            cls.execute_dml(
+                f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications "
+                f"({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) "
+                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', "
+                f"TIMESTAMP '{now}', TIMESTAMP '{now}', true)"
+            )
 
-        if tools:
-            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools WHERE agent_id = '{agent_id}' {tenant_where}")
-            vals = []
-            for t in tools:
-                vals.append(f"({tenant_val}'{agent_internal_id}', '{agent_id}', '{cls.sanitize(t.get('name', ''))}', '{cls.sanitize(t.get('description', ''))}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
-            if vals:
-                cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools ({tenant_col}agent_internal_id, agent_id, tool_name, tool_description, created_ts, updated_ts) VALUES {','.join(vals)}")
+        # Update tools — None means "leave unchanged"; [] means "clear all tools"
+        # Agent→Tool data-source entries are kept in sync with agent_tools.
+        if tools is not None:
+            # Remove existing tool records
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools "
+                f"WHERE agent_id = '{agent_id}' {tenant_where}"
+            )
+            # Remove existing Agent→Tool data-source entries only (Table/Column entries untouched)
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND target_object_type = 'Tool'"
+            )
+            if tools:
+                tool_rows: List[str] = []
+                tool_ds_rows: List[str] = []
+                for t in tools:
+                    tool_id = str(uuid.uuid4())
+                    t_name = cls.sanitize(t.get("name", ""))
+                    t_desc = cls.sanitize(t.get("description", ""))
+                    tool_rows.append(
+                        f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
+                        f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                    )
+                    tool_ds_rows.append(
+                        f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                        f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
+                        f"'{agent_id}', NULL, '{cls.sanitize(effective_agent_name)}', 'Agent', "
+                        f"'{tool_id}', NULL, '{t_name}', 'Tool')"
+                    )
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
+                    f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, tool_description, created_ts, updated_ts) "
+                    f"VALUES {','.join(tool_rows)}"
+                )
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"({tenant_col}agent_internal_id, agent_id, "
+                    f"access_level, contains_pii, contains_phi, contains_pci, "
+                    f"created_ts, updated_ts, "
+                    f"source_object_id, source_object_domain, source_object_name, source_object_type, "
+                    f"target_object_id, target_object_domain, target_object_name, target_object_type) "
+                    f"VALUES {','.join(tool_ds_rows)}"
+                )
 
+        # Update knowledge source — when provided, replace existing
         if knowledge_source:
-            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
-            ks_id   = str(uuid.uuid4())
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources "
+                f"WHERE agent_id = '{agent_id}' {tenant_where}"
+            )
+            ks_id = str(uuid.uuid4())
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
             cls.execute_dml(
                 f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources "
                 f"({tenant_col}agent_internal_id, agent_id, identifier, name, description, created_ts, updated_ts) "
-                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_id}', "
+                f"'{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
             )
 
+        # Update data sources — None means "leave unchanged"; [] means "clear Table/Column entries"
+        # Agent→Tool entries are NEVER touched here; they are managed by the tools block above.
         if data_sources is not None:
-            # Replace only Table/Column data-source rows; Agent→Tool rows are preserved.
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
                 f"WHERE agent_internal_id = '{agent_internal_id}' "
                 f"AND target_object_type IN ('Table', 'Column')"
             )
             if data_sources:
-                # Use the new agent_name if it was updated, otherwise keep the stored name.
-                name_for_ds = (
-                    str(agent_name).strip()
-                    if (agent_name is not None and str(agent_name).strip())
-                    else current_agent_name
-                )
-                ds_entries = cls._build_data_source_entries(agent_id, name_for_ds, data_sources)
+                ds_entries = cls._build_data_source_entries(agent_id, effective_agent_name, data_sources)
                 if ds_entries:
                     ds_sql_values = cls._build_ds_sql_values(
                         ds_entries, agent_internal_id, agent_id, now,
@@ -1960,8 +2021,7 @@ class AgentMetadataExporter:
                         VALUES {','.join(ds_sql_values)}
                     """)
 
-        # Refresh the curated snapshot and local card file so downstream reads
-        # immediately reflect the changes made above.
+        # Refresh curated snapshot and local card so downstream reads reflect changes immediately
         try:
             refresh_curated_agent_360(agent_internal_id, agent_id, tenant_id)
             create_local_agent_card(agent_internal_id)
