@@ -30,8 +30,8 @@ services:
       - ./sql:/sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d tavro"]
-      interval: 10s
-      timeout: 5s
+      interval: 30s
+      timeout: 15s
       retries: 5
       start_period: 30s
 
@@ -97,9 +97,9 @@ services:
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
-      interval: 15s
-      timeout: 5s
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 15s
       retries: 3
       start_period: 20s
 
@@ -118,8 +118,8 @@ services:
       - "4001:4000"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
-      interval: 15s
-      timeout: 5s
+      interval: 30s
+      timeout: 15s
       retries: 3
       start_period: 20s
 
@@ -148,8 +148,8 @@ services:
       - tavro_runtime_config:/usr/share/nginx/html/runtime:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
-      interval: 20s
-      timeout: 5s
+      interval: 30s
+      timeout: 15s
       retries: 3
       start_period: 30s
 
@@ -226,7 +226,7 @@ services:
         - CMD
         - /app/zitadel
         - ready
-      interval: 15s
+      interval: 20s
       timeout: 30s
       retries: 20
       start_period: 90s
