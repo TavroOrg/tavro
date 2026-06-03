@@ -1040,8 +1040,9 @@ class AgentMetadataExporter:
             {",".join(values_list)}
             """)
 
-        # 4. knowledge sources (ONLY name + description)
+        # 4. knowledge sources
         if knowledge_source:
+            ks_id   = str(uuid.uuid4())
             ks_name = cls.sanitize(knowledge_source.get("name"))
             ks_desc = cls.sanitize(knowledge_source.get("description"))
             queries.append(f"""
@@ -1049,6 +1050,7 @@ class AgentMetadataExporter:
                 {tenant_id_column}
                 agent_internal_id,
                 agent_id,
+                identifier,
                 name,
                 description,
                 created_ts,
@@ -1058,6 +1060,7 @@ class AgentMetadataExporter:
                 {tenant_id_value}
                 '{agent_internal_id}',
                 '{agent_id}',
+                '{ks_id}',
                 '{ks_name}',
                 '{ks_desc}',
                 TIMESTAMP '{now}',
@@ -1916,9 +1919,14 @@ class AgentMetadataExporter:
 
         if knowledge_source:
             cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
+            ks_id   = str(uuid.uuid4())
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
-            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+            cls.execute_dml(
+                f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources "
+                f"({tenant_col}agent_internal_id, agent_id, identifier, name, description, created_ts, updated_ts) "
+                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+            )
 
         if data_sources is not None:
             # Replace only Table/Column data-source rows; Agent→Tool rows are preserved.

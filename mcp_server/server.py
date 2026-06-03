@@ -350,6 +350,8 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
     external tools, knowledge sources, and data source definitions.
+    The `instruction` parameter defines the agent’s behavior and decision-making logic,
+    guiding how it processes inputs and generates responses.
 
     Optional integrations:
     - `tools`: A list of tools the agent can use. Each tool must be a dict with:
