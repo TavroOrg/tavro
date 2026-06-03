@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
 from utils.db import DATABASE_URL, SyncSessionLocal
 from utils.set_environment import set_environment
+from services.db.db_functions import refresh_curated_agent_360, create_local_agent_card
 
 set_environment('databases')
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
@@ -1950,6 +1951,16 @@ class AgentMetadataExporter:
                         )
                         VALUES {','.join(ds_sql_values)}
                     """)
+
+        # Refresh the curated snapshot and local card file so downstream reads
+        # immediately reflect the changes made above.
+        try:
+            refresh_curated_agent_360(agent_internal_id, agent_id, tenant_id)
+            create_local_agent_card(agent_internal_id)
+            print(f"[update_agent] Refreshed agent_360 and local card for agent_id={agent_id}")
+        except Exception as refresh_err:
+            # Non-fatal: the update is committed; only the cached views are stale.
+            print(f"[update_agent] Warning: post-update refresh failed (changes are saved): {refresh_err}")
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
 
