@@ -534,6 +534,123 @@ class AgentMetadataExporter:
         return cleaned or None
 
     @staticmethod
+    def _to_bool_ds(val) -> str:
+        """Convert a pii/phi/pci value to a SQL boolean literal."""
+        if val is None:
+            return "NULL"
+        if isinstance(val, bool):
+            return "TRUE" if val else "FALSE"
+        return "TRUE" if str(val).strip().lower() in ("yes", "true", "1") else "FALSE"
+
+    @classmethod
+    def _build_data_source_entries(
+        cls,
+        agent_id: str,
+        agent_name: str,
+        data_sources: List[Dict],
+    ) -> List[Dict]:
+        """
+        Convert a user-provided list of table/column definitions into flat
+        data-source relationship entries covering Agent→Table and Table→Column.
+
+        Each entry in data_sources must have at minimum a ``table_name``.
+        Optional per-table fields: ``table_domain``, ``access_level``.
+        Optional per-column fields: ``column_domain``.
+
+        ``table_id`` and ``column_id`` are always auto-generated (UUID4).
+        ``uses_pii``, ``uses_phi``, ``uses_pci`` are always stored as NULL.
+        """
+        entries: List[Dict] = []
+        for ds in data_sources:
+            table_name = str(ds.get("table_name") or "").strip()
+            if not table_name:
+                continue
+            table_id = str(uuid.uuid4())
+            table_domain = ds.get("table_domain") or None
+
+            # Agent → Table
+            entries.append({
+                "relationship_id":        None,
+                "parent_relationship_id": None,
+                "source_object_id":       agent_id,
+                "source_object_domain":   None,
+                "source_object_name":     agent_name,
+                "source_object_type":     "Agent",
+                "target_object_id":       table_id,
+                "target_object_domain":   table_domain,
+                "target_object_name":     table_name,
+                "target_object_type":     "Table",
+                "access_level":           ds.get("access_level"),
+                "uses_pii":               None,
+                "uses_phi":               None,
+                "uses_pci":               None,
+            })
+
+            # Table → Column
+            for col in (ds.get("columns") or []):
+                column_name = str(col.get("column_name") or "").strip()
+                if not column_name:
+                    continue
+                entries.append({
+                    "relationship_id":        None,
+                    "parent_relationship_id": None,
+                    "source_object_id":       table_id,
+                    "source_object_domain":   table_domain,
+                    "source_object_name":     table_name,
+                    "source_object_type":     "Table",
+                    "target_object_id":       str(uuid.uuid4()),
+                    "target_object_domain":   col.get("column_domain") or None,
+                    "target_object_name":     column_name,
+                    "target_object_type":     "Column",
+                    "access_level":           None,
+                    "uses_pii":               None,
+                    "uses_phi":               None,
+                    "uses_pci":               None,
+                })
+        return entries
+
+    @classmethod
+    def _build_ds_sql_values(
+        cls,
+        entries: List[Dict],
+        agent_internal_id: str,
+        agent_id: str,
+        now: str,
+        tenant_id_column: str,
+        tenant_id_value: str,
+    ) -> List[str]:
+        """Convert data-source entry dicts to SQL VALUES tuples.
+
+        The column order must match the INSERT statement in callers:
+            {tenant_id_column} agent_internal_id, agent_id,
+            access_level, contains_pii, contains_phi, contains_pci,
+            created_ts, updated_ts,
+            source_object_id, source_object_domain, source_object_name, source_object_type,
+            target_object_id, target_object_domain, target_object_name, target_object_type
+        """
+        def _sq(v) -> str:
+            if v is None:
+                return "NULL"
+            return "'" + str(v).replace("'", "''") + "'"
+
+        values = []
+        for e in entries:
+            values.append(
+                f"({tenant_id_value}"
+                f"{_sq(agent_internal_id)},{_sq(agent_id)},"
+                f"{_sq(e.get('access_level'))},"
+                f"{cls._to_bool_ds(e.get('uses_pii'))}::boolean,"
+                f"{cls._to_bool_ds(e.get('uses_phi'))}::boolean,"
+                f"{cls._to_bool_ds(e.get('uses_pci'))}::boolean,"
+                f"TIMESTAMP '{now}',TIMESTAMP '{now}',"
+                f"{_sq(e.get('source_object_id'))},{_sq(e.get('source_object_domain'))},"
+                f"{_sq(e.get('source_object_name'))},{_sq(e.get('source_object_type'))},"
+                f"{_sq(e.get('target_object_id'))},{_sq(e.get('target_object_domain'))},"
+                f"{_sq(e.get('target_object_name'))},{_sq(e.get('target_object_type'))})"
+            )
+        return values
+
+    @staticmethod
     def _build_risk_payload(
         *,
         agent_internal_id: str,
@@ -658,6 +775,7 @@ class AgentMetadataExporter:
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
+        data_sources: Optional[List[Dict]] = None,
     ) -> None:
         """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
         try:
@@ -680,22 +798,27 @@ class AgentMetadataExporter:
                         "input_schema": None,
                         "output_schema": None,
                     })
+                    # Agent → Tool data-source entry
                     data_source_entries.append({
-                        "relationship_id": None,
+                        "relationship_id":        None,
                         "parent_relationship_id": None,
-                        "source_object_id": agent_id,
-                        "source_object_domain": None,
-                        "source_object_name": agent_name,
-                        "source_object_type": "Agent",
-                        "target_object_id": tool_id,
-                        "target_object_domain": None,
-                        "target_object_name": tool.get("name"),
-                        "target_object_type": "Tool",
-                        "access_level": None,
-                        "uses_pii": None,
-                        "uses_phi": None,
-                        "uses_pci": None,
+                        "source_object_id":       agent_id,
+                        "source_object_domain":   None,
+                        "source_object_name":     agent_name,
+                        "source_object_type":     "Agent",
+                        "target_object_id":       tool_id,
+                        "target_object_domain":   None,
+                        "target_object_name":     tool.get("name"),
+                        "target_object_type":     "Tool",
+                        "access_level":           None,
+                        "uses_pii":               None,
+                        "uses_phi":               None,
+                        "uses_pci":               None,
                     })
+
+            # Agent → Table → Column entries (appended alongside tool entries)
+            if data_sources:
+                data_source_entries += cls._build_data_source_entries(agent_id, agent_name, data_sources)
 
             ks_entry = None
             if knowledge_source:
@@ -779,8 +902,30 @@ class AgentMetadataExporter:
         instruction: str,
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
-        tenant_id: Optional[str] = None
-    )-> Dict[str, Any]:
+        tenant_id: Optional[str] = None,
+        data_sources: Optional[List[Dict]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a new agent.
+
+        ``data_sources`` accepts a list of table/column definitions that describe
+        the Agent → Table → Column data-source hierarchy.  Each entry supports:
+
+            {
+              "table_name":   str,            # required
+              "table_domain": str | None,     # optional
+              "access_level": str | None,     # optional
+              "columns": [
+                  {
+                    "column_name":   str,            # required
+                    "column_domain": str | None,     # optional
+                  }, ...
+              ]
+            }
+
+        All IDs (table_id, column_id) are auto-generated.
+        uses_pii / uses_phi / uses_pci are always stored as NULL.
+        """
         if not agent_name or not description or not instruction:
             raise ValueError("agent_name, description, instruction are required")
 
@@ -797,12 +942,12 @@ class AgentMetadataExporter:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         queries = []
-        data_source_values = []
         tool_ids_for_card: List[str] = []
 
-        # 1. agents table
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
         tenant_id_column = "tenant_id," if tenant_id else ""
+
+        # 1. agents table
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
@@ -848,7 +993,8 @@ class AgentMetadataExporter:
         )
         """)
 
-        # 3. tools (ONLY name + description)
+        # 3. tools (ONLY name + description) + Agent→Tool data-source entries
+        tool_ds_values: List[str] = []
         if tools:
             values_list = []
             for tool in tools:
@@ -856,7 +1002,6 @@ class AgentMetadataExporter:
                 tool_ids_for_card.append(tool_id)
                 name = cls.sanitize(tool.get("name"))
                 desc = cls.sanitize(tool.get("description"))
-
                 values_list.append(f"""
                 (
                     {tenant_id_value}
@@ -869,24 +1014,17 @@ class AgentMetadataExporter:
                     TIMESTAMP '{now}'
                 )
                 """)
-                # --- agent_data_sources insert ---
-                data_source_values.append(f"""
-                (
-                    {tenant_id_value}
-                    '{agent_internal_id}',
-                    '{agent_id}',
-                    TIMESTAMP '{now}',
-                    TIMESTAMP '{now}',
-                    '{agent_id}',
-                    '{cls.sanitize(agent_name)}',
-                    'Agent',
-                    '{tool_id}',
-                    '{name}',
-                    'Tool'
+                # Always create Agent → Tool data-source entry
+                tool_ds_values.append(
+                    f"({tenant_id_value}"
+                    f"'{agent_internal_id}','{agent_id}',"
+                    f"NULL,NULL::boolean,NULL::boolean,NULL::boolean,"
+                    f"TIMESTAMP '{now}',TIMESTAMP '{now}',"
+                    f"'{agent_id}',NULL,'{cls.sanitize(agent_name)}','Agent',"
+                    f"'{cls.sanitize(tool_id)}',NULL,'{name}','Tool')"
                 )
-                """)
 
-            tools_query = f"""
+            queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
                 {tenant_id_column}
                 agent_internal_id,
@@ -899,8 +1037,7 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(values_list)}
-            """
-            queries.append(tools_query)
+            """)
 
         # 4. knowledge sources (ONLY name + description)
         if knowledge_source:
@@ -926,32 +1063,40 @@ class AgentMetadataExporter:
                 TIMESTAMP '{now}'
             )
             """)
-        
-        # 5. data source insert (only if tools exist)
-        if data_source_values:
+
+        # 5. agent_data_sources
+        ds_insert_columns = f"""
+            {tenant_id_column}
+            agent_internal_id, agent_id,
+            access_level, contains_pii, contains_phi, contains_pci,
+            created_ts, updated_ts,
+            source_object_id, source_object_domain, source_object_name, source_object_type,
+            target_object_id, target_object_domain, target_object_name, target_object_type
+        """
+
+        # Merge Agent→Tool entries (always) with Agent→Table→Column entries (if provided)
+        all_ds_values: List[str] = list(tool_ds_values)
+        if data_sources:
+            ds_entries = cls._build_data_source_entries(agent_id, raw_agent_name, data_sources)
+            if ds_entries:
+                all_ds_values += cls._build_ds_sql_values(
+                    ds_entries, agent_internal_id, agent_id, now,
+                    tenant_id_column, tenant_id_value,
+                )
+
+        if all_ds_values:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
-                {tenant_id_column}
-                agent_internal_id,
-                agent_id,
-                created_ts,
-                updated_ts,
-                source_object_id,
-                source_object_name,
-                source_object_type,
-                target_object_id,
-                target_object_name,
-                target_object_type
+                {ds_insert_columns}
             )
-            VALUES
-            {",".join(data_source_values)}
+            VALUES {','.join(all_ds_values)}
             """)
 
-        # 5. Execute
+        # 6. Execute all statements
         for query in queries:
             cls.execute_dml(query)
 
-        # 6. Write agent card JSON so get_agent_card returns full details immediately
+        # 7. Write agent card JSON so get_agent_card returns full details immediately
         cls._write_agent_card(
             agent_id=agent_id,
             agent_internal_id=agent_internal_id,
@@ -961,6 +1106,7 @@ class AgentMetadataExporter:
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
+            data_sources=data_sources,
         )
 
         payload = {
@@ -992,7 +1138,7 @@ class AgentMetadataExporter:
         return {
             "agent_id": agent_id,
             "agent_name": raw_agent_name,
-            "message": "Agent created successfully and risk assessment triggered."
+            "message": "Agent created successfully and Risk Assessment is also triggered."
         }
     
     @staticmethod
@@ -1693,11 +1839,30 @@ class AgentMetadataExporter:
         instruction: Optional[str] = None,
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        data_sources: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """
-        Update existing agent with minimal query overhead.
-        Only provided fields are updated.
+        Update an existing agent.  Only provided fields are changed.
+
+        ``data_sources`` replaces ALL existing data-source relationships for the
+        agent when supplied.  Pass an empty list ``[]`` to clear all data sources.
+        The format is identical to ``create_agent``:
+
+            [
+              {
+                "table_name":   str,            # required
+                "table_domain": str | None,     # optional
+                "access_level": str | None,     # optional
+                "columns": [
+                    {"column_name": str, "column_domain": str | None},
+                    ...
+                ]
+              }, ...
+            ]
+
+        All IDs (table_id, column_id) are auto-generated.
+        uses_pii / uses_phi / uses_pci are always stored as NULL.
         """
         if not agent_id and not agent_name:
             raise ValueError("Either agent_id or agent_name is required.")
@@ -1716,12 +1881,16 @@ class AgentMetadataExporter:
                 raise ValueError(f"Agent '{agent_name}' not found.")
         agent_id = cls.sanitize(str(agent_id).strip())
 
-        # Fetch agent info (1 query)
-        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        # Fetch agent info — also grab agent_name for data-source labels
+        rows = cls.execute_select(
+            f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents "
+            f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1"
+        )
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
-        
+
         agent_internal_id = rows[0].get("agent_internal_id")
+        current_agent_name = rows[0].get("agent_name") or ""
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Batch updates into single transaction
@@ -1749,6 +1918,38 @@ class AgentMetadataExporter:
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+
+        if data_sources is not None:
+            # Replace only Table/Column data-source rows; Agent→Tool rows are preserved.
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND target_object_type IN ('Table', 'Column')"
+            )
+            if data_sources:
+                # Use the new agent_name if it was updated, otherwise keep the stored name.
+                name_for_ds = (
+                    str(agent_name).strip()
+                    if (agent_name is not None and str(agent_name).strip())
+                    else current_agent_name
+                )
+                ds_entries = cls._build_data_source_entries(agent_id, name_for_ds, data_sources)
+                if ds_entries:
+                    ds_sql_values = cls._build_ds_sql_values(
+                        ds_entries, agent_internal_id, agent_id, now,
+                        tenant_col, tenant_val,
+                    )
+                    cls.execute_dml(f"""
+                        INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
+                            {tenant_col}
+                            agent_internal_id, agent_id,
+                            access_level, contains_pii, contains_phi, contains_pci,
+                            created_ts, updated_ts,
+                            source_object_id, source_object_domain, source_object_name, source_object_type,
+                            target_object_id, target_object_domain, target_object_name, target_object_type
+                        )
+                        VALUES {','.join(ds_sql_values)}
+                    """)
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
 

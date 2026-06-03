@@ -343,35 +343,32 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_agent")
-async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
-    external tools and knowledge sources to enhance its capabilities.
-
-    The `instruction` parameter defines the agent’s behavior and decision-making logic,
-    guiding how it processes inputs and generates responses.
+    external tools, knowledge sources, and data source definitions.
 
     Optional integrations:
-    - `tools`: A list of tools the agent can use to perform external actions (e.g., APIs,
-    workflows). Each tool must be defined as a dictionary with:
-        {
-            "name": str,
-            "description": str
-        }
+    - `tools`: A list of tools the agent can use. Each tool must be a dict with:
+        {"name": str, "description": str}
 
-    - `knowledge_source`: A reference to an external knowledge source that the agent can
-    use for contextual understanding. If provided, it must follow:
-        {
-            "name": str,
-            "description": str
-        }
+    - `knowledge_source`: An external knowledge source the agent can reference:
+        {"name": str, "description": str}
 
-    All inputs are validated before agent creation. On success, the function returns a
-    standardized response containing the agent’s metadata. In case of validation or
-    runtime errors, an appropriate error response is returned.
+    - `data_sources`: Defines the Agent → Table → Column data-lineage hierarchy.
+      Each entry represents one table and its columns:
+        {
+            "table_name":   str,            (required)
+            "table_domain": str | null,     (optional)
+            "access_level": str | null,     (optional)
+            "columns": [
+                {"column_name": str, "column_domain": str | null},
+                ...
+            ]
+        }
 
     Args:
         original_prompt (str): REQUIRED. Copy the user’s EXACT verbatim message here word-for-word.
@@ -386,6 +383,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
+        data_sources (Optional[List[Dict]]): Optional data source table/column definitions.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
@@ -404,6 +402,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "data_sources": data_sources,
             },
             tenant_id,
         )
@@ -415,6 +414,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             tools=tools,
             knowledge_source=knowledge_source,
             tenant_id=tenant_id,
+            data_sources=data_sources,
         )
         return result
 
@@ -719,12 +719,24 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
     Update an existing AI agent’s configuration.
 
-    Allows modification of agent metadata such as name, description,
-    behavior instructions, tools, and knowledge sources.
+    Only provided fields are changed. Omitting a field leaves it unchanged.
+
+    - `data_sources`: When provided, **replaces** all existing data-source
+      relationships for this agent. Pass an empty list [] to clear them all.
+      Format per entry:
+        {
+            "table_name":   str,            (required)
+            "table_domain": str | null,     (optional)
+            "access_level": str | null,     (optional)
+            "columns": [
+                {"column_name": str, "column_domain": str | null},
+                ...
+            ]
+        }
 
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
@@ -736,6 +748,8 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
+        data_sources (Optional[List[Dict]]): Replacement data source table/column definitions.
+                                             Omit to leave existing data sources unchanged.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -756,6 +770,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "data_sources": data_sources,
             },
             tenant_id,
         )
@@ -768,6 +783,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             tools=tools,
             knowledge_source=knowledge_source,
             tenant_id=str(tenant_id),
+            data_sources=data_sources,
         )
 
         return result
