@@ -21,11 +21,12 @@ AZURE_AI_FOUNDRY_ENDPOINT=https://tavro-portal-development.services.ai.azure.com
 AZURE_AI_FOUNDRY_KEY=
 AZURE_AI_FOUNDRY_API_VERSION=2024-02-15-preview
 AZURE_AI_FOUNDRY_AGENT_API_VERSION=v1
-# Required for creating agents in Foundry. Generate with:
-# az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
-#AZURE_AI_FOUNDRY_AGENT_TOKEN=
 # Optional. If omitted, the selected playground model is used as the Azure deployment name.
 AZURE_AI_FOUNDRY_DEPLOYMENT=gpt-5.4-mini
+# Required when running the API in Docker locally. In Azure, use managed identity instead.
+AZURE_CLIENT_ID=
+AZURE_TENANT_ID=
+AZURE_CLIENT_SECRET=
 
 TAVRO_PUBLIC_ORIGIN=http://localhost:9000
 VITE_ZITADEL_ISSUER=http://localhost:8080
