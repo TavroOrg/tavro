@@ -123,6 +123,34 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── Admin Portal — FastAPI (API + React UI) on port 7000 ─────────────────────
+  tavro-admin:
+    build:
+      context: .
+      dockerfile: tavro_admin/Dockerfile
+    container_name: tavro-admin
+    restart: unless-stopped
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:          postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      ADMIN_ENCRYPTION_KEY:  ${ADMIN_ENCRYPTION_KEY:-}
+      # Connector-generated agent card JSONs are written here; shared with tavro-api
+      AGENT_CARD_DIR:        /app/agent_cards
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./sql:/sql:ro                               # admin DDL bootstrap
+      - ./tavro_api/agent_cards:/app/agent_cards    # shared with tavro-api for portal visibility
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
