@@ -1847,6 +1847,7 @@ class AgentMetadataExporter:
         instruction: Optional[str] = None,
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
+        skills: Optional[List[Any]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -1862,6 +1863,7 @@ class AgentMetadataExporter:
         tenant_where = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
         tenant_col = "tenant_id," if is_tenant else ""
         tenant_val = f"'{tenant_clean}'," if is_tenant else ""
+        tenant_lit = f"'{tenant_clean}'" if is_tenant else "NULL"
 
         # Resolve agent ID (1 query)
         if not agent_id:
@@ -1871,15 +1873,17 @@ class AgentMetadataExporter:
         agent_id = cls.sanitize(str(agent_id).strip())
 
         # Fetch agent info (1 query)
-        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        rows = cls.execute_select(f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
         
         agent_internal_id = rows[0].get("agent_internal_id")
+        effective_agent_name = str(rows[0].get("agent_name") or "")
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Batch updates into single transaction
         if agent_name is not None and str(agent_name).strip():
+            effective_agent_name = str(agent_name).strip()
             cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
         if description is not None and str(description).strip():
@@ -1903,6 +1907,187 @@ class AgentMetadataExporter:
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+
+        if skills is not None:
+            def _pg_array(lst):
+                if not lst:
+                    return "ARRAY[]::TEXT[]"
+                escaped = [f"'{cls.sanitize(str(x))}'" for x in lst if str(x).strip()]
+                return f"ARRAY[{', '.join(escaped)}]" if escaped else "ARRAY[]::TEXT[]"
+
+            def _list_text_values(value):
+                if isinstance(value, list):
+                    return [str(v).strip() for v in value if str(v).strip()]
+                if isinstance(value, str):
+                    stripped = value.strip()
+                    if not stripped:
+                        return []
+                    if "," in stripped:
+                        return [part.strip() for part in stripped.split(",") if part.strip()]
+                    return [stripped]
+                return []
+
+            def _first_present(mapping, *keys):
+                for key in keys:
+                    if key in mapping and mapping[key] is not None:
+                        return mapping[key]
+                return None
+
+            def _has_any_key(mapping, *keys):
+                return any(key in mapping for key in keys)
+
+            def _clean_text(value):
+                return str(value or "").strip()
+
+            def _existing_list(value):
+                return _list_text_values(value)
+
+            rel_tenant_where = f"AND rel.tenant_id = '{tenant_clean}'" if is_tenant else ""
+            existing_skill_rows = cls.execute_select(f"""
+                SELECT rel.skill_id, rel.skill_name, s.name, s.description,
+                       s.tags, s.input_modes, s.output_modes
+                FROM {cls.CORE_DB_NAME}.agent_skills rel
+                LEFT JOIN {cls.CORE_DB_NAME}.skills s
+                  ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                 AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                WHERE rel.agent_id = '{agent_id}'
+                  {rel_tenant_where}
+                  AND rel.skill_id IS NOT NULL
+                  AND rel.skill_id <> ''
+            """)
+            existing_skills = []
+            for row in existing_skill_rows:
+                existing_sid = _clean_text(row.get("skill_id"))
+                if not existing_sid:
+                    continue
+                existing_skills.append({
+                    "skill_id": existing_sid,
+                    "skill_name": _clean_text(row.get("name") or row.get("skill_name") or existing_sid),
+                    "description": _clean_text(row.get("description")),
+                    "tags": _existing_list(row.get("tags")),
+                    "input_modes": _existing_list(row.get("input_modes")),
+                    "output_modes": _existing_list(row.get("output_modes")),
+                })
+
+            def _find_existing_skill(explicit_id, skill_name, single_skill_patch):
+                explicit_key = _clean_text(explicit_id).lower()
+                name_key = _clean_text(skill_name).lower()
+                for row in existing_skills:
+                    if explicit_key and row["skill_id"].lower() == explicit_key:
+                        return row
+                for row in existing_skills:
+                    candidates = {row["skill_id"].lower(), row["skill_name"].lower()}
+                    if name_key and name_key in candidates:
+                        return row
+                if single_skill_patch and len(existing_skills) == 1:
+                    return existing_skills[0]
+                return None
+
+            skill_rows = []
+            seen_skill_ids: set = set()
+            single_skill_patch = len(skills or []) == 1
+            for skill in skills:
+                existing_match = None
+                if isinstance(skill, str):
+                    skill_id = skill.strip()
+                    skill_name = skill_id
+                    existing_match = _find_existing_skill(skill_id, skill_name, single_skill_patch)
+                    if existing_match:
+                        skill_id = existing_match["skill_id"]
+                        skill_name = existing_match["skill_name"]
+                        skill_desc = existing_match["description"]
+                        tags = existing_match["tags"]
+                        input_modes = existing_match["input_modes"]
+                        output_modes = existing_match["output_modes"]
+                    else:
+                        skill_desc = ""
+                        tags, input_modes, output_modes = [], [], []
+                elif isinstance(skill, dict):
+                    explicit_id = _clean_text(_first_present(skill, "identifier", "skill_id", "id"))
+                    requested_name = _clean_text(skill.get("name") or skill.get("skill_name"))
+                    fallback_name = requested_name or explicit_id
+                    existing_match = _find_existing_skill(explicit_id, fallback_name, single_skill_patch)
+                    skill_id = existing_match["skill_id"] if existing_match else (explicit_id or fallback_name)
+                    skill_name = requested_name or (existing_match["skill_name"] if existing_match else skill_id)
+                    skill_desc = (
+                        _clean_text(skill.get("description"))
+                        if "description" in skill
+                        else (existing_match["description"] if existing_match else "")
+                    )
+                    tags = (
+                        _list_text_values(skill.get("tags"))
+                        if "tags" in skill
+                        else (existing_match["tags"] if existing_match else [])
+                    )
+                    input_modes = (
+                        _list_text_values(_first_present(
+                            skill, "inputModes", "input_modes", "inputBounds", "input_bounds", "inputs", "input"
+                        ))
+                        if _has_any_key(skill, "inputModes", "input_modes", "inputBounds", "input_bounds", "inputs", "input")
+                        else (existing_match["input_modes"] if existing_match else [])
+                    )
+                    output_modes = (
+                        _list_text_values(_first_present(
+                            skill, "outputModes", "output_modes", "outputBounds", "output_bounds", "outputs", "output"
+                        ))
+                        if _has_any_key(skill, "outputModes", "output_modes", "outputBounds", "output_bounds", "outputs", "output")
+                        else (existing_match["output_modes"] if existing_match else [])
+                    )
+                else:
+                    continue
+
+                if not skill_id:
+                    continue
+                skill_key = skill_id.lower()
+                if skill_key in seen_skill_ids:
+                    continue
+                seen_skill_ids.add(skill_key)
+                skill_rows.append({
+                    "skill_id": cls.sanitize(skill_id),
+                    "skill_name": cls.sanitize(skill_name),
+                    "description": cls.sanitize(skill_desc),
+                    "tags": tags,
+                    "input_modes": input_modes,
+                    "output_modes": output_modes,
+                })
+
+            for skill in skill_rows:
+                cls.execute_dml(f"""
+                    INSERT INTO {cls.CORE_DB_NAME}.skills (
+                        tenant_id, skill_id, name, description,
+                        tags, input_modes, output_modes,
+                        created_ts, updated_ts
+                    )
+                    VALUES (
+                        {tenant_lit}, '{skill["skill_id"]}', '{skill["skill_name"]}', '{skill["description"]}',
+                        {_pg_array(skill["tags"])}, {_pg_array(skill["input_modes"])}, {_pg_array(skill["output_modes"])},
+                        TIMESTAMP '{now}', TIMESTAMP '{now}'
+                    )
+                    ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        tags = EXCLUDED.tags,
+                        input_modes = EXCLUDED.input_modes,
+                        output_modes = EXCLUDED.output_modes,
+                        updated_ts = EXCLUDED.updated_ts
+                """)
+                cls.execute_dml(f"""
+                    INSERT INTO {cls.CORE_DB_NAME}.agent_skills (
+                        tenant_id, skill_id, skill_name, agent_id, agent_name,
+                        agent_internal_id, created_ts, updated_ts
+                    )
+                    VALUES (
+                        {tenant_lit}, '{skill["skill_id"]}', '{skill["skill_name"]}',
+                        '{agent_id}', '{cls.sanitize(effective_agent_name)}',
+                        '{agent_internal_id}',
+                        TIMESTAMP '{now}', TIMESTAMP '{now}'
+                    )
+                    ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
+                        skill_name = EXCLUDED.skill_name,
+                        agent_name = EXCLUDED.agent_name,
+                        agent_internal_id = EXCLUDED.agent_internal_id,
+                        updated_ts = EXCLUDED.updated_ts
+                """)
 
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
 

@@ -84,8 +84,6 @@ const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills
                 tags: Array.isArray(skill?.tags) ? skill.tags : [],
                 inputModes,
                 outputModes,
-                input_modes: inputModes,
-                output_modes: outputModes,
             };
         })
         .filter((skill: any) => hasNonBlankText(skill.id ?? skill.skill_id ?? skill.identifier ?? skill.name));
