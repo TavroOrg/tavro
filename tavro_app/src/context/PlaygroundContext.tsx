@@ -99,6 +99,7 @@ interface PlaygroundState {
   observations:  PlaygroundObservation[];
   isRunning:     boolean;
   sessionActive: boolean;
+  sessionStarting: boolean;
   sessionId:     string | null;
   tokenCount:    number;
   summary:       SessionSummary | null;
@@ -130,6 +131,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [observations,   setObservations] = useState<PlaygroundObservation[]>([]);
   const [isRunning,      setIsRunning]    = useState(false);
   const [sessionActive,  setSessionActive] = useState(false);
+  const [sessionStarting, setSessionStarting] = useState(false);
   const [sessionId,      setSessionId]    = useState<string | null>(null);
   const [tokenCount,     setTokenCount]   = useState(0);
   const [summary,        setSummary]      = useState<SessionSummary | null>(null);
@@ -184,6 +186,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const startSession = useCallback(async () => {
     setSessionError(null);
+    setSessionStarting(true);
     try {
       const systemPromptToUse = config.systemPrompt.trim() || buildFallbackSystemPrompt(config);
       const result = await apiPost<{
@@ -223,6 +226,8 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         content:   `Failed to start session: ${err.message}`,
         timestamp: new Date(),
       }]);
+    } finally {
+      setSessionStarting(false);
     }
   }, [config]);
 
@@ -320,7 +325,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   return (
     <PlaygroundContext.Provider value={{
-      config, messages, observations, isRunning, sessionActive, sessionId,
+      config, messages, observations, isRunning, sessionActive, sessionStarting, sessionId,
       tokenCount, summary, summaryLoading, sessionError,
       setConfig, setProvider, loadFromAgent, resetConfig,
       startSession, endSession, sendMessage, clearMessages, generateSummary,
