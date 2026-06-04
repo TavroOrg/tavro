@@ -343,7 +343,17 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_agent")
-async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def create_agent(
+    original_prompt: str,
+    *,
+    agent_name: str,
+    description: str,
+    instruction: str,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tables: Optional[List[Dict[str, Any]]] = None,
+    data_source: Optional[List[Dict[str, Any]]] = None,
+    knowledge_source: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
@@ -361,6 +371,25 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             "name": str,
             "description": str
         }
+      A tool may optionally include table metadata it uses:
+        {
+            "name": str,
+            "description": str,
+            "table": {"name": str, "columns": [str]}
+        }
+
+    - `tables`: Optional explicit table metadata for the agent or tools:
+        [
+            {
+                "name": str,
+                "columns": [str],
+                "tool_name": str
+            }
+        ]
+      Use `tool_name` when the table belongs to a specific tool.
+
+    - `data_source`: Optional relationship-style metadata using Agent/Tool/Table/Column
+    source and target object fields.
 
     - `knowledge_source`: A reference to an external knowledge source that the agent can
     use for contextual understanding. If provided, it must follow:
@@ -384,7 +413,9 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                            "Revenue Agent") unless the user has explicitly named them or they are confirmed to
                            exist in the catalog context. If the agent coordinates with upstream agents, describe
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
-        tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
+        tools (Optional[List[Dict[str, Any]]]): Optional list of tool definitions.
+        tables (Optional[List[Dict[str, Any]]]): Optional table definitions.
+        data_source (Optional[List[Dict[str, Any]]]): Optional data-source relationships.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
 
     Returns:
@@ -403,6 +434,8 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                 "description": description,
                 "instruction": instruction,
                 "tools": tools,
+                "tables": tables,
+                "data_source": data_source,
                 "knowledge_source": knowledge_source,
             },
             tenant_id,
@@ -413,6 +446,8 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             description=description,
             instruction=instruction,
             tools=tools,
+            tables=tables,
+            data_source=data_source,
             knowledge_source=knowledge_source,
             tenant_id=tenant_id,
         )

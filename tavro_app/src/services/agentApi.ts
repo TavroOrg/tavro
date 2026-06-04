@@ -47,7 +47,9 @@ export interface AgentCreatePayload {
     role?: string;
     environment?: string;
     owner?: string;
-    tools?: Array<{ name: string; description: string }>;
+    tools?: Array<{ name: string; description: string; table?: any; tables?: any[]; columns?: any[] }>;
+    tables?: Array<{ table_id?: string; name?: string; table_name?: string; columns?: any[]; tool_name?: string; tool_id?: string }>;
+    data_source?: Array<Record<string, any>>;
     knowledge_source?: { name: string; description: string };
 }
 

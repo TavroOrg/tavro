@@ -2,6 +2,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
 ON core.agents (agent_id, agent_name)
 WHERE is_current = true;
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_internal_id
+ON core.agents (agent_internal_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_configurations_current
 ON core.agent_configurations (agent_internal_id)
 WHERE is_current = true;
@@ -57,6 +60,15 @@ ON core.business_applications (business_application_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
 ON core.business_processes (business_process_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_columns
+ON core.columns (table_id, name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tables
+ON core.tables (agent_internal_id, table_id);
+
+CREATE INDEX IF NOT EXISTS ix_core_tables_agent_tool
+ON core.tables (agent_internal_id, tool_id);
 
 DO $$
 BEGIN
@@ -208,6 +220,46 @@ BEGIN
         ON DELETE CASCADE;
     END IF;
 
+    -- Create helper function + triggers to populate tenant_id on insert when missing
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        EXECUTE $ddl$
+        CREATE OR REPLACE FUNCTION core.populate_tenant_from_agent() RETURNS trigger AS $func$
+        BEGIN
+            -- For rows that include agent_internal_id, prefer that lookup
+            IF NEW.tenant_id IS NULL OR NEW.tenant_id = '' THEN
+                IF TG_TABLE_NAME = 'agent_tools' OR TG_TABLE_NAME = 'tables' THEN
+                    IF NEW.agent_internal_id IS NOT NULL THEN
+                        SELECT tenant_id INTO NEW.tenant_id FROM core.agents WHERE agent_internal_id = NEW.agent_internal_id LIMIT 1;
+                    END IF;
+                ELSIF TG_TABLE_NAME = 'columns' THEN
+                    -- columns only reference table_id; derive tenant from core.tables
+                    IF NEW.table_id IS NOT NULL THEN
+                        SELECT tenant_id INTO NEW.tenant_id FROM core.tables WHERE table_id = NEW.table_id LIMIT 1;
+                    END IF;
+                END IF;
+            END IF;
+            RETURN NEW;
+        END;
+        $func$ LANGUAGE plpgsql;
+        $ddl$;
+
+        -- Attach triggers to relevant tables
+        IF to_regclass('core.agent_tools') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_agent_tools ON core.agent_tools';
+            EXECUTE 'CREATE TRIGGER trg_populate_tenant_agent_tools BEFORE INSERT OR UPDATE ON core.agent_tools FOR EACH ROW EXECUTE FUNCTION core.populate_tenant_from_agent()';
+        END IF;
+
+        IF to_regclass('core.tables') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_tables ON core.tables';
+            EXECUTE 'CREATE TRIGGER trg_populate_tenant_tables BEFORE INSERT OR UPDATE ON core.tables FOR EACH ROW EXECUTE FUNCTION core.populate_tenant_from_agent()';
+        END IF;
+
+        IF to_regclass('core.columns') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_columns ON core.columns';
+            EXECUTE 'CREATE TRIGGER trg_populate_tenant_columns BEFORE INSERT OR UPDATE ON core.columns FOR EACH ROW EXECUTE FUNCTION core.populate_tenant_from_agent()';
+        END IF;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -249,6 +301,51 @@ BEGIN
             REFERENCES core.business_processes (business_process_id)
             ON DELETE CASCADE;
         END IF;
+    END IF;
+
+    IF to_regclass('core.tables') IS NOT NULL
+       AND to_regclass('core.columns') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_columns_table'
+       )
+    THEN
+        ALTER TABLE core.columns
+        ADD CONSTRAINT fk_core_columns_table
+        FOREIGN KEY (table_id)
+        REFERENCES core.tables (table_id)
+        ON DELETE CASCADE;
+    END IF;
+
+    IF to_regclass('core.agents') IS NOT NULL
+       AND to_regclass('core.tables') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_tables_agent'
+       )
+    THEN
+        ALTER TABLE core.tables
+        ADD CONSTRAINT fk_core_tables_agent
+        FOREIGN KEY (agent_internal_id)
+        REFERENCES core.agents (agent_internal_id)
+        ON DELETE CASCADE;
+    END IF;
+
+    IF to_regclass('core.agent_tools') IS NOT NULL
+       AND to_regclass('core.tables') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_tables_agent_tool'
+       )
+    THEN
+        ALTER TABLE core.tables
+        ADD CONSTRAINT fk_core_tables_agent_tool
+        FOREIGN KEY (agent_internal_id, tool_id)
+        REFERENCES core.agent_tools (agent_internal_id, tool_id)
+        ON DELETE CASCADE;
     END IF;
 
 END $$;
