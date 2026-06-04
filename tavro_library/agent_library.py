@@ -394,6 +394,44 @@ class AgentMetadataExporter:
                 except Exception as ra_overlay_err:
                     print(f"[get_agent_card] Risk assessment overlay failed (returning card as-is): {ra_overlay_err}")
 
+                # Overlay data_source from DB so renames and new relationships are
+                # immediately visible in the UI lineage without regenerating the card file.
+                try:
+                    ds_rows = cls.execute_select(
+                        f"""
+                        SELECT relationship_id, parent_relationship_id,
+                               source_object_id, source_object_domain, source_object_name, source_object_type,
+                               target_object_id, target_object_domain, target_object_name, target_object_type,
+                               access_level, contains_pii, contains_phi, contains_pci
+                        FROM {cls.CORE_DB_NAME}.agent_data_sources
+                        WHERE agent_id = %s
+                        ORDER BY created_ts NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if ds_rows:
+                        local_card["data_source"] = [
+                            {
+                                "relationship_id": r.get("relationship_id"),
+                                "parent_relationship_id": r.get("parent_relationship_id"),
+                                "source_object_id": r.get("source_object_id"),
+                                "source_object_domain": r.get("source_object_domain"),
+                                "source_object_name": r.get("source_object_name"),
+                                "source_object_type": r.get("source_object_type"),
+                                "target_object_id": r.get("target_object_id"),
+                                "target_object_domain": r.get("target_object_domain"),
+                                "target_object_name": r.get("target_object_name"),
+                                "target_object_type": r.get("target_object_type"),
+                                "access_level": r.get("access_level"),
+                                "uses_pii": r.get("contains_pii"),
+                                "uses_phi": r.get("contains_phi"),
+                                "uses_pci": r.get("contains_pci"),
+                            }
+                            for r in ds_rows
+                        ]
+                except Exception as ds_overlay_err:
+                    print(f"[get_agent_card] Data source overlay failed (returning card as-is): {ds_overlay_err}")
+
                 return local_card
 
             # ---------- 7. Not found ----------
@@ -2095,6 +2133,7 @@ class AgentMetadataExporter:
         instruction: Optional[str] = None,
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
+        tables: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -2119,10 +2158,10 @@ class AgentMetadataExporter:
         agent_id = cls.sanitize(str(agent_id).strip())
 
         # Fetch agent info (1 query)
-        rows = cls.execute_select(f"SELECT agent_internal_id FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
+        rows = cls.execute_select(f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
-        
+
         agent_internal_id = rows[0].get("agent_internal_id")
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -2152,7 +2191,71 @@ class AgentMetadataExporter:
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
-        return {"message": "Agent updated successfully.", "agent_id": agent_id}
+        tables_updated = 0
+        for table in (tables or []):
+            if not isinstance(table, dict):
+                continue
+            new_name = cls.sanitize(str(table.get("name") or "").strip())
+            if not new_name:
+                continue
+
+            # Resolve table_id: prefer explicit table_id, fall back to old_name or current name lookup
+            table_id = cls.sanitize(str(table.get("table_id") or "").strip())
+            if not table_id:
+                lookup_name = cls.sanitize(str(table.get("old_name") or table.get("name") or "").strip())
+                if lookup_name:
+                    found = cls.execute_select(
+                        f"SELECT table_id FROM {cls.CORE_DB_NAME}.tables "
+                        f"WHERE agent_internal_id = '{agent_internal_id}' "
+                        f"AND LOWER(name) = LOWER('{lookup_name}') LIMIT 1"
+                    )
+                    if found:
+                        table_id = cls.sanitize(str(found[0].get("table_id") or "").strip())
+
+            if not table_id:
+                continue
+
+            # Update core.tables
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.tables SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE table_id = '{table_id}' AND agent_internal_id = '{agent_internal_id}'"
+            )
+            # Propagate new name to all three relationship tables
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE table_id = '{table_id}' AND agent_id = '{agent_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.tool_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE table_id = '{table_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.table_columns SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE table_id = '{table_id}'"
+            )
+            # Propagate new name to agent_data_sources (used by the UI lineage view)
+            # Table appears as a target in Tool→Table edges
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND target_object_id = '{table_id}' "
+                f"AND LOWER(target_object_type) = 'table'"
+            )
+            # Table appears as a source in Table→Column edges
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                f"SET source_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND source_object_id = '{table_id}' "
+                f"AND LOWER(source_object_type) = 'table'"
+            )
+            tables_updated += 1
+
+        msg = "Agent updated successfully."
+        if tables_updated:
+            msg += f" {tables_updated} table(s) renamed."
+        return {"message": msg, "agent_id": agent_id}
 
     @classmethod
     def delete_agent(

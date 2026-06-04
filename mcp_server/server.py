@@ -754,12 +754,12 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, tables: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Update an existing AI agent’s configuration.
 
     Allows modification of agent metadata such as name, description,
-    behavior instructions, tools, and knowledge sources.
+    behavior instructions, tools, knowledge sources, and tables.
 
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
@@ -771,6 +771,15 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
+        tables (Optional[List[Dict[str, Any]]]): Tables to rename or update. Each entry must include
+                           the new name and a way to identify the existing table:
+                               {
+                                   "name": str,       # new table name to set
+                                   "old_name": str,   # current table name (use when table_id is unknown)
+                                   "table_id": str    # table identifier (preferred when available)
+                               }
+                           Use "old_name" when the user refers to the current name (e.g. "rename
+                           SNOW_incident to Incidents"). Use "table_id" when you already know it.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -791,6 +800,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "tables": tables,
             },
             tenant_id,
         )
@@ -802,6 +812,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             instruction=instruction,
             tools=tools,
             knowledge_source=knowledge_source,
+            tables=tables,
             tenant_id=str(tenant_id),
         )
 
