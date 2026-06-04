@@ -97,6 +97,32 @@ export function extractAndStoreTenantId(): void {
     }
 }
 
+/**
+ * True only when the token has passed its actual exp claim with no grace period.
+ * Used as the final arbiter for forced logout: if the token is in the 30s
+ * pre-emptive window but not actually expired, we keep the user logged in and
+ * let the API layer signal real failures rather than logging them out prematurely.
+ */
+export function isAccessTokenHardExpired(): boolean {
+    const accessToken = localStorage.getItem('tavro_access_token');
+    if (!accessToken) return true;
+
+    const accessPayload = parseJwtPayload(accessToken);
+    if (typeof accessPayload?.exp === 'number') {
+        return Date.now() / 1000 >= (accessPayload.exp as number);
+    }
+
+    const idToken = localStorage.getItem('tavro_id_token');
+    if (idToken) {
+        const idPayload = parseJwtPayload(idToken);
+        if (typeof idPayload?.exp === 'number') {
+            return Date.now() / 1000 >= (idPayload.exp as number);
+        }
+    }
+
+    return false;
+}
+
 /** True when tavro_auth is set AND the access token is still live. */
 export function isAuthenticated(): boolean {
     return localStorage.getItem('tavro_auth') === 'true' && !isAccessTokenExpired();
@@ -139,6 +165,9 @@ export async function refreshAccessToken(): Promise<boolean> {
             if (typeof data.access_token !== 'string') return false;
 
             localStorage.setItem('tavro_access_token', data.access_token);
+            // Keep the MCP token in sync so every API client gets the fresh token
+            // without relying on each client to update it independently.
+            localStorage.setItem('tavro_mcp_access_token', data.access_token);
             if (typeof data.id_token === 'string') localStorage.setItem('tavro_id_token', data.id_token);
             if (typeof data.refresh_token === 'string') localStorage.setItem('tavro_mcp_refresh_token', data.refresh_token);
             extractAndStoreTenantId();

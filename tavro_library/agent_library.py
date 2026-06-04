@@ -358,6 +358,42 @@ class AgentMetadataExporter:
                 except Exception as use_case_overlay_err:
                     print(f"[get_agent_card] AI use case overlay failed: {use_case_overlay_err}")
 
+                # Overlay latest risk assessment directly from DB so the card
+                # always reflects the most recent completed assessment, regardless
+                # of when the local JSON file was last regenerated.
+                try:
+                    ra_rows = cls.execute_select(
+                        f"""
+                        SELECT risk_assessment_id, assessment_name, assessor_name,
+                               assessment_ts, blended_risk_score, blended_risk_class,
+                               aivss_score, aivss_class, regulatory_risk_score,
+                               regulatory_risk_class, state_name, summary
+                        FROM {cls.CORE_DB_NAME}.agent_risk_assessments
+                        WHERE agent_id = %s
+                        ORDER BY updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if ra_rows:
+                        ra = ra_rows[0]
+                        local_card["risk_assessment"] = {
+                            "identifier": ra.get("risk_assessment_id"),
+                            "name": ra.get("assessment_name"),
+                            "assessor": ra.get("assessor_name"),
+                            "date": str(ra.get("assessment_ts")) if ra.get("assessment_ts") else None,
+                            "blended_risk_score": ra.get("blended_risk_score"),
+                            "blended_risk_class": ra.get("blended_risk_class"),
+                            "aivss_score": ra.get("aivss_score"),
+                            "aivss_classification": ra.get("aivss_class"),
+                            "regulatory_risk_score": ra.get("regulatory_risk_score"),
+                            "regulatory_risk_classification": ra.get("regulatory_risk_class"),
+                            "state": ra.get("state_name"),
+                            "summary": ra.get("summary"),
+                        }
+                except Exception as ra_overlay_err:
+                    print(f"[get_agent_card] Risk assessment overlay failed (returning card as-is): {ra_overlay_err}")
+
                 return local_card
 
             # ---------- 7. Not found ----------

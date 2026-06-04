@@ -8,8 +8,9 @@ import {
     ArrowRight, CheckCircle2,
     Home, Play, LayoutGrid, List, Plus, Link2,
     ShieldAlert, Unlink2, PlusCircle, Settings2, MessageSquare,
-    ClipboardCheck, Loader2, Send, Paperclip,
-    Building2, Globe, RefreshCw, Hash, Layers
+    ClipboardCheck, Loader2,
+    Building2, Globe, RefreshCw, Layers,
+    Code2
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -84,353 +85,7 @@ const UIButton: React.FC<{ color?: 'blue' | 'violet' | 'red' | 'slate' | 'rose';
     );
 };
 
-// ─── Screen Mockups ───────────────────────────────────────────────────────────
 
-const ScreenFrame: React.FC<{ title: string; subtitle?: string; children: React.ReactNode }> = ({ title, subtitle, children }) => (
-    <div className="my-6 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-lg">
-        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-            <div className="flex gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-red-400" />
-                <span className="w-3 h-3 rounded-full bg-amber-400" />
-                <span className="w-3 h-3 rounded-full bg-emerald-400" />
-            </div>
-            <div className="flex-1 text-center">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{title}</span>
-            </div>
-            {subtitle && <span className="text-[10px] text-slate-400 font-medium">{subtitle}</span>}
-        </div>
-        <div className="bg-slate-50 dark:bg-slate-900">{children}</div>
-    </div>
-);
-
-// Mockup: App Layout
-const LayoutMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Agent BizOps">
-        <div className="flex h-48 text-[10px]">
-            {/* Left rail */}
-            <div className="w-28 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700 flex flex-col p-2 gap-1 flex-shrink-0">
-                <div className="flex items-center gap-1.5 px-1 py-1.5 mb-1 border-b border-slate-100 dark:border-slate-800">
-                    <div className="w-5 h-5 rounded bg-blue-600 flex-shrink-0" />
-                    <span className="font-bold text-slate-800 dark:text-slate-200 text-[9px]">Tavro BizOps</span>
-                </div>
-                {[{ icon: <Home size={10} />, label: 'Home' }, { icon: <ClipboardList size={10} />, label: 'AI Use Cases', active: true }, { icon: <Bot size={10} />, label: 'Agents' }, { icon: <Network size={10} />, label: 'Blueprint' }, { icon: <Scale size={10} />, label: 'Compliance' }, { icon: <ShieldCheck size={10} />, label: 'Audit Center' }].map(item => (
-                    <div key={item.label} className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${item.active ? 'bg-blue-50 text-blue-700' : 'text-slate-500 dark:text-slate-400'}`}>
-                        {item.icon}<span>{item.label}</span>
-                    </div>
-                ))}
-            </div>
-            {/* Main */}
-            <div className="flex-1 p-3 overflow-hidden">
-                <div className="flex items-center justify-between mb-2">
-                    <div>
-                        <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">AI Use Cases</div>
-                        <div className="text-slate-400 text-[9px]">12 active initiatives</div>
-                    </div>
-                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded-md text-[9px] font-semibold flex items-center gap-1"><Plus size={8} />New Use Case</div>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                    {['Invoice Automation', 'Customer Churn Prediction', 'Contract Review'].map(name => (
-                        <div key={name} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
-                            <div className="w-3 h-3 rounded bg-blue-500 mb-1" />
-                            <div className="font-semibold text-slate-700 dark:text-slate-300 leading-tight text-[9px]">{name}</div>
-                            <div className="mt-1 flex gap-1">
-                                <span className="bg-emerald-100 text-emerald-700 rounded px-1 text-[8px]">Active</span>
-                                <span className="bg-amber-100 text-amber-700 rounded px-1 text-[8px]">High</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-            {/* Right rail */}
-            <div className="w-12 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 flex flex-col items-center pt-4 gap-3 flex-shrink-0">
-                <div className="flex flex-col items-center gap-1 p-1.5 rounded-xl border border-blue-200 text-blue-500">
-                    <MessageCircle size={14} />
-                    <span className="text-[7px] font-semibold">Chat</span>
-                </div>
-                <div className="flex flex-col items-center gap-1 p-1.5 rounded-xl border border-slate-200 text-slate-400">
-                    <FlaskConical size={14} />
-                    <span className="text-[7px] font-semibold">Logs</span>
-                </div>
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-// Mockup: Agent Catalog (real agents from DB)
-const AgentCatalogMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Agent Catalog" subtitle="288 agents total">
-        <div className="p-3 text-[10px]">
-            <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 w-48">
-                    <Search size={9} className="text-slate-400" />
-                    <span className="text-slate-400">Search 288 agents…</span>
-                </div>
-                <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold">+ New Agent</div>
-            </div>
-            <div className="space-y-1.5">
-                {[
-                    { name: 'Business Data Intelligence Agent', desc: 'Large-scale data analysis, pattern recognition and business intelligence…', risk: '7.76', cls: 'High', clsColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', tools: 5, pii: true },
-                    { name: 'ColdChain AI — Perishable Intelligence Agent', desc: 'Forecasts demand, monitors perishable inventory, USDA FSIS & HACCP compliance…', risk: '4.56', cls: 'Medium', clsColor: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300', tools: 6, pii: false },
-                    { name: 'Sentiment Agent', desc: 'Classifies customer feedback sentiment and escalates negative or urgent cases…', risk: '—', cls: 'Pending', clsColor: 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400', tools: 2, pii: false },
-                ].map(a => (
-                    <div key={a.name} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                                <Bot size={11} className="text-slate-500" />
-                            </div>
-                            <div className="min-w-0">
-                                <div className="font-semibold text-slate-800 dark:text-slate-200 text-[9px] truncate">{a.name}</div>
-                                <div className="text-slate-400 text-[8px] truncate">{a.desc}</div>
-                                <div className="flex gap-1 mt-0.5">
-                                    <span className="bg-slate-100 dark:bg-slate-700 text-slate-500 rounded px-1 text-[7px]">{a.tools} tools</span>
-                                    {a.pii && <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-600 rounded px-1 text-[7px]">PII</span>}
-                                </div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                            <span className={`${a.clsColor} rounded-full px-1.5 py-0.5 text-[8px] font-semibold`}>{a.cls}</span>
-                            <span className="text-slate-400 text-[8px]">Score: {a.risk}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-// Mockup: Use Case Detail
-const UseCaseDetailMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — AI-Powered Customer Support Chatbot · Use Case">
-        <div className="p-3 text-[10px]">
-            <div className="flex items-center justify-between mb-3">
-                <div>
-                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">AI-Powered Customer Support Chatbot</div>
-                    <div className="text-slate-500 dark:text-slate-400 text-[9px] mt-0.5">Owner: System Administrator</div>
-                    <div className="flex gap-1 mt-1">
-                        <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-full px-2 py-0.5 text-[9px]">New</span>
-                        <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full px-2 py-0.5 text-[9px]">2 - High</span>
-                    </div>
-                </div>
-                <div className="flex gap-1.5">
-                    <div className="bg-blue-600 text-white px-2 py-1 rounded-md text-[9px] font-semibold flex items-center gap-1"><ShieldCheck size={8} />Audit</div>
-                    <div className="bg-white border border-slate-300 dark:bg-slate-800 dark:border-slate-600 px-2 py-1 rounded-md text-[9px] text-slate-600 dark:text-slate-300">Edit</div>
-                </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
-                    <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center gap-1"><Bot size={9} />Currently Related Agents (2)</div>
-                    {['Sentiment Agent', 'Business Data Intelligence Agent'].map(a => (
-                        <div key={a} className="flex items-center justify-between py-0.5">
-                            <span className="text-blue-600 dark:text-blue-400 text-[9px] truncate max-w-[110px]">{a}</span>
-                            <span className="text-red-400 text-[8px] flex items-center gap-0.5 flex-shrink-0"><Unlink2 size={7} />Remove</span>
-                        </div>
-                    ))}
-                    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2">
-                        <div className="text-slate-400 text-[9px] mb-1">Add Agent Relation</div>
-                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
-                            <Search size={8} className="text-slate-400" /><span className="text-slate-400">Filter agents…</span>
-                        </div>
-                    </div>
-                </div>
-                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
-                    <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center gap-1"><Workflow size={9} />Currently Related Processes (1)</div>
-                    <div className="flex items-center justify-between py-0.5">
-                        <span className="text-blue-600 dark:text-blue-400 text-[9px]">Customer Support Operations</span>
-                        <span className="text-red-400 text-[8px] flex items-center gap-0.5"><Unlink2 size={7} />Remove</span>
-                    </div>
-                    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2">
-                        <div className="text-slate-400 text-[9px] mb-1">Add Process Relation</div>
-                        <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
-                            <Search size={8} className="text-slate-400" /><span className="text-slate-400">Filter processes…</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-// Mockup: Agent view — Business Data Intelligence Agent (real DB record)
-const AgentViewMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Business Data Intelligence Agent · Agent">
-        <div className="text-[10px]">
-            <div className="flex items-center justify-between px-3 pt-3 pb-2 border-b border-slate-200 dark:border-slate-700">
-                <div>
-                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">Business Data Intelligence Agent</div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-slate-400 text-[9px]">5 tools · 5 data sources</span>
-                        <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded-full px-1.5 py-0.5 text-[8px] font-semibold">High Risk · 7.76</span>
-                        <span className="bg-amber-50 dark:bg-amber-900/20 text-amber-600 border border-amber-200 dark:border-amber-800 rounded-full px-1.5 py-0.5 text-[8px]">PII</span>
-                    </div>
-                </div>
-                <div className="flex gap-1.5">
-                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><FlaskConical size={8} />Playground</div>
-                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldAlert size={8} />Risk Assessment</div>
-                    <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldCheck size={8} />Audit</div>
-                </div>
-            </div>
-            <div className="flex border-b border-slate-200 dark:border-slate-700 px-3">
-                {['Overview', 'Context Graph', 'Related'].map((tab, i) => (
-                    <div key={tab} className={`px-3 py-2 text-[9px] font-semibold border-b-2 ${i === 1 ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500'}`}>{tab}</div>
-                ))}
-            </div>
-            {/* Context Graph — real rings: Technical (blue), Functional (purple), Business (orange), Risk (rose) */}
-            <div className="p-3 flex items-center justify-center bg-slate-50 dark:bg-slate-900/50">
-                <div className="relative w-56 h-36">
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-9 bg-slate-700 dark:bg-slate-600 rounded-xl flex items-center justify-center z-10 border-2 border-slate-500">
-                        <span className="text-white text-[7px] font-bold text-center leading-tight px-1">Business Data<br/>Intelligence</span>
-                    </div>
-                    {[
-                        { label: '5 Tools', color: 'bg-blue-500',   top: '6%',  left: '12%' },
-                        { label: 'Analytics DB', color: 'bg-blue-400', top: '6%', right: '12%' },
-                        { label: '5 Data Sources', color: 'bg-violet-500', top: '42%', left: '0%' },
-                        { label: 'Data Platform', color: 'bg-orange-500', top: '42%', right: '0%' },
-                        { label: 'Risk: 7.76 High', color: 'bg-rose-500', bottom: '6%', left: '12%' },
-                        { label: 'PII Exposure', color: 'bg-rose-400', bottom: '6%', right: '12%' },
-                    ].map(n => (
-                        <div key={n.label} className="absolute flex items-center justify-center z-10"
-                            style={{ top: n.top, bottom: (n as any).bottom, left: (n as any).left, right: (n as any).right }}>
-                            <div className={`${n.color} text-white rounded-md px-1.5 py-0.5 text-[7px] font-semibold shadow-sm whitespace-nowrap`}>{n.label}</div>
-                        </div>
-                    ))}
-                    <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 5 }}>
-                        {[[112,70, 44,16],[112,70,180,16],[112,70,8,56],[112,70,216,56],[112,70,44,124],[112,70,180,124]].map(([x1,y1,x2,y2],i) => (
-                            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#94a3b8" strokeWidth="0.6" strokeDasharray="2,2"/>
-                        ))}
-                    </svg>
-                </div>
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-// Mockup: Risk Score Breakdown — real AIVSS data from ColdChain AI agent
-const RiskScoreMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Risk Assessment · ColdChain AI — Perishable Intelligence Agent" subtitle="AIVSS 4.65 · Medium">
-        <div className="p-3 text-[10px]">
-            <div className="grid grid-cols-3 gap-2 mb-3">
-                {[
-                    { label: 'Blended Risk', value: '4.56', cls: 'Medium', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700' },
-                    { label: 'AIVSS Score', value: '4.65', cls: 'Medium', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700' },
-                    { label: 'Regulatory', value: 'Other', cls: 'EU AI Act', color: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-600' },
-                ].map(s => (
-                    <div key={s.label} className={`rounded-xl border p-2 ${s.bg}`}>
-                        <div className="text-slate-500 dark:text-slate-400 text-[8px] mb-0.5">{s.label}</div>
-                        <div className={`font-bold text-sm ${s.color}`}>{s.value}</div>
-                        <div className="text-slate-400 text-[8px]">{s.cls}</div>
-                    </div>
-                ))}
-            </div>
-            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2 mb-2">
-                <div className="font-semibold text-slate-600 dark:text-slate-400 mb-2 text-[9px]">AIVSS Capability Breakdown</div>
-                {[
-                    { cap: 'Autonomy of Action', score: 0.50, note: 'Human approval required for irreversible actions' },
-                    { cap: 'Goal-Driven Planning', score: 0.50, note: '7-day demand forecasts, multi-step plans' },
-                    { cap: 'Non-Determinism',     score: 0.50, note: 'Hybrid structured + natural language output' },
-                    { cap: 'Opacity & Reflexivity',score: 0.50, note: 'Summarized internal reasoning' },
-                    { cap: 'Contextual Awareness', score: 0.00, note: 'No unfiltered external data access' },
-                    { cap: 'Memory Use',            score: 0.00, note: 'Stateless / ephemeral processing' },
-                ].map(row => (
-                    <div key={row.cap} className="flex items-center gap-2 mb-1">
-                        <div className="w-28 text-slate-600 dark:text-slate-400 text-[8px] flex-shrink-0">{row.cap}</div>
-                        <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full ${row.score > 0 ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600'}`} style={{ width: `${row.score * 100}%` }} />
-                        </div>
-                        <div className="w-6 text-right text-slate-500 dark:text-slate-400 text-[8px]">{row.score.toFixed(2)}</div>
-                        <div className="w-32 text-slate-400 text-[7px] truncate">{row.note}</div>
-                    </div>
-                ))}
-            </div>
-            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
-                <div className="font-semibold text-slate-600 dark:text-slate-400 mb-1.5 text-[9px]">Top Scenario Risks (OWASP)</div>
-                {[
-                    { scenario: 'Agent Supply Chain & Dependency Attacks', score: '5.45', color: 'text-amber-600' },
-                    { scenario: 'Insecure Critical Systems Interaction',    score: '4.65', color: 'text-amber-500' },
-                    { scenario: 'Agent Memory & Context Manipulation',      score: '4.55', color: 'text-amber-500' },
-                ].map(r => (
-                    <div key={r.scenario} className="flex items-center justify-between py-0.5">
-                        <span className="text-slate-600 dark:text-slate-400 text-[8px]">{r.scenario}</span>
-                        <span className={`font-bold text-[9px] ${r.color}`}>{r.score}</span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-
-
-// Mockup: Spark
-const SparkMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Spark">
-        <div className="p-3 text-[10px]">
-            <div className="flex items-center justify-between mb-2">
-                <div>
-                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5"><Zap size={12} className="text-violet-500" />Spark</div>
-                    <div className="text-slate-400 text-[9px]">6 ideas · Page 1 of 1</div>
-                </div>
-                <div className="bg-violet-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><Zap size={8} />Inspire Me</div>
-            </div>
-            <div className="flex items-center gap-2 mb-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1">
-                <Hash size={8} className="text-slate-400" />
-                <span className="text-slate-400">Focus direction — e.g. "Quality management"…</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-                {[{ title: 'Automated PO Matching', signal: 'Gap Coverage', signalColor: 'bg-blue-100 text-blue-700', complexity: 'Medium', impact: 'High' }, { title: 'Vendor Risk Scoring', signal: 'Risk Hotspot', signalColor: 'bg-rose-100 text-rose-700', complexity: 'High', impact: 'High' }, { title: 'Payment Terms Optimizer', signal: 'Strategic Gap', signalColor: 'bg-slate-100 text-slate-600', complexity: 'Low', impact: 'Medium' }].map(idea => (
-                    <div key={idea.title} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-                        <div className="h-4 bg-gradient-to-r from-violet-500 to-indigo-600" />
-                        <div className="p-2">
-                            <div className="font-semibold text-slate-800 dark:text-slate-200 text-[9px] leading-tight mb-1">{idea.title}</div>
-                            <span className={`${idea.signalColor} text-[7px] px-1 py-0.5 rounded-full font-semibold`}>{idea.signal}</span>
-                            <div className="flex justify-between mt-1.5">
-                                <span className="text-slate-400 text-[7px]">Complex: {idea.complexity}</span>
-                                <span className="text-slate-400 text-[7px]">Impact: {idea.impact}</span>
-                            </div>
-                            <div className="mt-1.5 w-full bg-violet-600 text-white rounded text-[7px] text-center py-0.5 font-semibold flex items-center justify-center gap-0.5"><ArrowRight size={7} />View &amp; Develop</div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    </ScreenFrame>
-);
-
-// Mockup: Audit Center
-const AuditMockup: React.FC = () => (
-    <ScreenFrame title="tavro.ai — Audit Center">
-        <div className="p-3 text-[10px]">
-            <div className="flex items-center justify-between mb-3">
-                <div>
-                    <div className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5"><ShieldCheck size={12} className="text-blue-500" />Audit Center</div>
-                    <div className="text-slate-400 text-[9px]">4 completed runs · 2 critical · 5 high findings</div>
-                </div>
-                <div className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5"><ShieldCheck size={8} />New Audit</div>
-            </div>
-            <div className="space-y-1.5">
-                {[
-                    { name: 'AI Customer Support Chatbot', vs: 'vs. EU AI Act', risk: 'Medium', riskColor: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300', pct: 100, status: '✓' },
-                    { name: 'Large-Scale Data Processing', vs: 'vs. GDPR', risk: 'High', riskColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', pct: 72, status: '⟳', live: true },
-                    { name: 'Business Data Intelligence Agent', vs: 'vs. EU AI Act', risk: 'High', riskColor: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300', pct: 100, status: '✓' },
-                ].map(run => (
-                    <div key={run.name} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
-                        <div className="flex items-center justify-between mb-1">
-                            <div>
-                                <span className={`${run.status === '⟳' ? 'text-blue-500' : 'text-emerald-500'} mr-1.5`}>{run.status}</span>
-                                <span className="font-semibold text-slate-700 dark:text-slate-300">{run.name}</span>
-                                <span className="text-slate-400 ml-1">{run.vs}</span>
-                            </div>
-                            <span className={`${run.riskColor} rounded-full px-1.5 py-0.5 text-[8px] font-semibold`}>{run.risk}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1">
-                            <div className="bg-blue-500 h-1 rounded-full" style={{ width: `${run.pct}%` }} />
-                        </div>
-                        {run.live && <div className="text-[8px] text-blue-500 mt-0.5 animate-pulse">● 3 findings so far…</div>}
-                    </div>
-                ))}
-            </div>
-        </div>
-    </ScreenFrame>
-);
 
 
 
@@ -494,7 +149,7 @@ const TOC_SECTIONS: TocSection[] = [
         ],
     },
     {
-        id: 'spark', label: 'Spark — AI Ideas', icon: <Zap size={14} />,
+        id: 'spark', label: 'Spark — Ideas', icon: <Zap size={14} />,
         children: [
             { id: 'spark-generate', label: 'Generating Ideas' },
             { id: 'spark-convert', label: 'Converting to a Use Case' },
@@ -638,9 +293,25 @@ const UserGuidePage: React.FC = () => {
                     {/* ════════════════════════════════════════════════════════
                         1 · PORTAL NAVIGATION
                     ════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="nav-overview" level={2} icon={<Layers size={18} />}>Portal Navigation</SectionHeading>                 
+                    <SectionHeading id="nav-overview" level={2} icon={<Layers size={18} />}>Portal Navigation</SectionHeading>
 
-                    
+                    {/* Home screenshot */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Tavro Agent BizOps — Home</span>
+                        </div>
+                        <img
+                            src="/assets/images/Home.png"
+                            alt="Tavro Agent BizOps Home Screen"
+                            className="w-full block"
+                        />
+                    </div>
+
                     <div className="grid grid-cols-3 gap-3 mt-4">
                         {[
                             { title: 'Left Sidebar', color: 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30', desc: 'Primary navigation — links to every module. Collapse it using the chevron button on its right edge to gain more space. Collapsed icons show tooltips on hover.' },
@@ -689,10 +360,25 @@ const UserGuidePage: React.FC = () => {
                     ════════════════════════════════════════════════════════ */}
                     <SectionHeading id="use-case-discovery" level={2} icon={<ClipboardList size={18} />}>Use Case Discovery</SectionHeading>
                     <SectionHeading id="three-panel" level={3}>Layout</SectionHeading>
-                    <LayoutMockup />
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
                         A <strong className="text-slate-800 dark:text-slate-200">Use Case</strong> is the starting point for every AI initiative in Tavro. It documents the business problem, expected benefits, and priority — and acts as the anchor that links agents, processes, applications, and compliance rules together. There are two ways to create one.
                     </p>
+                    {/* AI Use Case screenshot */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">AI Use Cases</span>
+                        </div>
+                        <img
+                            src="/assets/images/AI Use Cases.png"
+                            alt="AI Use Cases"
+                            className="w-full block"
+                        />
+                    </div>
 
                     <SectionHeading id="uc-via-ui" level={3}>Path 1 — Creating a Use Case via the UI</SectionHeading>                    
                     <FlowDiagram steps={[
@@ -751,7 +437,7 @@ const UserGuidePage: React.FC = () => {
                             ))}
                         </div>
                     </Step>                    
-                    <Callout type="tip" title="Spark for Structured AI Ideas">
+                    <Callout type="tip" title="Spark for Structured Ideas">
                         For a more structured approach, use <strong>Spark</strong> (left sidebar → Spark). It analyzes your entire Blueprint and automatically generates prioritized use case ideas — see the <em>Spark</em> section below.
                     </Callout>
 
@@ -770,8 +456,6 @@ const UserGuidePage: React.FC = () => {
                     ]} />
 
                     <SectionHeading id="linking-agents" level={3}>Linking Agents to a Use Case</SectionHeading>                    
-                    <AgentCatalogMockup />
-                    <UseCaseDetailMockup />
                     <Step n={1} title="Open the Use Case">
                         From <strong>AI Use Cases</strong>, click <em>AI-Powered Customer Support Chatbot</em>. You'll see its detail page with two relationship sections: <em>Currently Related Agents</em> and <em>Business Imapact Currently Related Processes</em>.
                     </Step>
@@ -790,20 +474,25 @@ const UserGuidePage: React.FC = () => {
 
                     <SectionHeading id="agent-detail" level={3}>Exploring Agent Detail</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
-                        Click any agent name in the <em>Currently Related Agents</em> list to open its full detail page. The agent page has three key tabs:
+                        Click any agent name in the <em>Currently Related Agents</em> list to open its full detail page.
                     </p>
-                    <div className="grid grid-cols-3 gap-2 my-4">
-                        {[
-                            { tab: 'Overview', desc: 'Role, instructions, goal, environment, owner, governance status, and key governance tags. This is the agent\'s identity card.' },
-                            { tab: 'Context Graph', desc: 'An interactive radial graph showing every connection this agent has — tools, data sources, applications, processes, use cases, and risk scores.' },
-            
-                        ].map(t => (
-                            <div key={t.tab} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-3.5">
-                                <div className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1.5">{t.tab}</div>
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t.desc}</p>
+                    {/* Agent Detail */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
                             </div>
-                        ))}
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Agent</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Detail Page.png"
+                            alt="Agent"
+                            className="w-full block"
+                        />
                     </div>
+                  
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
                         From the agent page you can also trigger key actions using the buttons in the top-right:
                     </p>
@@ -811,15 +500,31 @@ const UserGuidePage: React.FC = () => {
                         <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton>
                         <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton>
                         <UIButton color="blue" icon={<ShieldCheck size={10} />}>Audit</UIButton>
+                        <UIButton color="slate" icon={<Code2 size={10} />}>Agent Card</UIButton>
                         <UIButton color="slate">Edit</UIButton>
                         <UIButton color="red">Delete</UIButton>
                     </div>
 
                     <SectionHeading id="context-graph" level={3}>Agent Context Graph</SectionHeading>
-                    <AgentViewMockup />
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
                         The <strong>Context Graph</strong> tab renders a live radial diagram of everything the agent is connected to. It's the fastest way to understand an agent's full blast radius across your organization.
                     </p>
+                    {/* Agent Context Graph */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Context Graph</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Context Graph.png"
+                            alt="Context Graph"
+                            className="w-full block"
+                        />
+                    </div>
                     <div className="grid grid-cols-2 gap-2 my-4">
                         {[
                             { ring: 'Technical', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800', textColor: 'text-blue-700 dark:text-blue-300', items: 'Tools the agent uses, its reasoning model, autonomy level, memory type, access scope' },
@@ -832,10 +537,7 @@ const UserGuidePage: React.FC = () => {
                                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">{r.items}</p>
                             </div>
                         ))}
-                    </div>
-                    <Callout type="tip" title="Navigate from the Graph">
-                        Every leaf node in the Context Graph is clickable. Clicking an Application node takes you to that application's detail page; clicking a Use Case node takes you to the use case — making it a powerful jump-pad for cross-navigation.
-                    </Callout>
+                    </div>                    
 
                     <SectionHeading id="blueprint-map" level={3}>Blueprint — Your Organization Map</SectionHeading>                    
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
@@ -877,23 +579,37 @@ const UserGuidePage: React.FC = () => {
                         { icon: <CheckCircle2 size={14} />, label: 'Scores Appear', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
                     ]} />
                     <Step n={1} title="Open the Agent">
-                        Navigate to <strong>Agents</strong> and click the <em>Sentiment Agent</em> card — its risk class shows <strong>Pending</strong> because no assessment has run yet.
+                        Navigate to <strong>Agents</strong> and click the <em>SPC Multivariate Anomaly Detection Agent</em> card — its risk class shows <strong>Pending</strong> because no assessment has run yet.
                     </Step>
                     <Step n={2} title="Trigger the assessment">
                         Click <UIButton color="blue" icon={<ShieldAlert size={10} />}>Risk Assessment</UIButton> in the top-right. The button shows a spinner labeled <em>"Assessing…"</em> while the AI evaluates the agent against the EU AI Act and AIVSS framework.
                     </Step>
                     <Step n={3} title="Wait for results">
-                        The assessment runs asynchronously. The agent card pulses while processing. When complete, Blended Risk, AIVSS Score, and Regulatory Risk appear in the <strong>Overview</strong> tab.
+                        The assessment runs asynchronously. The agent card pulses while processing. When complete, Blended Risk, AIVSS Score, and Regulatory Risk appear in the <strong>AI Risk Assessment</strong> tab.
                     </Step>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 mt-4 leading-relaxed">
-                        The assessment produces three scores. The example below shows real output from the <strong>ColdChain AI — Perishable Intelligence Agent</strong> (6 tools, 6 data sources, Medium risk):
-                    </p>
-                    <RiskScoreMockup />
+
+                    {/* AI Risk Assessment */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Risk Assessment</span>
+                        </div>
+                        <img
+                            src="/assets/images/AI Risk Assessment.png"
+                            alt="Risk Assessment"
+                            className="w-full block"
+                        />
+                    </div>
+                    
                     <div className="grid grid-cols-3 gap-2 my-3">
                         {[
-                            { label: 'Blended Risk', desc: 'Combined score: access scope, autonomy level, data sensitivity, tool capabilities. ColdChain: 4.56 Medium. Business Data Intelligence: 7.76 High.', color: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800' },
-                            { label: 'AIVSS Score', desc: 'AI Vulnerability Scoring System — 10 capability dimensions (autonomy, memory, tool use, multi-agent, etc.) each scored 0–1. ColdChain: 4.65. BDI Agent: 8.95.', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800' },
-                            { label: 'Regulatory Risk', desc: 'EU AI Act classification — Other, High Risk, or Prohibited. Driven by PII/PHI/PCI flags and Article 5/6 evaluation. BDI Agent: High Risk (PII: Yes).', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800' },
+                            { label: 'Blended Risk', desc: 'Combined score: access scope, autonomy level, data sensitivity, tool capabilities.', color: 'border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800' },
+                            { label: 'AIVSS Score', desc: 'AI Vulnerability Scoring System — 10 capability dimensions (autonomy, memory, tool use, multi-agent, etc.).', color: 'border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800' },
+                            { label: 'Regulatory Risk', desc: 'EU AI Act classification — Other, High Risk, or Prohibited. Driven by PII/PHI/PCI flags and Article 5/6 evaluation.', color: 'border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800' },
                         ].map(s => (
                             <div key={s.label} className={`rounded-xl border p-3.5 ${s.color}`}>
                                 <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">{s.label}</p>
@@ -903,7 +619,6 @@ const UserGuidePage: React.FC = () => {
                     </div>
 
                     <SectionHeading id="compliance-audit" level={3}>Running a Compliance Audit</SectionHeading>
-                    <AuditMockup />
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-3 leading-relaxed">
                         Compliance audits can be launched from three places: the <strong>Audit Center</strong> page, a <strong>Use Case</strong> detail page, or an <strong>Agent</strong> detail page. Results stream live as the AI processes each assessment pair.
                     </p>
@@ -965,8 +680,8 @@ const UserGuidePage: React.FC = () => {
                     ]} />
 
                     <SectionHeading id="pg-launch" level={3}>Launching from an Agent</SectionHeading>                  
-                    <Step n={1} title="Open the Sentiment Agent">
-                        Go to <strong>Agents</strong> → search for <em>"Sentiment Agent"</em> → click the card.
+                    <Step n={1} title="Open the SPC Multivariate Anomaly Detection Agent">
+                        Go to <strong>Agents</strong> → search for <em>"SPC Multivariate Anomaly Detection Agent"</em> → click the card.
                     </Step>
                     <Step n={2} title="Click Playground">
                         Click <UIButton color="blue" icon={<FlaskConical size={10} />}>Playground</UIButton> in the top-right. The Playground opens with the agent's name and description pre-loaded from the catalog record.
@@ -974,13 +689,29 @@ const UserGuidePage: React.FC = () => {
                     <Callout type="tip" title="Launching from the sidebar">
                         You can also open <strong>Agent Playground</strong> directly from the left sidebar to prototype a brand-new agent from scratch without a catalog record.
                     </Callout>
+                    {/* Agent Playground */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Agent Playground</span>
+                        </div>
+                        <img
+                            src="/assets/images/Agent Playground.png"
+                            alt="Agent Playground"
+                            className="w-full block"
+                        />
+                    </div>
                     
                                     
                     <div className="space-y-3 my-4">
                         {[
-                            { section: 'Infrastructure', desc: 'Choose between Claude (Anthropic) or Azure AI Foundry. For the Sentiment Agent, select Claude and pick claude-sonnet-4.' },
+                            { section: 'Infrastructure', desc: 'Choose between Claude (Anthropic) or Azure AI Foundry. For the SPC Multivariate Anomaly Detection Agent, select Claude and pick claude-sonnet-4.' },
                             { section: 'Model', desc: 'Select the model — e.g. claude-sonnet-4, claude-opus-4.1. Options update based on the provider.' },
-                            { section: 'Agent Name', desc: 'Pre-filled as "Sentiment Agent" from the catalog. This appears in the session header and downloaded transcript filename.' },
+                            { section: 'Agent Name', desc: 'Pre-filled as "SPC Multivariate Anomaly Detection Agent" from the catalog. This appears in the session header and downloaded transcript filename.' },
                             { section: 'System Prompt', desc: 'Write the agent\'s instructions. If your company Blueprint is loaded, Tavro automatically injects organizational context at the bottom of this prompt — you\'ll see a note confirming this.' },
                             { section: 'Temperature', desc: 'Drag the slider from 0 (Precise — deterministic responses) to 1 (Creative — more varied responses). For business-critical agents, stay at 0.1–0.3.' },
                             { section: 'Max Tokens', desc: 'Cap the response length. 1024 is good for structured extractions; 4096+ for conversational agents that need to write detailed analysis.' },
@@ -1036,18 +767,34 @@ const UserGuidePage: React.FC = () => {
                     {/* ════════════════════════════════════════════════════════
                         6 · SPARK
                     ════════════════════════════════════════════════════════ */}
-                    <SectionHeading id="spark" level={2} icon={<Zap size={18} />}>Spark — AI Idea Generation</SectionHeading>
+                    <SectionHeading id="spark" level={2} icon={<Zap size={18} />}>Spark — Idea Generation</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
                         Spark analyzes your company's Blueprint, existing agents, and compliance landscape to surface high-value AI use case opportunities you haven't identified yet. It's the fastest way to populate your use case backlog with data-driven ideas.
                     </p>
-                    <SparkMockup />
+
+                    {/* Spark */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Spark</span>
+                        </div>
+                        <img
+                            src="/assets/images/Spark Ideas.png"
+                            alt="Spark"
+                            className="w-full block"
+                        />
+                    </div>
 
                     <SectionHeading id="spark-generate" level={3}>Generating Ideas</SectionHeading>
                     <Step n={1} title="Navigate to Spark">
                         Click <strong>Spark</strong> in the left sidebar (violet Zap icon).
                     </Step>
-                    <Step n={2} title="Optionally set a focus direction">
-                        Type a focus area into the direction field (e.g. <em>"predictive maintenance"</em>, <em>"customer onboarding automation"</em>). Leave it blank to scan your entire Blueprint.
+                    <Step n={2} title="Set a focus direction">
+                        Type a focus area into the direction field (e.g. <em>"predictive maintenance"</em>, <em>"customer onboarding automation"</em>).
                     </Step>
                     <Step n={3} title="Optionally filter by Blueprint dimensions">
                         Click <UIButton color="slate">Filters</UIButton> to expand the dimension panel. Select specific Blueprint nodes to focus the ideation on those areas. A badge shows how many filters are active.
@@ -1079,6 +826,22 @@ const UserGuidePage: React.FC = () => {
                             <div className="flex items-center gap-2"><CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />Attempts to create and pre-link a suggested agent (best-effort)</div>
                         </div>
                     </Step>
+                    {/* Convert to Use Case */}
+                    <div className="my-5 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-lg">
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red-400" />
+                                <span className="w-3 h-3 rounded-full bg-amber-400" />
+                                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                            </div>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-1 text-center">Convert to Use Case</span>
+                        </div>
+                        <img
+                            src="/assets/images/Convert to Use Case.png"
+                            alt="Convert to Use Case"
+                            className="w-full block"
+                        />
+                    </div>
                     <Step n={4} title="Refine the use case">
                         On the new use case page, review the AI-generated content, edit any fields that need adjusting, and link additional agents, processes, and applications as described in the <em>Use Case → Agent → Blueprint</em> section.
                     </Step>
