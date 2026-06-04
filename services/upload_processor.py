@@ -93,6 +93,8 @@ def has_meaningful_data(data) -> bool:
             if isinstance(item, dict):
                 if any(is_meaningful(v) for v in item.values()):
                     return True
+            elif is_meaningful(item):
+                return True
         return False
     return False
 
@@ -537,6 +539,97 @@ def _upsert_agent_ai_use_cases(conn, card: dict, agent_internal_id: str, now_str
         WHERE uc.ai_use_case_id = c.ai_use_case_id
           AND COALESCE(uc.tenant_id, '') = COALESCE(c.tenant_id, '')
     """, f"ai_use_cases associated-count sync ({len(select_rows)})")
+
+
+# Step 8b — core.agent_skills (many-to-many relationship with skills)
+# ---------------------------------------------------------------------------
+
+def _upsert_agent_skills(conn, card: dict, agent_internal_id: str, now_str: str):
+    ident = card.get("identification", {})
+    skills = card.get("skills", []) or []
+    if not has_meaningful_data(skills):
+        return
+
+    tenant_id = ident.get("tenant_id") or ""
+    agent_id = ident.get("agent_id")
+    agent_name = ident.get("agent_name") or card.get("name")
+    select_rows = []
+
+    for skill in skills:
+        if isinstance(skill, str):
+            skill_id = _clean_text(skill)
+            skill_name = skill_id
+            description = None
+            input_data = None
+            output_data = None
+        elif isinstance(skill, dict):
+            skill_id = (
+                _clean_text(skill.get("identifier"))
+                or _clean_text(skill.get("skill_id"))
+                or _clean_text(skill.get("id"))
+                or _clean_text(skill.get("name"))
+            )
+            skill_name = (
+                _clean_text(skill.get("name"))
+                or _clean_text(skill.get("skill_name"))
+                or _clean_text(skill.get("id"))
+                or skill_id
+            )
+            description = _clean_text(skill.get("description"))
+            input_data = _clean_text(skill.get("input"))
+            output_data = _clean_text(skill.get("output"))
+        else:
+            continue
+
+        if not skill_id:
+            continue
+
+        select_rows.append(f"""
+            SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tenant_id)} AS tenant_id,
+                   {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name,
+                   {_sq(skill_id)} AS skill_id, {_sq(skill_name)} AS skill_name,
+                   {_sq(description)} AS description,
+                   {_sq(input_data)} AS input,
+                   {_sq(output_data)} AS output,
+                   TIMESTAMP '{now_str}' AS now_ts
+        """.strip())
+
+    if not select_rows:
+        return
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+
+    # Upsert master skills table
+    _exec(conn, f"""
+        INSERT INTO {CORE}.skills (
+            tenant_id, skill_id, name, description, input, output, created_ts, updated_ts
+        )
+        SELECT DISTINCT tenant_id, skill_id, skill_name, description, input, output, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (tenant_id, skill_id)
+        DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            input = EXCLUDED.input,
+            output = EXCLUDED.output,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"skills upsert ({len(select_rows)})")
+
+    # Upsert junction table (many-to-many)
+    _exec(conn, f"""
+        INSERT INTO {CORE}.agent_skills (
+            tenant_id, skill_id, skill_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts
+        )
+        SELECT tenant_id, skill_id, skill_name, agent_id, agent_name, agent_internal_id, now_ts, now_ts
+        FROM ({union_all}) AS s
+        WHERE agent_id IS NOT NULL AND agent_id <> ''
+        ON CONFLICT (tenant_id, skill_id, agent_id)
+        DO UPDATE SET
+            skill_name = EXCLUDED.skill_name,
+            agent_name = EXCLUDED.agent_name,
+            agent_internal_id = EXCLUDED.agent_internal_id,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"agent_skills upsert ({len(select_rows)})")
 
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1199,7 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
                 (" 6/20 - agent_knowledge_sources",         _upsert_agent_knowledge_source),
                 (" 7/20 - agent_llm_models",                _upsert_agent_llm_models),
                 (" 8/20 - agent_ai_use_cases",              _upsert_agent_ai_use_cases),
+                (" 8b/20 - agent_skills",                   _upsert_agent_skills),
                 (" 9/20 - business_processes",              _upsert_business_processes),
                 ("10/20 - business_applications",           _upsert_business_applications),
                 ("11/20 - agent_business_processes",        _upsert_agent_business_processes),

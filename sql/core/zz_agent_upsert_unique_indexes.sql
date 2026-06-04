@@ -175,6 +175,42 @@ BEGIN
           AND a.ctid < b.ctid;
     END IF;
 
+    IF to_regclass('core.agent_skills') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'skill_id'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN skill_id TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'skill_name'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN skill_name TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'agent_name'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN agent_name TEXT;
+        END IF;
+
+        UPDATE core.agent_skills rel
+        SET agent_name = COALESCE(NULLIF(rel.agent_name, ''), ag.agent_name)
+        FROM core.agents ag
+        WHERE rel.agent_id = ag.agent_id
+          AND COALESCE(ag.is_current, true) = true;
+
+        DELETE FROM core.agent_skills a
+        USING core.agent_skills b
+        WHERE COALESCE(a.tenant_id, '') = COALESCE(b.tenant_id, '')
+          AND COALESCE(a.skill_id, '') = COALESCE(b.skill_id, '')
+          AND COALESCE(a.agent_id, '') = COALESCE(b.agent_id, '')
+          AND a.ctid < b.ctid;
+    END IF;
+
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
         DELETE FROM core.agent_ai_use_cases a
         USING core.agent_ai_use_cases b
@@ -194,6 +230,12 @@ BEGIN
         DROP INDEX IF EXISTS core.ux_core_agent_ai_use_cases;
         CREATE UNIQUE INDEX ux_core_agent_ai_use_cases
         ON core.agent_ai_use_cases (tenant_id, ai_use_case_id, agent_id);
+    END IF;
+
+    IF to_regclass('core.agent_skills') IS NOT NULL THEN
+        DROP INDEX IF EXISTS core.ux_core_agent_skills;
+        CREATE UNIQUE INDEX ux_core_agent_skills
+        ON core.agent_skills (tenant_id, skill_id, agent_id);
     END IF;
 
     IF NOT EXISTS (
