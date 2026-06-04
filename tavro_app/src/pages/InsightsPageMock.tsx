@@ -366,10 +366,23 @@ const classifyAgentStage = (agent: AgentData) => {
     const status = norm(agent.identification?.governance_status ?? agent.latest_event_status);
     // Monitor only when governance status explicitly says so — a Production
     // environment alone means "deployed", not "actively monitored".
-    if (status.includes('monitor') || status.includes('active')) return 'Monitor';
-    // Any agent released to an environment (prod, staging, dev, test, …) is Deployed.
-    if (hasKnownEnv(agent) || status.includes('deploy') || status.includes('release')) return 'Deploy';
-    if (status.includes('running') || status.includes('build') || status.includes('develop')) return 'Develop';
+    if (status.includes('monitor') || status.includes('active'))
+    return 'Monitor';
+
+    if (
+        status.includes('running') ||
+        status.includes('build') ||
+        status.includes('develop') ||
+        status.includes('in_progress')
+    )
+        return 'Develop';
+
+    if (
+        hasKnownEnv(agent) ||
+        status.includes('deploy') ||
+        status.includes('release')
+    )
+        return 'Deploy';
     if (status.includes('review') || status.includes('pending') || status.includes('approval') || status.includes('design')) return 'Design';
 
     if (hasResolvedRiskAssessment(agent)) return 'Deploy';
@@ -1369,30 +1382,6 @@ const InsightsPageMock: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                <CardShell
-                    accent="bg-rose-500"
-                    headerBg="bg-rose-50/60"
-                    icon={<ShieldAlert size={20} className="text-rose-600" />}
-                    title="Critical & High Risk in Production"
-                    subtitle="Agents requiring immediate attention"
-                    badge={<span className="text-2xl font-black text-red-600 tabular-nums">{productionRiskAgents.length}</span>}
-                >
-                    {productionRiskAgents.length === 0 ? <EmptyState label="No critical or high-risk production agents found" /> : productionRiskAgents.map(a => <RiskAgentRow key={a.id} agent={a} />)}
-                </CardShell>
-
-                <CardShell
-                    accent="bg-amber-500"
-                    headerBg="bg-amber-50/60"
-                    icon={<FlameKindling size={20} className="text-amber-600" />}
-                    title="High Risk Agents Under Development"
-                    subtitle="Risky agents in non-production environments"
-                    badge={<span className="text-2xl font-black text-amber-600 tabular-nums">{developmentRiskAgents.length}</span>}
-                >
-                    {developmentRiskAgents.length === 0 ? <EmptyState label="No high-risk agents found in development or staging" /> : developmentRiskAgents.map(a => <RiskAgentRow key={a.id} agent={a} />)}
-                </CardShell>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <CategoryDistributionCard
                     title="Agents by Provider"
                     subtitle="Distribution of agents by provider organization"
@@ -1424,6 +1413,30 @@ const InsightsPageMock: React.FC = () => {
                     }
                     emptyLabel="No blended risk classifications available"
                 />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                <CardShell
+                    accent="bg-rose-500"
+                    headerBg="bg-rose-50/60"
+                    icon={<ShieldAlert size={20} className="text-rose-600" />}
+                    title="Critical & High Risk in Production"
+                    subtitle="Agents requiring immediate attention"
+                    badge={<span className="text-2xl font-black text-red-600 tabular-nums">{productionRiskAgents.length}</span>}
+                >
+                    {productionRiskAgents.length === 0 ? <EmptyState label="No critical or high-risk production agents found" /> : productionRiskAgents.map(a => <RiskAgentRow key={a.id} agent={a} />)}
+                </CardShell>
+
+                <CardShell
+                    accent="bg-amber-500"
+                    headerBg="bg-amber-50/60"
+                    icon={<FlameKindling size={20} className="text-amber-600" />}
+                    title="High Risk Agents Under Development"
+                    subtitle="Risky agents in non-production environments"
+                    badge={<span className="text-2xl font-black text-amber-600 tabular-nums">{developmentRiskAgents.length}</span>}
+                >
+                    {developmentRiskAgents.length === 0 ? <EmptyState label="No high-risk agents found in development or staging" /> : developmentRiskAgents.map(a => <RiskAgentRow key={a.id} agent={a} />)}
+                </CardShell>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
