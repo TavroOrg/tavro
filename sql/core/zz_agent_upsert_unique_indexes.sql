@@ -214,6 +214,29 @@ BEGIN
           AND a.ctid < b.ctid;
     END IF;
 
+    IF to_regclass('core.skills') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'tags'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN tags TEXT[];
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'input_modes'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN input_modes TEXT[];
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'output_modes'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN output_modes TEXT[];
+        END IF;
+    END IF;
+
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
         DELETE FROM core.agent_ai_use_cases a
         USING core.agent_ai_use_cases b

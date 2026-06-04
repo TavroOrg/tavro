@@ -358,6 +358,60 @@ class AgentMetadataExporter:
                 except Exception as use_case_overlay_err:
                     print(f"[get_agent_card] AI use case overlay failed: {use_case_overlay_err}")
 
+                # Overlay linked skills from DB so lineage/config views reflect
+                # skills loaded after the local card was first written.
+                try:
+                    skill_params: list[Any] = [agent_id_clean]
+                    skill_tenant_where = ""
+                    if tenant_mode == "TENANT":
+                        skill_tenant_where = """
+                        AND (
+                            rel.tenant_id = %s
+                            OR rel.tenant_id IS NULL
+                            OR rel.tenant_id = ''
+                            OR rel.tenant_id = 'None'
+                        )
+                        """
+                        skill_params.append(tenant_id)
+
+                    skill_rows = cls.execute_select(
+                        f"""
+                        SELECT DISTINCT ON (LOWER(TRIM(rel.skill_id)))
+                            rel.skill_id AS id,
+                            COALESCE(s.name, rel.skill_name, rel.skill_id) AS name,
+                            s.description,
+                            s.tags,
+                            s.input_modes,
+                            s.output_modes
+                        FROM {cls.CORE_DB_NAME}.agent_skills rel
+                        LEFT JOIN {cls.CORE_DB_NAME}.skills s
+                          ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                         AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                        WHERE rel.agent_id = %s
+                          {skill_tenant_where}
+                          AND rel.skill_id IS NOT NULL
+                          AND rel.skill_id <> ''
+                        ORDER BY LOWER(TRIM(rel.skill_id))
+                        """,
+                        tuple(skill_params),
+                    )
+                    db_skills = [
+                        {
+                            "id": r.get("id"),
+                            "name": r.get("name"),
+                            "description": r.get("description"),
+                            "tags": r.get("tags") if isinstance(r.get("tags"), list) else [],
+                            "inputModes": r.get("input_modes") if isinstance(r.get("input_modes"), list) else [],
+                            "outputModes": r.get("output_modes") if isinstance(r.get("output_modes"), list) else [],
+                        }
+                        for r in skill_rows
+                        if r.get("id")
+                    ]
+                    if db_skills:
+                        local_card["skills"] = db_skills
+                except Exception as skill_overlay_err:
+                    print(f"[get_agent_card] Skills overlay failed: {skill_overlay_err}")
+
                 # Overlay latest risk assessment directly from DB so the card
                 # always reflects the most recent completed assessment, regardless
                 # of when the local JSON file was last regenerated.
@@ -658,6 +712,7 @@ class AgentMetadataExporter:
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
+        skills: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
         try:
@@ -705,6 +760,21 @@ class AgentMetadataExporter:
                     "access_mechanism": None,
                 }
 
+            skill_entries = []
+            for s in (skills or []):
+                if isinstance(s, str):
+                    skill_entries.append({"id": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
+                elif isinstance(s, dict):
+                    skill_id = s.get("identifier") or s.get("skill_id") or s.get("id") or s.get("name") or ""
+                    skill_entries.append({
+                        "id": skill_id,
+                        "name": s.get("name") or s.get("skill_name") or skill_id,
+                        "description": s.get("description"),
+                        "tags": s.get("tags") if isinstance(s.get("tags"), list) else [],
+                        "inputModes": s.get("inputModes") or s.get("input_modes") or [],
+                        "outputModes": s.get("outputModes") or s.get("output_modes") or [],
+                    })
+
             card = {
                 "capabilities": {"streaming": False},
                 "defaultInputModes": ["text"],
@@ -714,7 +784,7 @@ class AgentMetadataExporter:
                 "preferredTransport": None,
                 "protocol_version": None,
                 "instruction_sets": [],
-                "skills": [],
+                "skills": skill_entries,
                 "provider": {"organization": None, "url": ""},
                 "url": "",
                 "documentation_url": None,
@@ -779,8 +849,9 @@ class AgentMetadataExporter:
         instruction: str,
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
+        skills: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None
-    )-> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         if not agent_name or not description or not instruction:
             raise ValueError("agent_name, description, instruction are required")
 
@@ -947,11 +1018,93 @@ class AgentMetadataExporter:
             {",".join(data_source_values)}
             """)
 
-        # 5. Execute
+        # 6. skills — persist to core.skills and core.agent_skills
+        if skills:
+            def _pg_array(lst):
+                if not lst:
+                    return "ARRAY[]::TEXT[]"
+                escaped = [f"'{cls.sanitize(str(x))}'" for x in lst if str(x).strip()]
+                return f"ARRAY[{', '.join(escaped)}]" if escaped else "ARRAY[]::TEXT[]"
+
+            tenant_id_lit = f"'{tenant_id}'" if tenant_id else "NULL"
+            seen_skill_ids: set = set()
+            for skill in skills:
+                if isinstance(skill, str):
+                    skill_id = skill.strip()
+                    skill_name = skill_id
+                    skill_desc = ""
+                    tags, input_modes, output_modes = [], [], []
+                elif isinstance(skill, dict):
+                    skill_id = str(
+                        skill.get("identifier") or skill.get("skill_id") or
+                        skill.get("id") or skill.get("name") or ""
+                    ).strip()
+                    skill_name = str(
+                        skill.get("name") or skill.get("skill_name") or skill_id
+                    ).strip()
+                    skill_desc = str(skill.get("description") or "").strip()
+                    tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
+                    input_modes = skill.get("inputModes") or skill.get("input_modes") or []
+                    output_modes = skill.get("outputModes") or skill.get("output_modes") or []
+                    input_modes = input_modes if isinstance(input_modes, list) else []
+                    output_modes = output_modes if isinstance(output_modes, list) else []
+                else:
+                    continue
+
+                if not skill_id:
+                    continue
+                skill_key = skill_id.lower()
+                if skill_key in seen_skill_ids:
+                    continue
+                seen_skill_ids.add(skill_key)
+
+                sid = cls.sanitize(skill_id)
+                sname = cls.sanitize(skill_name)
+                sdesc = cls.sanitize(skill_desc)
+
+                queries.append(f"""
+                INSERT INTO {cls.CORE_DB_NAME}.skills (
+                    tenant_id, skill_id, name, description,
+                    tags, input_modes, output_modes,
+                    created_ts, updated_ts
+                )
+                VALUES (
+                    {tenant_id_lit}, '{sid}', '{sname}', '{sdesc}',
+                    {_pg_array(tags)}, {_pg_array(input_modes)}, {_pg_array(output_modes)},
+                    TIMESTAMP '{now}', TIMESTAMP '{now}'
+                )
+                ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    tags = EXCLUDED.tags,
+                    input_modes = EXCLUDED.input_modes,
+                    output_modes = EXCLUDED.output_modes,
+                    updated_ts = EXCLUDED.updated_ts
+                """)
+
+                queries.append(f"""
+                INSERT INTO {cls.CORE_DB_NAME}.agent_skills (
+                    tenant_id, skill_id, skill_name, agent_id, agent_name,
+                    agent_internal_id, created_ts, updated_ts
+                )
+                VALUES (
+                    {tenant_id_lit}, '{sid}', '{sname}',
+                    '{agent_id}', '{agent_name}',
+                    '{agent_internal_id}',
+                    TIMESTAMP '{now}', TIMESTAMP '{now}'
+                )
+                ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
+                    skill_name = EXCLUDED.skill_name,
+                    agent_name = EXCLUDED.agent_name,
+                    agent_internal_id = EXCLUDED.agent_internal_id,
+                    updated_ts = EXCLUDED.updated_ts
+                """)
+
+        # 7. Execute
         for query in queries:
             cls.execute_dml(query)
 
-        # 6. Write agent card JSON so get_agent_card returns full details immediately
+        # 8. Write agent card JSON so get_agent_card returns full details immediately
         cls._write_agent_card(
             agent_id=agent_id,
             agent_internal_id=agent_internal_id,
@@ -961,6 +1114,7 @@ class AgentMetadataExporter:
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
+            skills=skills,
         )
 
         payload = {

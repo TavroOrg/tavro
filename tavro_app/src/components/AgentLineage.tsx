@@ -1,6 +1,6 @@
 import React from 'react';
-import { AgentData, AgentDataSource, AgentTool } from '../types/agent';
-import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle } from 'lucide-react';
+import { AgentData, AgentDataSource, AgentSkill, AgentTool } from '../types/agent';
+import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle, Zap } from 'lucide-react';
 
 interface AgentLineageProps { agent: AgentData; }
 
@@ -39,8 +39,17 @@ function toArray<T>(value: unknown): T[] {
     return [value as T];
 }
 
+function stringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.map(v => displayText(v, '')).filter(Boolean)
+        : [];
+}
+
 const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
     const tools = toArray<AgentTool>((agent as any).tool);
+    const skills = toArray<AgentSkill>((agent as any).skills).filter(skill =>
+        displayText(skill.name ?? skill.skill_name ?? skill.id ?? skill.skill_id ?? skill.identifier, '').trim()
+    );
     const dataSources = toArray<AgentDataSource>((agent as any).data_source);
     const relationships = dataSources.filter(
         ds => displayText(ds.target_object_type, '').toLowerCase() !== 'tool'
@@ -68,7 +77,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-slate-800 tracking-tight">Lineage Map</h2>
-                        <p className="text-xs text-slate-500 font-medium">Tools, data sources & relationships</p>
+                        <p className="text-xs text-slate-500 font-medium">Tools, skills, data sources & relationships</p>
                     </div>
                 </div>
                 {hasPiiConcerns && (
@@ -117,6 +126,57 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                 </div>
 
                 {/* ── Data Source Relationships ──────────────────── */}
+                <div className="flex flex-col gap-3">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Zap size={13} /> Skills ({skills.length})
+                    </h3>
+                    {skills.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                            No skills configured.
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {skills.map((skill, idx) => {
+                                const label = displayText(
+                                    skill.name ?? skill.skill_name ?? skill.id ?? skill.skill_id ?? skill.identifier,
+                                    `Skill ${idx + 1}`,
+                                );
+                                const inputModes = stringArray(skill.inputModes ?? skill.input_modes);
+                                const outputModes = stringArray(skill.outputModes ?? skill.output_modes);
+                                const tags = stringArray(skill.tags);
+
+                                return (
+                                    <div key={skill.id ?? skill.skill_id ?? skill.identifier ?? idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
+                                        <span className="font-bold text-sm text-slate-800 break-words">{label}</span>
+                                        {skill.description && (
+                                            <span className="text-xs text-slate-500 leading-relaxed block mt-1">{displayText(skill.description, '')}</span>
+                                        )}
+                                        {(inputModes.length > 0 || outputModes.length > 0 || tags.length > 0) && (
+                                            <div className="flex flex-wrap gap-1 mt-2">
+                                                {inputModes.map(mode => (
+                                                    <span key={`in-${mode}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 border border-emerald-100 text-emerald-700 uppercase">
+                                                        In: {mode}
+                                                    </span>
+                                                ))}
+                                                {outputModes.map(mode => (
+                                                    <span key={`out-${mode}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-50 border border-blue-100 text-blue-700 uppercase">
+                                                        Out: {mode}
+                                                    </span>
+                                                ))}
+                                                {tags.map(tag => (
+                                                    <span key={`tag-${tag}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 uppercase">
+                                                        {tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
                 <div className="flex flex-col gap-3">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                         <Database size={13} /> Relationships ({relationships.length})

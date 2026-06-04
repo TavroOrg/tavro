@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS core.skills (
 	description TEXT,
 	created_ts TIMESTAMP,
 	updated_ts TIMESTAMP,
-	input TEXT,
-	output TEXT
+	tags TEXT[],
+	input_modes TEXT[],
+	output_modes TEXT[]
 );

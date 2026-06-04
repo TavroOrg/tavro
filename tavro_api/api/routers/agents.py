@@ -100,6 +100,7 @@ class AgentCreateRequest(BaseModel):
     owner: Optional[str] = None
     tools: Optional[List[Dict[str, str]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
+    skills: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentUpdateRequest(BaseModel):
@@ -192,6 +193,7 @@ def _write_agent_card(
     instruction: str,
     tools: Optional[List[Dict[str, str]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
+    skills: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
     try:
@@ -240,6 +242,21 @@ def _write_agent_card(
                 "access_mechanism": None,
             }
 
+        skill_entries = []
+        for s in (skills or []):
+            if isinstance(s, str):
+                skill_entries.append({"id": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
+            elif isinstance(s, dict):
+                skill_id = s.get("identifier") or s.get("skill_id") or s.get("id") or s.get("name") or ""
+                skill_entries.append({
+                    "id": skill_id,
+                    "name": s.get("name") or s.get("skill_name") or skill_id,
+                    "description": s.get("description"),
+                    "tags": s.get("tags") if isinstance(s.get("tags"), list) else [],
+                    "inputModes": s.get("inputModes") or s.get("input_modes") or [],
+                    "outputModes": s.get("outputModes") or s.get("output_modes") or [],
+                })
+
         card = {
             "capabilities": {"streaming": False},
             "defaultInputModes": ["text"],
@@ -249,7 +266,7 @@ def _write_agent_card(
             "preferredTransport": None,
             "protocol_version": None,
             "instruction_sets": [],
-            "skills": [],
+            "skills": skill_entries,
             "provider": {"organization": None, "url": ""},
             "url": "",
             "documentation_url": None,
@@ -382,6 +399,77 @@ async def create_agent(
                  "desc": body.knowledge_source.get("description", "")},
             )
 
+        seen_skill_ids: set = set()
+        for skill in (body.skills or []):
+            if isinstance(skill, str):
+                skill_id = skill.strip()
+                skill_name = skill_id
+                skill_desc = ""
+                tags: List[str] = []
+                input_modes: List[str] = []
+                output_modes: List[str] = []
+            elif isinstance(skill, dict):
+                skill_id = str(
+                    skill.get("identifier") or skill.get("skill_id") or
+                    skill.get("id") or skill.get("name") or ""
+                ).strip()
+                skill_name = str(skill.get("name") or skill.get("skill_name") or skill_id).strip()
+                skill_desc = str(skill.get("description") or "").strip()
+                tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
+                input_modes = skill.get("inputModes") or skill.get("input_modes") or []
+                output_modes = skill.get("outputModes") or skill.get("output_modes") or []
+                input_modes = input_modes if isinstance(input_modes, list) else []
+                output_modes = output_modes if isinstance(output_modes, list) else []
+            else:
+                continue
+
+            if not skill_id:
+                continue
+            skill_key = skill_id.lower()
+            if skill_key in seen_skill_ids:
+                continue
+            seen_skill_ids.add(skill_key)
+
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.skills
+                        (tenant_id, skill_id, name, description,
+                         tags, input_modes, output_modes,
+                         created_ts, updated_ts)
+                    VALUES
+                        (:tid, :sid, :sname, :sdesc,
+                         :tags, :imodes, :omodes,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        tags = EXCLUDED.tags,
+                        input_modes = EXCLUDED.input_modes,
+                        output_modes = EXCLUDED.output_modes,
+                        updated_ts = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "sid": skill_id, "sname": skill_name,
+                 "sdesc": skill_desc, "tags": tags,
+                 "imodes": input_modes, "omodes": output_modes},
+            )
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_skills
+                        (tenant_id, skill_id, skill_name, agent_id, agent_name,
+                         agent_internal_id, created_ts, updated_ts)
+                    VALUES
+                        (:tid, :sid, :sname, :aid, :aname,
+                         :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
+                        skill_name = EXCLUDED.skill_name,
+                        agent_name = EXCLUDED.agent_name,
+                        agent_internal_id = EXCLUDED.agent_internal_id,
+                        updated_ts = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "sid": skill_id, "sname": skill_name,
+                 "aid": agent_id, "aname": body.agent_name, "iid": agent_internal_id},
+            )
+
         # Insert a placeholder row into curated.agent_360 immediately so the
         # agent appears in the catalog straight away. Risk data is filled in
         # later when the Temporal workflow completes.
@@ -417,6 +505,7 @@ async def create_agent(
         instruction=body.instruction,
         tools=body.tools,
         knowledge_source=body.knowledge_source,
+        skills=body.skills,
     )
 
     background_tasks.add_task(

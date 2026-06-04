@@ -550,18 +550,25 @@ def _upsert_agent_skills(conn, card: dict, agent_internal_id: str, now_str: str)
     if not has_meaningful_data(skills):
         return
 
-    tenant_id = ident.get("tenant_id") or ""
+    tenant_id = ident.get("tenant_id")
+    if not tenant_id:
+        rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
+        if rows and rows[0].get("tenant_id"):
+            tenant_id = rows[0].get("tenant_id")
+    tenant_id = tenant_id or ""
     agent_id = ident.get("agent_id")
     agent_name = ident.get("agent_name") or card.get("name")
     select_rows = []
+    seen_skill_ids = set()
 
     for skill in skills:
         if isinstance(skill, str):
             skill_id = _clean_text(skill)
             skill_name = skill_id
             description = None
-            input_data = None
-            output_data = None
+            tags = []
+            input_modes = []
+            output_modes = []
         elif isinstance(skill, dict):
             skill_id = (
                 _clean_text(skill.get("identifier"))
@@ -576,21 +583,29 @@ def _upsert_agent_skills(conn, card: dict, agent_internal_id: str, now_str: str)
                 or skill_id
             )
             description = _clean_text(skill.get("description"))
-            input_data = _clean_text(skill.get("input"))
-            output_data = _clean_text(skill.get("output"))
+            tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
+            input_modes = skill.get("inputModes") or skill.get("input_modes") or []
+            output_modes = skill.get("outputModes") or skill.get("output_modes") or []
+            input_modes = input_modes if isinstance(input_modes, list) else []
+            output_modes = output_modes if isinstance(output_modes, list) else []
         else:
             continue
 
         if not skill_id:
             continue
+        skill_key = skill_id.strip().lower()
+        if skill_key in seen_skill_ids:
+            continue
+        seen_skill_ids.add(skill_key)
 
         select_rows.append(f"""
             SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tenant_id)} AS tenant_id,
                    {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name,
                    {_sq(skill_id)} AS skill_id, {_sq(skill_name)} AS skill_name,
                    {_sq(description)} AS description,
-                   {_sq(input_data)} AS input,
-                   {_sq(output_data)} AS output,
+                   {_array_str(tags)} AS tags,
+                   {_array_str(input_modes)} AS input_modes,
+                   {_array_str(output_modes)} AS output_modes,
                    TIMESTAMP '{now_str}' AS now_ts
         """.strip())
 
@@ -602,16 +617,21 @@ def _upsert_agent_skills(conn, card: dict, agent_internal_id: str, now_str: str)
     # Upsert master skills table
     _exec(conn, f"""
         INSERT INTO {CORE}.skills (
-            tenant_id, skill_id, name, description, input, output, created_ts, updated_ts
+            tenant_id, skill_id, name, description,
+            tags, input_modes, output_modes,
+            created_ts, updated_ts
         )
-        SELECT DISTINCT tenant_id, skill_id, skill_name, description, input, output, now_ts, now_ts
+        SELECT DISTINCT tenant_id, skill_id, skill_name, description,
+               tags, input_modes, output_modes,
+               now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (tenant_id, skill_id)
         DO UPDATE SET
             name = EXCLUDED.name,
             description = EXCLUDED.description,
-            input = EXCLUDED.input,
-            output = EXCLUDED.output,
+            tags = EXCLUDED.tags,
+            input_modes = EXCLUDED.input_modes,
+            output_modes = EXCLUDED.output_modes,
             updated_ts = EXCLUDED.updated_ts
     """, f"skills upsert ({len(select_rows)})")
 
@@ -1190,6 +1210,9 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
         with _db() as conn:
             print("[INFO] Step  1/20 - agents")
             agent_internal_id = _upsert_agent(conn, card_dict, now_str, incoming_source_hash, tenant_id)
+            if tenant_id is not None:
+                ident = card_dict.setdefault("identification", {})
+                ident["tenant_id"] = tenant_id
 
             steps = [
                 (" 2/20 - agent_configurations",            _upsert_agent_configuration),

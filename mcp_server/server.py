@@ -343,13 +343,13 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_agent")
-async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, skills: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
-    external tools and knowledge sources to enhance its capabilities.
+    external tools, knowledge sources, and skills to enhance its capabilities.
 
     The `instruction` parameter defines the agent’s behavior and decision-making logic,
     guiding how it processes inputs and generates responses.
@@ -369,6 +369,14 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             "description": str
         }
 
+    - `skills`: A list of skill definitions the agent possesses. Each skill must be defined
+    as a dictionary with at minimum:
+        {
+            "name": str,         # required — human-readable skill name
+            "description": str   # optional — what the skill does
+        }
+    Skills are persisted to core.skills and linked to the agent in core.agent_skills.
+
     All inputs are validated before agent creation. On success, the function returns a
     standardized response containing the agent’s metadata. In case of validation or
     runtime errors, an appropriate error response is returned.
@@ -386,12 +394,13 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
+        skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
     """
     print("Create agent requested")
-    
+
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
@@ -404,6 +413,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "skills": skills,
             },
             tenant_id,
         )
@@ -414,6 +424,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             instruction=instruction,
             tools=tools,
             knowledge_source=knowledge_source,
+            skills=skills,
             tenant_id=tenant_id,
         )
         return result
