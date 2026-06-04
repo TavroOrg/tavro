@@ -112,7 +112,7 @@ interface PlaygroundState {
 
   startSession:    () => Promise<void>;
   endSession:      () => Promise<void>;
-  sendMessage:     (text: string, attachments?: AttachmentPayload[]) => Promise<void>;
+  sendMessage:     (text: string, attachments?: AttachmentPayload[]) => Promise<string | null>;
   clearMessages:   () => void;
   generateSummary: () => Promise<void>;
 
@@ -243,8 +243,8 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // ── Send message ───────────────────────────────────────────────────────────
 
-  const sendMessage = useCallback(async (text: string, attachments: AttachmentPayload[] = []) => {
-    if ((!text.trim() && attachments.length === 0) || isRunning || !sessionId) return;
+  const sendMessage = useCallback(async (text: string, attachments: AttachmentPayload[] = []): Promise<string | null> => {
+    if ((!text.trim() && attachments.length === 0) || isRunning || !sessionId) return null;
 
     setIsRunning(true);
     const attNames = attachments.map(a => a.name);
@@ -272,6 +272,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         tokens:    result.message.tokens,
       }]);
       setTokenCount(result.token_total);
+      return result.message.content;
 
     } catch (err: any) {
       setMessages(prev => [...prev, {
@@ -280,6 +281,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         content:   `Something went wrong: ${err.message}`,
         timestamp: new Date(),
       }]);
+      return null;
     } finally {
       setIsRunning(false);
     }
