@@ -5,8 +5,9 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   FlaskConical, Play, Square, RotateCcw, Plus, Send, Loader2,
   ChevronDown, ChevronUp, Settings2, MessageSquare, ClipboardList,
-  Trash2, Download, Bot, User, Copy, Check, Info,
+  Trash2, Download, Bot, User, Copy, Check, Info, FileText,
 } from 'lucide-react';
+import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
 import type { AttachmentPayload } from '../context/PlaygroundContext';
 import AttachmentPicker from '../components/playground/AttachmentPicker';
@@ -148,9 +149,15 @@ const PlaygroundPage: React.FC = () => {
       mime_type: a.mime_type,
       data:      a.data,
     }));
+    const isPdf = isPdfExportRequest(text);
     setInput('');
     setAttachments([]);
-    await sendMessage(text, atts);
+    const responseText = await sendMessage(text, atts);
+    if (isPdf && responseText?.trim()) {
+      const body  = extractPdfBody(responseText);
+      const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
+      if (body.trim()) generateMarkdownPdf(title, body, `tavro-playground-${Date.now()}.pdf`);
+    }
   };
 
   const handleAddObs = () => {
@@ -536,9 +543,9 @@ const PlaygroundPage: React.FC = () => {
                             )}
                           </div>
                         </div>
-                        {/* Quick observation tags on assistant messages */}
+                        {/* Quick observation tags and PDF download on assistant messages */}
                         {msg.role === 'assistant' && (
-                          <div className="flex gap-1.5 ml-9">
+                          <div className="flex flex-wrap gap-1.5 ml-9 items-center">
                             {(['gap', 'works_well', 'needs_info', 'unexpected'] as const).map(type => (
                               <button key={type}
                                 onClick={() => addObservation({ type, content: `Re: "${msg.content.slice(0, 60)}…"`, messageId: msg.id })}
@@ -546,6 +553,16 @@ const PlaygroundPage: React.FC = () => {
                                 + {OBSERVATION_TYPES[type].label}
                               </button>
                             ))}
+                            <button
+                              onClick={() => {
+                                const body  = extractPdfBody(msg.content);
+                                const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
+                                if (body.trim()) generateMarkdownPdf(title, body, `tavro-response-${Date.now()}.pdf`);
+                              }}
+                              className="flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200 dark:hover:border-blue-700 transition-colors"
+                              title="Download as PDF">
+                              <FileText size={9} /> PDF
+                            </button>
                           </div>
                         )}
                       </div>

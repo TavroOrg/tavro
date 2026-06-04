@@ -6,7 +6,7 @@ import { mcpClient } from '../services/mcpClient';
 import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
-import { jsPDF } from 'jspdf';
+import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
 import { useChatContext } from '../context/ChatContext';
 import type { BlueprintContext } from '../context/ChatContext';
 import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../services/buildSystemPrompt';
@@ -51,31 +51,7 @@ function buildTranscript(messages: Message[], sessionTitle?: string, modelLabel?
 }
 
 function saveTextAsPdf(title: string, text: string, filename: string): void {
-    const doc = new jsPDF();
-    const margin = 20;
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const maxWidth = doc.internal.pageSize.getWidth() - margin * 2;
-    let y = 20;
-    doc.setFontSize(18);
-    doc.text(title, margin, y);
-    y += 10;
-    doc.setFontSize(10);
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, margin, y);
-    y += 10;
-    doc.setLineWidth(0.5);
-    doc.line(margin, y, margin + maxWidth, y);
-    y += 10;
-    doc.setFontSize(11);
-    const lines = doc.splitTextToSize(text || 'No chat content available.', maxWidth);
-    lines.forEach((line: string) => {
-        if (y > pageHeight - margin) {
-            doc.addPage();
-            y = margin;
-        }
-        doc.text(line, margin, y);
-        y += 6;
-    });
-    doc.save(filename);
+    generateMarkdownPdf(title, text, filename);
 }
 
 // ── Export / download helpers ──────────────────────────────────────────────────
@@ -93,7 +69,7 @@ const EXPORT_LABELS: Record<ExportFormat, string> = {
 };
 
 const EXPORT_INSTRUCTIONS: Record<ExportFormat, string> = {
-    pdf:  '\n\nThe user wants the response as a downloadable PDF. Provide a comprehensive, well-structured answer with all relevant data.',
+    pdf:  '\n\n[PDF EXPORT]\nRespond with ONLY the report content — no preamble, no closing remarks.\nRules:\n1. Begin immediately with a # heading that names the report topic (e.g. "# Critical Data Elements - TAVAC0004582"). Do NOT start with "Here is", "Sure,", "I\'ll generate", or any acknowledgement.\n2. Use ## for sections, **bold** for key terms, - for bullets, | markdown tables | for tabular data.\n3. Do NOT add any closing sentence ("Your PDF...", "I hope...", "Let me know...").\n4. ASCII only — no emojis, no Unicode symbols.\nThe platform extracts your response verbatim and converts it to PDF.',
     csv:  '\n\nThe user wants tabular data as a CSV file. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row.',
     xlsx: '\n\nThe user wants data as a spreadsheet. Use available tools to fetch the relevant data, then output it inside a ```csv code block with a proper header row (will be downloaded as an Excel-compatible file).',
     json: '\n\nThe user wants data as a JSON file. Use available tools to fetch the relevant data, then output it inside a ```json code block.',
@@ -160,7 +136,9 @@ function markdownToWordHtml(text: string): string {
 function handleExport(format: ExportFormat, content: string, title: string, basename: string): boolean {
     switch (format) {
         case 'pdf': {
-            saveTextAsPdf(title, content, `${basename}.pdf`);
+            const body = extractPdfBody(content);
+            if (!body.trim()) return false;
+            generateMarkdownPdf(extractPdfTitle(body, title), body, `${basename}.pdf`);
             return true;
         }
         case 'csv':
@@ -711,7 +689,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const handleDownloadMessagePDF = (msg: Message) => {
-        saveTextAsPdf('Tavro AI Assistant Response', msg.text, `tavro-assistant-response-${Date.now()}.pdf`);
+        const body  = extractPdfBody(msg.text);
+        const title = extractPdfTitle(body, 'Tavro AI Assistant Response');
+        generateMarkdownPdf(title, body, `tavro-assistant-response-${Date.now()}.pdf`);
     };
 
     const sendMessage = async () => {
