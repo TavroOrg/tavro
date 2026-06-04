@@ -58,6 +58,9 @@ ON core.business_applications (business_application_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
 ON core.business_processes (business_process_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_skills
+ON core.skills (tenant_id, skill_id);
+
 DO $$
 BEGIN
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
