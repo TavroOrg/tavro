@@ -1,0 +1,108 @@
+name: Auto-merge PRs to dev at 5PM IST
+
+on:
+  schedule:
+    - cron: '30 11 * * 1-5'  # 5:00 PM IST (UTC+5:30) = 11:30 UTC, weekdays only
+  workflow_dispatch:          # Allow manual trigger for testing
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge open PRs targeting dev
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // Fetch all open PRs targeting dev
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo,
+              state: 'open',
+              base: 'dev',
+              per_page: 100,
+            });
+
+            if (prs.length === 0) {
+              core.info('No open PRs targeting dev. Nothing to do.');
+              return;
+            }
+
+            const results = { merged: [], skipped: [] };
+
+            for (const pr of prs) {
+              core.info(`Processing PR #${pr.number}: ${pr.title}`);
+
+              // Check mergability (GitHub needs a moment to compute this)
+              const { data: detail } = await github.rest.pulls.get({
+                owner, repo, pull_number: pr.number,
+              });
+
+              if (detail.mergeable === false) {
+                core.warning(`PR #${pr.number} has conflicts — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: 'merge conflict' });
+                continue;
+              }
+
+              // Check all required status checks pass
+              const { data: checks } = await github.rest.checks.listForRef({
+                owner, repo,
+                ref: pr.head.sha,
+              });
+
+              const failed = checks.check_runs.filter(
+                c => c.status === 'completed' && c.conclusion !== 'success' && c.conclusion !== 'skipped' && c.conclusion !== 'neutral'
+              );
+
+              if (failed.length > 0) {
+                core.warning(`PR #${pr.number} has failing checks — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: `failing checks: ${failed.map(c => c.name).join(', ')}` });
+                continue;
+              }
+
+              // Merge the PR
+              try {
+                await github.rest.pulls.merge({
+                  owner, repo,
+                  pull_number: pr.number,
+                  merge_method: 'squash',  // Change to 'merge' or 'rebase' if preferred
+                });
+                core.info(`PR #${pr.number} merged successfully.`);
+                results.merged.push({ number: pr.number, title: pr.title });
+              } catch (err) {
+                core.warning(`PR #${pr.number} could not be merged: ${err.message} — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: err.message });
+              }
+            }
+
+            // Save summary for the notification step
+            core.exportVariable('MERGED_COUNT',  results.merged.length);
+            core.exportVariable('SKIPPED_COUNT', results.skipped.length);
+            core.exportVariable('MERGE_SUMMARY', JSON.stringify(results));
+
+      - name: Send email summary
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com   # Change to your SMTP host
+          server_port: 587
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ secrets.NOTIFY_EMAIL }}  # Comma-separated for multiple recipients
+          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
+          subject: "[Dev merge] ${{ env.MERGED_COUNT }} merged, ${{ env.SKIPPED_COUNT }} skipped — ${{ github.repository }}"
+          body: |
+            Scheduled 5 PM IST auto-merge run completed.
+
+            Repository : ${{ github.repository }}
+            Run URL    : https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Summary    : ${{ env.MERGED_COUNT }} merged · ${{ env.SKIPPED_COUNT }} skipped
+
+            Full details: ${{ env.MERGE_SUMMARY }}
