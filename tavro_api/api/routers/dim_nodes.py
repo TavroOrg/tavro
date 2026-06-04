@@ -12,6 +12,7 @@ import json
 
 from api.database import get_db
 from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
+from api.routers.business_relations import sync_dim_node_to_business_entity
 
 router = APIRouter()
 
@@ -113,7 +114,34 @@ async def create_dim_node(body: DimNodeCreate, db: AsyncSession = Depends(get_db
         },
     )
     await db.commit()
-    return dict(row.mappings().first())
+    node = dict(row.mappings().first())
+
+    # When creating a dim_node under application/process/integration, auto-create the business entity record
+    try:
+        type_row = await db.execute(
+            text("SELECT category FROM twin.dim_type WHERE id = :id"),
+            {"id": str(body.dim_type_id)},
+        )
+        type_result = type_row.mappings().first()
+        if type_result and type_result["category"] in ("application", "process", "integration"):
+            company_row = await db.execute(
+                text("SELECT name FROM twin.company WHERE id = :id LIMIT 1"),
+                {"id": str(body.company_id)},
+            )
+            company = company_row.mappings().first()
+            company_name = company["name"] if company else None
+            await sync_dim_node_to_business_entity(
+                db,
+                str(body.company_id),
+                company_name,
+                type_result["category"],
+                body.label,
+                body.summary,
+            )
+    except Exception:
+        pass  # Non-fatal — dim_node was already committed
+
+    return node
 
 
 @router.patch("/{node_id}", response_model=DimNode)

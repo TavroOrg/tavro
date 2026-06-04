@@ -17,6 +17,7 @@ import {
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const PAGE_SIZE = 10;
 
@@ -53,6 +54,7 @@ const getCriticalityMeta = (criticality: string | null | undefined) => {
 const BusinessApplicationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
+  const { activeCompany } = useBlueprint();
   const [applications, setApplications] = useState<BusinessApplicationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +83,7 @@ const BusinessApplicationsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await businessRelationsApi.listApplications();
+        const data = await businessRelationsApi.listApplications(undefined, activeCompany?.id);
         setApplications(data);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load applications');
@@ -90,7 +92,7 @@ const BusinessApplicationsPage: React.FC = () => {
       }
     };
     load();
-  }, [catalogLoading, catalogError, lastFetched]);
+  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

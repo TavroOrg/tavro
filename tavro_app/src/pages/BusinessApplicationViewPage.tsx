@@ -24,6 +24,7 @@ import type {
   BusinessApplicationUpsertPayload,
 } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 type Tab = 'overview' | 'related';
 type Option = { label: string; value: string };
@@ -267,6 +268,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
+  const { activeCompany } = useBlueprint();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
 
@@ -386,7 +388,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     try {
       const payload = buildApplicationPayload(form);
       if (isCreateMode) {
-        const created = await businessRelationsApi.createApplication(payload);
+        const created = await businessRelationsApi.createApplication(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
             await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id);
