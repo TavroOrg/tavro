@@ -6,7 +6,9 @@ import { mcpClient } from '../services/mcpClient';
 import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
-import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
+import { generateMarkdownPdf, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
+import { detectArtifacts } from '../utils/artifactDetector';
+import type { DetectedArtifact } from '../utils/artifactDetector';
 import { useChatContext } from '../context/ChatContext';
 import type { BlueprintContext } from '../context/ChatContext';
 import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../services/buildSystemPrompt';
@@ -183,6 +185,46 @@ function handleExport(format: ExportFormat, content: string, title: string, base
 /** @deprecated kept for any external callers — use detectExportFormat instead */
 function isPdfRequest(text: string): boolean {
     return detectExportFormat(text) === 'pdf';
+}
+
+/**
+ * Extract individually-bounded artifact documents from an LLM response.
+ *
+ * The LLM is instructed to wrap each artifact with:
+ *   <!-- BEGIN_ARTIFACT:type -->  ...content...  <!-- END_ARTIFACT -->
+ *
+ * Returns an array of { type, content } pairs in document order.
+ * Returns an empty array when no boundary markers are found.
+ */
+function parseArtifactsFromResponse(text: string): { type: string; content: string }[] {
+    const results: { type: string; content: string }[] = [];
+    const RE = /<!--\s*BEGIN_ARTIFACT:([\w]+)\s*-->([\s\S]*?)<!--\s*END_ARTIFACT\s*-->/gi;
+    let match: RegExpExecArray | null;
+    while ((match = RE.exec(text)) !== null) {
+        const content = match[2].trim();
+        if (content) results.push({ type: match[1], content });
+    }
+    return results;
+}
+
+/**
+ * Generate and download one PDF per detected artifact.
+ * Returns the number of PDFs successfully created.
+ */
+function downloadArtifactPdfs(
+    artifacts: { type: string; content: string }[],
+    basename: string,
+): number {
+    let count = 0;
+    for (const { type, content } of artifacts) {
+        const body = extractPdfBody(content);
+        if (!body.trim()) continue;
+        const title = extractPdfTitle(body, type.replace(/_/g, ' '));
+        const filename = `${basename}-${type.replace(/_/g, '-')}.pdf`;
+        generateMarkdownPdf(title, body, filename);
+        count++;
+    }
+    return count;
 }
 
 /** Render a line with **bold** and _italic_ support. */
@@ -718,10 +760,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         const assistantId = `assistant-${Date.now()}`;
 
         try {
-            const exportFormat = detectExportFormat(text);
-            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
-            // Append a format instruction so the LLM generates content in the
-            // requested output format (CSV, JSON, DOCX, PDF, etc.).
+            // Detect structured artifact intent first — takes priority over generic
+            // export format detection so "requirements document as PDF" generates a
+            // proper structured document rather than a generic PDF export.
+            const detectedArtifacts: DetectedArtifact[] = detectArtifacts(text);
+            const hasArtifacts = detectedArtifacts.length > 0;
+
+            // Only detect a generic export format when no artifact intent is present.
+            const exportFormat = hasArtifacts ? null : detectExportFormat(text);
+
+            // buildSystemPrompt injects artifact instructions when userMessage is
+            // supplied and artifact intent is detected.
+            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx, text);
             const effectiveSystemPrompt = exportFormat
                 ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
                 : systemPrompt;
@@ -748,15 +798,31 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 }
             }
 
-            // Trigger file download once streaming is finished (synchronous, before
-            // setMessages so the download happens exactly once outside a React updater).
+            // ── Post-stream downloads ─────────────────────────────────────────
+            // Trigger file downloads once streaming is finished, before setMessages,
+            // so downloads happen exactly once outside a React updater.
+
+            const basename = `tavro-${Date.now()}`;
+
+            // Artifact path: parse boundary markers and download one PDF per artifact.
+            if (hasArtifacts && accumulated.trim()) {
+                const parsed = parseArtifactsFromResponse(accumulated);
+                const pdfCount = downloadArtifactPdfs(parsed, basename);
+                if (pdfCount > 0) {
+                    const plural = pdfCount > 1 ? `${pdfCount} documents` : 'document';
+                    accumulated += `\n\n---\n*${plural} downloaded as PDF${pdfCount > 1 ? 's' : ''}.*`;
+                }
+            }
+
+            // Generic export path (CSV, JSON, DOCX, plain PDF, etc.) — only runs
+            // when no artifact intent was detected.
             let exportDownloaded = false;
             if (exportFormat && accumulated.trim()) {
                 exportDownloaded = handleExport(
                     exportFormat,
                     accumulated,
                     activeSession?.title ?? 'Tavro AI Response',
-                    `tavro-export-${Date.now()}`,
+                    basename,
                 );
                 if (exportDownloaded) {
                     accumulated += `\n\n---\n*Your ${EXPORT_LABELS[exportFormat]} has been downloaded.*`;

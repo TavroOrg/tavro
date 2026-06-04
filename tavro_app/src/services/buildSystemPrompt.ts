@@ -4,6 +4,8 @@
 // The prompt changes based on what the user is currently viewing.
 
 import type { ViewType, ViewData, BlueprintContext, AgentDetailContext, UseCaseDetailContext } from '../context/ChatContext';
+import { detectArtifacts } from '../utils/artifactDetector';
+import { buildArtifactSystemInstruction } from '../utils/artifactTemplates';
 
 // ── Shared base instructions ──────────────────────────────────────────────────
 
@@ -122,6 +124,8 @@ export function buildSystemPrompt(
   viewData: ViewData,
   /** Pass the blueprint context from BlueprintContext if available */
   blueprintCtx?: BlueprintContext | null,
+  /** The current user message — used to detect structured artifact intent */
+  userMessage?: string,
 ): string {
   const parts: string[] = [BASE];
 
@@ -158,6 +162,16 @@ export function buildSystemPrompt(
 Help the user navigate Tavro. You can discuss AI use cases, agents,
 risk assessments, and company blueprints.`);
       if (blueprintCtx) parts.push(compactBlueprintBlock(blueprintCtx));
+  }
+
+  // When the user is requesting structured project artifacts, inject the
+  // document-generation instructions. This is done after the view-specific
+  // sections so artifact instructions always appear at the end of the prompt.
+  if (userMessage) {
+    const artifacts = detectArtifacts(userMessage);
+    if (artifacts.length > 0) {
+      parts.push(buildArtifactSystemInstruction(artifacts, blueprintCtx));
+    }
   }
 
   return parts.join('\n');
