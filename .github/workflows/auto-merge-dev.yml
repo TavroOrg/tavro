@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '30 11 * * 1-5'  # 5:00 PM IST (UTC+5:30) = 11:30 UTC, weekdays only
   workflow_dispatch:          # Allow manual trigger for testing
+    inputs:
+      exclude_prs:
+        description: 'PR numbers to exclude (comma-separated, e.g. 12,45,67)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -20,6 +25,17 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
+
+            // Parse manually excluded PR numbers (from workflow_dispatch input)
+            const excludeInput = context.payload.inputs?.exclude_prs || '';
+            const manualExcludes = excludeInput
+              .split(',')
+              .map(s => parseInt(s.trim()))
+              .filter(n => !isNaN(n));
+
+            if (manualExcludes.length > 0) {
+              core.info(`Manually excluded PRs: #${manualExcludes.join(', #')}`);
+            }
 
             // Fetch all open PRs targeting dev
             const { data: prs } = await github.rest.pulls.list({
@@ -38,6 +54,21 @@ jobs:
 
             for (const pr of prs) {
               core.info(`Processing PR #${pr.number}: ${pr.title}`);
+
+              // Skip manually excluded PRs
+              if (manualExcludes.includes(pr.number)) {
+                core.info(`PR #${pr.number} manually excluded — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: 'manually excluded' });
+                continue;
+              }
+
+              // Skip PRs with the 'do-not-merge' label
+              const labels = pr.labels.map(l => l.name.toLowerCase());
+              if (labels.includes('do-not-merge')) {
+                core.info(`PR #${pr.number} has 'do-not-merge' label — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: 'do-not-merge label' });
+                continue;
+              }
 
               // Check mergability (GitHub needs a moment to compute this)
               const { data: detail } = await github.rest.pulls.get({
@@ -71,7 +102,7 @@ jobs:
                 await github.rest.pulls.merge({
                   owner, repo,
                   pull_number: pr.number,
-                  merge_method: 'squash',  // Change to 'merge' or 'rebase' if preferred
+                  merge_method: 'squash',
                 });
                 core.info(`PR #${pr.number} merged successfully.`);
                 results.merged.push({ number: pr.number, title: pr.title });
@@ -90,11 +121,11 @@ jobs:
         if: always()
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: smtp.gmail.com   # Change to your SMTP host
+          server_address: smtp.gmail.com
           server_port: 587
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          to: ${{ secrets.NOTIFY_EMAIL }}  # Comma-separated for multiple recipients
+          to: ${{ secrets.NOTIFY_EMAIL }}
           from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
           subject: "[Dev merge] ${{ env.MERGED_COUNT }} merged, ${{ env.SKIPPED_COUNT }} skipped — ${{ github.repository }}"
           body: |
