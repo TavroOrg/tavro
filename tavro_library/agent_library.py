@@ -997,6 +997,9 @@ class AgentMetadataExporter:
         data_source_values = []
         table_values = []
         column_values = []
+        agent_table_values = []
+        tool_table_values = []
+        table_column_values = []
         tool_ids_for_card: List[str] = []
         tool_name_to_id: Dict[str, str] = {}
         tables_payload = cls._normalize_tables_payload(tables, tools, data_source)
@@ -1131,6 +1134,20 @@ class AgentMetadataExporter:
             )
             """)
 
+            # agent_tables relationship
+            agent_table_values.append(f"""
+            (
+                {tenant_id_value}
+                '{agent_id}',
+                '{agent_name}',
+                '{agent_internal_id}',
+                '{table_id}',
+                '{table_name}',
+                TIMESTAMP '{now}',
+                TIMESTAMP '{now}'
+            )
+            """)
+
             if table_tool_id:
                 data_source_values.append(f"""
                 (
@@ -1147,6 +1164,20 @@ class AgentMetadataExporter:
                     'Table'
                 )
                 """)
+                # tool_tables relationship
+                tool_table_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{table_tool_id}',
+                    '{table_tool_name}',
+                    '{table_id}',
+                    '{table_name}',
+                    '{agent_id}',
+                    '{agent_internal_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
 
             for column_name in table.get("columns") or []:
                 clean_column = cls.sanitize(column_name)
@@ -1156,6 +1187,17 @@ class AgentMetadataExporter:
                 (
                     {tenant_id_value}
                     '{table_id}',
+                    '{clean_column}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
+                # table_columns relationship
+                table_column_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{table_id}',
+                    '{table_name}',
                     '{clean_column}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1212,6 +1254,52 @@ class AgentMetadataExporter:
             {",".join(column_values)}
             ON CONFLICT (table_id, name)
             DO UPDATE SET
+                updated_ts = EXCLUDED.updated_ts
+            """)
+
+        if agent_table_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.agent_tables (
+                {tenant_id_column}
+                agent_id, agent_name, agent_internal_id,
+                table_id, table_name, created_ts, updated_ts
+            )
+            VALUES
+            {",".join(agent_table_values)}
+            ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                agent_name = EXCLUDED.agent_name,
+                agent_internal_id = EXCLUDED.agent_internal_id,
+                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.agent_tables.table_name),
+                updated_ts = EXCLUDED.updated_ts
+            """)
+
+        if tool_table_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.tool_tables (
+                {tenant_id_column}
+                tool_id, tool_name, table_id, table_name,
+                agent_id, agent_internal_id, created_ts, updated_ts
+            )
+            VALUES
+            {",".join(tool_table_values)}
+            ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
+                tool_name = COALESCE(EXCLUDED.tool_name, {cls.CORE_DB_NAME}.tool_tables.tool_name),
+                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.tool_tables.table_name),
+                agent_id = EXCLUDED.agent_id,
+                agent_internal_id = EXCLUDED.agent_internal_id,
+                updated_ts = EXCLUDED.updated_ts
+            """)
+
+        if table_column_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.table_columns (
+                {tenant_id_column}
+                table_id, table_name, column_name, created_ts, updated_ts
+            )
+            VALUES
+            {",".join(table_column_values)}
+            ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
+                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.table_columns.table_name),
                 updated_ts = EXCLUDED.updated_ts
             """)
 

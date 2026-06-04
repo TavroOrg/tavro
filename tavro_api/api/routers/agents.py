@@ -619,6 +619,24 @@ async def create_agent(
                 },
             )
 
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_tables
+                        (tenant_id, agent_id, agent_name, agent_internal_id,
+                         table_id, table_name, created_ts, updated_ts)
+                    VALUES
+                        (:tid, :aid, :aname, :iid, :table_id, :table_name,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                        agent_name = EXCLUDED.agent_name,
+                        agent_internal_id = EXCLUDED.agent_internal_id,
+                        table_name = COALESCE(EXCLUDED.table_name, {CORE}.agent_tables.table_name),
+                        updated_ts = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "aid": agent_id, "aname": body.agent_name,
+                 "iid": agent_internal_id, "table_id": table_id, "table_name": table_name},
+            )
+
             if table_tool_id:
                 await db.execute(
                     text(f"""
@@ -650,6 +668,31 @@ async def create_agent(
                         "table_name": table_name,
                     },
                 )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.tool_tables
+                            (tenant_id, tool_id, tool_name, table_id, table_name,
+                             agent_id, agent_internal_id, created_ts, updated_ts)
+                        VALUES
+                            (:tid, :tool_id, :tool_name, :table_id, :table_name,
+                             :aid, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
+                            tool_name = COALESCE(EXCLUDED.tool_name, {CORE}.tool_tables.tool_name),
+                            table_name = COALESCE(EXCLUDED.table_name, {CORE}.tool_tables.table_name),
+                            agent_id = EXCLUDED.agent_id,
+                            agent_internal_id = EXCLUDED.agent_internal_id,
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "tool_id": table_tool_id,
+                        "tool_name": table.get("tool_name"),
+                        "table_id": table_id,
+                        "table_name": table_name,
+                        "aid": agent_id,
+                        "iid": agent_internal_id,
+                    },
+                )
 
             for column_name in table.get("columns") or []:
                 await db.execute(
@@ -662,6 +705,20 @@ async def create_agent(
                             updated_ts = EXCLUDED.updated_ts
                     """),
                     {"tid": tenant_id, "table_id": table_id, "col_name": column_name},
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.table_columns
+                            (tenant_id, table_id, table_name, column_name, created_ts, updated_ts)
+                        VALUES
+                            (:tid, :table_id, :table_name, :column_name,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
+                            table_name = COALESCE(EXCLUDED.table_name, {CORE}.table_columns.table_name),
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {"tid": tenant_id, "table_id": table_id,
+                     "table_name": table_name, "column_name": column_name},
                 )
                 await db.execute(
                     text(f"""

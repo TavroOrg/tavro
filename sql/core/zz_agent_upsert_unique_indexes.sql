@@ -70,6 +70,15 @@ ON core.tables (agent_internal_id, table_id);
 CREATE INDEX IF NOT EXISTS ix_core_tables_agent_tool
 ON core.tables (agent_internal_id, tool_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tool_tables
+ON core.tool_tables (tenant_id, tool_id, table_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_tables
+ON core.agent_tables (tenant_id, agent_id, table_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_table_columns
+ON core.table_columns (tenant_id, table_id, column_name);
+
 DO $$
 BEGIN
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
