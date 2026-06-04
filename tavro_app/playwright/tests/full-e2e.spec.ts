@@ -259,6 +259,40 @@ test.describe('Settings page', () => {
     expect(body.length).toBeGreaterThan(0);
     await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 8_000 });
   });
+
+  test('opens Container Logs from Settings and pauses the live stream', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page).not.toHaveURL(/\/login/);
+
+    const containerLogsButton = page.getByRole('button', { name: /container logs/i }).first();
+    await containerLogsButton.scrollIntoViewIfNeeded();
+    await expect(containerLogsButton).toBeVisible({ timeout: 8_000 });
+    await containerLogsButton.click();
+
+    await expect(page).toHaveURL(/\/settings\/logs/, { timeout: 10_000 });
+
+    const logFilter = page.getByPlaceholder(/filter logs/i);
+    await expect(logFilter).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Live', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+
+    await expect.poll(async () => {
+      const count = await page.locator('text=/GET|POST|INFO|ERROR/').count();
+      return count;
+    }, {
+      timeout: 20_000,
+      message: 'No log entries found',
+    }).toBeGreaterThan(0);
+
+    const pauseButton = page.getByRole('button', { name: /^pause$/i }).first();
+    await expect(pauseButton).toBeVisible({ timeout: 8_000 });
+    await pauseButton.click();
+
+    await expect(page.getByRole('button', { name: /resume/i })).toBeVisible({ timeout: 8_000 });
+
+    const resumeButton = page.getByRole('button', { name: /resume/i }).first();
+    await resumeButton.click();
+    await expect(page.getByRole('button', { name: /^pause$/i })).toBeVisible({ timeout: 8_000 });
+  });
 });
 
 // ── shared POST / PUT helpers ─────────────────────────────────────────────────
@@ -639,14 +673,14 @@ test.describe.serial('Spark to Agent Playground E2E Testing', () => {
     if (!applicationId) test.skip(true, 'Skipping: no application ID — test 6 must pass first');
     requireRegisteredCompany();
 
-    await page.goto('/applications');
+    await page.goto(`/applications/${applicationId}`);
     await expect(page).not.toHaveURL(/\/login/);
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
 
-    await expect(page.locator('body'), `Application "${APPLICATION_NAME}" not found on /applications page`)
+    await expect(page.locator('body'), `Application "${APPLICATION_NAME}" (${applicationId}) not found on application detail page`)
       .toContainText(APPLICATION_NAME, { timeout: 15_000 });
+    await expect(page.locator('body')).toContainText(applicationId, { timeout: 15_000 });
 
-    console.log(`[spark] UI — application "${APPLICATION_NAME}" confirmed on /applications`);
+    console.log(`[spark] UI — application "${APPLICATION_NAME}" confirmed on /applications/${applicationId}`);
   });
 
   // ── 8. UI — /processes page lists newly created process ──────────────────────
@@ -655,14 +689,14 @@ test.describe.serial('Spark to Agent Playground E2E Testing', () => {
     if (!processId) test.skip(true, 'Skipping: no process ID — test 6 must pass first');
     requireRegisteredCompany();
 
-    await page.goto('/processes');
+    await page.goto(`/processes/${processId}`);
     await expect(page).not.toHaveURL(/\/login/);
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
 
-    await expect(page.locator('body'), `Process "${PROCESS_NAME}" not found on /processes page`)
+    await expect(page.locator('body'), `Process "${PROCESS_NAME}" (${processId}) not found on process detail page`)
       .toContainText(PROCESS_NAME, { timeout: 15_000 });
+    await expect(page.locator('body')).toContainText(processId, { timeout: 15_000 });
 
-    console.log(`[spark] UI — process "${PROCESS_NAME}" confirmed on /processes`);
+    console.log(`[spark] UI — process "${PROCESS_NAME}" confirmed on /processes/${processId}`);
   });
 
   // ── 9. API — link agent to process ───────────────────────────────────────────
