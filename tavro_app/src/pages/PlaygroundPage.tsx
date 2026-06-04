@@ -85,7 +85,7 @@ const PlaygroundPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const {
     config, messages, observations, isRunning, sessionActive, tokenCount,
-    summary, summaryLoading,
+    summary, summaryLoading, sessionError,
     setConfig, setProvider, loadFromAgent, resetConfig,
     startSession, endSession, sendMessage, clearMessages, generateSummary,
     addObservation, removeObservation,
@@ -470,6 +470,11 @@ const PlaygroundPage: React.FC = () => {
                   <p className="font-bold text-slate-600 dark:text-slate-300 text-base">Session not started</p>
                   <p className="text-sm mt-1">Configure your agent and click Start session to begin interacting.</p>
                 </div>
+                {sessionError && (
+                  <div className="max-w-xl text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 px-4 py-3 rounded-lg">
+                    {sessionError}
+                  </div>
+                )}
                 <button onClick={() => setActiveTab('config')}
                   className="flex items-center gap-2 text-sm font-bold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 px-4 py-2 rounded-lg transition-colors">
                   <Settings2 size={14} /> Go to configuration
