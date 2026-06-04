@@ -818,7 +818,7 @@ const UseCaseViewPage: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in pb-12">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between w-full max-w-[1400px] mx-auto">
         <button
           onClick={() => {
             const page = (location.state as any)?.page;

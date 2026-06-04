@@ -83,7 +83,7 @@ const PlaygroundPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
-    config, messages, observations, isRunning, sessionActive, tokenCount,
+    config, messages, observations, isRunning, sessionActive, sessionStarting, tokenCount,
     summary, summaryLoading, sessionError,
     setConfig, setProvider, loadFromAgent, resetConfig,
     startSession, endSession, sendMessage, clearMessages, generateSummary,
@@ -438,10 +438,12 @@ const PlaygroundPage: React.FC = () => {
             {!sessionActive && (
               <button
                 onClick={() => { startSession(); setActiveTab('chat'); }}
-                disabled={!config.agentName.trim()}
+                disabled={!config.agentName.trim() || sessionStarting}
                 className="flex items-center justify-center gap-2 w-full py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Play size={15} /> Start session and interact
+                {sessionStarting
+                  ? <><Loader2 size={15} className="animate-spin" /> Setting up session…</>
+                  : <><Play size={15} /> Start session and interact</>}
               </button>
             )}
           </div>
@@ -453,8 +455,21 @@ const PlaygroundPage: React.FC = () => {
         {activeTab === 'chat' && (
           <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
 
+            {/* Session setup in progress */}
+            {sessionStarting && (
+              <div className="flex flex-col items-center justify-center py-24 gap-5 text-slate-400 dark:text-slate-500 px-8">
+                <div className="p-5 bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-100 dark:border-violet-800">
+                  <Loader2 size={32} className="text-violet-500 dark:text-violet-400 animate-spin" />
+                </div>
+                <div className="text-center">
+                  <p className="font-bold text-slate-600 dark:text-slate-300 text-base">Setting up session…</p>
+                  <p className="text-sm mt-1">Provisioning the agent and connecting to {config.provider}. This may take a few moments.</p>
+                </div>
+              </div>
+            )}
+
             {/* Not started state */}
-            {!sessionActive && (
+            {!sessionActive && !sessionStarting && (
               <div className="flex flex-col items-center justify-center py-24 gap-5 text-slate-400 dark:text-slate-500 px-8">
                 <div className="p-5 bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-100 dark:border-violet-800">
                   <FlaskConical size={32} className="text-violet-500 dark:text-violet-400" />

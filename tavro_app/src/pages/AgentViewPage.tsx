@@ -404,7 +404,7 @@ const AgentViewPage: React.FC = () => {
     return (
         <div className="flex-col gap-6 w-full animate-fade-in relative">
             {/* Top bar */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 w-full max-w-[1400px] mx-auto">
                 <button
                     onClick={() => {
                         if (window.history.length > 2) {
