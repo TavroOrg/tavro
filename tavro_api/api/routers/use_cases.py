@@ -191,7 +191,6 @@ async def _ensure_use_case_tables(db: AsyncSession) -> None:
                 status TEXT,
                 created_ts TIMESTAMP,
                 updated_ts TIMESTAMP,
-                agent_internal_id TEXT,
                 agent_risk_exposure_are DECIMAL(10, 2),
                 no_of_associated_agents INT,
                 inherent_risk_classification TEXT,
@@ -419,11 +418,11 @@ async def create_use_case(body: UseCaseCreateRequest, request: Request, db: Asyn
                 INSERT INTO {CORE}.ai_use_cases
                     (tenant_id, ai_use_case_id, name, description, owner,
                      problem_statement, expected_benefits, priority, status,
-                     solution_approach, created_ts, updated_ts, agent_internal_id)
+                     solution_approach, created_ts, updated_ts)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
                      :problem, :benefits, :priority, 'New',
-                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
+                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """),
             {
                 "tid": tenant_id, "uid": use_case_id,
