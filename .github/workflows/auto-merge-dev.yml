@@ -1,14 +1,8 @@
-name: Auto-merge PRs to dev at 5PM IST
+name: Auto-merge PRs to dev at 6PM IST
 
 on:
   schedule:
-    - cron: '30 11 * * 1-5'  # 5:00 PM IST (UTC+5:30) = 11:30 UTC, weekdays only
-  workflow_dispatch:          # Allow manual trigger for testing
-    inputs:
-      exclude_prs:
-        description: 'PR numbers to exclude (comma-separated, e.g. 12,45,67)'
-        required: false
-        default: ''
+    - cron: '30 12 * * 1-5'  # 6:00 PM IST (UTC+5:30) = 12:30 UTC, weekdays only
 
 permissions:
   contents: write
@@ -18,7 +12,7 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
     steps:
-      - name: Merge open PRs targeting dev
+      - name: Merge open PRs targeting dev based on labels
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -26,16 +20,9 @@ jobs:
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
 
-            // Parse manually excluded PR numbers (from workflow_dispatch input)
-            const excludeInput = context.payload.inputs?.exclude_prs || '';
-            const manualExcludes = excludeInput
-              .split(',')
-              .map(s => parseInt(s.trim()))
-              .filter(n => !isNaN(n));
-
-            if (manualExcludes.length > 0) {
-              core.info(`Manually excluded PRs: #${manualExcludes.join(', #')}`);
-            }
+            // Label rules
+            const MERGE_LABEL    = 'enhancement';   // PRs with this label will be merged
+            const SKIP_LABEL     = 'help wanted';   // PRs with this label will be skipped
 
             // Fetch all open PRs targeting dev
             const { data: prs } = await github.rest.pulls.list({
@@ -50,27 +37,30 @@ jobs:
               return;
             }
 
-            const results = { merged: [], skipped: [] };
+            const results = { merged: [], skipped: [], ignored: [] };
 
             for (const pr of prs) {
               core.info(`Processing PR #${pr.number}: ${pr.title}`);
 
-              // Skip manually excluded PRs
-              if (manualExcludes.includes(pr.number)) {
-                core.info(`PR #${pr.number} manually excluded — skipping.`);
-                results.skipped.push({ number: pr.number, title: pr.title, reason: 'manually excluded' });
-                continue;
-              }
-
-              // Skip PRs with the 'do-not-merge' label
               const labels = pr.labels.map(l => l.name.toLowerCase());
-              if (labels.includes('do-not-merge')) {
-                core.info(`PR #${pr.number} has 'do-not-merge' label — skipping.`);
-                results.skipped.push({ number: pr.number, title: pr.title, reason: 'do-not-merge label' });
+              const hasReadyLabel = labels.includes(MERGE_LABEL.toLowerCase());
+              const hasSkipLabel  = labels.includes(SKIP_LABEL.toLowerCase());
+
+              // Skip PRs marked as not ready
+              if (hasSkipLabel) {
+                core.info(`PR #${pr.number} has '${SKIP_LABEL}' label — skipping.`);
+                results.skipped.push({ number: pr.number, title: pr.title, reason: `'${SKIP_LABEL}' label` });
                 continue;
               }
 
-              // Check mergability (GitHub needs a moment to compute this)
+              // Only merge PRs explicitly marked as ready
+              if (!hasReadyLabel) {
+                core.info(`PR #${pr.number} has no '${MERGE_LABEL}' label — ignoring.`);
+                results.ignored.push({ number: pr.number, title: pr.title, reason: 'no ready label' });
+                continue;
+              }
+
+              // Check mergeability
               const { data: detail } = await github.rest.pulls.get({
                 owner, repo, pull_number: pr.number,
               });
@@ -81,14 +71,17 @@ jobs:
                 continue;
               }
 
-              // Check all required status checks pass
+              // Check all status checks pass
               const { data: checks } = await github.rest.checks.listForRef({
                 owner, repo,
                 ref: pr.head.sha,
               });
 
               const failed = checks.check_runs.filter(
-                c => c.status === 'completed' && c.conclusion !== 'success' && c.conclusion !== 'skipped' && c.conclusion !== 'neutral'
+                c => c.status === 'completed' &&
+                     c.conclusion !== 'success' &&
+                     c.conclusion !== 'skipped' &&
+                     c.conclusion !== 'neutral'
               );
 
               if (failed.length > 0) {
@@ -115,7 +108,8 @@ jobs:
             // Save summary for the notification step
             core.exportVariable('MERGED_COUNT',  results.merged.length);
             core.exportVariable('SKIPPED_COUNT', results.skipped.length);
-            core.exportVariable('MERGE_SUMMARY', JSON.stringify(results));
+            core.exportVariable('IGNORED_COUNT', results.ignored.length);
+            core.exportVariable('MERGE_SUMMARY', JSON.stringify(results, null, 2));
 
       - name: Send email summary
         if: always()
@@ -127,13 +121,19 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           to: ${{ secrets.NOTIFY_EMAIL }}
           from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
-          subject: "[Dev merge] ${{ env.MERGED_COUNT }} merged, ${{ env.SKIPPED_COUNT }} skipped — ${{ github.repository }}"
+          subject: "[Dev merge] ${{ env.MERGED_COUNT }} merged, ${{ env.SKIPPED_COUNT }} skipped, ${{ env.IGNORED_COUNT }} ignored — ${{ github.repository }}"
           body: |
-            Scheduled 5 PM IST auto-merge run completed.
+            Scheduled 6 PM IST auto-merge run completed.
 
             Repository : ${{ github.repository }}
             Run URL    : https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-            Summary    : ${{ env.MERGED_COUNT }} merged · ${{ env.SKIPPED_COUNT }} skipped
+            Summary    : ${{ env.MERGED_COUNT }} merged · ${{ env.SKIPPED_COUNT }} skipped · ${{ env.IGNORED_COUNT }} ignored
 
-            Full details: ${{ env.MERGE_SUMMARY }}
+            Label rules:
+              ✅ 'enhancement'  → merged
+              ⏭️  'help wanted'  → skipped (not ready)
+              ⚪ no label       → ignored
+
+            Full details:
+            ${{ env.MERGE_SUMMARY }}
