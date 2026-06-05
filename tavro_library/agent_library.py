@@ -1030,18 +1030,23 @@ class AgentMetadataExporter:
             seen_skill_ids: set = set()
             for skill in skills:
                 if isinstance(skill, str):
-                    skill_id = skill.strip()
-                    skill_name = skill_id
+                    skill_name = skill.strip()
+                    if not skill_name:
+                        continue
+                    skill_id = str(uuid.uuid4())
                     skill_desc = ""
                     tags, input_modes, output_modes = [], [], []
                 elif isinstance(skill, dict):
-                    skill_id = str(
+                    explicit_id = str(
                         skill.get("identifier") or skill.get("skill_id") or
-                        skill.get("id") or skill.get("name") or ""
+                        skill.get("id") or ""
                     ).strip()
                     skill_name = str(
-                        skill.get("name") or skill.get("skill_name") or skill_id
+                        skill.get("name") or skill.get("skill_name") or ""
                     ).strip()
+                    skill_id = explicit_id or str(uuid.uuid4())
+                    if not skill_name:
+                        skill_name = skill_id
                     skill_desc = str(skill.get("description") or "").strip()
                     tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
                     input_modes = skill.get("inputModes") or skill.get("input_modes") or []
@@ -1051,9 +1056,7 @@ class AgentMetadataExporter:
                 else:
                     continue
 
-                if not skill_id:
-                    continue
-                skill_key = skill_id.lower()
+                skill_key = skill_name.lower()
                 if skill_key in seen_skill_ids:
                     continue
                 seen_skill_ids.add(skill_key)
@@ -1989,9 +1992,8 @@ class AgentMetadataExporter:
             for skill in skills:
                 existing_match = None
                 if isinstance(skill, str):
-                    skill_id = skill.strip()
-                    skill_name = skill_id
-                    existing_match = _find_existing_skill(skill_id, skill_name, single_skill_patch)
+                    skill_name = skill.strip()
+                    existing_match = _find_existing_skill(skill_name, skill_name, single_skill_patch)
                     if existing_match:
                         skill_id = existing_match["skill_id"]
                         skill_name = existing_match["skill_name"]
@@ -2000,6 +2002,7 @@ class AgentMetadataExporter:
                         input_modes = existing_match["input_modes"]
                         output_modes = existing_match["output_modes"]
                     else:
+                        skill_id = str(uuid.uuid4())
                         skill_desc = ""
                         tags, input_modes, output_modes = [], [], []
                 elif isinstance(skill, dict):
@@ -2007,7 +2010,7 @@ class AgentMetadataExporter:
                     requested_name = _clean_text(skill.get("name") or skill.get("skill_name"))
                     fallback_name = requested_name or explicit_id
                     existing_match = _find_existing_skill(explicit_id, fallback_name, single_skill_patch)
-                    skill_id = existing_match["skill_id"] if existing_match else (explicit_id or fallback_name)
+                    skill_id = existing_match["skill_id"] if existing_match else (explicit_id or str(uuid.uuid4()))
                     skill_name = requested_name or (existing_match["skill_name"] if existing_match else skill_id)
                     skill_desc = (
                         _clean_text(skill.get("description"))
