@@ -1072,15 +1072,10 @@ class AgentMetadataExporter:
                     tags, input_modes, output_modes,
                     created_ts, updated_ts
                 )
-                SELECT
+                VALUES (
                     {tenant_id_lit}, '{sid}', '{sname}', '{sdesc}',
                     {_pg_array(tags)}, {_pg_array(input_modes)}, {_pg_array(output_modes)},
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM {cls.CORE_DB_NAME}.skills
-                    WHERE COALESCE(tenant_id, '') = COALESCE({tenant_id_lit}, '')
-                      AND skill_id = '{sid}'
                 )
                 """)
 
