@@ -329,7 +329,7 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
 
 
 # ---------------------------------------------------------------------------
-# Step X — core.tables  (agent -> tables, tools -> tables)
+# Step X — core.tables  (table catalog)
 # ---------------------------------------------------------------------------
 def _upsert_tables(conn, card: dict, agent_internal_id: str, now_str: str):
     ident = card.get("identification", {})
@@ -344,7 +344,7 @@ def _upsert_tables(conn, card: dict, agent_internal_id: str, now_str: str):
         if rows and rows[0].get("tenant_id"):
             tenant_id = rows[0].get("tenant_id")
 
-    # Collect table records: table_id -> {name, tool_id}
+    # Collect table records; tool_id is used only to populate tool_tables below.
     tables = {}
     # First pass: find explicit table nodes (as source or target)
     # Also capture direct agent->table ownership when present.
@@ -394,27 +394,21 @@ def _upsert_tables(conn, card: dict, agent_internal_id: str, now_str: str):
         name = meta.get("name")
         tool_id = meta.get("tool_id")
         tool_name = meta.get("tool_name") or ""
-        table_agent_id = meta.get("agent_id")
-        select_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(agent_internal_id)} AS agent_internal_id, {_sq(table_agent_id)} AS agent_id, {_sq(tool_id)} AS tool_id, {_sq(tid)} AS table_id, {_sq(name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
+        select_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(tid)} AS table_id, {_sq(name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
         agent_table_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name, {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tid)} AS table_id, {_sq(name)} AS table_name, TIMESTAMP '{now_str}' AS now_ts")
         if tool_id:
-            tool_table_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name, {_sq(tid)} AS table_id, {_sq(name)} AS table_name, {_sq(agent_id)} AS agent_id, {_sq(agent_internal_id)} AS agent_internal_id, TIMESTAMP '{now_str}' AS now_ts")
+            tool_table_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name, {_sq(tid)} AS table_id, {_sq(name)} AS table_name, TIMESTAMP '{now_str}' AS now_ts")
 
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
         INSERT INTO {CORE}.tables (
-            tenant_id, agent_internal_id, agent_id, tool_id, table_id, name, created_ts, updated_ts
+            tenant_id, table_id, name, created_ts, updated_ts
         )
-        SELECT tenant_id, agent_internal_id, agent_id, tool_id, table_id, name, now_ts, now_ts
+        SELECT tenant_id, table_id, name, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, table_id)
+        ON CONFLICT (table_id)
         DO UPDATE SET
-            agent_id = CASE
-                WHEN EXCLUDED.tool_id IS NOT NULL THEN NULL
-                ELSE COALESCE(EXCLUDED.agent_id, {CORE}.tables.agent_id)
-            END,
             name = COALESCE(EXCLUDED.name, {CORE}.tables.name),
-            tool_id = COALESCE(EXCLUDED.tool_id, {CORE}.tables.tool_id),
             updated_ts = EXCLUDED.updated_ts
     """, f"tables upsert ({len(select_rows)})")
 
@@ -441,17 +435,15 @@ def _upsert_tables(conn, card: dict, agent_internal_id: str, now_str: str):
         _exec(conn, f"""
             INSERT INTO {CORE}.tool_tables (
                 tenant_id, tool_id, tool_name, table_id, table_name,
-                agent_id, agent_internal_id, created_ts, updated_ts
+                created_ts, updated_ts
             )
             SELECT tenant_id, tool_id, tool_name, table_id, table_name,
-                   agent_id, agent_internal_id, now_ts, now_ts
+                   now_ts, now_ts
             FROM ({ut}) AS s
             WHERE tool_id IS NOT NULL AND tool_id <> ''
             ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
                 tool_name = COALESCE(EXCLUDED.tool_name, {CORE}.tool_tables.tool_name),
                 table_name = COALESCE(EXCLUDED.table_name, {CORE}.tool_tables.table_name),
-                agent_id = EXCLUDED.agent_id,
-                agent_internal_id = EXCLUDED.agent_internal_id,
                 updated_ts = EXCLUDED.updated_ts
         """, f"tool_tables upsert ({len(tool_table_rows)})")
 
@@ -479,9 +471,10 @@ def _upsert_columns(conn, card: dict, agent_internal_id: str, now_str: str):
             table_id = ds.get("source_object_id")
             table_name = ds.get("source_object_name") or ""
             col_name = ds.get("target_object_name")
-            if table_id and col_name:
-                select_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(table_id)} AS table_id, {_sq(col_name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
-                tc_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(table_id)} AS table_id, {_sq(table_name)} AS table_name, {_sq(col_name)} AS column_name, TIMESTAMP '{now_str}' AS now_ts")
+            column_id = ds.get("target_object_id") or col_name
+            if table_id and col_name and column_id:
+                select_rows.append(f"SELECT {_sq(column_id)} AS column_id, {_sq(tenant_id)} AS tenant_id, {_sq(col_name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
+                tc_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(table_id)} AS table_id, {_sq(table_name)} AS table_name, {_sq(col_name)} AS column_name, {_sq(column_id)} AS column_id, TIMESTAMP '{now_str}' AS now_ts")
 
     if not select_rows:
         return
@@ -489,11 +482,11 @@ def _upsert_columns(conn, card: dict, agent_internal_id: str, now_str: str):
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
         INSERT INTO {CORE}.columns (
-            tenant_id, table_id, name, created_ts, updated_ts
+            column_id, tenant_id, name, created_ts, updated_ts
         )
-        SELECT tenant_id, table_id, name, now_ts, now_ts
+        SELECT column_id, tenant_id, name, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (table_id, name)
+        ON CONFLICT (column_id)
         DO UPDATE SET
             updated_ts = EXCLUDED.updated_ts
     """, f"columns upsert ({len(select_rows)})")
@@ -502,12 +495,13 @@ def _upsert_columns(conn, card: dict, agent_internal_id: str, now_str: str):
         utc = "\nUNION ALL\n".join(tc_rows)
         _exec(conn, f"""
             INSERT INTO {CORE}.table_columns (
-                tenant_id, table_id, table_name, column_name, created_ts, updated_ts
+                tenant_id, table_id, table_name, column_name, column_id, created_ts, updated_ts
             )
-            SELECT tenant_id, table_id, table_name, column_name, now_ts, now_ts
+            SELECT tenant_id, table_id, table_name, column_name, column_id, now_ts, now_ts
             FROM ({utc}) AS s
             ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
                 table_name = COALESCE(EXCLUDED.table_name, {CORE}.table_columns.table_name),
+                column_id = COALESCE(EXCLUDED.column_id, {CORE}.table_columns.column_id),
                 updated_ts = EXCLUDED.updated_ts
         """, f"table_columns upsert ({len(tc_rows)})")
 

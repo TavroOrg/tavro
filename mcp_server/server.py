@@ -754,12 +754,12 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, tables: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, tables: Optional[List[Dict[str, Any]]] = None, columns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Update an existing AI agent’s configuration.
 
     Allows modification of agent metadata such as name, description,
-    behavior instructions, tools, knowledge sources, and tables.
+    behavior instructions, tools, knowledge sources, tables, and columns.
 
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
@@ -780,6 +780,15 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                                }
                            Use "old_name" when the user refers to the current name (e.g. "rename
                            SNOW_incident to Incidents"). Use "table_id" when you already know it.
+        columns (Optional[List[Dict[str, Any]]]): Columns to rename. Each entry must include
+                           the new name and a way to identify the existing column:
+                               {
+                                   "name": str,       # new column name to set
+                                   "old_name": str,   # current column name (required)
+                                   "table_id": str    # table the column belongs to (preferred for precision)
+                               }
+                           Use "old_name" for the current column name (e.g. "rename col_id to incident_id").
+                           Provide "table_id" when the same column name exists in multiple tables.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -801,6 +810,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "tools": tools,
                 "knowledge_source": knowledge_source,
                 "tables": tables,
+                "columns": columns,
             },
             tenant_id,
         )
@@ -813,6 +823,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             tools=tools,
             knowledge_source=knowledge_source,
             tables=tables,
+            columns=columns,
             tenant_id=str(tenant_id),
         )
 

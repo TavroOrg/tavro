@@ -913,6 +913,7 @@ class AgentMetadataExporter:
                     "uses_pci": None,
                 })
                 for column_name in table.get("columns") or []:
+                    col_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{column_name}"))
                     data_source_entries.append({
                         "relationship_id": None,
                         "parent_relationship_id": None,
@@ -920,7 +921,7 @@ class AgentMetadataExporter:
                         "source_object_domain": None,
                         "source_object_name": table_name,
                         "source_object_type": "Table",
-                        "target_object_id": column_name,
+                        "target_object_id": col_id,
                         "target_object_domain": None,
                         "target_object_name": column_name,
                         "target_object_type": "Column",
@@ -1156,15 +1157,10 @@ class AgentMetadataExporter:
             table_name = cls.sanitize(table.get("name") or "")
             table_tool_id = cls.sanitize(table.get("tool_id") or "")
             table_tool_name = cls.sanitize(table.get("tool_name") or "")
-            table_agent_id_value = "NULL" if table_tool_id else f"'{agent_id}'"
-            table_tool_id_value = f"'{table_tool_id}'" if table_tool_id else "NULL"
 
             table_values.append(f"""
             (
                 {tenant_id_value}
-                '{agent_internal_id}',
-                {table_agent_id_value},
-                {table_tool_id_value},
                 '{table_id}',
                 '{table_name}',
                 TIMESTAMP '{now}',
@@ -1210,8 +1206,6 @@ class AgentMetadataExporter:
                     '{table_tool_name}',
                     '{table_id}',
                     '{table_name}',
-                    '{agent_id}',
-                    '{agent_internal_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
                 )
@@ -1221,10 +1215,11 @@ class AgentMetadataExporter:
                 clean_column = cls.sanitize(column_name)
                 if not clean_column:
                     continue
+                column_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{clean_column}"))
                 column_values.append(f"""
                 (
+                    '{column_id}',
                     {tenant_id_value}
-                    '{table_id}',
                     '{clean_column}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1237,6 +1232,7 @@ class AgentMetadataExporter:
                     '{table_id}',
                     '{table_name}',
                     '{clean_column}',
+                    '{column_id}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
                 )
@@ -1251,7 +1247,7 @@ class AgentMetadataExporter:
                     '{table_id}',
                     '{table_name}',
                     'Table',
-                    '{clean_column}',
+                    '{column_id}',
                     '{clean_column}',
                     'Column'
                 )
@@ -1261,9 +1257,6 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.tables (
                 {tenant_id_column}
-                agent_internal_id,
-                agent_id,
-                tool_id,
                 table_id,
                 name,
                 created_ts,
@@ -1271,10 +1264,8 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(table_values)}
-            ON CONFLICT (agent_internal_id, table_id)
+            ON CONFLICT (table_id)
             DO UPDATE SET
-                agent_id = EXCLUDED.agent_id,
-                tool_id = EXCLUDED.tool_id,
                 name = COALESCE(EXCLUDED.name, {cls.CORE_DB_NAME}.tables.name),
                 updated_ts = EXCLUDED.updated_ts
             """)
@@ -1282,15 +1273,15 @@ class AgentMetadataExporter:
         if column_values:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.columns (
+                column_id,
                 {tenant_id_column}
-                table_id,
                 name,
                 created_ts,
                 updated_ts
             )
             VALUES
             {",".join(column_values)}
-            ON CONFLICT (table_id, name)
+            ON CONFLICT (column_id)
             DO UPDATE SET
                 updated_ts = EXCLUDED.updated_ts
             """)
@@ -1316,15 +1307,13 @@ class AgentMetadataExporter:
             INSERT INTO {cls.CORE_DB_NAME}.tool_tables (
                 {tenant_id_column}
                 tool_id, tool_name, table_id, table_name,
-                agent_id, agent_internal_id, created_ts, updated_ts
+                created_ts, updated_ts
             )
             VALUES
             {",".join(tool_table_values)}
             ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
                 tool_name = COALESCE(EXCLUDED.tool_name, {cls.CORE_DB_NAME}.tool_tables.tool_name),
                 table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.tool_tables.table_name),
-                agent_id = EXCLUDED.agent_id,
-                agent_internal_id = EXCLUDED.agent_internal_id,
                 updated_ts = EXCLUDED.updated_ts
             """)
 
@@ -1332,12 +1321,13 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.table_columns (
                 {tenant_id_column}
-                table_id, table_name, column_name, created_ts, updated_ts
+                table_id, table_name, column_name, column_id, created_ts, updated_ts
             )
             VALUES
             {",".join(table_column_values)}
             ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
                 table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.table_columns.table_name),
+                column_id = COALESCE(EXCLUDED.column_id, {cls.CORE_DB_NAME}.table_columns.column_id),
                 updated_ts = EXCLUDED.updated_ts
             """)
 
@@ -2134,6 +2124,7 @@ class AgentMetadataExporter:
         tools: Optional[List[Dict[str, str]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tables: Optional[List[Dict[str, Any]]] = None,
+        columns: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -2206,8 +2197,7 @@ class AgentMetadataExporter:
                 if lookup_name:
                     found = cls.execute_select(
                         f"SELECT table_id FROM {cls.CORE_DB_NAME}.tables "
-                        f"WHERE agent_internal_id = '{agent_internal_id}' "
-                        f"AND LOWER(name) = LOWER('{lookup_name}') LIMIT 1"
+                        f"WHERE LOWER(name) = LOWER('{lookup_name}') {tenant_where} LIMIT 1"
                     )
                     if found:
                         table_id = cls.sanitize(str(found[0].get("table_id") or "").strip())
@@ -2218,7 +2208,7 @@ class AgentMetadataExporter:
             # Update core.tables
             cls.execute_dml(
                 f"UPDATE {cls.CORE_DB_NAME}.tables SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE table_id = '{table_id}' AND agent_internal_id = '{agent_internal_id}'"
+                f"WHERE table_id = '{table_id}'"
             )
             # Propagate new name to all three relationship tables
             cls.execute_dml(
@@ -2252,9 +2242,51 @@ class AgentMetadataExporter:
             )
             tables_updated += 1
 
+        columns_updated = 0
+        for col in (columns or []):
+            if not isinstance(col, dict):
+                continue
+            new_name = cls.sanitize(str(col.get("name") or "").strip())
+            old_name = cls.sanitize(str(col.get("old_name") or "").strip())
+            if not new_name or not old_name:
+                continue
+
+            scoped_table_id = cls.sanitize(str(col.get("table_id") or "").strip())
+            table_filter = f"AND table_id = '{scoped_table_id}'" if scoped_table_id else ""
+            tenant_filter = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
+
+            found = cls.execute_select(
+                f"SELECT column_id FROM {cls.CORE_DB_NAME}.table_columns "
+                f"WHERE LOWER(column_name) = LOWER('{old_name}') {table_filter} {tenant_filter} LIMIT 1"
+            )
+            if not found:
+                continue
+            column_id = cls.sanitize(str(found[0].get("column_id") or "").strip())
+            if not column_id:
+                continue
+
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.columns SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE column_id = '{column_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.table_columns SET column_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE column_id = '{column_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND LOWER(target_object_type) = 'column' "
+                f"AND LOWER(target_object_name) = LOWER('{old_name}')"
+            )
+            columns_updated += 1
+
         msg = "Agent updated successfully."
         if tables_updated:
             msg += f" {tables_updated} table(s) renamed."
+        if columns_updated:
+            msg += f" {columns_updated} column(s) renamed."
         return {"message": msg, "agent_id": agent_id}
 
     @classmethod
