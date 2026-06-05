@@ -283,7 +283,6 @@ const AgentViewPage: React.FC = () => {
             if (resolved) {
                 const overlaid = applyRecentEditOverlay(resolved);
                 setAgent(overlaid);
-                upsertAgent(overlaid);
             }
         } catch (error) {
             console.error("Error fetching agent details", error);
@@ -503,7 +502,7 @@ const AgentViewPage: React.FC = () => {
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-12">
             {/* Top bar */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 w-full max-w-[1400px] mx-auto">
                 <button
                     onClick={() => {
                         if (window.history.length > 2) {
