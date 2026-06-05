@@ -47,8 +47,8 @@ function formatScore(raw: string): string {
     return score.toFixed(2).replace(/\.?0+$/, '');
 }
 
-function extractHeadline(html: string): { level: string; aivss: string; cvss: string } {
-    if (!html) return { level: 'Unknown', aivss: 'N/A', cvss: 'N/A' };
+function extractHeadline(html: string): { level: string; aivss: string; aars: string } {
+    if (!html) return { level: 'Unknown', aivss: 'N/A', aars: 'N/A' };
 
     const levelMatch =
         html.match(/<b[^>]*>'?([^'<]+Risk[^'<]*)'?<\/b>/i) ??
@@ -61,22 +61,12 @@ function extractHeadline(html: string): { level: string; aivss: string; cvss: st
         ?? html.match(/AIVSS Score[^:]*:\s*([\d.]+(?:\/\d+)?)/i);
     const aivss = aivssMatch?.[1] ? formatScore(aivssMatch[1]) : 'N/A';
 
-    const cvssMatch = html.match(/CVSS score of\s*<b[^>]*>([\d.]+\/\d+)<\/b>/i)
-        ?? html.match(/CVSS score of\s*([\d.]+\/\d+)/i)
-        ?? html.match(/CVSS Score[^:]*:\s*([\d.]+(?:\/\d+)?)/i);
-    let cvss = cvssMatch?.[1] ? formatScore(cvssMatch[1]) : 'N/A';
+    const aarsMatch = html.match(/AARS score of\s*<b[^>]*>([\d.]+\/\d+)<\/b>/i)
+        ?? html.match(/AARS score of\s*([\d.]+\/\d+)/i)
+        ?? html.match(/AARS Score[^:]*:\s*([\d.]+(?:\/\d+)?)/i);
+    const aars = aarsMatch?.[1] ? formatScore(aarsMatch[1]) : 'N/A';
 
-    if (cvss === 'N/A' && aivss !== 'N/A') {
-        const aarsMatch = html.match(/AARS Score[^:]*:\s*([\d.]+)/i);
-        const aivssValue = parseFloat(aivss);
-        const aarsValue = aarsMatch?.[1] ? parseFloat(aarsMatch[1]) : NaN;
-        const derivedCvss = (2 * aivssValue) - aarsValue;
-        if (Number.isFinite(derivedCvss) && derivedCvss >= 0) {
-            cvss = `${Math.round(derivedCvss * 100) / 100}`;
-        }
-    }
-
-    return { level, aivss, cvss };
+    return { level, aivss, aars };
 }
 
 function riskColor(level: string) {
@@ -210,14 +200,14 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
                                 <span className="text-sm font-medium text-slate-700">Security</span>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                                     <ScoreMetric label="AIVSS Score" value={headline.aivss} />
-                                    <ScoreMetric label="CVSS Score" value={headline.cvss} />
+                                    <ScoreMetric label="AARS Score" value={headline.aars} />
                                 </div>
                             </div>
                             <div className="flex flex-col gap-2 md:border-l md:border-slate-300 md:pl-6">
-                                <span className="text-sm font-medium text-slate-700">Regulatory Risk</span>
+                                <span className="text-sm font-medium text-slate-700">EU AI Act</span>
                                 <div className="flex flex-col gap-1">
                                     <div className="flex flex-col items-start gap-1.5">
-                                        <span className="text-xs text-slate-500 font-medium">Risk Classification Score</span>
+                                        <span className="text-xs text-slate-500 font-medium">Risk Classification</span>
                                         <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${colors.badge}`}>
                                             <RiskIcon size={13} />
                                             {headline.level}

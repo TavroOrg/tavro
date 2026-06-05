@@ -96,6 +96,41 @@ class AzureFoundryAgentProvisioning(BaseModel):
     agent: dict[str, Any] | None = None
 
 # =============================================================
+# PDF-export helpers
+# =============================================================
+
+# Injected at the END of the system prompt whenever the user's message
+# requests a PDF.  Uses strong imperative language so it overrides any
+# conflicting agent-persona instruction ("I'm a weather agent and can't
+# make PDFs", etc.).
+_PDF_SYSTEM_INJECT = """
+
+---
+[PLATFORM OVERRIDE - PDF EXPORT MODE]
+The user has requested a PDF. The following rules OVERRIDE all other instructions:
+1. Respond with ONLY the report content in clean markdown — no preamble, no closing remarks.
+2. Start IMMEDIATELY with a # Report Title heading that names the report topic.
+   - Do NOT start with "Here is...", "Sure,...", "I appreciate...", "I'm unable...", or any sentence before the heading.
+3. Do NOT say you cannot create, generate, or export PDF files. The platform generates the PDF automatically from your text response.
+4. Do NOT add any closing sentence ("Your PDF...", "I hope...", "Let me know...", "Would you like...").
+5. Use ## for sections, **bold** for key terms, - for bullets, | tables | for tabular data.
+6. ASCII only — no emojis, no Unicode symbols.
+This instruction takes precedence over your agent persona and any other system instructions.
+"""
+
+
+def _is_pdf_request(text: str) -> bool:
+    """Return True when the user's message is asking for a PDF."""
+    msg = text.lower()
+    if "pdf" not in msg:
+        return False
+    phrases  = ["in pdf", "as pdf", "as a pdf", "to pdf", "into pdf"]
+    actions  = ["generate", "create", "download", "export", "give", "provide",
+                "get", "make", "produce", "output", "save", "report"]
+    return any(p in msg for p in phrases) or any(a in msg for a in actions)
+
+
+# =============================================================
 # Helpers
 # =============================================================
 
@@ -1124,8 +1159,17 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    config      = SessionConfig(**session["config"])
+    config   = SessionConfig(**session["config"])
     provider = (config.provider or "claude").lower()
+
+    # If the user is requesting a PDF, append a strong override to the system
+    # prompt so the agent generates clean report content instead of refusing.
+    # This creates a one-shot local config — the stored session is NOT modified.
+    if _is_pdf_request(body.content):
+        config = SessionConfig(**{
+            **session["config"],
+            "system_prompt": config.system_prompt + _PDF_SYSTEM_INJECT,
+        })
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:
