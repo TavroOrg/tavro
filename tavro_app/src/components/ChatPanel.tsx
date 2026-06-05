@@ -448,7 +448,7 @@ function restoreMessages(stored: StoredMessage[], welcomeMsg: Message): Message[
 const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const navigate = useNavigate();
     const { viewType, viewData } = useChatContext();
-    const { activeCompany, nodes } = useBlueprint();
+    const { activeCompany, nodes, graph } = useBlueprint();
     const { sessions, activeSession, activeSessionId, createSession, switchSession, deleteSession, updateSessionMessages, updateSessionProvider } = useChatSessions();
     const { upsertUseCase, refresh: refreshUseCases } = useUseCases();
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -463,6 +463,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             category: n.category ?? 'custom',
             summary: n.summary?.slice(0, 120),
         })),
+        edges: graph ? (() => {
+            const nodeMap = new Map(graph.nodes.map(n => [n.id, n.label]));
+            return graph.edges.slice(0, 50).map(e => ({
+                sourceLabel: nodeMap.get(e.source) ?? e.source,
+                targetLabel: nodeMap.get(e.target) ?? e.target,
+                relType: e.rel_type,
+            }));
+        })() : undefined,
     } : null;
 
     // ── Provider state (per-session) ───────────────────────────────────────────
