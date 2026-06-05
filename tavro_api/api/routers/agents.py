@@ -289,6 +289,21 @@ def _tables_from_data_sources(data_sources: Optional[List[Dict[str, Any]]]) -> L
             column_name = _clean_text(entry.get("target_object_name") or entry.get("target_object_id"))
             if column_name and column_name not in item["columns"]:
                 item["columns"].append(column_name)
+        elif src_type == "agent" and tgt_type == "table":
+            table_id = _clean_text(entry.get("target_object_id"))
+            if not table_id:
+                continue
+            item = table_map.setdefault(
+                table_id,
+                {
+                    "table_id": table_id,
+                    "name": _clean_text(entry.get("target_object_name")),
+                    "columns": [],
+                    "tool_name": None,
+                    "tool_id": None,
+                },
+            )
+            item["name"] = item.get("name") or _clean_text(entry.get("target_object_name"))
         elif src_type == "tool" and tgt_type == "table":
             table_id = _clean_text(entry.get("target_object_id"))
             if not table_id:
@@ -680,6 +695,31 @@ async def create_agent(
                         "tid": tenant_id,
                         "tool_id": table_tool_id,
                         "tool_name": table.get("tool_name"),
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    },
+                )
+            else:
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_data_sources (
+                            tenant_id, agent_internal_id, agent_id,
+                            created_ts, updated_ts,
+                            source_object_id, source_object_name, source_object_type,
+                            target_object_id, target_object_name, target_object_type
+                        )
+                        VALUES (
+                            :tid, :iid, :aid,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                            :aid, :agent_name, 'Agent',
+                            :table_id, :table_name, 'Table'
+                        )
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "iid": agent_internal_id,
+                        "aid": agent_id,
+                        "agent_name": body.agent_name,
                         "table_id": table_id,
                         "table_name": table_name,
                     },

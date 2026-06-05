@@ -389,6 +389,9 @@ async def create_agent(
             }
         ]
       Use `tool_name` when the table belongs to a specific tool.
+      Omit `tool_name` for direct agent-owned tables. Direct tables are represented
+      as Agent -> Table -> Column; tool-owned tables are represented as
+      Agent -> Tool -> Table -> Column.
 
     - `columns`: Optional explicit column metadata for tables:
         [

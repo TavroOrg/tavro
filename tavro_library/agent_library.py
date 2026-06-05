@@ -714,6 +714,15 @@ class AgentMetadataExporter:
                     table_id,
                     {"table_id": table_id, "name": cls._clean_text(entry.get("source_object_name")), "tool_name": None, "tool_id": None},
                 )
+            elif src_type == "agent" and tgt_type == "table":
+                table_id = cls._clean_text(entry.get("target_object_id"))
+                if not table_id:
+                    continue
+                item = table_map.setdefault(
+                    table_id,
+                    {"table_id": table_id, "name": cls._clean_text(entry.get("target_object_name")), "tool_name": None, "tool_id": None},
+                )
+                item["name"] = item.get("name") or cls._clean_text(entry.get("target_object_name"))
             elif src_type == "tool" and tgt_type == "table":
                 table_id = cls._clean_text(entry.get("target_object_id"))
                 if not table_id:
@@ -1325,6 +1334,22 @@ class AgentMetadataExporter:
                     TIMESTAMP '{now}'
                 )
                 """)
+            else:
+                data_source_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{agent_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}',
+                    '{agent_id}',
+                    '{agent_name}',
+                    'Agent',
+                    '{table_id}',
+                    '{table_name}',
+                    'Table'
+                )
+                """)
 
             for column_name in columns_by_table.get(table_index, []):
                 clean_column = cls.sanitize(column_name)
@@ -1451,7 +1476,7 @@ class AgentMetadataExporter:
             )
             """)
         
-        # 5. data source insert (only if tools exist)
+        # 5. data source insert
         if data_source_values:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
