@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { mcpClient } from '../services/mcpClient';
-import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff, Download } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff, Download, Info } from 'lucide-react';
 import { generateRiskReportPDF } from '../utils/riskReportPDF';
 interface AgentRiskSummaryProps {
     agentId: string;
@@ -195,6 +195,31 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
 
                 {!loading && !error && data && headline && (
                     <div className="flex flex-col gap-4">
+                        {/* OWASP AIVSS attribution — mirrors the ServiceNow annotation */}
+                        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-blue-50 border border-blue-200 text-[11px] text-blue-700">
+                            <Info size={13} className="mt-0.5 flex-shrink-0 text-blue-500" />
+                            <span>
+                                Risk Scoring adapted from the{' '}
+                                <a
+                                    href="https://aivss.owasp.org/"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-violet-600 hover:text-violet-700 underline"
+                                >
+                                    OWASP AIVSS v0.5
+                                </a>{' '}
+                                framework. Licensed under{' '}
+                                <a
+                                    href="https://creativecommons.org/licenses/by-sa/4.0/"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-violet-600 hover:text-violet-700 underline"
+                                >
+                                    CC BY-SA 4.0
+                                </a>.
+                            </span>
+                        </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-[minmax(360px,1.25fr)_minmax(220px,0.75fr)] gap-6 max-w-[760px]">
                             <div className="flex flex-col gap-2">
                                 <span className="text-sm font-medium text-slate-700">Security</span>
