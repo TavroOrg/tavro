@@ -402,11 +402,11 @@ def _write_agent_card(
         skill_entries = []
         for s in (skills or []):
             if isinstance(s, str):
-                skill_entries.append({"id": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
+                skill_entries.append({"identifier": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
             elif isinstance(s, dict):
                 skill_id = s.get("identifier") or s.get("skill_id") or s.get("id") or s.get("name") or ""
                 skill_entries.append({
-                    "id": skill_id,
+                    "identifier": skill_id,
                     "name": s.get("name") or s.get("skill_name") or skill_id,
                     "description": s.get("description"),
                     "tags": s.get("tags") if isinstance(s.get("tags"), list) else [],
@@ -563,17 +563,16 @@ async def create_agent(
                         (tenant_id, skill_id, name, description,
                          tags, input_modes, output_modes,
                          created_ts, updated_ts)
-                    VALUES
-                        (:tid, :sid, :sname, :sdesc,
-                         :tags, :imodes, :omodes,
-                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        description = EXCLUDED.description,
-                        tags = EXCLUDED.tags,
-                        input_modes = EXCLUDED.input_modes,
-                        output_modes = EXCLUDED.output_modes,
-                        updated_ts = EXCLUDED.updated_ts
+                    SELECT
+                        :tid, :sid, :sname, :sdesc,
+                        :tags, :imodes, :omodes,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM {CORE}.skills
+                        WHERE COALESCE(tenant_id, '') = COALESCE(:tid, '')
+                          AND skill_id = :sid
+                    )
                 """),
                 {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
                  "sdesc": skill["description"], "tags": skill["tags"],
@@ -587,11 +586,6 @@ async def create_agent(
                     VALUES
                         (:tid, :sid, :sname, :aid, :aname,
                          :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
-                        skill_name = EXCLUDED.skill_name,
-                        agent_name = EXCLUDED.agent_name,
-                        agent_internal_id = EXCLUDED.agent_internal_id,
-                        updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
                  "aid": agent_id, "aname": body.agent_name, "iid": agent_internal_id},
@@ -732,11 +726,8 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
         skill_result = await db.execute(
             text(f"""
                 SELECT
-                    rel.skill_id AS id,
                     rel.skill_id AS identifier,
-                    rel.skill_id AS skill_id,
                     COALESCE(s.name, rel.skill_name, rel.skill_id) AS name,
-                    COALESCE(s.name, rel.skill_name, rel.skill_id) AS skill_name,
                     s.description,
                     COALESCE(s.tags, ARRAY[]::text[]) AS tags,
                     COALESCE(s.input_modes, ARRAY[]::text[]) AS "inputModes",

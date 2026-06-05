@@ -377,7 +377,7 @@ class AgentMetadataExporter:
                     skill_rows = cls.execute_select(
                         f"""
                         SELECT DISTINCT ON (LOWER(TRIM(rel.skill_id)))
-                            rel.skill_id AS id,
+                            rel.skill_id AS identifier,
                             COALESCE(s.name, rel.skill_name, rel.skill_id) AS name,
                             s.description,
                             s.tags,
@@ -397,7 +397,7 @@ class AgentMetadataExporter:
                     )
                     db_skills = [
                         {
-                            "id": r.get("id"),
+                            "identifier": r.get("identifier"),
                             "name": r.get("name"),
                             "description": r.get("description"),
                             "tags": r.get("tags") if isinstance(r.get("tags"), list) else [],
@@ -405,7 +405,7 @@ class AgentMetadataExporter:
                             "outputModes": r.get("output_modes") if isinstance(r.get("output_modes"), list) else [],
                         }
                         for r in skill_rows
-                        if r.get("id")
+                        if r.get("identifier")
                     ]
                     if db_skills:
                         local_card["skills"] = db_skills
@@ -763,11 +763,11 @@ class AgentMetadataExporter:
             skill_entries = []
             for s in (skills or []):
                 if isinstance(s, str):
-                    skill_entries.append({"id": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
+                    skill_entries.append({"identifier": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
                 elif isinstance(s, dict):
                     skill_id = s.get("identifier") or s.get("skill_id") or s.get("id") or s.get("name") or ""
                     skill_entries.append({
-                        "id": skill_id,
+                        "identifier": skill_id,
                         "name": s.get("name") or s.get("skill_name") or skill_id,
                         "description": s.get("description"),
                         "tags": s.get("tags") if isinstance(s.get("tags"), list) else [],
@@ -1034,6 +1034,7 @@ class AgentMetadataExporter:
                     if not skill_name:
                         continue
                     skill_id = str(uuid.uuid4())
+                    skill_dedupe_key = skill_name.lower()
                     skill_desc = ""
                     tags, input_modes, output_modes = [], [], []
                 elif isinstance(skill, dict):
@@ -1047,6 +1048,7 @@ class AgentMetadataExporter:
                     skill_id = explicit_id or str(uuid.uuid4())
                     if not skill_name:
                         skill_name = skill_id
+                    skill_dedupe_key = (explicit_id or skill_name).lower()
                     skill_desc = str(skill.get("description") or "").strip()
                     tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
                     input_modes = skill.get("inputModes") or skill.get("input_modes") or []
@@ -1056,10 +1058,9 @@ class AgentMetadataExporter:
                 else:
                     continue
 
-                skill_key = skill_name.lower()
-                if skill_key in seen_skill_ids:
+                if skill_dedupe_key in seen_skill_ids:
                     continue
-                seen_skill_ids.add(skill_key)
+                seen_skill_ids.add(skill_dedupe_key)
 
                 sid = cls.sanitize(skill_id)
                 sname = cls.sanitize(skill_name)
@@ -1071,18 +1072,16 @@ class AgentMetadataExporter:
                     tags, input_modes, output_modes,
                     created_ts, updated_ts
                 )
-                VALUES (
+                SELECT
                     {tenant_id_lit}, '{sid}', '{sname}', '{sdesc}',
                     {_pg_array(tags)}, {_pg_array(input_modes)}, {_pg_array(output_modes)},
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM {cls.CORE_DB_NAME}.skills
+                    WHERE COALESCE(tenant_id, '') = COALESCE({tenant_id_lit}, '')
+                      AND skill_id = '{sid}'
                 )
-                ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    description = EXCLUDED.description,
-                    tags = EXCLUDED.tags,
-                    input_modes = EXCLUDED.input_modes,
-                    output_modes = EXCLUDED.output_modes,
-                    updated_ts = EXCLUDED.updated_ts
                 """)
 
                 queries.append(f"""
@@ -1096,11 +1095,6 @@ class AgentMetadataExporter:
                     '{agent_internal_id}',
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
                 )
-                ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
-                    skill_name = EXCLUDED.skill_name,
-                    agent_name = EXCLUDED.agent_name,
-                    agent_internal_id = EXCLUDED.agent_internal_id,
-                    updated_ts = EXCLUDED.updated_ts
                 """)
 
         # 7. Execute

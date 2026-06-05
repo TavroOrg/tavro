@@ -375,7 +375,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             "name": str,         # required — human-readable skill name
             "description": str   # optional — what the skill does
         }
-    Skills are persisted to core.skills and linked to the agent in core.agent_skills.
+    Skills are registered as part of the agent metadata.
 
     All inputs are validated before agent creation. On success, the function returns a
     standardized response containing the agent’s metadata. In case of validation or
@@ -785,88 +785,6 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
         )
 
         return result
-
-    except ValueError as ve:
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-@core.tool(name="update_agent_skill")
-async def update_agent_skill(
-    original_prompt: str,
-    *,
-    agent_id: Optional[str] = None,
-    agent_name: Optional[str] = None,
-    skill_id: Optional[str] = None,
-    skill_name: Optional[str] = None,
-    description: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-    input_modes: Optional[List[str]] = None,
-    output_modes: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Add or update one skill linked to an existing AI agent.
-
-    Use this tool for requests to rename a skill, update a skill description,
-    add or replace skill tags, or add or replace skill input/output modes.
-
-    Args:
-        original_prompt (str): REQUIRED. Exact user message verbatim.
-        agent_id (Optional[str]): Agent identifier. Prefer this when known.
-        agent_name (Optional[str]): Agent name, used to resolve the agent when agent_id is unknown.
-        skill_id (Optional[str]): Existing stable skill identifier. For renames, pass the current skill id here.
-        skill_name (Optional[str]): Skill display name. For renames, pass the new name here.
-        description (Optional[str]): Skill description.
-        tags (Optional[List[str]]): Tags to store in core.skills.tags.
-        input_modes (Optional[List[str]]): Inputs accepted by the skill, stored in core.skills.input_modes.
-        output_modes (Optional[List[str]]): Outputs produced by the skill, stored in core.skills.output_modes.
-
-    Returns:
-        Dict[str, Any]: Update response or error response.
-    """
-    print("Update agent skill requested")
-
-    try:
-        if not skill_id and not skill_name:
-            raise ValueError("Either skill_id or skill_name is required.")
-
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-
-        skill_payload: Dict[str, Any] = {}
-        if skill_id:
-            skill_payload["skill_id"] = skill_id
-            skill_payload["identifier"] = skill_id
-            skill_payload["id"] = skill_id
-        if skill_name:
-            skill_payload["name"] = skill_name
-            skill_payload["skill_name"] = skill_name
-        if description is not None:
-            skill_payload["description"] = description
-        if tags is not None:
-            skill_payload["tags"] = tags
-        if input_modes is not None:
-            skill_payload["inputModes"] = input_modes
-        if output_modes is not None:
-            skill_payload["outputModes"] = output_modes
-
-        log_tool_call(
-            "update_agent_skill",
-            original_prompt,
-            {
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "skill": skill_payload,
-            },
-            tenant_id,
-        )
-
-        return AgentMetadataExporter.update_agent(
-            agent_id=agent_id,
-            agent_name=agent_name,
-            skills=[skill_payload],
-            tenant_id=str(tenant_id),
-        )
 
     except ValueError as ve:
         return {"error": "VALIDATION_ERROR", "details": str(ve)}

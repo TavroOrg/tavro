@@ -56,7 +56,7 @@ const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills
         .map((skill: any) => {
             if (typeof skill === 'string') {
                 return {
-                    id: skill,
+                    identifier: skill,
                     name: skill,
                     description: null,
                     tags: [],
@@ -65,8 +65,8 @@ const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills
                 };
             }
 
-            const id = skill?.id ?? skill?.identifier ?? skill?.skill_id ?? skill?.name ?? null;
-            const name = skill?.name ?? skill?.skill_name ?? skill?.id ?? skill?.skill_id ?? null;
+            const identifier = skill?.identifier ?? skill?.id ?? skill?.skill_id ?? skill?.name ?? null;
+            const name = skill?.name ?? skill?.skill_name ?? skill?.identifier ?? skill?.id ?? skill?.skill_id ?? null;
             const inputModes = Array.isArray(skill?.inputModes)
                 ? skill.inputModes
                 : (Array.isArray(skill?.input_modes) ? skill.input_modes : []);
@@ -75,18 +75,15 @@ const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills
                 : (Array.isArray(skill?.output_modes) ? skill.output_modes : []);
 
             return {
-                id,
-                identifier: skill?.identifier ?? id,
-                skill_id: skill?.skill_id ?? id,
+                identifier,
                 name,
-                skill_name: skill?.skill_name ?? name,
                 description: skill?.description ?? null,
                 tags: Array.isArray(skill?.tags) ? skill.tags : [],
                 inputModes,
                 outputModes,
             };
         })
-        .filter((skill: any) => hasNonBlankText(skill.id ?? skill.skill_id ?? skill.identifier ?? skill.name));
+        .filter((skill: any) => hasNonBlankText(skill.identifier ?? skill.name));
 };
 
 const firstNonEmptySkills = (...payloads: any[]): NonNullable<AgentData['skills']> => {

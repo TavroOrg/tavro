@@ -48,7 +48,7 @@ function stringArray(value: unknown): string[] {
 const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
     const tools = toArray<AgentTool>((agent as any).tool);
     const skills = toArray<AgentSkill>((agent as any).skills).filter(skill =>
-        displayText(skill.name ?? skill.skill_name ?? skill.id ?? skill.skill_id ?? skill.identifier, '').trim()
+        displayText(skill.name ?? skill.skill_name ?? skill.identifier ?? skill.id ?? skill.skill_id, '').trim()
     );
     const dataSources = toArray<AgentDataSource>((agent as any).data_source);
     const relationships = dataSources.filter(
@@ -138,20 +138,19 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {skills.map((skill, idx) => {
                                 const label = displayText(
-                                    skill.name ?? skill.skill_name ?? skill.id ?? skill.skill_id ?? skill.identifier,
+                                    skill.name ?? skill.skill_name ?? skill.identifier ?? skill.id ?? skill.skill_id,
                                     `Skill ${idx + 1}`,
                                 );
                                 const inputModes = stringArray(skill.inputModes ?? skill.input_modes);
                                 const outputModes = stringArray(skill.outputModes ?? skill.output_modes);
-                                const tags = stringArray(skill.tags);
 
                                 return (
-                                    <div key={skill.id ?? skill.skill_id ?? skill.identifier ?? idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
+                                    <div key={skill.identifier ?? skill.id ?? skill.skill_id ?? idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
                                         <span className="font-bold text-sm text-slate-800 break-words">{label}</span>
                                         {skill.description && (
                                             <span className="text-xs text-slate-500 leading-relaxed block mt-1">{displayText(skill.description, '')}</span>
                                         )}
-                                        {(inputModes.length > 0 || outputModes.length > 0 || tags.length > 0) && (
+                                        {(inputModes.length > 0 || outputModes.length > 0) && (
                                             <div className="flex flex-wrap gap-1 mt-2">
                                                 {inputModes.map(mode => (
                                                     <span key={`in-${mode}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 border border-emerald-100 text-emerald-700 uppercase">
@@ -161,11 +160,6 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent }) => {
                                                 {outputModes.map(mode => (
                                                     <span key={`out-${mode}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-50 border border-blue-100 text-blue-700 uppercase">
                                                         Out: {mode}
-                                                    </span>
-                                                ))}
-                                                {tags.map(tag => (
-                                                    <span key={`tag-${tag}`} className="text-[9px] font-bold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 uppercase">
-                                                        {tag}
                                                     </span>
                                                 ))}
                                             </div>
