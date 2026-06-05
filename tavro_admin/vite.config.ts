@@ -10,6 +10,10 @@ export default defineConfig({
         target: 'http://localhost:7000',
         changeOrigin: true,
       },
+      '/runtime/': {
+        target: 'http://localhost:7000',
+        changeOrigin: true,
+      },
     },
   },
 })

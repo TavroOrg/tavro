@@ -8,8 +8,13 @@ export interface ConfigEntry {
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const token = localStorage.getItem('tavro_admin_access_token');
     const res = await fetch(`${BASE}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+        headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(init.headers ?? {}),
+        },
         ...init,
     });
     if (!res.ok) {

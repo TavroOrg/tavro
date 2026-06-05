@@ -12,13 +12,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy import text
 
 from api.database import AsyncSessionLocal
 from api.routers import llm_keys, config, connectors
+from api.dependencies.auth import require_portal_admin
 
 # ── Admin schema DDL paths ─────────────────────────────────────────────────────
 
@@ -84,9 +85,32 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/v1/admin/me", tags=["Auth"])
+async def get_me(auth: dict = Depends(require_portal_admin)):
+    """Verifies the bearer token via ZITADEL userinfo and confirms portal_admin role.
+    Used by the frontend after token exchange to gate dashboard access."""
+    return {
+        "email": auth["claims"].get("email"),
+        "tenant_id": auth["tenant_id"],
+    }
+
+
 # ── Serve React static files (SPA fallback) ───────────────────────────────────
-# This must come LAST so API routes take priority.
+# Must come LAST so API routes take priority.
+# Uses a catch-all route instead of StaticFiles so React Router paths like
+# /auth/callback resolve to index.html rather than 404.
 
 _STATIC_DIR = Path(__file__).parent.parent / "static"
-if _STATIC_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
+_STATIC_ROOT = _STATIC_DIR.resolve()
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    target = (_STATIC_DIR / full_path).resolve()
+    # Guard against path traversal
+    if target.is_file() and str(target).startswith(str(_STATIC_ROOT)):
+        return FileResponse(str(target))
+    index = _STATIC_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(str(index))
+    raise HTTPException(status_code=404)

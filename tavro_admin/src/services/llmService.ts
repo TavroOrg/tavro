@@ -34,8 +34,13 @@ export const PROVIDER_HINTS: Record<LLMProvider, string> = {
 
 const BASE = '/api/v1/admin/llm-keys';
 
+function authHeaders(): HeadersInit {
+    const token = localStorage.getItem('tavro_admin_access_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function fetchLLMKeys(): Promise<LLMKeyRecord[]> {
-    const res = await fetch(BASE);
+    const res = await fetch(BASE, { headers: authHeaders() });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
 }
@@ -48,7 +53,7 @@ export async function createLLMKey(
 ): Promise<LLMKeyRecord> {
     const res = await fetch(BASE, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ name: PROVIDER_LABELS[provider], provider, model, api_key: apiKey, ...azureFields }),
     });
     if (!res.ok) throw new Error((await res.json()).detail ?? 'Failed to save key');
@@ -61,7 +66,7 @@ export async function updateLLMKey(
 ): Promise<LLMKeyRecord> {
     const res = await fetch(`${BASE}/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(patch),
     });
     if (!res.ok) throw new Error((await res.json()).detail ?? 'Failed to update key');
@@ -69,6 +74,6 @@ export async function updateLLMKey(
 }
 
 export async function deleteLLMKey(id: string): Promise<void> {
-    const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE}/${id}`, { method: 'DELETE', headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to delete key');
 }

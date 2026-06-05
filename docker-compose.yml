@@ -165,11 +165,18 @@ services:
       RISK_CLASSIFY_URL:     http://tavro-api:8000/api/v1/risk/classify-risk
       RISK_CONCURRENCY:      "2"
       RISK_TIMEOUT_S:        "600"
+      # Used by the backend auth dependency to validate tokens against ZITADEL's userinfo endpoint
+      ZITADEL_ISSUER:        ${VITE_ZITADEL_ISSUER}
+      # Docker-internal URL to reach ZITADEL from inside the container network
+      ZITADEL_INTERNAL_URL:  http://zitadel-api:8080
+      ZITADEL_INTERNAL_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
     ports:
       - "7000:7000"
     volumes:
       - ./sql:/sql:ro
       - ./tavro_api/agent_cards:/app/agent_cards
+      # Runtime auth config written by zitadel-configure-app; served at /runtime/tavro-admin-runtime-config.json
+      - tavro_runtime_config:/app/static/runtime:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:7000/health || exit 1"]
       interval: 20s
@@ -430,6 +437,9 @@ services:
       ZITADEL_APP_NAME: ${ZITADEL_APP_NAME:-tavro-mcp}
       ZITADEL_APP_REDIRECT_URIS: ${ZITADEL_APP_REDIRECT_URIS}
       ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS: ${ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS}
+      ZITADEL_ADMIN_ROLE: ${ZITADEL_ADMIN_ROLE:-portal_admin}
+      VITE_ADMIN_ZITADEL_SCOPE: ${VITE_ADMIN_ZITADEL_SCOPE:-openid profile email urn:zitadel:iam:user:resourceowner urn:zitadel:iam:org:project:roles}
+      TAVRO_ADMIN_RUNTIME_CONFIG_FILE: /runtime/tavro-admin-runtime-config.json
     volumes:
       - ./iam:/work/iam:ro
       - zitadel-bootstrap:/zitadel/bootstrap:ro

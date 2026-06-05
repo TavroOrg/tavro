@@ -1,34 +1,60 @@
-import React, { useState } from 'react';
-import { ShieldCheck, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-
-const ADMIN_EMAIL    = 'admin@tavro.ai';
-const ADMIN_PASSWORD = 'tavro_admin_2024';
+import React, { useEffect, useState } from 'react';
+import { ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
+import { generatePKCE } from '../services/pkce';
+import { loadAuthConfig } from '../services/authConfig';
 
 const AdminLogin: React.FC = () => {
-    const [email,    setEmail]    = useState('');
-    const [password, setPassword] = useState('');
-    const [loading,  setLoading]  = useState(false);
-    const [error,    setError]    = useState<string | null>(null);
-    const navigate = useNavigate();
+    const [error, setError] = useState<string | null>(null);
 
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setLoading(true);
-        await new Promise(r => setTimeout(r, 600));
-        if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-            localStorage.setItem('tavro_admin_auth', 'true');
-            navigate('/');
-        } else {
-            setError('Invalid credentials. Please try again.');
-            setLoading(false);
-        }
-    };
+    useEffect(() => {
+        const redirectToZitadel = async () => {
+            const authConfig = await loadAuthConfig();
+            const { zitadelIssuer: issuer, zitadelClientId: clientId, zitadelRedirectPath: redirectPath, zitadelScope: scope } = authConfig;
+            const redirectUri = `${window.location.origin}${redirectPath}`;
+
+            if (!issuer || !clientId) {
+                setError('ZITADEL login is not configured. Set VITE_ZITADEL_ISSUER and VITE_ZITADEL_CLIENT_ID.');
+                return;
+            }
+
+            const staleKeys = [
+                'tavro_admin_pkce_verifier', 'tavro_admin_oidc_state',
+                'tavro_admin_oidc_issuer', 'tavro_admin_oidc_client_id',
+                'tavro_admin_auth_redirect_uri', 'tavro_admin_access_token',
+                'tavro_admin_id_token', 'tavro_admin_refresh_token',
+                'tavro_admin_tenant_id', 'tavro_admin_auth',
+            ];
+            staleKeys.forEach((k) => localStorage.removeItem(k));
+
+            const { verifier, challenge } = await generatePKCE();
+            const state = crypto.randomUUID();
+
+            localStorage.setItem('tavro_admin_pkce_verifier', verifier);
+            localStorage.setItem('tavro_admin_oidc_issuer', issuer);
+            localStorage.setItem('tavro_admin_oidc_client_id', clientId);
+            localStorage.setItem('tavro_admin_auth_redirect_uri', redirectUri);
+            localStorage.setItem('tavro_admin_oidc_state', state);
+
+            const authUrl = new URL(`${issuer}/oauth/v2/authorize`);
+            authUrl.searchParams.set('client_id', clientId);
+            authUrl.searchParams.set('response_type', 'code');
+            authUrl.searchParams.set('redirect_uri', redirectUri);
+            authUrl.searchParams.set('scope', scope);
+            authUrl.searchParams.set('code_challenge', challenge);
+            authUrl.searchParams.set('code_challenge_method', 'S256');
+            authUrl.searchParams.set('state', state);
+
+            window.location.href = authUrl.toString();
+        };
+
+        redirectToZitadel().catch((err: Error) => {
+            setError(err.message || 'Unable to start ZITADEL login.');
+        });
+    }, []);
 
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
-            <div className="w-full max-w-md animate-fade-in">
+            <div className="w-full max-w-md">
                 <div className="flex flex-col items-center mb-10">
                     <div className="p-4 bg-blue-600 rounded-2xl shadow-2xl shadow-blue-500/20 mb-4">
                         <ShieldCheck size={40} className="text-white" />
@@ -40,62 +66,19 @@ const AdminLogin: React.FC = () => {
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
                     <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
 
-                    <div className="mb-8">
-                        <h2 className="text-xl font-bold text-white mb-2">Sign in</h2>
-                        <p className="text-slate-400 text-sm leading-relaxed">
-                            Enter your admin credentials to access the management portal.
-                        </p>
-                    </div>
-
-                    <form onSubmit={handleLogin} className="space-y-6">
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Email</label>
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={e => setEmail(e.target.value)}
-                                placeholder="admin@tavro.ai"
-                                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3.5 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-                                disabled={loading}
-                                required
-                            />
+                    {!error ? (
+                        <div className="flex flex-col items-center gap-4 py-4">
+                            <Loader2 size={36} className="animate-spin text-blue-500" />
+                            <p className="text-sm font-semibold text-slate-300">Redirecting to ZITADEL...</p>
+                            <p className="text-xs text-slate-500">You will be redirected to sign in.</p>
                         </div>
-
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Password</label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                                placeholder="••••••••"
-                                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3.5 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-                                disabled={loading}
-                                required
-                            />
+                    ) : (
+                        <div className="flex flex-col items-center gap-4 py-4">
+                            <AlertCircle size={36} className="text-red-400" />
+                            <h2 className="text-lg font-bold text-white">Login configuration required</h2>
+                            <p className="text-sm text-slate-400 text-center leading-relaxed">{error}</p>
                         </div>
-
-                        {error && (
-                            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex gap-3 items-start">
-                                <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={18} />
-                                <p className="text-xs font-medium text-red-200 leading-normal">{error}</p>
-                            </div>
-                        )}
-
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-500/10 transition-all flex items-center justify-center gap-2 group"
-                        >
-                            {loading ? (
-                                <Loader2 size={20} className="animate-spin text-white/50" />
-                            ) : (
-                                <>
-                                    <span>Sign In</span>
-                                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                                </>
-                            )}
-                        </button>
-                    </form>
+                    )}
 
                     <div className="mt-6 pt-5 border-t border-white/10 text-center text-xs text-slate-500">
                         Restricted access. Authorized personnel only.

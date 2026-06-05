@@ -187,13 +187,33 @@ const AdminConnectorsPage: React.FC = () => {
         }));
     };
 
+    // Resolve tenant_id: prefer what was stored at login, fall back to decoding
+    // the stored id_token so existing sessions don't need a re-login.
+    const tenantId = (() => {
+        const stored = localStorage.getItem('tavro_admin_tenant_id');
+        if (stored) return stored;
+        try {
+            const idToken = localStorage.getItem('tavro_admin_id_token');
+            if (!idToken) return '';
+            const payload = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            // ZITADEL v2+: nested object
+            const ro = payload['urn:zitadel:iam:user:resourceowner'];
+            if (ro && typeof ro === 'object' && ro.id) return String(ro.id);
+            // Flat keys
+            return payload['urn:zitadel:iam:user:resourceowner:id']
+                || payload['urn:zitadel:iam:org:id']
+                || payload['org_id']
+                || '';
+        } catch { return ''; }
+    })();
+
     const getGeminiAuthUrl = async () => {
         const creds = credentials['gemini'] ?? {};
         setGeminiAuthUrl({ loading: true });
         try {
             const res = await fetch('/api/v1/admin/connectors/gemini/auth-url', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...(tenantId ? { 'x-tenant-id': tenantId } : {}) },
                 body: JSON.stringify({
                     client_id:     creds.client_id     ?? '',
                     client_secret: creds.client_secret ?? '',
@@ -216,9 +236,14 @@ const AdminConnectorsPage: React.FC = () => {
         setRunState(prev => ({ ...prev, [connector.id]: { status: 'running' } }));
 
         try {
-            const res = await fetch(`/api/v1/admin/connectors/${connector.id}/run`, {
+            const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
+        const res = await fetch(`/api/v1/admin/connectors/${connector.id}/run`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(tenantId    ? { 'x-tenant-id':    tenantId }              : {}),
+                    ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
+                },
                 body: JSON.stringify({ config: credentials[connector.id] ?? {} }),
             });
             const data: RunResult = await res.json();
