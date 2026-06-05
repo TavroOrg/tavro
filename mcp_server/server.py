@@ -351,6 +351,7 @@ async def create_agent(
     instruction: str,
     tools: Optional[List[Dict[str, Any]]] = None,
     tables: Optional[List[Dict[str, Any]]] = None,
+    columns: Optional[List[Dict[str, Any]]] = None,
     data_source: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
@@ -435,6 +436,7 @@ async def create_agent(
                 "instruction": instruction,
                 "tools": tools,
                 "tables": tables,
+                "columns": columns,
                 "data_source": data_source,
                 "knowledge_source": knowledge_source,
             },
@@ -447,6 +449,7 @@ async def create_agent(
             instruction=instruction,
             tools=tools,
             tables=tables,
+            columns=columns,
             data_source=data_source,
             knowledge_source=knowledge_source,
             tenant_id=tenant_id,
@@ -754,7 +757,7 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, tables: Optional[List[Dict[str, Any]]] = None, columns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, tables: Optional[List[Dict[str, Any]]] = None, columns: Optional[List[Dict[str, Any]]] = None, data_source: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Update an existing AI agent’s configuration.
 
@@ -811,6 +814,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "knowledge_source": knowledge_source,
                 "tables": tables,
                 "columns": columns,
+                "data_source": data_source,
             },
             tenant_id,
         )
@@ -824,6 +828,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             knowledge_source=knowledge_source,
             tables=tables,
             columns=columns,
+            data_source=data_source,
             tenant_id=str(tenant_id),
         )
 

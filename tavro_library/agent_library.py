@@ -432,6 +432,39 @@ class AgentMetadataExporter:
                 except Exception as ds_overlay_err:
                     print(f"[get_agent_card] Data source overlay failed (returning card as-is): {ds_overlay_err}")
 
+                # Overlay tool list from DB so tools added via update_agent are visible.
+                try:
+                    tool_rows = cls.execute_select(
+                        f"""
+                        SELECT tool_id, tool_name, tool_description,
+                               delegation_possible, allowed_delegates,
+                               input_schema_json_text, output_schema_json_text,
+                               default_config_json_text
+                        FROM {cls.CORE_DB_NAME}.agent_tools
+                        WHERE agent_id = %s
+                        ORDER BY created_ts NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if tool_rows:
+                        local_card["tool"] = [
+                            {
+                                "identifier": r.get("tool_id"),
+                                "name": r.get("tool_name"),
+                                "description": r.get("tool_description"),
+                                "delegation_possible": r.get("delegation_possible"),
+                                "allowed_delegates": r.get("allowed_delegates"),
+                                "parameter_name": None,
+                                "parameter_type": None,
+                                "default_value": r.get("default_config_json_text"),
+                                "input_schema": r.get("input_schema_json_text"),
+                                "output_schema": r.get("output_schema_json_text"),
+                            }
+                            for r in tool_rows
+                        ]
+                except Exception as tool_overlay_err:
+                    print(f"[get_agent_card] Tool overlay failed (returning card as-is): {tool_overlay_err}")
+
                 return local_card
 
             # ---------- 7. Not found ----------
@@ -716,7 +749,7 @@ class AgentMetadataExporter:
                     existing_columns.add(column_key)
 
         for item in normalized.values():
-            item["table_id"] = item.get("table_id") or str(uuid.uuid4())
+            item["table_id"] = str(uuid.uuid4())
         return list(normalized.values())
     
     @staticmethod
@@ -913,7 +946,7 @@ class AgentMetadataExporter:
                     "uses_pci": None,
                 })
                 for column_name in table.get("columns") or []:
-                    col_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{column_name}"))
+                    col_id = str(uuid.uuid4())
                     data_source_entries.append({
                         "relationship_id": None,
                         "parent_relationship_id": None,
@@ -1013,6 +1046,7 @@ class AgentMetadataExporter:
         instruction: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         tables: Optional[List[Dict[str, Any]]] = None,
+        columns: Optional[List[Dict[str, Any]]] = None,
         data_source: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tenant_id: Optional[str] = None
@@ -1042,6 +1076,22 @@ class AgentMetadataExporter:
         tool_ids_for_card: List[str] = []
         tool_name_to_id: Dict[str, str] = {}
         tables_payload = cls._normalize_tables_payload(tables, tools, data_source)
+
+        # Merge top-level columns into their matching table entries
+        for col_entry in (columns or []):
+            if not isinstance(col_entry, dict):
+                continue
+            col_name = str(col_entry.get("name") or "").strip()
+            if not col_name:
+                continue
+            match_id = str(col_entry.get("table_id") or "").strip()
+            match_name = str(col_entry.get("table_name") or "").strip().lower()
+            for tbl in tables_payload:
+                if (match_id and tbl.get("table_id") == match_id) or \
+                   (match_name and str(tbl.get("name") or "").strip().lower() == match_name):
+                    if col_name not in (tbl.get("columns") or []):
+                        tbl.setdefault("columns", []).append(col_name)
+                    break
 
         # 1. agents table
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
@@ -1152,7 +1202,7 @@ class AgentMetadataExporter:
             if tool_name_key and not table.get("tool_id"):
                 table["tool_id"] = tool_name_to_id.get(tool_name_key)
 
-            table_id = cls.sanitize(table.get("table_id") or str(uuid.uuid4()))
+            table_id = str(uuid.uuid4())
             table["table_id"] = table_id
             table_name = cls.sanitize(table.get("name") or "")
             table_tool_id = cls.sanitize(table.get("tool_id") or "")
@@ -1215,7 +1265,7 @@ class AgentMetadataExporter:
                 clean_column = cls.sanitize(column_name)
                 if not clean_column:
                     continue
-                column_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{clean_column}"))
+                column_id = str(uuid.uuid4())
                 column_values.append(f"""
                 (
                     '{column_id}',
@@ -1264,10 +1314,6 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(table_values)}
-            ON CONFLICT (table_id)
-            DO UPDATE SET
-                name = COALESCE(EXCLUDED.name, {cls.CORE_DB_NAME}.tables.name),
-                updated_ts = EXCLUDED.updated_ts
             """)
 
         if column_values:
@@ -1281,9 +1327,6 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(column_values)}
-            ON CONFLICT (column_id)
-            DO UPDATE SET
-                updated_ts = EXCLUDED.updated_ts
             """)
 
         if agent_table_values:
@@ -1295,11 +1338,6 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(agent_table_values)}
-            ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
-                agent_name = EXCLUDED.agent_name,
-                agent_internal_id = EXCLUDED.agent_internal_id,
-                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.agent_tables.table_name),
-                updated_ts = EXCLUDED.updated_ts
             """)
 
         if tool_table_values:
@@ -1311,10 +1349,6 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(tool_table_values)}
-            ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
-                tool_name = COALESCE(EXCLUDED.tool_name, {cls.CORE_DB_NAME}.tool_tables.tool_name),
-                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.tool_tables.table_name),
-                updated_ts = EXCLUDED.updated_ts
             """)
 
         if table_column_values:
@@ -1325,10 +1359,6 @@ class AgentMetadataExporter:
             )
             VALUES
             {",".join(table_column_values)}
-            ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
-                table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.table_columns.table_name),
-                column_id = COALESCE(EXCLUDED.column_id, {cls.CORE_DB_NAME}.table_columns.column_id),
-                updated_ts = EXCLUDED.updated_ts
             """)
 
         # 4. knowledge sources (ONLY name + description)
@@ -2125,6 +2155,7 @@ class AgentMetadataExporter:
         knowledge_source: Optional[Dict[str, str]] = None,
         tables: Optional[List[Dict[str, Any]]] = None,
         columns: Optional[List[Dict[str, Any]]] = None,
+        data_source: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -2154,6 +2185,7 @@ class AgentMetadataExporter:
             raise ValueError(f"Agent '{agent_id}' not found.")
 
         agent_internal_id = rows[0].get("agent_internal_id")
+        current_agent_name = cls.sanitize(str(rows[0].get("agent_name") or "").strip())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Batch updates into single transaction
@@ -2169,18 +2201,48 @@ class AgentMetadataExporter:
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
 
         if tools:
-            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools WHERE agent_id = '{agent_id}' {tenant_where}")
-            vals = []
+            tool_rows = []
+            tool_ds_rows = []
             for t in tools:
-                vals.append(f"({tenant_val}'{agent_internal_id}', '{agent_id}', '{cls.sanitize(t.get('name', ''))}', '{cls.sanitize(t.get('description', ''))}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
-            if vals:
-                cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools ({tenant_col}agent_internal_id, agent_id, tool_name, tool_description, created_ts, updated_ts) VALUES {','.join(vals)}")
+                tool_id = str(uuid.uuid4())
+                t_name = cls.sanitize(t.get("name", ""))
+                t_desc = cls.sanitize(t.get("description", ""))
+                tool_rows.append(
+                    f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
+                    f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                )
+                tool_ds_rows.append(
+                    f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                    f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
+                    f"'{agent_id}', NULL, '{current_agent_name}', 'Agent', "
+                    f"'{tool_id}', NULL, '{t_name}', 'Tool')"
+                )
+            cls.execute_dml(
+                f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
+                f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, tool_description, created_ts, updated_ts) "
+                f"VALUES {','.join(tool_rows)}"
+            )
+            cls.execute_dml(
+                f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                f"({tenant_col}agent_internal_id, agent_id, "
+                f"access_level, contains_pii, contains_phi, contains_pci, "
+                f"created_ts, updated_ts, "
+                f"source_object_id, source_object_domain, source_object_name, source_object_type, "
+                f"target_object_id, target_object_domain, target_object_name, target_object_type) "
+                f"VALUES {','.join(tool_ds_rows)}"
+            )
 
         if knowledge_source:
             cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
+
+        # Merge data_source entries into tables so both paths produce the same result
+        if data_source:
+            extra = cls._normalize_tables_payload(None, None, data_source)
+            tables = list(tables or []) + extra
 
         tables_updated = 0
         for table in (tables or []):
@@ -2190,56 +2252,147 @@ class AgentMetadataExporter:
             if not new_name:
                 continue
 
-            # Resolve table_id: prefer explicit table_id, fall back to old_name or current name lookup
-            table_id = cls.sanitize(str(table.get("table_id") or "").strip())
-            if not table_id:
-                lookup_name = cls.sanitize(str(table.get("old_name") or table.get("name") or "").strip())
-                if lookup_name:
+            old_name = cls.sanitize(str(table.get("old_name") or "").strip())
+
+            if old_name:
+                # ── RENAME path ──────────────────────────────────────────────
+                table_id = cls.sanitize(str(table.get("table_id") or "").strip())
+                if not table_id:
                     found = cls.execute_select(
                         f"SELECT table_id FROM {cls.CORE_DB_NAME}.tables "
-                        f"WHERE LOWER(name) = LOWER('{lookup_name}') {tenant_where} LIMIT 1"
+                        f"WHERE LOWER(name) = LOWER('{old_name}') {tenant_where} LIMIT 1"
                     )
                     if found:
                         table_id = cls.sanitize(str(found[0].get("table_id") or "").strip())
+                if not table_id:
+                    continue
 
-            if not table_id:
-                continue
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.tables SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}' AND agent_id = '{agent_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.tool_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.table_columns SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND target_object_id = '{table_id}' "
+                    f"AND LOWER(target_object_type) = 'table'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"SET source_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND source_object_id = '{table_id}' "
+                    f"AND LOWER(source_object_type) = 'table'"
+                )
 
-            # Update core.tables
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.tables SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE table_id = '{table_id}'"
-            )
-            # Propagate new name to all three relationship tables
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agent_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE table_id = '{table_id}' AND agent_id = '{agent_id}'"
-            )
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.tool_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE table_id = '{table_id}'"
-            )
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.table_columns SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE table_id = '{table_id}'"
-            )
-            # Propagate new name to agent_data_sources (used by the UI lineage view)
-            # Table appears as a target in Tool→Table edges
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
-                f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
-                f"AND target_object_id = '{table_id}' "
-                f"AND LOWER(target_object_type) = 'table'"
-            )
-            # Table appears as a source in Table→Column edges
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
-                f"SET source_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
-                f"AND source_object_id = '{table_id}' "
-                f"AND LOWER(source_object_type) = 'table'"
-            )
+            else:
+                # ── INSERT path (new table) ───────────────────────────────────
+                table_id = str(uuid.uuid4())
+
+                tbl_tool_name = cls.sanitize(str(table.get("tool_name") or "").strip())
+                tbl_tool_id = cls.sanitize(str(table.get("tool_id") or "").strip())
+                if tbl_tool_name and not tbl_tool_id:
+                    tool_rows = cls.execute_select(
+                        f"SELECT tool_id FROM {cls.CORE_DB_NAME}.agent_tools "
+                        f"WHERE agent_id = '{agent_id}' AND LOWER(tool_name) = LOWER('{tbl_tool_name}') {tenant_where} LIMIT 1"
+                    )
+                    if tool_rows:
+                        tbl_tool_id = cls.sanitize(str(tool_rows[0].get("tool_id") or "").strip())
+
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.tables ({tenant_col}table_id, name, created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{table_id}', '{new_name}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (table_id) DO UPDATE SET "
+                    f"name = COALESCE(EXCLUDED.name, {cls.CORE_DB_NAME}.tables.name), updated_ts = EXCLUDED.updated_ts"
+                )
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_tables "
+                    f"({tenant_col}agent_id, agent_name, agent_internal_id, table_id, table_name, created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{agent_id}', '{current_agent_name}', '{agent_internal_id}', "
+                    f"'{table_id}', '{new_name}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET "
+                    f"table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.agent_tables.table_name), "
+                    f"updated_ts = EXCLUDED.updated_ts"
+                )
+
+                src_id = tbl_tool_id or agent_id
+                src_name = tbl_tool_name or current_agent_name
+                src_type = 'Tool' if tbl_tool_id else 'Agent'
+
+                if tbl_tool_id:
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.tool_tables "
+                        f"({tenant_col}tool_id, tool_name, table_id, table_name, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{tbl_tool_id}', '{tbl_tool_name}', '{table_id}', '{new_name}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET "
+                        f"table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.tool_tables.table_name), "
+                        f"updated_ts = EXCLUDED.updated_ts"
+                    )
+
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"({tenant_col}agent_internal_id, agent_id, "
+                    f"source_object_id, source_object_name, source_object_type, "
+                    f"target_object_id, target_object_name, target_object_type, "
+                    f"created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                    f"'{src_id}', '{src_name}', '{src_type}', "
+                    f"'{table_id}', '{new_name}', 'Table', "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                    f"source_object_name = EXCLUDED.source_object_name, "
+                    f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
+                )
+
+                for column_name in table.get("columns") or []:
+                    clean_col = cls.sanitize(str(column_name).strip())
+                    if not clean_col:
+                        continue
+                    col_id = str(uuid.uuid4())
+
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.columns ({tenant_col}column_id, name, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{col_id}', '{clean_col}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (column_id) DO UPDATE SET updated_ts = EXCLUDED.updated_ts"
+                    )
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.table_columns "
+                        f"({tenant_col}table_id, table_name, column_name, column_id, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{table_id}', '{new_name}', '{clean_col}', '{col_id}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET "
+                        f"column_id = COALESCE(EXCLUDED.column_id, {cls.CORE_DB_NAME}.table_columns.column_id), "
+                        f"updated_ts = EXCLUDED.updated_ts"
+                    )
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"source_object_id, source_object_name, source_object_type, "
+                        f"target_object_id, target_object_name, target_object_type, "
+                        f"created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                        f"'{table_id}', '{new_name}', 'Table', "
+                        f"'{col_id}', '{clean_col}', 'Column', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                        f"source_object_name = EXCLUDED.source_object_name, "
+                        f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
+                    )
+
             tables_updated += 1
 
         columns_updated = 0
