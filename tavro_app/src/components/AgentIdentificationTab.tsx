@@ -9,7 +9,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
     const [instrOverflow, setInstrOverflow] = useState(false);
     const instructionContainerRef = useRef<HTMLDivElement | null>(null);
     const id = agent.identification;
-    const COLLAPSED_MAX_HEIGHT_PX = 128; // max-h-32
+    const COLLAPSED_MAX_HEIGHT_PX = 256; // max-h-64
 
     useEffect(() => {
         const node = instructionContainerRef.current;
@@ -50,12 +50,6 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assigned Role</span>
                         <span className="text-sm font-medium text-slate-800">{id?.role || '-'}</span>
                     </div>
-                    {id?.goal_orientation && (
-                        <div className="flex flex-col gap-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Goal Orientation</span>
-                            <span className="text-sm font-medium text-slate-800">{id.goal_orientation}</span>
-                        </div>
-                    )}
                     <div className="flex flex-col gap-1">
                         <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">System Instruction</span>
@@ -70,7 +64,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                         </div>
                         <div
                             ref={instructionContainerRef}
-                            className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOverflow ? (instrOpen ? 'max-h-[2500px]' : 'max-h-32') : 'max-h-none'} overflow-y-auto pr-1`}
+                            className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOverflow ? (instrOpen ? 'max-h-[2500px]' : 'max-h-64') : 'max-h-none'} overflow-y-auto pr-1`}
                         >
                             <pre className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
                                 {id?.instruction || '-'}
