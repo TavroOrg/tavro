@@ -376,18 +376,29 @@ async def create_agent(
         {
             "name": str,
             "description": str,
-            "table": {"name": str, "columns": [str]}
+            "table": {"name": str}
         }
+      Column metadata must be passed through the top-level `columns` parameter,
+      not nested inside tool table metadata.
 
     - `tables`: Optional explicit table metadata for the agent or tools:
         [
             {
                 "name": str,
-                "columns": [str],
                 "tool_name": str
             }
         ]
       Use `tool_name` when the table belongs to a specific tool.
+
+    - `columns`: Optional explicit column metadata for tables:
+        [
+            {
+                "name": str,
+                "table_name": str,
+                "table_id": str
+            }
+        ]
+      Use `table_name` or `table_id` to link each column to its table.
 
     - `data_source`: Optional relationship-style metadata using Agent/Tool/Table/Column
     source and target object fields.
@@ -416,6 +427,7 @@ async def create_agent(
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
         tools (Optional[List[Dict[str, Any]]]): Optional list of tool definitions.
         tables (Optional[List[Dict[str, Any]]]): Optional table definitions.
+        columns (Optional[List[Dict[str, Any]]]): Optional column definitions.
         data_source (Optional[List[Dict[str, Any]]]): Optional data-source relationships.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
 
