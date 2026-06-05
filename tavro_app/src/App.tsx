@@ -9,7 +9,6 @@ import Dashboard from './pages/Dashboard';
 import CreateAgentPage from './pages/CreateAgentPage';
 import AgentViewPage from './pages/AgentViewPage';
 import InsightsPage from './pages/InsightsPage';
-import InsightsPageMock from './pages/InsightsPageMock';
 import Settings from './pages/Settings';
 import AuthCallback from './pages/AuthCallback';
 import UseCasePage from './pages/UseCasePage';
@@ -148,7 +147,7 @@ function App() {
                 <Route path="use-cases" element={<UseCasePage />} />
                 <Route path="use-cases/new" element={<CreateUseCasePage />} />
                 <Route path="use-case/:id" element={<UseCaseViewPage />} />
-                <Route path="insights" element={<InsightsPageMock />} />
+                <Route path="insights" element={<InsightsPage />} />
                 <Route path="agent/:id" element={<AgentViewPage />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="settings/logs" element={<ContainerLogsPage />} />
