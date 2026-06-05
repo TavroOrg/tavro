@@ -2,23 +2,21 @@ import React, { useState } from 'react';
 import { ShieldCheck, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const ADMIN_EMAIL = 'admin@tavro.ai';
+const ADMIN_EMAIL    = 'admin@tavro.ai';
 const ADMIN_PASSWORD = 'tavro_admin_2024';
 
 const AdminLogin: React.FC = () => {
-    const [email, setEmail] = useState('');
+    const [email,    setEmail]    = useState('');
     const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [loading,  setLoading]  = useState(false);
+    const [error,    setError]    = useState<string | null>(null);
     const navigate = useNavigate();
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
         setLoading(true);
-
         await new Promise(r => setTimeout(r, 600));
-
         if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
             localStorage.setItem('tavro_admin_auth', 'true');
             navigate('/');
@@ -51,9 +49,7 @@ const AdminLogin: React.FC = () => {
 
                     <form onSubmit={handleLogin} className="space-y-6">
                         <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">
-                                Email
-                            </label>
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Email</label>
                             <input
                                 type="email"
                                 value={email}
@@ -66,9 +62,7 @@ const AdminLogin: React.FC = () => {
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">
-                                Password
-                            </label>
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Password</label>
                             <input
                                 type="password"
                                 value={password}

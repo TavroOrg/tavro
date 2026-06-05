@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
     ChevronRight, Play, RotateCcw, CheckCircle2, AlertCircle,
-    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink,
+    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -28,12 +28,21 @@ interface ConnectorDef {
 
 type RunStatus = 'idle' | 'running' | 'success' | 'error';
 
+interface ExtractedAgent {
+    filename:   string;
+    agent_id:   string;
+    agent_name: string;
+}
+
 interface RunResult {
-    status: RunStatus;
-    files_saved?: string[];
-    count?: number;
-    logs?: string;
-    error?: string;
+    status:            RunStatus;
+    count?:            number;
+    agents_extracted?: ExtractedAgent[];
+    risk_queued?:      number;
+    error?:            string;
+    // legacy — not displayed
+    files_saved?:      string[];
+    logs?:             string;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,50 +437,51 @@ const AdminConnectorsPage: React.FC = () => {
                     {/* result area */}
                     {state && state.status !== 'idle' && state.result && (
                         <div className="space-y-4">
-                            {/* status banner */}
+                            {/* success banner */}
                             {state.status === 'success' && (
                                 <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
                                     <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                                     <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                                        Completed — {state.result.count ?? 0} file{(state.result.count ?? 0) !== 1 ? 's' : ''} saved
+                                        Completed — {state.result.count ?? 0} agent{(state.result.count ?? 0) !== 1 ? 's' : ''} extracted
                                     </span>
                                 </div>
                             )}
                             {state.status === 'error' && (
                                 <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
                                     <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
-                                    <span className="text-sm text-red-600 dark:text-red-400 break-all">
-                                        {state.result.error}
-                                    </span>
+                                    <span className="text-sm text-red-600 dark:text-red-400 break-all">{state.result.error}</span>
                                 </div>
                             )}
 
-                            {/* saved files */}
-                            {(state.result.files_saved?.length ?? 0) > 0 && (
+                            {/* extracted agents list */}
+                            {state.result.agents_extracted && state.result.agents_extracted.length > 0 && (
                                 <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                                        Saved Files
-                                    </h4>
-                                    <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                                        {state.result.files_saved!.map(f => (
-                                            <div key={f} className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 rounded-lg px-3 py-1.5">
-                                                <FileJson size={12} className="text-blue-500 shrink-0" />
-                                                {f}
+                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Extracted Agents</h4>
+                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                        {state.result.agents_extracted.map(a => (
+                                            <div key={a.filename} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                <FileJson size={14} className="text-blue-500 shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{a.agent_name || a.agent_id}</p>
+                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{a.filename}</p>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
                             )}
 
-                            {/* logs */}
-                            {state.result.logs && (
-                                <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                                        Logs
-                                    </h4>
-                                    <pre className="bg-slate-950 text-slate-300 text-xs rounded-xl p-4 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                                        {state.result.logs}
-                                    </pre>
+                            {/* risk assessment background notice */}
+                            {state.status === 'success' && state.result.risk_queued && state.result.risk_queued > 0 && (
+                                <div className="flex items-start gap-3 p-3.5 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
+                                    <Clock size={15} className="text-blue-500 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Risk assessments running in background</p>
+                                        <p className="text-xs text-blue-600/80 dark:text-blue-400/70 mt-0.5 leading-relaxed">
+                                            Assessments for all {state.result.risk_queued} agent{state.result.risk_queued !== 1 ? 's' : ''} have been queued.
+                                            Results will appear in the Agent Catalog once complete.
+                                        </p>
+                                    </div>
                                 </div>
                             )}
                         </div>

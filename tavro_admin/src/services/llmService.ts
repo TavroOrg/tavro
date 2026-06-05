@@ -1,4 +1,4 @@
-export type LLMProvider = 'openai' | 'azure_openai' | 'anthropic';
+export type LLMProvider = 'github_copilot' | 'openai' | 'azure_openai' | 'anthropic';
 
 export interface LLMKeyRecord {
     id: string;
@@ -7,27 +7,29 @@ export interface LLMKeyRecord {
     model: string;
     azure_endpoint: string | null;
     azure_api_version: string | null;
-    is_active: boolean;
     created_at: string;
     updated_at: string;
 }
 
+export const PROVIDER_LABELS: Record<LLMProvider, string> = {
+    github_copilot: 'GitHub Copilot',
+    openai:         'OpenAI',
+    azure_openai:   'Azure OpenAI / Azure AI Foundry',
+    anthropic:      'Anthropic (Claude)',
+};
+
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
-    openai:       'gpt-4o',
-    azure_openai: 'gpt-4o',
-    anthropic:    'claude-sonnet-4-6',
+    github_copilot: 'gpt-4o',
+    openai:         'gpt-4o',
+    azure_openai:   'gpt-4o',
+    anthropic:      'claude-sonnet-4-6',
 };
 
 export const PROVIDER_HINTS: Record<LLMProvider, string> = {
-    openai:       'api.openai.com',
-    azure_openai: 'your-resource.openai.azure.com',
-    anthropic:    'api.anthropic.com',
-};
-
-export const PROVIDER_LABELS: Record<LLMProvider, string> = {
-    openai:       'OpenAI',
-    azure_openai: 'Azure OpenAI',
-    anthropic:    'Anthropic (BYOK)',
+    github_copilot: 'requires subscription',
+    openai:         'api.openai.com',
+    azure_openai:   'your-resource.openai.azure.com',
+    anthropic:      'api.anthropic.com',
 };
 
 const BASE = '/api/v1/admin/llm-keys';
@@ -47,13 +49,7 @@ export async function createLLMKey(
     const res = await fetch(BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name:     PROVIDER_LABELS[provider],
-            provider,
-            model,
-            api_key:  apiKey,
-            ...azureFields,
-        }),
+        body: JSON.stringify({ name: PROVIDER_LABELS[provider], provider, model, api_key: apiKey, ...azureFields }),
     });
     if (!res.ok) throw new Error((await res.json()).detail ?? 'Failed to save key');
     return res.json();
@@ -75,9 +71,4 @@ export async function updateLLMKey(
 export async function deleteLLMKey(id: string): Promise<void> {
     const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete key');
-}
-
-export async function activateLLMKey(id: string): Promise<void> {
-    const res = await fetch(`${BASE}/${id}/activate`, { method: 'POST' });
-    if (!res.ok) throw new Error('Failed to activate key');
 }

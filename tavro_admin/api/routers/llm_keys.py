@@ -13,11 +13,9 @@ from api import crypto
 router = APIRouter()
 
 
-# ── Pydantic models ────────────────────────────────────────────────────────────
-
 class LLMKeyCreate(BaseModel):
     name: str
-    provider: str   # openai | azure_openai | anthropic
+    provider: str   # github_copilot | openai | azure_openai | anthropic
     model: str
     api_key: str
     azure_endpoint: Optional[str] = None
@@ -38,7 +36,6 @@ class LLMKeyOut(BaseModel):
     model: str
     azure_endpoint: Optional[str]
     azure_api_version: Optional[str]
-    is_active: bool
     created_at: str
     updated_at: str
 
@@ -51,20 +48,17 @@ def _row_out(row: dict) -> LLMKeyOut:
         model=row["model"],
         azure_endpoint=row.get("azure_endpoint"),
         azure_api_version=row.get("azure_api_version"),
-        is_active=bool(row["is_active"]),
         created_at=row["created_at"].isoformat() if row.get("created_at") else "",
         updated_at=row["updated_at"].isoformat() if row.get("updated_at") else "",
     )
 
-
-# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.get("/llm-keys", response_model=list[LLMKeyOut])
 async def list_llm_keys():
     async with AsyncSessionLocal() as db:
         rows = await db.execute(text("""
             SELECT id, name, provider, model, azure_endpoint, azure_api_version,
-                   is_active, created_at, updated_at
+                   created_at, updated_at
             FROM admin.llm_keys
             ORDER BY created_at ASC
         """))
@@ -73,7 +67,7 @@ async def list_llm_keys():
 
 @router.post("/llm-keys", response_model=LLMKeyOut)
 async def create_llm_key(body: LLMKeyCreate):
-    if body.provider not in ("openai", "azure_openai", "anthropic"):
+    if body.provider not in ("github_copilot", "openai", "azure_openai", "anthropic"):
         raise HTTPException(status_code=422, detail=f"Unsupported provider: {body.provider}")
     if not body.api_key.strip():
         raise HTTPException(status_code=422, detail="api_key is required")
@@ -83,18 +77,15 @@ async def create_llm_key(body: LLMKeyCreate):
         try:
             result = await db.execute(text("""
                 INSERT INTO admin.llm_keys
-                    (name, provider, model, api_key_enc, azure_endpoint, azure_api_version, is_active)
+                    (name, provider, model, api_key_enc, azure_endpoint, azure_api_version)
                 VALUES
-                    (:name, :provider, :model, :enc, :ep, :ver, false)
+                    (:name, :provider, :model, :enc, :ep, :ver)
                 RETURNING id, name, provider, model, azure_endpoint, azure_api_version,
-                          is_active, created_at, updated_at
+                          created_at, updated_at
             """), {
-                "name": body.name,
-                "provider": body.provider,
-                "model": body.model,
-                "enc": enc,
-                "ep": body.azure_endpoint,
-                "ver": body.azure_api_version,
+                "name": body.name, "provider": body.provider,
+                "model": body.model, "enc": enc,
+                "ep": body.azure_endpoint, "ver": body.azure_api_version,
             })
             await db.commit()
             return _row_out(dict(result.mappings().one()))
@@ -109,25 +100,20 @@ async def update_llm_key(key_id: str, body: LLMKeyUpdate):
     params: dict = {"id": key_id}
 
     if body.model is not None:
-        sets.append("model = :model")
-        params["model"] = body.model
+        sets.append("model = :model"); params["model"] = body.model
     if body.api_key and body.api_key.strip():
-        sets.append("api_key_enc = :enc")
-        params["enc"] = crypto.encrypt(body.api_key.strip())
+        sets.append("api_key_enc = :enc"); params["enc"] = crypto.encrypt(body.api_key.strip())
     if body.azure_endpoint is not None:
-        sets.append("azure_endpoint = :ep")
-        params["ep"] = body.azure_endpoint
+        sets.append("azure_endpoint = :ep"); params["ep"] = body.azure_endpoint
     if body.azure_api_version is not None:
-        sets.append("azure_api_version = :ver")
-        params["ver"] = body.azure_api_version
+        sets.append("azure_api_version = :ver"); params["ver"] = body.azure_api_version
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(text(f"""
-            UPDATE admin.llm_keys
-            SET {', '.join(sets)}
-            WHERE id = :id::uuid
+            UPDATE admin.llm_keys SET {', '.join(sets)}
+            WHERE id = CAST(:id AS UUID)
             RETURNING id, name, provider, model, azure_endpoint, azure_api_version,
-                      is_active, created_at, updated_at
+                      created_at, updated_at
         """), params)
         row = result.mappings().one_or_none()
         if row is None:
@@ -140,22 +126,7 @@ async def update_llm_key(key_id: str, body: LLMKeyUpdate):
 async def delete_llm_key(key_id: str):
     async with AsyncSessionLocal() as db:
         await db.execute(
-            text("DELETE FROM admin.llm_keys WHERE id = :id::uuid"),
+            text("DELETE FROM admin.llm_keys WHERE id = CAST(:id AS UUID)"),
             {"id": key_id},
         )
-        await db.commit()
-
-
-@router.post("/llm-keys/{key_id}/activate", status_code=204)
-async def activate_llm_key(key_id: str):
-    async with AsyncSessionLocal() as db:
-        await db.execute(text("UPDATE admin.llm_keys SET is_active = false, updated_at = now()"))
-        result = await db.execute(text("""
-            UPDATE admin.llm_keys
-            SET is_active = true, updated_at = now()
-            WHERE id = :id::uuid
-        """), {"id": key_id})
-        if result.rowcount == 0:
-            await db.rollback()
-            raise HTTPException(status_code=404, detail="LLM key not found")
         await db.commit()

@@ -69,26 +69,29 @@ export default function ContainerLogsPage() {
     // Sync paused state into ref so the SSE handler doesn't close over stale state
     useEffect(() => { pausedRef.current = paused; }, [paused]);
 
+    // Logs are stored newest-first so new entries naturally appear at the top.
     const appendLogs = useCallback((newEntries: LogEntry[]) => {
         setLogs(prev => {
-            const next = [...prev, ...newEntries];
-            // Cap to last 10,000 lines in the DOM to avoid memory issues
-            return next.length > 10_000 ? next.slice(next.length - 10_000) : next;
+            // Prepend new entries (reverse so the very latest is index 0)
+            const next = [...newEntries.slice().reverse(), ...prev];
+            // Cap to 10,000 lines to avoid memory issues
+            return next.length > 10_000 ? next.slice(0, 10_000) : next;
         });
     }, []);
 
-    // Auto-scroll to bottom when new logs arrive and user hasn't scrolled up
+    // Auto-scroll to TOP when new logs arrive and user hasn't scrolled down
     useEffect(() => {
         if (!paused && !userScrolledRef.current) {
-            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+            scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
         }
     }, [logs, paused]);
 
     const handleScroll = useCallback(() => {
         const el = scrollRef.current;
         if (!el) return;
-        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        userScrolledRef.current = !atBottom;
+        // User has "scrolled away" when they are more than 80px below the top
+        const atTop = el.scrollTop < 80;
+        userScrolledRef.current = !atTop;
     }, []);
 
     // Fetch container list for the sidebar
@@ -155,6 +158,8 @@ export default function ContainerLogsPage() {
                 appendLogs(pendingRef.current);
                 pendingRef.current = [];
                 userScrolledRef.current = false;
+                // Jump back to top so the newly flushed logs are visible
+                scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
             }
             return next;
         });
@@ -344,7 +349,6 @@ export default function ContainerLogsPage() {
                             );
                         })}
 
-                        <div ref={bottomRef} />
                     </div>
 
                     {/* Footer: entry count */}
