@@ -112,7 +112,7 @@ type ResearchRefresh = {
 };
 
 const AGENT_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = [
-    { stage: 'Plan', sub: 'Use case -> blueprint', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', dot: 'bg-violet-500' },
+    { stage: 'Plan', sub: 'Use case → blueprint', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', dot: 'bg-violet-500' },
     { stage: 'Design', sub: 'Variants & trade-offs', color: 'bg-teal-500', light: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', dot: 'bg-teal-500' },
     { stage: 'Develop', sub: 'Build & test', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
     { stage: 'Deploy', sub: 'Environment release', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' },
