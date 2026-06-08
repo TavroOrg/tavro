@@ -494,7 +494,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     LIMIT 1
                 ) i ON true
                 LEFT JOIN LATERAL (
-                    SELECT blended_risk_class AS risk_classification, blended_risk_score, pii_flag, phi_flag, pci_flag
+                    SELECT risk_classification, blended_risk_score, pii_flag, phi_flag, pci_flag
                     FROM {CORE}.agent_risk_assessments
                     WHERE agent_internal_id = a.agent_internal_id
                       AND COALESCE(is_current, true) = true
