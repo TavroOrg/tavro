@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from utils.set_environment import set_environment
+from dotenv import load_dotenv
 from services.workflow.workflow import RiskManagerWorkflow
+
+load_dotenv(override=False)
 from services.activity.activities import (
     classify_risk_activity,
     aars_risk_evaluation_activity,
@@ -30,7 +32,6 @@ from services.activity.activities import (
 
 TASK_QUEUE = "risk-classification-queue"
 TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "temporal:7233")
-set_environment('fastapi')
 
 # Async worker that listens to the task queue
 async def run_worker():

@@ -2462,14 +2462,15 @@ async def get_agent_relations(
                             {description_expr} AS description,
                             {owner_expr} AS owner,
                             {priority_expr} AS priority,
-                            {status_expr} AS status
+                            {status_expr} AS status,
+                            LOWER({name_expr}) AS _sort_key
                         FROM core.agent_ai_use_cases rel
                         {uc_join}
                         WHERE ({' OR '.join(match_parts)})
                           {tenant_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
-                        ORDER BY LOWER(name)
+                        ORDER BY _sort_key
                         """
                     ),
                     params,

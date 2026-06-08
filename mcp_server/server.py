@@ -23,15 +23,6 @@ from contextlib import asynccontextmanager
 from tavro_library.agent_library import AgentMetadataExporter
 from tavro_library.users import get_approved_user
 
-from utils.set_environment import set_environment
-
-
-
-set_environment("mcp")
-set_environment("oAuth")
-set_environment("secrets")
-set_environment("fastapi")
-
 TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
 
 

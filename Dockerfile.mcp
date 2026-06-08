@@ -25,6 +25,5 @@ COPY mcp_server ./mcp_server
 COPY tavro_library ./tavro_library
 COPY utils ./utils
 COPY services ./services
-COPY config.yaml ./config.yaml
 
 CMD ["python", "-m", "mcp_server.server"]
