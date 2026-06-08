@@ -894,7 +894,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                         <MessageCircle size={14} />
                     </div>
                     <div className="min-w-0">
-                        <h2 className="font-semibold text-slate-800 text-sm leading-tight truncate">Tavro AI Assistant</h2>
                         {getContextBadge(viewType, viewData) && (
                             <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full leading-tight mt-0.5">
                                 {getContextBadge(viewType, viewData)}
