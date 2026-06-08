@@ -88,6 +88,21 @@ interface ProcessFormState {
   process_health_state: string;
 }
 
+type ProcessInlineField =
+  | 'process_number'
+  | 'process_name'
+  | 'process_description'
+  | 'parent_process_id'
+  | 'stakeholders'
+  | 'owner'
+  | 'operators'
+  | 'business_criticality'
+  | 'reputational_impact'
+  | 'financial_impact'
+  | 'regulatory_impact'
+  | 'sla'
+  | 'process_health_state';
+
 const HINTS: Record<string, string> = {
   business_criticality:
     'Business Criticality indicates how essential a process is. Tier 1 is mission-critical and Tier 4 has minimal business impact.',
@@ -266,6 +281,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('overview');
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
+  const [inlineEdit, setInlineEdit] = useState<{ field: ProcessInlineField; value: string } | null>(null);
+  const [inlineSaving, setInlineSaving] = useState<ProcessInlineField | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -337,6 +354,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(null);
       setForm(emptyForm());
       setEditing(true);
+      setInlineEdit(null);
       setAttemptedSave(false);
       setLoading(false);
       setTab('overview');
@@ -345,6 +363,7 @@ const BusinessProcessViewPage: React.FC = () => {
       return;
     }
     setEditing(false);
+    setInlineEdit(null);
     load();
   }, [id, isCreateMode]);
 
@@ -424,6 +443,124 @@ const BusinessProcessViewPage: React.FC = () => {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
+  const startInlineEdit = (field: ProcessInlineField) => {
+    if (editing || isCreateMode || saving || inlineSaving) return;
+    setActionError(null);
+    setInlineEdit({ field, value: form[field] });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEdit(null);
+    setActionError(null);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!process || !inlineEdit) return;
+    const nextForm = { ...form, [inlineEdit.field]: inlineEdit.value };
+    if (!nextForm.process_name.trim()) {
+      setActionError('Process Name is required.');
+      return;
+    }
+
+    setInlineSaving(inlineEdit.field);
+    setActionError(null);
+    try {
+      const updated = await businessRelationsApi.updateProcess(
+        process.business_process_id,
+        buildProcessPayload(nextForm),
+      );
+      setProcess(updated);
+      setForm(formFromProcess(updated));
+      setInlineEdit(null);
+      setAttemptedSave(false);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to save process field');
+    } finally {
+      setInlineSaving(null);
+    }
+  };
+
+  const renderInlineEditable = (
+    field: ProcessInlineField,
+    displayValue: string,
+    config: { kind?: 'text' | 'textarea' | 'select'; options?: Option[]; className?: string; selectChildren?: React.ReactNode } = {},
+  ) => {
+    const isActive = inlineEdit?.field === field;
+    const kind = config.kind ?? 'text';
+    const valueClass = config.className ?? 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5';
+    const isSavingField = inlineSaving === field;
+    const saveDisabled = isSavingField || (field === 'process_name' && !inlineEdit?.value.trim());
+
+    if (!editing && !isCreateMode && isActive) {
+      return (
+        <div className="flex items-start gap-2">
+          {kind === 'textarea' ? (
+            <textarea
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              rows={3}
+              className={textAreaCls}
+              autoFocus
+            />
+          ) : kind === 'select' ? (
+            <select
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            >
+              {config.selectChildren ?? (
+                <>
+                  <option value="">Select...</option>
+                  {(config.options ?? []).map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </>
+              )}
+            </select>
+          ) : (
+            <input
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            />
+          )}
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={saveInlineEdit}
+              disabled={saveDisabled}
+              title={field === 'process_name' && !inlineEdit.value.trim() ? 'Process Name is required' : 'Save'}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            >
+              {isSavingField ? <Loader2 size={14} className="animate-spin" /> : '✓'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelInlineEdit}
+              disabled={isSavingField}
+              title="Cancel"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <p
+        onDoubleClick={() => startInlineEdit(field)}
+        title="Double-click to edit"
+        className={`${valueClass} ${!editing && !isCreateMode ? 'cursor-text hover:border-blue-200 hover:bg-blue-50/40 transition-colors' : ''}`}
+      >
+        {displayValue}
+      </p>
+    );
+  };
+
   const handleSuggestDescription = async () => {
     if (!form.process_name.trim()) {
       setActionError('Process Name is required before generating the description.');
@@ -483,6 +620,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(updated);
       setForm(formFromProcess(updated));
       setAttemptedSave(false);
+      setInlineEdit(null);
       setEditing(false);
     } catch (err: any) {
       setActionError(err.message || 'Failed to save process');
@@ -493,6 +631,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const handleCancelEdit = () => {
     setActionError(null);
+    setInlineEdit(null);
     setAttemptedSave(false);
     if (isCreateMode) {
       if (linkUseCaseId) {
@@ -647,15 +786,15 @@ const BusinessProcessViewPage: React.FC = () => {
                 disabled={saving}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               >
-                <XCircle size={15} /> Cancel
+                <XCircle size={15} /> {isCreateMode ? 'Cancel' : 'Discard'}
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || !form.process_name.trim()}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                {isCreateMode ? 'Create Process' : 'Save Changes'}
+                {isCreateMode ? 'Create Process' : 'Save'}
               </button>
             </>
           ) : (
@@ -664,6 +803,7 @@ const BusinessProcessViewPage: React.FC = () => {
                 onClick={() => {
                   setTab('overview');
                   setAttemptedSave(false);
+                  setInlineEdit(null);
                   setEditing(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -811,9 +951,7 @@ const BusinessProcessViewPage: React.FC = () => {
                     className={inputCls}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.process_number || 'N/A'}
-                  </p>
+                  renderInlineEditable('process_number', form.process_number || 'N/A')
                 )}
               </div>
 
@@ -836,9 +974,7 @@ const BusinessProcessViewPage: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.process_name || 'N/A'}
-                  </p>
+                  renderInlineEditable('process_name', form.process_name || 'N/A')
                 )}
               </div>
 
@@ -875,9 +1011,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     disabled={generatingDescription}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]">
-                    {form.process_description || 'N/A'}
-                  </p>
+                  renderInlineEditable('process_description', form.process_description || 'N/A', {
+                    kind: 'textarea',
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]',
+                  })
                 )}
               </div>
             </div>
@@ -901,11 +1038,25 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.parent_process_id
+                  renderInlineEditable(
+                    'parent_process_id',
+                    form.parent_process_id
                       ? `${processNameById.get(form.parent_process_id) || form.parent_process_id} (${form.parent_process_id})`
-                      : 'N/A'}
-                  </p>
+                      : 'N/A',
+                    {
+                      kind: 'select',
+                      selectChildren: (
+                        <>
+                          <option value="">None</option>
+                          {selectableParents.map(parent => (
+                            <option key={parent.business_process_id} value={parent.business_process_id}>
+                              {(parent.process_name || parent.business_process_id)} ({parent.business_process_id})
+                            </option>
+                          ))}
+                        </>
+                      ),
+                    },
+                  )
                 )}
               </div>
 
@@ -923,9 +1074,10 @@ const BusinessProcessViewPage: React.FC = () => {
                       className={inputCls}
                     />
                   ) : (
-                    <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                      {form[field as keyof ProcessFormState] || 'N/A'}
-                    </p>
+                    renderInlineEditable(
+                      field as ProcessInlineField,
+                      form[field as keyof ProcessFormState] || 'N/A',
+                    )
                   )}
                 </div>
               ))}
@@ -948,9 +1100,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS)}
-                  </p>
+                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS), {
+                    kind: 'select',
+                    options: BUSINESS_CRITICALITY_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -968,9 +1121,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS)}
-                  </p>
+                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: REPUTATIONAL_IMPACT_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -993,9 +1147,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS)}
-                  </p>
+                  renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: FINANCIAL_IMPACT_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -1013,9 +1168,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS)}
-                  </p>
+                  renderInlineEditable('regulatory_impact', labelFromOptions(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: REGULATORY_IMPACT_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -1037,9 +1193,7 @@ const BusinessProcessViewPage: React.FC = () => {
                     className={inputCls}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.sla || 'N/A'}
-                  </p>
+                  renderInlineEditable('sla', form.sla || 'N/A')
                 )}
               </div>
 
@@ -1057,9 +1211,10 @@ const BusinessProcessViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.process_health_state, PROCESS_HEALTH_OPTIONS)}
-                  </p>
+                  renderInlineEditable('process_health_state', labelFromOptions(form.process_health_state, PROCESS_HEALTH_OPTIONS), {
+                    kind: 'select',
+                    options: PROCESS_HEALTH_OPTIONS,
+                  })
                 )}
               </div>
             </div>
