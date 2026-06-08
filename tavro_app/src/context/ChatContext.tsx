@@ -46,6 +46,8 @@ export interface BlueprintContext {
   region:      string;
   /** Summarised dimension nodes — label + category + 1-sentence summary */
   dimensions:  { label: string; category: string; summary?: string }[];
+  /** Relationships between dimension nodes from dim_edge */
+  edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
   /** Active node the user has selected in the explorer, if any */
   activeDimension?: { label: string; category: string; summary?: string };
 }
