@@ -369,12 +369,17 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             "description": str
         }
 
-    - `skills`: A list of skill definitions the agent possesses. Each skill must be defined
-    as a dictionary with at minimum:
+    - `skills`: A list of skill definitions the agent possesses. Each skill may be provided
+    as a string name or as a dictionary with:
         {
-            "name": str,         # required — human-readable skill name
-            "description": str   # optional — what the skill does
+            "name": str,
+            "description": str,
+            "tags": List[str],
+            "inputModes": List[str],
+            "outputModes": List[str]
         }
+    The keys "identifier" or "skill_id" may be used to provide a stable skill ID.
+    The snake_case keys "input_modes" and "output_modes" are also accepted.
     Skills are registered as part of the agent metadata.
 
     All inputs are validated before agent creation. On success, the function returns a
@@ -395,6 +400,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
         skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
+            Each skill can include name, description, tags, inputModes/input_modes, and outputModes/output_modes.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
@@ -748,6 +754,15 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
         skills (Optional[List[Any]]): Updated skill list for this agent.
+            Each skill can be a string name or a dictionary with:
+            {
+                "name": str,
+                "description": str,
+                "tags": List[str],
+                "inputModes": List[str],
+                "outputModes": List[str]
+            }
+            The keys "identifier"/"skill_id", "input_modes", and "output_modes" are also accepted.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
