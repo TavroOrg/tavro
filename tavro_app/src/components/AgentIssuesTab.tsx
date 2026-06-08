@@ -173,7 +173,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
 
       {/* ── Inline Create Form ──────────────────────────────────── */}
       {formOpen && (
-        <div className="border-b border-slate-200 bg-slate-50">
+        <div className="border-b border-slate-200 bg-white">
           <form onSubmit={handleSubmit} className="p-5">
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-4">New Issue</p>
 
