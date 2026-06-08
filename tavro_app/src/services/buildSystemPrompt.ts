@@ -20,6 +20,10 @@ function blueprintSection(data: BlueprintContext): string {
     .map(d => `  • [${d.category}] ${d.label}${d.summary ? ': ' + d.summary : ''}`)
     .join('\n');
 
+  const edgeList = data.edges?.length
+    ? data.edges.map(e => `  • ${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`).join('\n')
+    : '  No relationships defined yet.';
+
   const activeSection = data.activeDimension
     ? `\nThe user is currently viewing this dimension:
   Label: ${data.activeDimension.label}
@@ -37,13 +41,16 @@ ${activeSection}
 ## Current Blueprint Dimensions (${data.dimensions.length} total)
 ${dimList || '  No dimensions defined yet.'}
 
+## Dimension Relationships (dim_edge)
+${edgeList}
+
 ## Your role in Blueprint mode
 - Help the user understand, refine, and extend their company blueprint
 - Suggest missing dimensions based on the company's industry
-- Explain relationships between dimensions
+- Explain relationships between dimensions using the edges above
 - Help draft summaries for new dimensions
-- Answer questions about specific dimensions
-- Suggest AI use cases grounded in the blueprint dimensions`;
+- Answer questions about specific dimensions and how they connect
+- Suggest AI use cases grounded in the blueprint dimensions and their relationships`;
 }
 
 function agentDetailSection(data: AgentDetailContext): string {
@@ -109,10 +116,13 @@ function compactBlueprintBlock(data: BlueprintContext): string {
   const topDims = data.dimensions.slice(0, 12)
     .map(d => `${d.category}: ${d.label}`)
     .join(', ');
+  const topEdges = data.edges?.slice(0, 8)
+    .map(e => `${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`)
+    .join(', ');
   return `
 ## Company Blueprint (background context)
 Company: ${data.companyName} | Industry: ${data.industry} | Region: ${data.region}
-Key dimensions: ${topDims || 'none defined yet'}`;
+Key dimensions: ${topDims || 'none defined yet'}${topEdges ? `\nKey relationships: ${topEdges}` : ''}`;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────

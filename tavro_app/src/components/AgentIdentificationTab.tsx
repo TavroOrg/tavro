@@ -1,15 +1,67 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AgentData } from '../types/agent';
-import { User, Tag, ChevronDown, ChevronUp } from 'lucide-react';
+import { User, Tag, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
-interface AgentIdentificationTabProps { agent: AgentData; }
+type AgentInlineField = 'name' | 'description' | 'instruction';
 
-export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ agent }) => {
+interface AgentIdentificationTabProps {
+    agent: AgentData;
+    isEditing?: boolean;
+    editDescription?: string;
+    onEditDescriptionChange?: (v: string) => void;
+    editInstruction?: string;
+    onEditInstructionChange?: (v: string) => void;
+    inlineEdit?: { field: AgentInlineField; value: string } | null;
+    inlineSaving?: AgentInlineField | null;
+    onStartInlineEdit?: (field: AgentInlineField) => void;
+    onInlineValueChange?: (value: string) => void;
+    onSaveInlineEdit?: () => void;
+    onCancelInlineEdit?: () => void;
+}
+
+export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
+    agent, isEditing,
+    editDescription, onEditDescriptionChange,
+    editInstruction, onEditInstructionChange,
+    inlineEdit, inlineSaving, onStartInlineEdit,
+    onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+}) => {
     const [instrOpen, setInstrOpen] = useState(false);
     const [instrOverflow, setInstrOverflow] = useState(false);
     const instructionContainerRef = useRef<HTMLDivElement | null>(null);
     const id = agent.identification;
     const COLLAPSED_MAX_HEIGHT_PX = 128; // max-h-32
+    const isInlineDescription = inlineEdit?.field === 'description';
+    const isInlineInstruction = inlineEdit?.field === 'instruction';
+
+    const renderInlineActions = (field: AgentInlineField) => {
+        const isSaving = inlineSaving === field;
+        const isBlank = !inlineEdit?.value.trim();
+        const saveDisabled = isSaving || isBlank;
+
+        return (
+            <div className="flex shrink-0 gap-1">
+                <button
+                    type="button"
+                    onClick={onSaveInlineEdit}
+                    disabled={saveDisabled}
+                    title={isBlank ? 'This field is required' : 'Save'}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : '✓'}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancelInlineEdit}
+                    disabled={isSaving}
+                    title="Cancel"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                    ✕
+                </button>
+            </div>
+        );
+    };
 
     useEffect(() => {
         const node = instructionContainerRef.current;
@@ -26,9 +78,33 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                     Identification & Role
                 </h3>
 
-                <p className="text-sm text-slate-600 leading-relaxed border-l-2 border-blue-200 pl-4 py-1 mb-4">
-                    {agent.description}
-                </p>
+                {isEditing ? (
+                    <textarea
+                        value={editDescription ?? agent.description ?? ''}
+                        onChange={e => onEditDescriptionChange?.(e.target.value)}
+                        rows={3}
+                        className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 mb-4 bg-blue-50/40 outline-none resize-none rounded-r-lg"
+                    />
+                ) : isInlineDescription && inlineEdit ? (
+                    <div className="flex items-start gap-2 mb-4">
+                        <textarea
+                            value={inlineEdit.value}
+                            onChange={e => onInlineValueChange?.(e.target.value)}
+                            rows={3}
+                            className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 bg-blue-50/40 outline-none resize-none rounded-r-lg"
+                            autoFocus
+                        />
+                        {renderInlineActions('description')}
+                    </div>
+                ) : (
+                    <p
+                        onDoubleClick={() => onStartInlineEdit?.('description')}
+                        title="Double-click to edit"
+                        className="text-sm text-slate-600 leading-relaxed border-l-2 border-blue-200 pl-4 py-1 mb-4 cursor-text rounded-r-lg hover:bg-blue-50/40 transition-colors"
+                    >
+                        {agent.description || '-'}
+                    </p>
+                )}
 
                 {(id?.owner || id?.tags) && (
                     <div className="flex flex-wrap gap-2 mb-4">
@@ -53,7 +129,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                     <div className="flex flex-col gap-1">
                         <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">System Instruction</span>
-                            {instrOverflow && (
+                            {instrOverflow && !isInlineInstruction && (
                                 <button
                                     onClick={() => setInstrOpen(o => !o)}
                                     className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 flex items-center gap-1"
@@ -62,14 +138,36 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({ 
                                 </button>
                             )}
                         </div>
-                        <div
-                            ref={instructionContainerRef}
-                            className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOverflow ? (instrOpen ? 'max-h-[2500px]' : 'max-h-32') : 'max-h-none'} overflow-y-auto pr-1`}
-                        >
-                            <pre className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
-                                {id?.instruction || '-'}
-                            </pre>
-                        </div>
+                        {isEditing ? (
+                            <textarea
+                                value={editInstruction ?? id?.instruction ?? ''}
+                                onChange={e => onEditInstructionChange?.(e.target.value)}
+                                rows={8}
+                                className="w-full text-xs font-mono text-slate-600 leading-relaxed bg-white border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none mt-1"
+                            />
+                        ) : isInlineInstruction && inlineEdit ? (
+                            <div className="flex items-start gap-2 mt-1">
+                                <textarea
+                                    value={inlineEdit.value}
+                                    onChange={e => onInlineValueChange?.(e.target.value)}
+                                    rows={8}
+                                    className="w-full text-xs font-mono text-slate-600 leading-relaxed bg-white border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                    autoFocus
+                                />
+                                {renderInlineActions('instruction')}
+                            </div>
+                        ) : (
+                            <div
+                                ref={instructionContainerRef}
+                                onDoubleClick={() => onStartInlineEdit?.('instruction')}
+                                title="Double-click to edit"
+                                className={`overflow-hidden transition-all duration-300 ease-in-out ${instrOverflow ? (instrOpen ? 'max-h-[2500px]' : 'max-h-32') : 'max-h-none'} overflow-y-auto pr-1`}
+                            >
+                                <pre className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed cursor-text rounded-lg hover:bg-blue-50/50 transition-colors">
+                                    {id?.instruction || '-'}
+                                </pre>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

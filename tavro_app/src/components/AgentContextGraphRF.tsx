@@ -33,19 +33,19 @@ const normalizedLinkedUseCases = (agent: AgentData): any[] => {
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-const CAT_RING_R = 220; const LEAF_RING_R = 390;
-const CAT_W = 120;  const CAT_H = 44;
-const LEAF_W = 180; const LEAF_H = 48;
-const CO_W = 160;   const CO_H = 56;
-const SUBCTX_RING_R = 340; const SUBLEAF_RING_R = 520;
-const SUBCTX_W = 128; const SUBCTX_H = 44;
+const CAT_RING_R = 220; const LEAF_RING_R = 430;
+const CAT_W = 158;  const CAT_H = 56;
+const LEAF_W = 224; const LEAF_H = 64;
+const CO_W = 196;   const CO_H = 70;
+const SUBCTX_RING_R = 340; const SUBLEAF_RING_R = 580;
+const SUBCTX_W = 162; const SUBCTX_H = 56;
 
 function centerLabelFontSize(label: string) {
   const len = label.trim().length;
-  if (len > 48) return 8.5;
-  if (len > 36) return 9.5;
-  if (len > 24) return 10.5;
-  return 13;
+  if (len > 48) return 11.5;
+  if (len > 36) return 12.5;
+  if (len > 24) return 14;
+  return 17;
 }
 
 // ── Colours ───────────────────────────────────────────────────────────────────
@@ -179,8 +179,41 @@ function ctxPos(i: number, n: number) {
   return { x: CAT_RING_R * Math.cos(a) - CAT_W / 2, y: CAT_RING_R * Math.sin(a) - CAT_H / 2 };
 }
 
+// Even leaf spacing regardless of count: keep at least one node-height of arc
+// gap between neighbours, push the ring outward as leaves are added, and keep a
+// floor so small groups still fan out wide. Capped so it never wraps onto itself.
+const LEAF_MIN_FAN = 0.55;       // floor spread (≈ small-group look)
+const LEAF_MAX_FAN = 1.7;        // ~97° ceiling
+const LEAF_ARC_GAP = 18;         // px added to node height for arc spacing
+// Leaf groups with this many or fewer get the evenly-spaced fan; larger groups
+// keep the original (tighter) default layout.
+const MAX_FANNED_LEAVES = 10;
+
+// Radius grows once a fan has more than 4 leaves so a wide fan has room.
+function leafRadius(baseR: number, count: number) {
+  return baseR + (count > 4 ? (count - 4) * 14 : 0);
+}
+
+function leafFanSpread(count: number, r: number) {
+  if (count <= 1) return 0;
+  const minGapSpread = ((LEAF_H + LEAF_ARC_GAP) * (count - 1)) / r;
+  return Math.min(Math.max(minGapSpread, LEAF_MIN_FAN), LEAF_MAX_FAN);
+}
+
+// Evenly-spaced fan for small groups (≤ MAX_FANNED_LEAVES): keeps a node-height
+// gap between leaves and grows the ring with count.
+function placeLeaf(anchorAngle: number, baseR: number, li: number, ln: number) {
+  const r = leafRadius(baseR, ln);
+  const spread = leafFanSpread(ln, r);
+  const t = ln <= 1 ? 0 : (li / (ln - 1) - 0.5);
+  const a = anchorAngle + t * spread;
+  return { x: r * Math.cos(a) - LEAF_W / 2, y: r * Math.sin(a) - LEAF_H / 2 };
+}
+
 function leafPos(ci: number, cn: number, li: number, ln: number) {
   const base = (2 * Math.PI * ci) / cn - Math.PI / 2;
+  if (ln <= MAX_FANNED_LEAVES) return placeLeaf(base, LEAF_RING_R, li, ln);
+  // Default (original) layout for large groups.
   const t = ln === 1 ? 0 : (li / (ln - 1) - 0.5);
   const a = base + t * Math.min(Math.PI / (cn * 0.9), 0.65);
   const r = ln > 5 ? LEAF_RING_R + 40 : LEAF_RING_R;
@@ -205,6 +238,8 @@ function subLeafPos(groupIdx: number, subIdx: number, subCount: number, leafIdx:
   const minSpread = subCount <= 1 ? 0 : ((SUBCTX_W + 30) * (subCount - 1)) / SUBCTX_RING_R;
   const spread = Math.max(0.55, minSpread);
   const subAngle = base + subT * spread;
+  if (leafCount <= MAX_FANNED_LEAVES) return placeLeaf(subAngle, SUBLEAF_RING_R, leafIdx, leafCount);
+  // Default (original) layout for large groups.
   const t = leafCount <= 1 ? 0 : (leafIdx / (leafCount - 1) - 0.5);
   const a = subAngle + t * 0.45;
   return { x: SUBLEAF_RING_R * Math.cos(a) - LEAF_W / 2, y: SUBLEAF_RING_R * Math.sin(a) - LEAF_H / 2 };
@@ -229,7 +264,7 @@ const AgentNode: React.FC<NodeProps> = ({ data }) => {
         display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
         wordBreak: 'normal',
       }}>{d.label}</p>
-      <p style={{ fontSize: 8, color: '#93c5fd', margin: '1px 0 0', letterSpacing: '0.04em' }}>AGENT</p>
+      <p style={{ fontSize: 11, color: '#93c5fd', margin: '1px 0 0', letterSpacing: '0.04em' }}>AGENT</p>
     </div>
   );
 };
@@ -246,10 +281,10 @@ const ContextNode: React.FC<NodeProps> = ({ data }) => {
     }}>
       <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
-      <div style={{ width: 8, height: 8, borderRadius: '50%', background: d.strokeColor, flexShrink: 0 }} />
+      <div style={{ width: 9, height: 9, borderRadius: '50%', background: d.strokeColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</p>
-        <p style={{ fontSize: 9, color: d.strokeColor, margin: 0, opacity: 0.8 }}>{d.count} item{d.count !== 1 ? 's' : ''} {d.expanded ? '▴' : '▾'}</p>
+        <p style={{ fontSize: 15, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</p>
+        <p style={{ fontSize: 12, color: d.strokeColor, margin: 0, opacity: 0.8 }}>{d.count} item{d.count !== 1 ? 's' : ''} {d.expanded ? '▴' : '▾'}</p>
       </div>
     </div>
   );
@@ -267,10 +302,10 @@ const SubContextNode: React.FC<NodeProps> = ({ data }: NodeProps) => {
     }}>
       <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: d.strokeColor, flexShrink: 0 }} />
+      <div style={{ width: 7, height: 7, borderRadius: '50%', background: d.strokeColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 10.5, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</p>
-        <p style={{ fontSize: 8.5, color: d.strokeColor, margin: 0, opacity: 0.75 }}>{d.count} item{d.count !== 1 ? 's' : ''} {d.expanded ? '▴' : '▾'}</p>
+        <p style={{ fontSize: 14, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</p>
+        <p style={{ fontSize: 11.5, color: d.strokeColor, margin: 0, opacity: 0.75 }}>{d.count} item{d.count !== 1 ? 's' : ''} {d.expanded ? '▴' : '▾'}</p>
       </div>
     </div>
   );
@@ -289,15 +324,15 @@ const LeafNode: React.FC<NodeProps> = ({ data }) => {
     }}>
       <Handle type="target" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
       <Handle type="source" position={Position.Top} style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0 }} />
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: d.strokeColor, flexShrink: 0, marginTop: 3 }} />
+      <div style={{ width: 7, height: 7, borderRadius: '50%', background: d.strokeColor, flexShrink: 0, marginTop: 4 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.4, wordBreak: 'break-word' }}>{d.label}</p>
+        <p style={{ fontSize: 15, fontWeight: 600, color: d.textColor, margin: 0, lineHeight: 1.4, wordBreak: 'break-word' }}>{d.label}</p>
         {d.badgeText ? (
           <div style={{ background: `${d.badgeColor}1e`, padding: '1px 7px', borderRadius: 5, marginTop: 3, width: 'fit-content', maxWidth: '100%' }}>
-            <p style={{ fontSize: 7.5, fontWeight: 700, color: d.badgeColor, margin: 0 }}>{d.badgeText}</p>
+            <p style={{ fontSize: 10.5, fontWeight: 700, color: d.badgeColor, margin: 0 }}>{d.badgeText}</p>
           </div>
         ) : (
-          <p style={{ fontSize: 9, color: d.strokeColor, margin: 0, opacity: 0.75, marginTop: 1 }}>{d.sublabel}</p>
+          <p style={{ fontSize: 12.5, color: d.strokeColor, margin: 0, opacity: 0.75, marginTop: 1 }}>{d.sublabel}</p>
         )}
       </div>
     </div>

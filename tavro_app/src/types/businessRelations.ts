@@ -92,6 +92,17 @@ export interface BusinessProcessRecord {
   related_use_cases: RelatedUseCaseReference[];
 }
 
+export interface ChildAgentReference {
+  agent_id: string | null;
+  agent_internal_id: string | null;
+  agent_name: string | null;
+  agent_description: string | null;
+  relationship_label: string | null;
+  // 'CHILD' = the referenced agent is a child of the agent being viewed.
+  // 'PARENT' = the referenced agent is a parent of the agent being viewed.
+  direction?: 'CHILD' | 'PARENT' | null;
+}
+
 export interface AgentRelationsPayload {
   agent: {
     agent_id: string | null;
@@ -133,6 +144,7 @@ export interface AgentRelationsPayload {
     related_processes: RelatedProcessReference[];
   }>;
   ai_use_cases?: RelatedUseCaseReference[];
+  child_agents?: ChildAgentReference[];
 }
 
 export interface BusinessApplicationUpsertPayload {

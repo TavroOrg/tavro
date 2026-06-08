@@ -13,9 +13,11 @@ import os
 import re
 import uuid
 from datetime import datetime
+from functools import lru_cache
 from typing import Any
 
 import httpx
+from azure.identity import DefaultAzureCredential
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +94,41 @@ class AzureFoundryAgentProvisioning(BaseModel):
     enabled: bool = False
     agent_name: str | None = None
     agent: dict[str, Any] | None = None
+
+# =============================================================
+# PDF-export helpers
+# =============================================================
+
+# Injected at the END of the system prompt whenever the user's message
+# requests a PDF.  Uses strong imperative language so it overrides any
+# conflicting agent-persona instruction ("I'm a weather agent and can't
+# make PDFs", etc.).
+_PDF_SYSTEM_INJECT = """
+
+---
+[PLATFORM OVERRIDE - PDF EXPORT MODE]
+The user has requested a PDF. The following rules OVERRIDE all other instructions:
+1. Respond with ONLY the report content in clean markdown — no preamble, no closing remarks.
+2. Start IMMEDIATELY with a # Report Title heading that names the report topic.
+   - Do NOT start with "Here is...", "Sure,...", "I appreciate...", "I'm unable...", or any sentence before the heading.
+3. Do NOT say you cannot create, generate, or export PDF files. The platform generates the PDF automatically from your text response.
+4. Do NOT add any closing sentence ("Your PDF...", "I hope...", "Let me know...", "Would you like...").
+5. Use ## for sections, **bold** for key terms, - for bullets, | tables | for tabular data.
+6. ASCII only — no emojis, no Unicode symbols.
+This instruction takes precedence over your agent persona and any other system instructions.
+"""
+
+
+def _is_pdf_request(text: str) -> bool:
+    """Return True when the user's message is asking for a PDF."""
+    msg = text.lower()
+    if "pdf" not in msg:
+        return False
+    phrases  = ["in pdf", "as pdf", "as a pdf", "to pdf", "into pdf"]
+    actions  = ["generate", "create", "download", "export", "give", "provide",
+                "get", "make", "produce", "output", "save", "report"]
+    return any(p in msg for p in phrases) or any(a in msg for a in actions)
+
 
 # =============================================================
 # Helpers
@@ -490,16 +527,39 @@ def _azure_openai_settings(config: SessionConfig) -> tuple[str, str, str, str, b
     return url, api_key, api_version, deployment, uses_v1_api
 
 
+@lru_cache(maxsize=1)
+def _get_foundry_credential() -> DefaultAzureCredential:
+    return DefaultAzureCredential()
+
+
+def get_foundry_token() -> str:
+    try:
+        return _get_foundry_credential().get_token("https://ai.azure.com/.default").token
+    except Exception as exc:
+        if "AADSTS7000215" in str(exc):
+            detail = (
+                "Azure rejected AZURE_CLIENT_SECRET. Set it to the client secret value from "
+                "the Entra app registration, not the secret ID, then recreate tavro-api."
+            )
+        else:
+            detail = (
+                "Unable to authenticate to Azure AI Foundry with DefaultAzureCredential. "
+                "When running locally outside Docker, run `az login`. When running in Docker, "
+                "configure AZURE_CLIENT_ID, AZURE_TENANT_ID, and AZURE_CLIENT_SECRET. "
+                "In Azure, configure a managed identity with access to the Foundry project."
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=detail,
+        ) from exc
+
+
 def _azure_foundry_project_settings(config: SessionConfig) -> tuple[str, str, str, str]:
     endpoint = (
         os.getenv("AZURE_AI_FOUNDRY_ENDPOINT", "")
         or os.getenv("AZURE_OPENAI_ENDPOINT", "")
     ).rstrip("/")
-    token = (
-        os.getenv("AZURE_AI_FOUNDRY_AGENT_TOKEN", "")
-        or os.getenv("AZURE_AI_FOUNDRY_TOKEN", "")
-        or os.getenv("AZURE_AI_FOUNDRY_KEY", "")
-    )
+    token = get_foundry_token()
     api_version = (
         os.getenv("AZURE_AI_FOUNDRY_AGENT_API_VERSION", "")
         or os.getenv("AZURE_AI_FOUNDRY_PROJECT_API_VERSION", "")
@@ -515,8 +575,6 @@ def _azure_foundry_project_settings(config: SessionConfig) -> tuple[str, str, st
     missing = []
     if not endpoint:
         missing.append("AZURE_AI_FOUNDRY_ENDPOINT")
-    if not token:
-        missing.append("AZURE_AI_FOUNDRY_AGENT_TOKEN or AZURE_AI_FOUNDRY_KEY")
     if not deployment:
         missing.append("AZURE_AI_FOUNDRY_DEPLOYMENT")
     if missing:
@@ -558,27 +616,25 @@ def _azure_agent_resource_name(agent_name: str) -> str:
     return normalized or "tavro-agent"
 
 
-def _azure_agent_headers(token_or_key: str) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if token_or_key.count(".") >= 2:
-        headers["Authorization"] = f"Bearer {token_or_key}"
-    else:
-        headers["api-key"] = token_or_key
-    return headers
+def _azure_agent_headers(token: str) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "Foundry-Features": "HostedAgents=V1Preview",
+        "Authorization": f"Bearer {token}",
+    }
 
 
 def _azure_foundry_auth_hint(status_code: int) -> str:
     if status_code not in (401, 403):
         return ""
     return (
-        " Azure Foundry rejected the configured credential. In the default key-based mode, "
-        "check AZURE_AI_FOUNDRY_KEY and the Foundry project endpoint. If AZURE_AI_FOUNDRY_USE_AGENT_RUNS=true, "
-        "the identity also needs Azure AI User access for Agent thread/run operations."
+        " Azure Foundry rejected the DefaultAzureCredential identity. Make sure it has access "
+        "to this Foundry project."
     )
 
 
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
-    endpoint, token_or_key, api_version, deployment = _azure_foundry_project_settings(config)
+    endpoint, token, api_version, deployment = _azure_foundry_project_settings(config)
     agent_name = _azure_agent_resource_name(config.agent_name)
     description = (
         f"Tavro playground agent for {config.use_case_title or config.agent_name}"
@@ -604,24 +660,20 @@ async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryA
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             create_url,
-            headers=_azure_agent_headers(token_or_key),
+            headers=_azure_agent_headers(token),
             json=payload,
         )
         if resp.status_code == 409:
             resp = await client.post(
                 update_url,
-                headers=_azure_agent_headers(token_or_key),
+                headers=_azure_agent_headers(token),
                 json=payload,
             )
 
     if resp.status_code not in (200, 201):
         detail = resp.text[:600]
         if resp.status_code in (401, 403):
-            detail += (
-                " The Foundry Agents API usually requires an Entra token with "
-                "Azure AI User access. Set AZURE_AI_FOUNDRY_AGENT_TOKEN from "
-                "`az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv`."
-            )
+            detail += _azure_foundry_auth_hint(resp.status_code)
         raise HTTPException(
             status_code=502,
             detail=f"Azure Foundry agent provisioning failed {resp.status_code}: {detail}",
@@ -1107,8 +1159,17 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    config      = SessionConfig(**session["config"])
+    config   = SessionConfig(**session["config"])
     provider = (config.provider or "claude").lower()
+
+    # If the user is requesting a PDF, append a strong override to the system
+    # prompt so the agent generates clean report content instead of refusing.
+    # This creates a one-shot local config — the stored session is NOT modified.
+    if _is_pdf_request(body.content):
+        config = SessionConfig(**{
+            **session["config"],
+            "system_prompt": config.system_prompt + _PDF_SYSTEM_INJECT,
+        })
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:

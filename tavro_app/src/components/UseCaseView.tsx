@@ -18,13 +18,43 @@ import {
     Info,
     CalendarDays,
     User,
+    Loader2,
 } from 'lucide-react';
+
+const PRIORITY_OPTIONS = [
+    '1 - Critical',
+    '2 - High',
+    '3 - Moderate',
+    '4 - Low',
+    '5 - Planning',
+];
 
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
     businessImpactComponent?: React.ReactNode;
     headerActions?: React.ReactNode;
+    isEditing?: boolean;
+    editTitle?: string;
+    onEditTitleChange?: (v: string) => void;
+    editDescription?: string;
+    onEditDescriptionChange?: (v: string) => void;
+    editPriority?: string;
+    onEditPriorityChange?: (v: string) => void;
+    editOwner?: string;
+    onEditOwnerChange?: (v: string) => void;
+    editProblemStatement?: string;
+    onEditProblemStatementChange?: (v: string) => void;
+    editExpectedBenefits?: string;
+    onEditExpectedBenefitsChange?: (v: string) => void;
+    editSolutionApproach?: string;
+    onEditSolutionApproachChange?: (v: string) => void;
+    inlineEdit?: { field: string; value: string } | null;
+    inlineSaving?: string | null;
+    onStartInlineEdit?: (field: string, value: string) => void;
+    onInlineValueChange?: (v: string) => void;
+    onSaveInlineEdit?: () => void;
+    onCancelInlineEdit?: () => void;
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -113,15 +143,6 @@ function SectionCard({ icon, title, count, children }: { icon: React.ReactNode; 
     );
 }
 
-function TextBlock({ icon, title, text }: { icon: React.ReactNode; title: string; text?: string | null }) {
-    if (!text) return null;
-    return (
-        <SectionCard icon={icon} title={title}>
-            <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">{text}</p>
-        </SectionCard>
-    );
-}
-
 function MetaField({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div className="flex flex-col gap-1">
@@ -165,7 +186,22 @@ function getId(item: any): string | undefined {
     return item?.sys_id ?? item?.id ?? item?.identifier ?? item?.value ?? item?.agent_id ?? item?.business_application_id;
 }
 
-const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent, businessImpactComponent, headerActions }) => {
+const UseCaseView: React.FC<UseCaseViewProps> = ({
+    useCase: uc,
+    agentsComponent,
+    businessImpactComponent,
+    headerActions,
+    isEditing,
+    editTitle, onEditTitleChange,
+    editDescription, onEditDescriptionChange,
+    editPriority, onEditPriorityChange,
+    editOwner, onEditOwnerChange,
+    editProblemStatement, onEditProblemStatementChange,
+    editExpectedBenefits, onEditExpectedBenefitsChange,
+    editSolutionApproach, onEditSolutionApproachChange,
+    inlineEdit, inlineSaving,
+    onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+}) => {
     const [activeTab, setActiveTab] = React.useState('details');
 
     const applications = uc.applications?.filter(Boolean) ?? [];
@@ -184,6 +220,38 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
     const createdAt = (uc as any).created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
     const updatedAt = (uc as any).updated_ts ?? (uc as any).updated_at ?? (uc as any).sys_updated_on ?? null;
     const description = uc.description ?? (uc as any).description ?? null;
+    const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
+    const expectedBenefits = uc.expected_benefits ?? null;
+    const solutionApproach = (uc as any).solution_approach ?? null;
+
+    const REQUIRED_INLINE_FIELDS = new Set(['title', 'description']);
+    const renderInlineActions = (field: string) => {
+        const isSaving = inlineSaving === field;
+        const isBlank = REQUIRED_INLINE_FIELDS.has(field) && !inlineEdit?.value.trim();
+        const saveDisabled = isSaving || isBlank;
+        return (
+            <div className="flex shrink-0 gap-1">
+                <button
+                    type="button"
+                    onClick={onSaveInlineEdit}
+                    disabled={saveDisabled}
+                    title={isBlank ? 'This field is required' : 'Save'}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                >
+                    {isSaving ? <Loader2 size={12} className="animate-spin" /> : '✓'}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancelInlineEdit}
+                    disabled={isSaving}
+                    title="Cancel"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                    ✕
+                </button>
+            </div>
+        );
+    };
 
     const tabs = [
         { id: 'details',          label: 'Details',                  icon: Info },
@@ -198,28 +266,50 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
         <div className="flex flex-col gap-6 w-full animate-fade-in pb-6 max-w-[1400px] mx-auto">
             <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
 
-            {/* ── Header card ── */}
+            {/* Header card */}
             <div className="-mt-6 bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
                 <div className="p-6 flex flex-col gap-4">
                     {/* Title row */}
-                    <div className="flex items-start justify-between gap-4 flex-wrap">
-                        <div className="flex items-start gap-4 min-w-0 flex-1">
-                            <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm shrink-0">
-                                <ClipboardList size={22} />
-                            </div>
-                            <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                                <h1 className="text-xl font-bold text-slate-800 tracking-tight leading-tight">
+                    <div className="flex items-start gap-4">
+                        <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm shrink-0">
+                            <ClipboardList size={22} />
+                        </div>
+                        <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                            {isEditing ? (
+                                <input
+                                    type="text"
+                                    value={editTitle ?? (uc as any).name ?? (uc as any).title ?? ''}
+                                    onChange={e => onEditTitleChange?.(e.target.value)}
+                                    className="text-xl font-bold text-slate-800 tracking-tight leading-tight w-full border-b-2 border-blue-400 bg-transparent outline-none pb-0.5"
+                                />
+                            ) : inlineEdit?.field === 'title' ? (
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <input
+                                        type="text"
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        className="text-xl font-bold text-slate-800 tracking-tight leading-tight w-full border-b-2 border-blue-400 bg-transparent outline-none pb-0.5"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('title')}
+                                </div>
+                            ) : (
+                                <h1
+                                    onDoubleClick={() => onStartInlineEdit?.('title', (uc as any).name ?? (uc as any).title ?? '')}
+                                    title="Double-click to edit"
+                                    className="text-xl font-bold text-slate-800 tracking-tight leading-tight cursor-text rounded-lg hover:bg-blue-50/50 transition-colors"
+                                >
                                     {(uc as any).name ?? (uc as any).title ?? 'Unnamed Use Case'}
                                 </h1>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    {uc.identifier && (
-                                        <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-500">
-                                            {uc.identifier}
-                                        </span>
-                                    )}
-                                    {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
-                                    {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
-                                </div>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {uc.identifier && (
+                                    <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-500">
+                                        {uc.identifier}
+                                    </span>
+                                )}
+                                {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
+                                {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                         </div>
                         {headerActions && (
@@ -236,12 +326,42 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
                         </MetaField>
 
                         <MetaField label="Priority">
-                            {priorityValue ? (
-                                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold border ${priorityTheme.badge}`}>
+                            {isEditing ? (
+                                <select
+                                    value={editPriority ?? ''}
+                                    onChange={e => onEditPriorityChange?.(e.target.value)}
+                                    className="text-xs border-b border-blue-400 bg-transparent outline-none py-0.5 pr-1"
+                                >
+                                    {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            ) : inlineEdit?.field === 'priority' ? (
+                                <div className="flex items-center gap-1">
+                                    <select
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        className="text-xs border-b border-blue-400 bg-transparent outline-none py-0.5 pr-1"
+                                        autoFocus
+                                    >
+                                        {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                                    </select>
+                                    {renderInlineActions('priority')}
+                                </div>
+                            ) : priorityValue ? (
+                                <span
+                                    onDoubleClick={() => onStartInlineEdit?.('priority', priorityValue)}
+                                    title="Double-click to edit"
+                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold border cursor-text hover:opacity-80 ${priorityTheme.badge}`}
+                                >
                                     <span className={`w-1.5 h-1.5 rounded-full ${priorityTheme.dot}`} />
                                     {priorityValue}
                                 </span>
-                            ) : <span className="text-slate-400 text-xs">—</span>}
+                            ) : (
+                                <span
+                                    onDoubleClick={() => onStartInlineEdit?.('priority', '')}
+                                    title="Double-click to edit"
+                                    className="text-slate-400 text-xs cursor-text hover:opacity-80"
+                                >—</span>
+                            )}
                         </MetaField>
 
                         <MetaField label="Owner">
@@ -259,7 +379,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
                 </div>
             </div>
 
-            {/* ── Tab bar ── */}
+            {/* Tab bar */}
             <div className="flex items-center gap-1 overflow-x-auto pb-0 scrollbar-hide border-b border-slate-200">
                 {tabs.map(tab => {
                     const Icon = tab.icon;
@@ -280,28 +400,86 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
                 })}
             </div>
 
-            {/* ── Tab content ── */}
+            {/* Tab content */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px]">
 
-                {/* Details tab — description + all metadata */}
+                {/* Details tab */}
                 {activeTab === 'details' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
-                        {description ? (
+                        {isEditing ? (
                             <SectionCard icon={<FileText size={16} />} title="Description">
-                                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">{description}</p>
+                                <textarea
+                                    value={editDescription ?? ''}
+                                    onChange={e => onEditDescriptionChange?.(e.target.value)}
+                                    rows={4}
+                                    className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                />
+                            </SectionCard>
+                        ) : inlineEdit?.field === 'description' ? (
+                            <SectionCard icon={<FileText size={16} />} title="Description">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('description')}
+                                </div>
+                            </SectionCard>
+                        ) : description ? (
+                            <SectionCard icon={<FileText size={16} />} title="Description">
+                                <p
+                                    onDoubleClick={() => onStartInlineEdit?.('description', description)}
+                                    title="Double-click to edit"
+                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                >
+                                    {description}
+                                </p>
                             </SectionCard>
                         ) : (
-                            <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm">
+                            <div
+                                onDoubleClick={() => onStartInlineEdit?.('description', '')}
+                                title="Double-click to add description"
+                                className="bg-white rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm cursor-text hover:bg-blue-50/20 transition-colors"
+                            >
                                 No description provided.
                             </div>
                         )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {owner && (
-                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>
-                                    <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><User size={13} className="text-slate-400" />{owner}</span>
-                                </div>
-                            )}
+                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>
+                                {isEditing ? (
+                                    <input
+                                        type="text"
+                                        value={editOwner ?? ''}
+                                        onChange={e => onEditOwnerChange?.(e.target.value)}
+                                        placeholder="Assign owner"
+                                        className="text-sm font-semibold text-slate-700 w-full border-b border-blue-400 bg-transparent outline-none"
+                                    />
+                                ) : inlineEdit?.field === 'owner' ? (
+                                    <div className="flex items-center gap-1">
+                                        <input
+                                            type="text"
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            className="text-sm font-semibold text-slate-700 w-full border-b border-blue-400 bg-transparent outline-none"
+                                            autoFocus
+                                        />
+                                        {renderInlineActions('owner')}
+                                    </div>
+                                ) : (
+                                    <span
+                                        onDoubleClick={() => onStartInlineEdit?.('owner', owner ?? '')}
+                                        title="Double-click to edit"
+                                        className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 cursor-text rounded hover:bg-blue-50/40 transition-colors"
+                                    >
+                                        <User size={13} className="text-slate-400" />
+                                        {owner || <span className="text-slate-400 font-normal">Unassigned</span>}
+                                    </span>
+                                )}
+                            </div>
                             {proposedBy && (
                                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
                                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Proposed By</span>
@@ -329,9 +507,105 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({ useCase: uc, agentsComponent,
                 {/* Business Case tab */}
                 {activeTab === 'business_case' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-                        <TextBlock icon={<FileText size={16} />} title="Business Problem Statement" text={(uc as any).problem_statement ?? (uc as any).business_problem_statement} />
-                        <TextBlock icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes" text={uc.expected_benefits} />
-                        <TextBlock icon={<Target size={16} />} title="Solution Approach" text={(uc as any).solution_approach} />
+                        {/* Problem Statement */}
+                        {isEditing ? (
+                            <SectionCard icon={<FileText size={16} />} title="Business Problem Statement">
+                                <textarea
+                                    value={editProblemStatement ?? ''}
+                                    onChange={e => onEditProblemStatementChange?.(e.target.value)}
+                                    rows={4}
+                                    className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                />
+                            </SectionCard>
+                        ) : inlineEdit?.field === 'problem_statement' ? (
+                            <SectionCard icon={<FileText size={16} />} title="Business Problem Statement">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('problem_statement')}
+                                </div>
+                            </SectionCard>
+                        ) : problemStatement ? (
+                            <SectionCard icon={<FileText size={16} />} title="Business Problem Statement">
+                                <p
+                                    onDoubleClick={() => onStartInlineEdit?.('problem_statement', problemStatement)}
+                                    title="Double-click to edit"
+                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                >{problemStatement}</p>
+                            </SectionCard>
+                        ) : null}
+
+                        {/* Expected Benefits */}
+                        {isEditing ? (
+                            <SectionCard icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes">
+                                <textarea
+                                    value={editExpectedBenefits ?? ''}
+                                    onChange={e => onEditExpectedBenefitsChange?.(e.target.value)}
+                                    rows={4}
+                                    className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                />
+                            </SectionCard>
+                        ) : inlineEdit?.field === 'expected_benefits' ? (
+                            <SectionCard icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('expected_benefits')}
+                                </div>
+                            </SectionCard>
+                        ) : expectedBenefits ? (
+                            <SectionCard icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes">
+                                <p
+                                    onDoubleClick={() => onStartInlineEdit?.('expected_benefits', expectedBenefits)}
+                                    title="Double-click to edit"
+                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                >{expectedBenefits}</p>
+                            </SectionCard>
+                        ) : null}
+
+                        {/* Solution Approach */}
+                        {isEditing ? (
+                            <SectionCard icon={<Target size={16} />} title="Solution Approach">
+                                <textarea
+                                    value={editSolutionApproach ?? ''}
+                                    onChange={e => onEditSolutionApproachChange?.(e.target.value)}
+                                    rows={4}
+                                    className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                />
+                            </SectionCard>
+                        ) : inlineEdit?.field === 'solution_approach' ? (
+                            <SectionCard icon={<Target size={16} />} title="Solution Approach">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('solution_approach')}
+                                </div>
+                            </SectionCard>
+                        ) : solutionApproach ? (
+                            <SectionCard icon={<Target size={16} />} title="Solution Approach">
+                                <p
+                                    onDoubleClick={() => onStartInlineEdit?.('solution_approach', solutionApproach)}
+                                    title="Double-click to edit"
+                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                >{solutionApproach}</p>
+                            </SectionCard>
+                        ) : null}
+
                         {(uc as any).business_sponsors && (
                             <SectionCard icon={<Users size={16} />} title="Business Sponsors">
                                 <p className="text-sm text-slate-700">{(uc as any).business_sponsors}</p>

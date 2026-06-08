@@ -5,8 +5,9 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   FlaskConical, Play, Square, RotateCcw, Plus, Send, Loader2,
   ChevronDown, ChevronUp, Settings2, MessageSquare, ClipboardList,
-  Trash2, Download, Bot, User, Copy, Check, Info,
+  Trash2, Download, Bot, User, Copy, Check, Info, FileText,
 } from 'lucide-react';
+import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
 import type { AttachmentPayload } from '../context/PlaygroundContext';
 import AttachmentPicker from '../components/playground/AttachmentPicker';
@@ -83,8 +84,8 @@ const PlaygroundPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
-    config, messages, observations, isRunning, sessionActive, tokenCount,
-    summary, summaryLoading,
+    config, messages, observations, isRunning, sessionActive, sessionStarting, tokenCount,
+    summary, summaryLoading, sessionError,
     setConfig, setProvider, loadFromAgent, resetConfig,
     startSession, endSession, sendMessage, clearMessages, generateSummary,
     addObservation, removeObservation,
@@ -148,9 +149,15 @@ const PlaygroundPage: React.FC = () => {
       mime_type: a.mime_type,
       data:      a.data,
     }));
+    const isPdf = isPdfExportRequest(text);
     setInput('');
     setAttachments([]);
-    await sendMessage(text, atts);
+    const responseText = await sendMessage(text, atts);
+    if (isPdf && responseText?.trim()) {
+      const body  = extractPdfBody(responseText);
+      const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
+      if (body.trim()) generateMarkdownPdf(title, body, `tavro-playground-${Date.now()}.pdf`);
+    }
   };
 
   const handleAddObs = () => {
@@ -438,10 +445,12 @@ const PlaygroundPage: React.FC = () => {
             {!sessionActive && (
               <button
                 onClick={() => { startSession(); setActiveTab('chat'); }}
-                disabled={!config.agentName.trim()}
+                disabled={!config.agentName.trim() || sessionStarting}
                 className="flex items-center justify-center gap-2 w-full py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Play size={15} /> Start session and interact
+                {sessionStarting
+                  ? <><Loader2 size={15} className="animate-spin" /> Setting up session…</>
+                  : <><Play size={15} /> Start session and interact</>}
               </button>
             )}
           </div>
@@ -453,8 +462,21 @@ const PlaygroundPage: React.FC = () => {
         {activeTab === 'chat' && (
           <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
 
+            {/* Session setup in progress */}
+            {sessionStarting && (
+              <div className="flex flex-col items-center justify-center py-24 gap-5 text-slate-400 dark:text-slate-500 px-8">
+                <div className="p-5 bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-100 dark:border-violet-800">
+                  <Loader2 size={32} className="text-violet-500 dark:text-violet-400 animate-spin" />
+                </div>
+                <div className="text-center">
+                  <p className="font-bold text-slate-600 dark:text-slate-300 text-base">Setting up session…</p>
+                  <p className="text-sm mt-1">Provisioning the agent and connecting to {config.provider}. This may take a few moments.</p>
+                </div>
+              </div>
+            )}
+
             {/* Not started state */}
-            {!sessionActive && (
+            {!sessionActive && !sessionStarting && (
               <div className="flex flex-col items-center justify-center py-24 gap-5 text-slate-400 dark:text-slate-500 px-8">
                 <div className="p-5 bg-violet-50 dark:bg-violet-900/20 rounded-2xl border border-violet-100 dark:border-violet-800">
                   <FlaskConical size={32} className="text-violet-500 dark:text-violet-400" />
@@ -463,6 +485,11 @@ const PlaygroundPage: React.FC = () => {
                   <p className="font-bold text-slate-600 dark:text-slate-300 text-base">Session not started</p>
                   <p className="text-sm mt-1">Configure your agent and click Start session to begin interacting.</p>
                 </div>
+                {sessionError && (
+                  <div className="max-w-xl text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 px-4 py-3 rounded-lg">
+                    {sessionError}
+                  </div>
+                )}
                 <button onClick={() => setActiveTab('config')}
                   className="flex items-center gap-2 text-sm font-bold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 px-4 py-2 rounded-lg transition-colors">
                   <Settings2 size={14} /> Go to configuration
@@ -536,9 +563,9 @@ const PlaygroundPage: React.FC = () => {
                             )}
                           </div>
                         </div>
-                        {/* Quick observation tags on assistant messages */}
+                        {/* Quick observation tags and PDF download on assistant messages */}
                         {msg.role === 'assistant' && (
-                          <div className="flex gap-1.5 ml-9">
+                          <div className="flex flex-wrap gap-1.5 ml-9 items-center">
                             {(['gap', 'works_well', 'needs_info', 'unexpected'] as const).map(type => (
                               <button key={type}
                                 onClick={() => addObservation({ type, content: `Re: "${msg.content.slice(0, 60)}…"`, messageId: msg.id })}
@@ -546,6 +573,16 @@ const PlaygroundPage: React.FC = () => {
                                 + {OBSERVATION_TYPES[type].label}
                               </button>
                             ))}
+                            <button
+                              onClick={() => {
+                                const body  = extractPdfBody(msg.content);
+                                const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
+                                if (body.trim()) generateMarkdownPdf(title, body, `tavro-response-${Date.now()}.pdf`);
+                              }}
+                              className="flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200 dark:hover:border-blue-700 transition-colors"
+                              title="Download as PDF">
+                              <FileText size={9} /> PDF
+                            </button>
                           </div>
                         )}
                       </div>
