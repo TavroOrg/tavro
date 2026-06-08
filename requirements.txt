@@ -10,3 +10,4 @@ rapidfuzz
 pyyaml
 boto3
 google-auth-oauthlib
+cvss

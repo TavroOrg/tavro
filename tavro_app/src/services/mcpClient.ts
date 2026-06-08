@@ -46,6 +46,7 @@ type ChatViewContext = {
         industry: string;
         region: string;
         dimensions: { label: string; category: string; summary?: string | null }[];
+        edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
     } | null;
 };
 
@@ -685,6 +686,10 @@ ${toolSummary}`;
                     .map(([cat, items]) => `  [${cat}]: ${items.join(' | ')}`)
                     .join('\n');
 
+                const edgeBlock = bp.edges?.length
+                    ? bp.edges.map(e => `  ${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`).join('\n')
+                    : '';
+
                 const writeToolList = writeTools.map(t => `  • ${t.name}`).join('\n');
 
                 return `
@@ -694,15 +699,15 @@ Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}
 
 Blueprint dimensions active for this company:
 ${dimBlock}
-
+${edgeBlock ? `\nDimension relationships (use these to understand how dimensions connect when generating values):\n${edgeBlock}` : ''}
 ### Intent-based parameter enrichment — MANDATORY for write operations
 The following tools (detected from the live tool list) create or modify resources:
 ${writeToolList}
 
-When calling any of these tools, derive generated parameter values from the blueprint dimensions above using this field-level mapping:
+When calling any of these tools, derive generated parameter values from the blueprint dimensions and their relationships above using this field-level mapping:
 - Parameters describing purpose, role, or behaviour (e.g. \`description\`, \`instructions\`, \`summary\`): ground in [strategy] and [process] dimensions.
-- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions.
-- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions.
+- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions and any dimension that has a [risks] or [depends_on] relationship to a risk node.
+- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions and dimensions connected via [enables] or [supports] relationships.
 - Parameters describing technical context (e.g. \`tools\`, \`integrations\`, \`platform\`): ground in [technology] and [integration] dimensions.
 - Parameters describing industry or geography (e.g. \`industry\`, \`region\`, \`sector\`): always use "${bp.industry}" and "${bp.region}" from the blueprint — never override these.
 
