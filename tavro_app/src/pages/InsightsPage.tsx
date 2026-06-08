@@ -1,6 +1,5 @@
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mcpClient } from '../services/mcpClient';
 import {
     Lightbulb, RefreshCw, ShieldAlert, FlameKindling, ArrowRight,
     AlertTriangle, TrendingUp, TrendingDown, Minus,
@@ -8,13 +7,17 @@ import {
     XCircle, AlertCircle, Zap, GitBranch, Layers, Search, Building2,
     BarChart3,
 } from 'lucide-react';
-import { useCatalog } from '../context/CatalogContext';
-import { useUseCases } from '../context/UseCaseContext';
-import { useBlueprint } from '../context/BlueprintContext';
-import type { AgentData } from '../types/agent';
-import type { UseCaseSummary } from '../types/useCase';
-import type { DimCategory, DimNode } from '../types/blueprint';
-import { CATEGORY_LABELS } from '../types/blueprint';
+import {
+    insightsApi,
+    type InsightsSummary,
+    type StageCount,
+    type LabelDistribution,
+    type InsightsRiskAgent,
+} from '../services/insightsApi';
+
+// All page data is now computed by the backend (GET /api/v1/insights/summary),
+// which aggregates live over the core.* / twin.* tables. This page only fetches
+// that payload and maps it onto presentational components + color templates.
 
 type StageDatum = {
     stage: string;
@@ -124,100 +127,28 @@ const USECASE_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = [
     { stage: 'Live', sub: 'Deployed & active', color: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
 ];
 
-const PROFILE_SECTION_DEFINITIONS: Array<{ label: string; categories: DimCategory[] }> = [
-    { label: 'Company Overview', categories: ['profile'] },
-    { label: 'Industry & Market', categories: ['strategy'] },
-    { label: 'Regulatory Context', categories: ['risk'] },
-    { label: 'Financial Profile', categories: ['finance'] },
-    { label: 'Competitive Landscape', categories: ['application', 'process', 'integration'] },
-    { label: 'ESG & Sustainability', categories: ['organisation', 'technology'] },
+// Canonical provider / risk / autonomy buckets — colors live here; counts come
+// from the server payload and are merged in by label.
+const PROVIDER_BUCKETS = [
+    { label: 'Google', color: 'bg-violet-500', text: 'text-violet-700' },
+    { label: 'Azure', color: 'bg-teal-500', text: 'text-teal-700' },
+    { label: 'ServiceNow', color: 'bg-blue-500', text: 'text-blue-700' },
+];
+
+const RISK_BUCKETS = [
+    { label: 'Critical', color: 'bg-rose-500', text: 'text-rose-700' },
+    { label: 'High', color: 'bg-red-500', text: 'text-red-700' },
+    { label: 'Medium', color: 'bg-amber-500', text: 'text-amber-700' },
+    { label: 'Low', color: 'bg-emerald-500', text: 'text-emerald-700' },
+];
+
+const AUTONOMY_BUCKETS = [
+    { label: 'Supervised', color: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700', desc: 'Full human review before action' },
+    { label: 'Semi-Autonomous', color: 'bg-amber-500', light: 'bg-amber-50', text: 'text-amber-700', desc: 'Human approval on high-risk actions only' },
+    { label: 'Fully Autonomous', color: 'bg-red-500', light: 'bg-red-50', text: 'text-red-700', desc: 'No human gate - escalation only' },
 ];
 
 const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
-
-const displayValue = (value: unknown, fallback = 'Unknown') => {
-    const text = String(value ?? '').trim();
-    return text || fallback;
-};
-
-const getAgentId = (agent: AgentData) => agent.identification?.agent_id || agent.id || agent.sys_id || agent.name;
-
-const getAgentEnv = (agent: AgentData) => displayValue(
-    agent.identification?.environment ??
-    (agent as any).environment ??
-    (agent as any).env ??
-    (agent as any).deployment_environment ??
-    (agent as any).runtime_environment ??
-    (agent as any).operational_environment ??
-    (agent as any).environmentName ??
-    (agent as any).environment_label,
-);
-
-const getRiskClass = (agent: AgentData): 'critical' | 'high' | 'medium' | 'low' => {
-    const labels = [
-        agent.latest_risk_class,
-        agent.risk_assessment?.blended_risk_classification,
-        agent.risk_assessment?.regulatory_risk_classification,
-        agent.risk_assessment?.aivss_classification,
-        (agent as any).risk_classification,
-        (agent as any).overall_risk,
-        (agent as any).overall_risk_classification,
-        (agent as any).blended_risk_classification,
-        (agent as any).eu_ai_act_risk_classification,
-    ].map(norm).filter(Boolean);
-    if (labels.some(v => v.includes('critical') || v.includes('prohibited'))) return 'critical';
-    if (labels.some(v => v.includes('high'))) return 'high';
-    if (labels.some(v => v.includes('medium') || v.includes('moderate'))) return 'medium';
-
-    const rawScore = agent.latest_risk_score ?? agent.risk_assessment?.blended_risk_score ?? agent.risk_assessment?.aivss_score ?? (agent as any).risk_score ?? (agent as any).overall_risk_score;
-    const score = Number(rawScore);
-    if (Number.isFinite(score)) {
-        if (score >= 8) return 'critical';
-        if (score >= 6) return 'high';
-        if (score >= 3) return 'medium';
-    }
-
-    return 'low';
-};
-
-const getRiskScore = (agent: AgentData): number => {
-    const raw = agent.latest_risk_score ?? agent.risk_assessment?.blended_risk_score ?? agent.risk_assessment?.aivss_score;
-    const score = Number(raw);
-    if (Number.isFinite(score)) return score;
-    const risk = getRiskClass(agent);
-    if (risk === 'critical') return 9;
-    if (risk === 'high') return 7;
-    if (risk === 'medium') return 4;
-    return 1;
-};
-
-const isProdEnv = (agent: AgentData) => {
-    const env = norm(getAgentEnv(agent));
-    return env.includes('prod') || env.includes('live');
-};
-
-const isDevEnv = (agent: AgentData) => {
-    const env = norm(getAgentEnv(agent));
-    // Note: use 'stag' not 'stage' — "staging".includes("stage") is false.
-    return env.includes('dev') || env.includes('stag') || env.includes('test') || env.includes('qa') || env.includes('uat');
-};
-
-const hasKnownEnv = (agent: AgentData) => {
-    const env = norm(getAgentEnv(agent));
-    return Boolean(env && env !== 'unknown');
-};
-
-const prettyEnv = (value: string) => {
-    const env = norm(value);
-    if (!env || env === 'unknown') return 'Unknown';
-    if (env.includes('prod') || env.includes('live')) return 'Production';
-    if (env.includes('stag')) return 'Staging';
-    if (env.includes('dev')) return 'Development';
-    if (env.includes('test')) return 'Testing';
-    if (env.includes('uat')) return 'UAT';
-    if (env.includes('qa')) return 'QA';
-    return value;
-};
 
 const envBadge = (env: string): { bg: string; text: string } => {
     const e = norm(env);
@@ -228,283 +159,11 @@ const envBadge = (env: string): { bg: string; text: string } => {
     return { bg: 'bg-slate-100', text: 'text-slate-500' };
 };
 
-const normalizeLifecycleStage = (value: unknown) => {
-    const stage = norm(value).replace(/[_-]+/g, ' ');
-    if (!stage) return null;
-    if (stage.includes('monitor') || stage.includes('operate') || stage.includes('active governance') || stage.includes('live')) return 'Monitor';
-    if (stage.includes('deploy') || stage.includes('release') || stage.includes('launch')) return 'Deploy';
-    if (stage.includes('develop') || stage.includes('development') || stage.includes('build') || stage.includes('test')) return 'Develop';
-    if (stage.includes('design') || stage.includes('prototype') || stage.includes('variant')) return 'Design';
-    if (stage.includes('plan') || stage.includes('idea') || stage.includes('identify') || stage.includes('blueprint')) return 'Plan';
-    return null;
-};
-
-const getAutonomyBucket = (value: unknown): 'supervised' | 'semi' | 'full' | null => {
-    const text = norm(value);
-    if (!text) return null;
-
-    if (text.includes('2.1') || text.includes('stage 2.1')) return 'supervised';
-    if (text.includes('2.2') || text.includes('stage 2.2')) return 'semi';
-    if (text.includes('2.3') || text.includes('stage 2.3')) return 'full';
-
-    if (text.includes('none') || text.includes('copilot') || text.includes('human-in-the-loop')) return 'supervised';
-    if (text.includes('semi') || text.includes('partial') || text.includes('approval') || text.includes('well-defined') || text.includes('decision tree')) return 'semi';
-    if (text.includes('full') || text.includes('fully') || text.includes('open-ended') || text.includes('free communication')) return 'full';
-    if (text.includes('supervised') || text.includes('human')) return 'supervised';
-
-    const numericMatch = text.match(/-?\d+(?:\.\d+)?/);
-    const numeric = Number(numericMatch?.[0] ?? text);
-    if (Number.isFinite(numeric)) {
-        if (numeric <= 0) return 'supervised';
-        if (numeric < 1) return 'semi';
-        return 'full';
-    }
-
-    return null;
-};
-
-const getAgentAutonomyBucket = (agent: AgentData): 'supervised' | 'semi' | 'full' | null => {
-    const candidates = [
-        agent.configuration?.autonomy_level,
-        (agent as any).autonomy_level,
-        (agent as any).autonomy,
-        (agent as any).autonomy_stage,
-        (agent as any).configuration?.autonomy,
-        (agent as any).configuration?.autonomy_stage,
-        (agent as any).risk_assessment?.autonomy_level,
-    ];
-    return candidates.map(getAutonomyBucket).find(Boolean) ?? null;
-};
-
-// Map a raw provider identifier to a clean display name. Falls back to the
-// original value (trimmed) so unrecognized providers still show their real name.
-const prettyProvider = (value: unknown): string => {
-    const raw = String(value ?? '').trim();
-    const p = raw.toLowerCase();
-    if (!p || p === 'unknown' || p === 'unknown provider') return 'Unknown Provider';
-    if (p.includes('servicenow') || p.includes('service now') || p.includes('service-now') || p.includes('now platform')) return 'ServiceNow';
-    if (p.includes('google') || p.includes('gcp') || p.includes('vertex') || p.includes('gemini')) return 'Google';
-    if (p.includes('azure') || p.includes('microsoft')) return 'Azure';
-    return raw;
-};
-
-// Provider label straight from the agent card's provider field (backfilled via
-// detail lookups when the catalog list omits it).
-const getProviderLabel = (agent: AgentData): string => prettyProvider(
-    agent.provider?.organization ??
-    (agent as any).provider_name ??
-    (agent as any).provider ??
-    (agent as any).platform_provider,
-);
-
-const hasKnownProvider = (agent: AgentData) => {
-    const provider = norm(
-        agent.provider?.organization ??
-        (agent as any).provider_name ??
-        (agent as any).provider ??
-        (agent as any).platform_provider,
-    );
-    return Boolean(provider && provider !== 'unknown' && provider !== 'unknown provider');
-};
-
-const getBlendedRiskLabel = (agent: AgentData) => {
-    const raw = displayValue(
-        agent.latest_risk_class ??
-        agent.risk_assessment?.blended_risk_classification ??
-        (agent.risk_assessment as any)?.blended_risk_class ??
-        (agent as any).blended_risk_classification ??
-        (agent as any).blended_risk_class,
-        'Unassessed',
-    );
-    const risk = norm(raw);
-    if (risk.includes('critical') || risk.includes('prohibited')) return 'Critical';
-    if (risk.includes('high')) return 'High';
-    if (risk.includes('medium') || risk.includes('moderate')) return 'Medium';
-    if (risk.includes('low')) return 'Low';
-    return raw;
-};
-
-// Only agents that actually carry a blended risk classification. Agents without
-// it are excluded entirely (no synthetic "Unassessed" bucket), so the blended
-// risk distribution stays stable and reflects real data only.
-const hasBlendedRisk = (agent: AgentData) => {
-    const value =
-        agent.latest_risk_class ??
-        agent.risk_assessment?.blended_risk_classification ??
-        (agent.risk_assessment as any)?.blended_risk_class ??
-        (agent as any).blended_risk_classification ??
-        (agent as any).blended_risk_class;
-    return Boolean(value && String(value).trim());
-};
-
-const hasResolvedRiskAssessment = (agent: AgentData) => {
-    const status = norm(agent.identification?.governance_status ?? agent.latest_event_status ?? agent.risk_assessment?.state);
-    return Boolean(
-        agent.latest_risk_class ||
-        agent.latest_risk_score != null ||
-        agent.risk_assessment?.blended_risk_classification ||
-        agent.risk_assessment?.blended_risk_score ||
-        agent.risk_assessment?.aivss_classification ||
-        agent.risk_assessment?.aivss_score ||
-        status.includes('completed') ||
-        status.includes('approved')
-    );
-};
-
-// Agents whose risk assessment has not been triggered yet — no resolved
-// assessment and not currently running/in progress.
-const riskNotTriggered = (agent: AgentData) => {
-    if (hasResolvedRiskAssessment(agent)) return false;
-    const status = norm(agent.identification?.governance_status ?? agent.latest_event_status ?? agent.risk_assessment?.state);
-    return !(status.includes('running') || status.includes('progress'));
-};
-
-const hasUseCaseContext = (agent: AgentData) => Boolean(
-    agent.ai_use_case ||
-    (agent.ai_use_cases && agent.ai_use_cases.length > 0) ||
-    (agent.business_process && agent.business_process.length > 0) ||
-    (agent.application && agent.application.length > 0)
-);
-
-const classifyAgentStage = (agent: AgentData) => {
-    const explicitStage = [
-        (agent as any).lifecycle_stage,
-        (agent as any).stage,
-        (agent as any).workflow_stage,
-        (agent as any).agent_lifecycle_stage,
-        (agent as any).lifecycle?.stage,
-    ].map(normalizeLifecycleStage).find(Boolean);
-    if (explicitStage) return explicitStage;
-
-    const status = norm(agent.identification?.governance_status ?? agent.latest_event_status);
-    // Monitor only when governance status explicitly says so — a Production
-    // environment alone means "deployed", not "actively monitored".
-    if (status.includes('monitor') || status.includes('active'))
-    return 'Monitor';
-
-    if (
-        status.includes('running') ||
-        status.includes('build') ||
-        status.includes('develop') ||
-        status.includes('in_progress')
-    )
-        return 'Develop';
-
-    if (
-        hasKnownEnv(agent) ||
-        status.includes('deploy') ||
-        status.includes('release')
-    )
-        return 'Deploy';
-    if (status.includes('review') || status.includes('pending') || status.includes('approval') || status.includes('design')) return 'Design';
-
-    if (hasResolvedRiskAssessment(agent)) return 'Deploy';
-    if (hasUseCaseContext(agent)) return 'Design';
-
-    return 'Plan';
-};
-
-const classifyUseCaseStage = (useCase: UseCaseSummary) => {
-    const status = norm(useCase.status);
-    if (status.includes('live') || status.includes('active') || status.includes('deployed')) return 'Live';
-    if (status.includes('build') || status.includes('progress') || status.includes('develop')) return 'In Build';
-    if (status.includes('approve') || status.includes('fund')) return 'Approved';
-    if (status.includes('scope') || status.includes('review') || status.includes('assess')) return 'Scoped';
-    return 'Identified';
-};
-
-const makeDistribution = <T,>(items: T[], template: Omit<StageDatum, 'count'>[], classifier: (item: T) => string): StageDatum[] => {
-    const counts = new Map(template.map(t => [t.stage, 0]));
-    for (const item of items) {
-        const stage = classifier(item);
-        counts.set(stage, (counts.get(stage) ?? 0) + 1);
-    }
-    return template.map(t => ({ ...t, count: counts.get(t.stage) ?? 0 }));
-};
-
-const getTrendDir = (riskScore: number): 'up' | 'down' | 'flat' => {
-    if (riskScore >= 7) return 'up';
-    if (riskScore <= 3) return 'down';
-    return 'flat';
-};
-
-// Operational KPI catalog. The catalog has no runtime telemetry, so each agent's
-// KPI value is derived from its risk profile (perf 0..1, where 1 = lowest risk =
-// healthiest metric). Status is computed by comparing the value against its target.
-type KpiResult = { value: string; target: string; status: 'pass' | 'warn' | 'fail' };
-
-const KPI_DEFINITIONS: Array<{ kpi: string; compute: (perf: number) => KpiResult }> = [
-    { kpi: 'Task Completion Rate', compute: perf => { const v = 82 + perf * 16; return { value: `${v.toFixed(0)}%`, target: '95%', status: v >= 95 ? 'pass' : v >= 90 ? 'warn' : 'fail' }; } },
-    { kpi: 'Response Latency', compute: perf => { const v = 0.8 + (1 - perf) * 3.2; return { value: `${v.toFixed(1)}s`, target: '2.0s', status: v <= 2.0 ? 'pass' : v <= 2.8 ? 'warn' : 'fail' }; } },
-    { kpi: 'Error Rate', compute: perf => { const v = 0.2 + (1 - perf) * 3.0; return { value: `${v.toFixed(1)}%`, target: '≤1%', status: v <= 1 ? 'pass' : v <= 2 ? 'warn' : 'fail' }; } },
-    { kpi: 'Cost per Operation', compute: perf => { const v = 0.05 + (1 - perf) * 0.20; return { value: `$${v.toFixed(2)}`, target: '$0.10', status: v <= 0.10 ? 'pass' : v <= 0.15 ? 'warn' : 'fail' }; } },
-    { kpi: 'False Positive Rate', compute: perf => { const v = 1 + (1 - perf) * 9; return { value: `${v.toFixed(1)}%`, target: '≤5%', status: v <= 5 ? 'pass' : v <= 7 ? 'warn' : 'fail' }; } },
-    { kpi: 'Accuracy Score', compute: perf => { const v = 86 + perf * 13; return { value: `${v.toFixed(1)}%`, target: '≥97%', status: v >= 97 ? 'pass' : v >= 93 ? 'warn' : 'fail' }; } },
-    { kpi: 'Uptime', compute: perf => { const v = 98 + perf * 1.9; return { value: `${v.toFixed(2)}%`, target: '≥99.5%', status: v >= 99.5 ? 'pass' : v >= 99 ? 'warn' : 'fail' }; } },
-    { kpi: 'Escalation Rate', compute: perf => { const v = 2 + (1 - perf) * 18; return { value: `${v.toFixed(0)}%`, target: '≤10%', status: v <= 10 ? 'pass' : v <= 15 ? 'warn' : 'fail' }; } },
+// Synthetic sparkline series for a risk-agent row, derived from the server's
+// risk score (purely visual — there is no time-series telemetry).
+const makeTrend = (score: number): number[] => [
+    Math.max(0, score - 1), score, score, Math.min(10, score + 0.5), score, score,
 ];
-
-const hashString = (value: string): number => {
-    let h = 0;
-    for (let i = 0; i < value.length; i++) h = (Math.imul(h, 31) + value.charCodeAt(i)) | 0;
-    return Math.abs(h);
-};
-
-const makeKpiTrend = (status: 'pass' | 'warn' | 'fail', seed: number): number[] => {
-    const dir = status === 'fail' ? 1 : status === 'pass' ? -1 : 0;
-    return Array.from({ length: 7 }, (_, i) => {
-        const drift = dir * (i - 3) * 0.6;
-        const wiggle = ((seed >> (i % 16)) & 1) ? 0.35 : -0.35;
-        return 5 + drift + wiggle;
-    });
-};
-
-// Deterministic "time since flagged" from an agent-id hash (1–47h → h/d ago).
-const synthAge = (seed: number): string => {
-    const hours = (seed % 47) + 1;
-    return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
-};
-
-const toRiskAgent = (agent: AgentData): RiskAgent => {
-    const score = getRiskScore(agent);
-    const app = (agent.application ?? []).find(a => a.name || a.identifier);
-    return {
-        id: getAgentId(agent),
-        name: agent.name,
-        desc: agent.description || 'No description available',
-        risk: getRiskClass(agent),
-        env: prettyEnv(getAgentEnv(agent)),
-        app: app ? displayValue(app.name ?? app.identifier) : null,
-        trend: [Math.max(0, score - 1), score, score, Math.min(10, score + 0.5), score, score],
-        trendDir: getTrendDir(score),
-    };
-};
-
-const ageLabel = (dateText?: string | null) => {
-    if (!dateText) return 'Unknown';
-    const time = new Date(dateText).getTime();
-    if (!Number.isFinite(time)) return 'Unknown';
-    const ms = Date.now() - time;
-    if (ms < 60_000) return 'Just now';
-    const mins = Math.floor(ms / 60_000);
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-};
-
-const daysSince = (dateText?: string | null) => {
-    if (!dateText) return 0;
-    const time = new Date(dateText).getTime();
-    if (!Number.isFinite(time)) return 0;
-    return Math.max(0, Math.floor((Date.now() - time) / 86_400_000));
-};
-
-const needsHumanAttention = (agent: AgentData) => {
-    const status = norm(agent.identification?.governance_status ?? agent.latest_event_status ?? agent.risk_assessment?.state);
-    return status.includes('human') || status.includes('hitl') || status.includes('review') || status.includes('pending') || status.includes('approval') || status.includes('escalat');
-};
 
 const Sparkline: React.FC<{ values: number[]; up?: boolean }> = ({ values, up }) => {
     const w = 56, h = 22;
@@ -1004,289 +663,94 @@ const SuccessMetricsCard: React.FC<{ metrics: SuccessMetric[] }> = ({ metrics })
     );
 };
 
+// ── Mapping helpers: merge server payload onto color templates ────────────────
+
+const mergeStages = (template: Omit<StageDatum, 'count'>[], counts: StageCount[]): StageDatum[] => {
+    const map = new Map(counts.map(c => [c.stage, c.count]));
+    return template.map(t => ({ ...t, count: map.get(t.stage) ?? 0 }));
+};
+
+const mergeDistribution = (
+    buckets: { label: string; color: string; text: string }[],
+    dist: LabelDistribution[],
+): DistributionDatum[] => {
+    const map = new Map(dist.map(d => [d.label, d]));
+    return buckets.map(b => ({ ...b, count: map.get(b.label)?.count ?? 0, pct: map.get(b.label)?.pct ?? 0 }));
+};
+
+const mergeAutonomy = (dist: LabelDistribution[]): AutonomyDatum[] => {
+    const map = new Map(dist.map(d => [d.label, d]));
+    return AUTONOMY_BUCKETS.map(b => ({ ...b, count: map.get(b.label)?.count ?? 0, pct: map.get(b.label)?.pct ?? 0 }));
+};
+
+const toRiskAgentRow = (a: InsightsRiskAgent): RiskAgent => ({
+    id: a.id,
+    name: a.name,
+    desc: a.desc,
+    risk: a.risk,
+    env: a.env,
+    app: a.app,
+    trend: makeTrend(a.riskScore),
+    trendDir: a.trendDir,
+});
+
 const InsightsPage: React.FC = () => {
-    const catalog = useCatalog();
-    const useCaseCatalog = useUseCases();
-    const blueprint = useBlueprint();
+    const [data, setData] = useState<InsightsSummary | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    // The catalog list endpoint omits `environment` and `provider` (both live in
-    // the agent detail / agent card). Backfill them here so the Production/Development
-    // and Provider cards reflect real data. Detail lookups are cached by mcpClient, so
-    // repeat visits are cheap. Keyed by agent_id -> { environment, provider }.
-    const [detailOverrides, setDetailOverrides] = useState<Record<string, { environment?: string; provider?: string }>>({});
-
-    useEffect(() => {
-        const missing = catalog.agents.filter(a => !hasKnownEnv(a) || !hasKnownProvider(a));
-        if (missing.length === 0) return;
-        let cancelled = false;
-        (async () => {
-            const updates: Record<string, { environment?: string; provider?: string }> = {};
-            for (const agent of missing) {
-                const id = getAgentId(agent);
-                if (!id || detailOverrides[id]) continue;
-                try {
-                    const detail = await mcpClient.getAgentDetails(id);
-                    const env = detail?.identification?.environment;
-                    const provider = detail?.provider?.organization;
-                    const update: { environment?: string; provider?: string } = {};
-                    if (env && String(env).trim()) update.environment = String(env).trim();
-                    if (provider && String(provider).trim()) update.provider = String(provider).trim();
-                    if (Object.keys(update).length > 0) updates[id] = update;
-                } catch {
-                    // best-effort enrichment; ignore failures
-                }
-            }
-            if (!cancelled && Object.keys(updates).length > 0) {
-                setDetailOverrides(prev => ({ ...prev, ...updates }));
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [catalog.agents]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Agents with environment & provider backfilled from detail lookups where the list omitted them.
-    const enrichedAgents = useMemo(() => catalog.agents.map(agent => {
-        const override = detailOverrides[getAgentId(agent)];
-        if (!override) return agent;
-        let next = agent;
-        if (override.environment && !hasKnownEnv(agent)) {
-            next = { ...next, identification: { ...next.identification, environment: override.environment } };
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const companyId = localStorage.getItem('tavro_active_company_id') ?? undefined;
+            const summary = await insightsApi.getSummary(companyId);
+            setData(summary);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to load insights');
+        } finally {
+            setLoading(false);
         }
-        if (override.provider && !hasKnownProvider(agent)) {
-            next = { ...next, provider: { organization: override.provider, url: next.provider?.url ?? '' } };
-        }
-        return next;
-    }), [catalog.agents, detailOverrides]);
+    }, []);
 
-    const {
-        agentDistribution,
-        useCaseDistribution,
-        productionRiskAgents,
-        developmentRiskAgents,
-        hitlEscalations,
-        stageGateBlockers,
-        autonomyDistribution,
-        providerDistribution,
-        blendedRiskDistribution,
-        successMetrics,
-        profileSections,
-        profileGaps,
-        profileRefreshes,
-        profileOverallPct,
-        totalAgents,
-        totalUseCases,
-        criticalCount,
-        highRiskCount,
-    } = useMemo(() => {
-        const agents = enrichedAgents;
-        const useCases = useCaseCatalog.useCases;
-        const agentDistribution = makeDistribution(agents, AGENT_STAGE_TEMPLATE, classifyAgentStage);
-        const useCaseDistribution = makeDistribution(useCases, USECASE_STAGE_TEMPLATE, classifyUseCaseStage);
-        const criticalOrHigh = agents.filter(a => ['critical', 'high'].includes(getRiskClass(a)));
-        // Production card: critical/high-risk agents in a Production or Unknown
-        // environment — sorted by risk so the most severe surface first.
-        const productionRiskSource = criticalOrHigh
-            .filter(a => isProdEnv(a) || !hasKnownEnv(a))
-            .sort((a, b) => getRiskScore(b) - getRiskScore(a));
-        const productionRiskIds = new Set(productionRiskSource.map(getAgentId));
-        const developmentRiskSource = criticalOrHigh.filter(a => {
-            if (productionRiskIds.has(getAgentId(a))) return false;
-            return isDevEnv(a);
-        });
-        const productionRiskAgents = productionRiskSource.map(toRiskAgent);
-        const developmentRiskAgents = developmentRiskSource.map(toRiskAgent);
-        const attentionAgents = agents.filter(needsHumanAttention);
+    useEffect(() => { load(); }, [load]);
 
-        // HITL queue: real escalations if any agent's governance status needs human
-        // review; otherwise list agents whose risk assessment has not been triggered
-        // yet — they await a human to initiate/complete the risk review.
-        const useRealHitl = attentionAgents.length > 0;
-        const hitlEscalations: QueueItem[] = useRealHitl
-            ? attentionAgents.map(a => ({
-                id: getAgentId(a),
-                agent: a.name,
-                trigger: displayValue(a.identification?.governance_status ?? a.latest_event_status ?? a.risk_assessment?.state, 'Awaiting human review'),
-                age: ageLabel(a.risk_assessment?.date),
-                severity: ['critical', 'high'].includes(getRiskClass(a)) ? 'high' : 'medium',
-                status: displayValue(a.identification?.governance_status ?? a.latest_event_status ?? a.risk_assessment?.state, 'Pending Review'),
-            }))
-            : agents.filter(riskNotTriggered).map(a => ({
-                id: getAgentId(a),
-                agent: a.name,
-                trigger: 'Risk assessment not yet triggered',
-                age: synthAge(hashString(getAgentId(a))),
-                severity: 'medium',
-                status: 'Pending Review',
-            }));
+    const totals = data?.totals;
+    const totalAgents = totals?.totalAgents ?? 0;
+    const totalUseCases = totals?.totalUseCases ?? 0;
+    const criticalCount = totals?.criticalCount ?? 0;
+    const highRiskCount = totals?.highRiskCount ?? 0;
 
-        // Stage Gate Blockers card: list every agent with its environment type.
-        const stageGateBlockers: GateItem[] = agents.map(a => {
-            const stage = classifyAgentStage(a);
-            const template = AGENT_STAGE_TEMPLATE.find(t => t.stage === stage) ?? AGENT_STAGE_TEMPLATE[0];
-            const env = prettyEnv(getAgentEnv(a));
-            const envStyle = envBadge(env);
-            return {
-                id: getAgentId(a),
-                agent: a.name,
-                gate: displayValue(a.identification?.governance_status ?? a.latest_event_status ?? a.risk_assessment?.state, 'Governance review'),
-                stage,
-                stageText: template.text,
-                stageBg: template.light,
-                env,
-                envText: envStyle.text,
-                envBg: envStyle.bg,
-                days: daysSince(a.risk_assessment?.date),
-            };
-        });
-
-        const autonomyBuckets = [
-            { key: 'supervised', label: 'Supervised', color: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700', desc: 'Full human review before action' },
-            { key: 'semi', label: 'Semi-Autonomous', color: 'bg-amber-500', light: 'bg-amber-50', text: 'text-amber-700', desc: 'Human approval on high-risk actions only' },
-            { key: 'full', label: 'Fully Autonomous', color: 'bg-red-500', light: 'bg-red-50', text: 'text-red-700', desc: 'No human gate - escalation only' },
-        ];
-
-        const autonomyDistribution: AutonomyDatum[] = autonomyBuckets.map(bucket => {
-            const count = agents.filter(agent =>
-    getAgentAutonomyBucket(agent) === bucket.key
-).length;
-            return {
-                label: bucket.label,
-                count,
-                pct: agents.length ? Math.round((count / agents.length) * 100) : 0,
-                color: bucket.color,
-                light: bucket.light,
-                text: bucket.text,
-                desc: bucket.desc,
-            };
-        });
-
-        // Always surface Google, Azure and ServiceNow as the canonical providers.
-        // Counts come from real agent-card provider data; agents without a known
-        // provider are excluded (no "Unknown Provider" bucket). Percentages are
-        // relative to agents that DO have a known provider, so the bars total ~100%.
-        const PROVIDER_BUCKETS = [
-            { label: 'Google', color: 'bg-violet-500', text: 'text-violet-700' },
-            { label: 'Azure', color: 'bg-teal-500', text: 'text-teal-700' },
-            { label: 'ServiceNow', color: 'bg-blue-500', text: 'text-blue-700' },
-        ];
-        const providerCounts: Record<string, number> = { Google: 0, Azure: 0, ServiceNow: 0 };
-        for (const agent of agents) {
-            const label = getProviderLabel(agent);
-            if (label in providerCounts) providerCounts[label] += 1;
-        }
-        const knownProviderTotal = PROVIDER_BUCKETS.reduce((sum, b) => sum + providerCounts[b.label], 0);
-        const providerDistribution: DistributionDatum[] = PROVIDER_BUCKETS.map(b => ({
-            label: b.label,
-            count: providerCounts[b.label],
-            pct: knownProviderTotal ? Math.round((providerCounts[b.label] / knownProviderTotal) * 100) : 0,
-            color: b.color,
-            text: b.text,
-        }));
-
-        const blendedRiskAgents = agents.filter(hasBlendedRisk);
-        // Fixed risk buckets so every level renders (e.g. Medium shows 0 when none),
-        // not just the levels present in the data. Critical is kept so critical
-        // agents are never dropped.
-        const riskBuckets = [
-            { label: 'Critical', color: 'bg-rose-500', text: 'text-rose-700' },
-            { label: 'High', color: 'bg-red-500', text: 'text-red-700' },
-            { label: 'Medium', color: 'bg-amber-500', text: 'text-amber-700' },
-            { label: 'Low', color: 'bg-emerald-500', text: 'text-emerald-700' },
-        ];
-        const blendedRiskDistribution: DistributionDatum[] = riskBuckets.map(bucket => {
-            const count = blendedRiskAgents.filter(a => getBlendedRiskLabel(a) === bucket.label).length;
-            return {
-                label: bucket.label,
-                count,
-                pct: blendedRiskAgents.length ? Math.round((count / blendedRiskAgents.length) * 100) : 0,
-                color: bucket.color,
-                text: bucket.text,
-            };
-        });
-        const successMetrics: SuccessMetric[] = agents
-            .filter(hasResolvedRiskAssessment)
-            .map((a, index) => {
-                // perf 0..1 — lower risk score means healthier operational metrics.
-                const perf = Math.max(0, Math.min(1, 1 - getRiskScore(a) / 10));
-                // Round-robin the KPI catalog so each agent surfaces a distinct metric.
-                const def = KPI_DEFINITIONS[index % KPI_DEFINITIONS.length];
-                const { value, target, status } = def.compute(perf);
-                return {
-                    id: getAgentId(a),
-                    agent: a.name,
-                    kpi: def.kpi,
-                    value,
-                    target,
-                    status,
-                    trend: makeKpiTrend(status, hashString(getAgentId(a))),
-                };
-            });
-
-        const nodesByCategory = new Map<DimCategory, DimNode[]>();
-        for (const node of blueprint.nodes) {
-            if (!node.category) continue;
-            nodesByCategory.set(node.category, [...(nodesByCategory.get(node.category) ?? []), node]);
-        }
-        const sectionCounts = PROFILE_SECTION_DEFINITIONS.map(section =>
-            section.categories.reduce((sum, category) => sum + (nodesByCategory.get(category)?.length ?? 0), 0)
-        );
-        const maxCategoryCount = Math.max(1, ...sectionCounts);
-        const profileSections: ProfileSection[] = PROFILE_SECTION_DEFINITIONS.map((section, index) => {
-            const count = sectionCounts[index] ?? 0;
-            const pct = count === 0 ? 0 : Math.min(100, Math.round((count / maxCategoryCount) * 100));
-            return {
-                label: section.label,
-                pct,
-                status: pct >= 70 ? 'pass' : pct >= 35 ? 'warn' : 'fail',
-            };
-        });
-        const profileOverallPct = Math.round(profileSections.reduce((sum, s) => sum + s.pct, 0) / Math.max(1, profileSections.length));
-        const profileGaps: ProfileGap[] = profileSections
-            .filter(s => s.pct === 0)
-            .map((s, index) => ({ id: `${s.label}-${index}`, gap: `${s.label} dimensions missing`, area: s.label, severity: index < 2 ? 'high' : 'medium' }));
-        const profileRefreshes: ResearchRefresh[] = PROFILE_SECTION_DEFINITIONS
-            .map(section => {
-            const nodes = section.categories.flatMap(category => nodesByCategory.get(category) ?? []);
-            const latest = nodes.map(n => new Date(n.updated_at).getTime()).filter(Number.isFinite).sort((a, b) => b - a)[0];
-            const days = latest ? Math.floor((Date.now() - latest) / 86_400_000) : 0;
-            return {
-                id: section.label,
-                section: section.label,
-                lastRefresh: latest ? (days <= 0 ? 'Today' : `${days}d ago`) : 'Unknown',
-                stale: !latest || days > 30,
-            };
-        })
-            .filter(r => r.lastRefresh !== 'Unknown');
-
+    const agentDistribution = mergeStages(AGENT_STAGE_TEMPLATE, data?.agentLifecycle ?? []);
+    const useCaseDistribution = mergeStages(USECASE_STAGE_TEMPLATE, data?.useCaseLifecycle ?? []);
+    const providerDistribution = mergeDistribution(PROVIDER_BUCKETS, data?.providerDistribution ?? []);
+    const blendedRiskDistribution = mergeDistribution(RISK_BUCKETS, data?.blendedRiskDistribution ?? []);
+    const autonomyDistribution = mergeAutonomy(data?.autonomyDistribution ?? []);
+    const productionRiskAgents = (data?.productionRiskAgents ?? []).map(toRiskAgentRow);
+    const developmentRiskAgents = (data?.developmentRiskAgents ?? []).map(toRiskAgentRow);
+    const hitlEscalations: QueueItem[] = data?.hitlEscalations ?? [];
+    const stageGateBlockers: GateItem[] = (data?.stageGateBlockers ?? []).map(g => {
+        const template = AGENT_STAGE_TEMPLATE.find(t => t.stage === g.stage) ?? AGENT_STAGE_TEMPLATE[0];
+        const envStyle = envBadge(g.env);
         return {
-            agentDistribution,
-            useCaseDistribution,
-            productionRiskAgents,
-            developmentRiskAgents,
-            hitlEscalations,
-            stageGateBlockers,
-            autonomyDistribution,
-            providerDistribution,
-            blendedRiskDistribution,
-            successMetrics,
-            profileSections: blueprint.activeCompany ? profileSections : [],
-            profileGaps: blueprint.activeCompany ? profileGaps : [],
-            profileRefreshes: blueprint.activeCompany ? profileRefreshes : [],
-            profileOverallPct: blueprint.activeCompany ? profileOverallPct : 0,
-            totalAgents: agents.length,
-            totalUseCases: useCases.length,
-            criticalCount: agents.filter(a => getRiskClass(a) === 'critical').length,
-            highRiskCount: agents.filter(a => getRiskClass(a) === 'high').length,
+            id: g.id,
+            agent: g.agent,
+            gate: g.gate,
+            stage: g.stage,
+            stageText: template.text,
+            stageBg: template.light,
+            env: g.env,
+            envText: envStyle.text,
+            envBg: envStyle.bg,
+            days: g.days,
         };
-    }, [enrichedAgents, useCaseCatalog.useCases, blueprint.nodes, blueprint.activeCompany]);
-
-    const loading = catalog.loading || useCaseCatalog.loading || blueprint.loading;
-    const errors = [catalog.error, useCaseCatalog.error, blueprint.error].filter(Boolean);
-
-    const refreshAll = () => {
-        catalog.refresh();
-        useCaseCatalog.refresh();
-        blueprint.refresh();
-    };
+    });
+    const successMetrics: SuccessMetric[] = data?.successMetrics ?? [];
+    const profile = data?.companyProfile;
+    const profileSections: ProfileSection[] = profile?.sections ?? [];
+    const profileGaps: ProfileGap[] = profile?.gaps ?? [];
+    const profileRefreshes: ResearchRefresh[] = profile?.refreshes ?? [];
+    const profileOverallPct = profile?.overallPct ?? 0;
 
     return (
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1200px] mx-auto">
@@ -1345,7 +809,7 @@ const InsightsPage: React.FC = () => {
                             </div>
                         </div>
                         <button
-                            onClick={refreshAll}
+                            onClick={load}
                             disabled={loading}
                             className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 transition-colors ml-1 self-end mb-0.5 disabled:opacity-60"
                         >
@@ -1355,11 +819,11 @@ const InsightsPage: React.FC = () => {
                 </div>
             </div>
 
-            {errors.map((error, index) => (
-                <div key={`${error}-${index}`} className="flex items-center gap-2 text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
+            {error && (
+                <div className="flex items-center gap-2 text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
                     <AlertTriangle size={16} className="shrink-0" /> {error}
                 </div>
-            ))}
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <LifecycleDistribution
