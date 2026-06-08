@@ -231,10 +231,6 @@ const AgentViewPage: React.FC = () => {
                 // Overlay fresh DB values onto the richer MCP card structure
                 resolved = {
                     ...mcpData,
-                    provider: {
-                        url: mcpData.provider?.url ?? '',
-                        organization: apiData?.source_system ?? mcpData.provider?.organization ?? '',
-                    },
                     name: apiData?.agent_name ?? mcpData.name,
                     description: apiData?.agent_description ?? mcpData.description,
                     identification: {
