@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-    Home, Bot, Workflow, BarChart2, Settings,
-    LogOut, Database, RefreshCw, ClipboardList, MessageCircle, X, Terminal,
+    Bot, Workflow, BarChart2, Settings,
+    LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
-    AppWindow, Paperclip, Network, Zap, Plug, CircleHelp
+    AppWindow, Paperclip, Network, Zap, CircleHelp,
+    Map, TestTube2, Shield, AlertTriangle
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -44,39 +45,14 @@ function isProcessPage(pathname: string): boolean {
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
 
-/** Returns a human-readable "X min ago" string, refreshed every 30s. */
-function useTimeSince(date: Date | null): string {
-    const [, forceUpdate] = useState(0);
-    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-    useEffect(() => {
-        if (!date) return;
-        intervalRef.current = setInterval(() => forceUpdate(n => n + 1), 30_000);
-        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [date]);
-
-    if (!date) return '';
-    const secs = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (secs < 60) return 'just now';
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
-}
 
 const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [showLogs] = useShowLogs();
-    const { loading: catalogLoading, lastFetched, refresh, agents } = useCatalog();
-    const { loading: ucLoading, refresh: ucRefresh, useCases } = useUseCases();
+    const { agents } = useCatalog();
+    const { useCases } = useUseCases();
     const { activeCompany } = useBlueprint();
-    const anyLoading = catalogLoading || ucLoading;
-    const timeSince = useTimeSince(lastFetched);
-
-    const handleRefreshAll = () => {
-        refresh();
-        ucRefresh();
-    };
 
     // ── Right panel state ────────────────────────────────────────────────────
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -169,7 +145,7 @@ const Layout: React.FC = () => {
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
                 {/* Logo */}
                 <div
-                    className={`flex items-center px-3 py-6 mb-2 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
+                    className={`flex items-center px-3 py-4 mb-1 cursor-pointer border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-300 flex-shrink-0`}
                     onClick={() => navigate('/')}
                 >
                     <div className="bg-white p-2 rounded-lg shadow-sm flex-shrink-0">
@@ -183,235 +159,197 @@ const Layout: React.FC = () => {
                 <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden transition-all duration-300`}>
                     {/* Scrollable nav area */}
                     <div className="flex flex-col">
-                        {/* Nav links */}
-                        <div className="flex flex-col p-4 gap-2">
-                            <button
-                                onClick={() => navigate('/')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/'
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Home" : undefined}
-                            >
-                                <Home size={18} className={`flex-shrink-0 ${location.pathname === '/' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Home</span>
-                            </button>
+                        <div className="flex flex-col px-3 pt-3 pb-2 gap-0.5">
 
-                            <button
-                                onClick={() => navigate('/use-cases')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "AI Use Cases" : undefined}
-                            >
-                                <ClipboardList size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI Use Cases</span>
-                            </button>
-
-                            <button
-                                onClick={() => navigate('/catalog')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Agents" : undefined}
-                            >
-                                <Bot size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
-                            </button>
-
-                            <button
-                                onClick={() => navigate('/applications')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Applications" : undefined}
-                            >
-                                <AppWindow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
-                            </button>
-
-                            <button
-                                onClick={() => navigate('/processes')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Processes" : undefined}
-                            >
-                                <Workflow size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-700 dark:text-blue-300' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
-                            </button>
-
-                            <button
-                                onClick={() => navigate('/integrations')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/integrations')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Integrations" : undefined}
-                            >
-                                <Plug size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/integrations') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
-                            </button>
-
-                            <button
-                                onClick={() => navigate('/spark')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/spark')
-                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Spark" : undefined}
-                            >
-                                <Zap size={18} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
-                            </button>
-
+                            {/* Insights */}
                             <button
                                 onClick={() => navigate('/insights')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/insights'
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/insights'
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Insights" : undefined}
                             >
-                                <BarChart2 size={18} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <BarChart2 size={16} className={`flex-shrink-0 ${location.pathname === '/insights' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Insights</span>
                             </button>
+
+                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
+
+                            {/* ── STRATEGY ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Strategy</p>}
                             <button
                                 onClick={() => navigate('/blueprint')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Blueprint" : undefined}
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Enterprise Blueprint" : undefined}
                             >
-                                <Network
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint')
-                                        ? 'text-blue-600 dark:text-blue-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Blueprint</span>
+                                <Network size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Enterprise Blueprint</span>
+                            </button>
+                            <div
+                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
+                                title={!isLeftPanelOpen ? "Roadmap (Coming soon)" : undefined}
+                            >
+                                <Map size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
+                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
+                            </div>
+
+                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
+
+                            {/* ── PLAN ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Plan</p>}
+                            <button
+                                onClick={() => navigate('/spark')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/spark')
+                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Spark" : undefined}
+                            >
+                                <Zap size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
                             </button>
                             <button
+                                onClick={() => navigate('/use-cases')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "AI Use Cases" : undefined}
+                            >
+                                <ClipboardList size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI use cases</span>
+                                {isLeftPanelOpen && useCases.length > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCases.length} {useCases.length === 1 ? 'case' : 'cases'}</span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => navigate('/catalog')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Agents" : undefined}
+                            >
+                                <Bot size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
+                                {isLeftPanelOpen && agents.length > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => navigate('/applications')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/applications')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Applications" : undefined}
+                            >
+                                <AppWindow size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/processes')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/processes')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Processes" : undefined}
+                            >
+                                <Workflow size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
+                            </button>
+
+                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
+
+                            {/* ── BUILD ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Build</p>}
+                            <button
+                                onClick={() => navigate('/playground')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Agent Playground" : undefined}
+                            >
+                                <FlaskConical size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/playground') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent playground</span>
+                            </button>
+                            <div
+                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
+                                title={!isLeftPanelOpen ? "Agent evals (Coming soon)" : undefined}
+                            >
+                                <TestTube2 size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
+                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
+                            </div>
+
+                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
+
+                            {/* ── GOVERN ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Govern</p>}
+                            <div
+                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
+                                title={!isLeftPanelOpen ? "Guardrails (Coming soon)" : undefined}
+                            >
+                                <Shield size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
+                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
+                            </div>
+                            <button
                                 onClick={() => navigate('/compliance')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
-                                    } ${location.pathname.startsWith('/compliance')
-                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/compliance')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Compliance" : undefined}
                             >
-                                <Scale
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/compliance')
-                                        ? 'text-blue-600 dark:text-blue-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
-                                    }`}>Compliance</span>
+                                <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
                             </button>
                             <button
                                 onClick={() => navigate('/audit')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'
-                                    } ${location.pathname.startsWith('/audit')
-                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/audit')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
                                 title={!isLeftPanelOpen ? "Audit Center" : undefined}
                             >
-                                <ShieldCheck
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/audit')
-                                        ? 'text-blue-600 dark:text-blue-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'
-                                    }`}>Audit Center</span>
+                                <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
                             </button>
-                            <button
-                                onClick={() => navigate('/playground')}
-                                className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/playground')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                                    }`}
-                                title={!isLeftPanelOpen ? "Agent Playground" : undefined}
+                            <div
+                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
+                                title={!isLeftPanelOpen ? "Issues (Coming soon)" : undefined}
                             >
-                                <FlaskConical
-                                    size={18}
-                                    className={`flex-shrink-0 ${location.pathname.startsWith('/playground')
-                                        ? 'text-blue-600 dark:text-blue-400'
-                                        : 'text-slate-400 dark:text-slate-500'}`}
-                                />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent Playground</span>
-                            </button>
+                                <AlertTriangle size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
+                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
+                            </div>
+
                         </div>
                     </div>{/* end scrollable nav */}
 
-                    {/* Catalog Sync Widget - pinned */}
-                    <div className={`mx-4 mt-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col gap-2 overflow-hidden transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-3 max-h-[200px] opacity-100' : 'p-0 max-h-0 opacity-0 border-transparent mt-0'}`}>
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <Database size={13} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
-                                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest whitespace-nowrap">
-                                        Catalog Sync
-                                    </span>
-                                </div>
-                                {anyLoading && (
-                                    <RefreshCw size={13} className="text-blue-500 animate-spin" />
-                                )}
-                            </div>
-                            {!anyLoading && (
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                        {agents.length} agents
-                                    </span>
-                                    {useCases.length > 0 && (
-                                        <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                            {useCases.length} use cases
-                                        </span>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                        {lastFetched && !catalogLoading && (
-                            <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-none whitespace-nowrap">Last synced {timeSince}</p>
-                        )}
-                        {catalogLoading && (
-                            <p className="text-[10px] text-blue-500 dark:text-blue-400 leading-none animate-pulse whitespace-nowrap">Fetching catalog…</p>
-                        )}
-                        <button
-                            onClick={handleRefreshAll}
-                            disabled={anyLoading}
-                            className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                            <RefreshCw size={11} className={anyLoading ? 'animate-spin flex-shrink-0' : 'flex-shrink-0'} />
-                            <span className="whitespace-nowrap">{anyLoading ? 'Syncing…' : 'Refresh Catalog'}</span>
-                        </button>
-                    </div>
-
                     {/* Bottom Actions */}
-                    <div className={`flex flex-col gap-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/70 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'p-4' : 'p-2'}`}>
+                    <div className={`flex flex-col gap-0.5 border-t border-slate-100 dark:border-slate-800 transition-all duration-300 flex-shrink-0 ${isLeftPanelOpen ? 'px-3 py-2' : 'p-2'}`}>
                         <button
                             onClick={() => window.open('/help/user-guide', '_blank', 'noopener,noreferrer')}
-                            className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white`}
+                            className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white`}
                             title={!isLeftPanelOpen ? "Help" : undefined}
                         >
-                            <CircleHelp size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-300" />
+                            <CircleHelp size={16} className="flex-shrink-0 text-slate-400 dark:text-slate-300" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Help</span>
                         </button>
                         <button
                             onClick={() => navigate('/settings')}
-                            className={`flex items-center py-2.5 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
+                            className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname === '/settings'
                                 ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                 : 'bg-transparent text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'}`}
                             title={!isLeftPanelOpen ? "Settings" : undefined}
                         >
-                            <Settings size={18} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-300'}`} />
+                            <Settings size={16} className={`flex-shrink-0 ${location.pathname === '/settings' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-300'}`} />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Settings</span>
                         </button>
                         <button
                             onClick={handleLogout}
-                            className={`flex items-center py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full mt-2 group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
+                            className={`flex items-center py-1 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
                             title={!isLeftPanelOpen ? "Sign Out" : undefined}
                         >
-                            <LogOut size={18} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
+                            <LogOut size={16} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Sign Out</span>
                         </button>
                     </div>
@@ -428,15 +366,14 @@ const Layout: React.FC = () => {
             </aside>
 
             {/* ── Main Content Area ─────────────────────────────────────────── */}
-            {/* overflow-hidden on the logs route so only the terminal panel scrolls */}
-            <main className={`flex-1 flex flex-col min-w-0 ${location.pathname === '/settings/logs' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+            <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
                 <div className={location.pathname === '/settings/logs'
                     ? 'flex-1 min-h-0 flex flex-col overflow-hidden'
-                    : 'p-8 w-full max-w-[1600px] mx-auto flex-1'}>
+                    : 'p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto'}>
                     <Outlet />
                 </div>
-                <footer className={`border-t border-slate-200 dark:border-slate-800 py-4 px-6 text-xs text-slate-600 dark:text-slate-400 mt-auto bg-white dark:bg-slate-900 transition-colors flex items-center justify-between${location.pathname === '/settings/logs' ? ' hidden' : ''}`}>
+                <footer className={`flex-shrink-0 border-t border-slate-200 dark:border-slate-800 py-2 px-6 text-[11px] text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-900 transition-colors flex items-center justify-between${location.pathname === '/settings/logs' ? ' hidden' : ''}`}>
                     <span>Tavro {TAVRO_VERSION}</span>
                     <span>{activeCompany?.name ?? '—'}</span>
                     <span>© 2026 Tavro AI.</span>

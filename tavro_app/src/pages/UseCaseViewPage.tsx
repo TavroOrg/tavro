@@ -4,12 +4,11 @@ import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X, CheckCircle2 } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
-import EditUseCaseModal from '../components/EditUseCaseModal';
 import { useCaseApi } from '../services/useCaseApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
@@ -671,7 +670,18 @@ const UseCaseViewPage: React.FC = () => {
   const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [editOpen, setEditOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editPriority, setEditPriority] = useState('');
+  const [editOwner, setEditOwner] = useState('');
+  const [editProblemStatement, setEditProblemStatement] = useState('');
+  const [editExpectedBenefits, setEditExpectedBenefits] = useState('');
+  const [editSolutionApproach, setEditSolutionApproach] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
+  const [inlineSaving, setInlineSaving] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
@@ -770,6 +780,98 @@ const UseCaseViewPage: React.FC = () => {
     }
   }, [useCase]);
 
+  const handleStartEdit = () => {
+    if (!useCase) return;
+    const uc = useCase as any;
+    setEditTitle(uc.name ?? uc.title ?? '');
+    setEditDescription(uc.description ?? '');
+    setEditPriority(uc.priority ?? '3 - Moderate');
+    setEditOwner(uc.owner ?? uc.use_case_owner ?? '');
+    setEditProblemStatement(uc.problem_statement ?? uc.business_problem_statement ?? '');
+    setEditExpectedBenefits(uc.expected_benefits ?? '');
+    setEditSolutionApproach(uc.solution_approach ?? '');
+    setEditError(null);
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!useCase || !id) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await useCaseApi.updateUseCase(id, {
+        title: editTitle.trim() || undefined,
+        description: editDescription.trim() || undefined,
+        priority: editPriority || undefined,
+        use_case_owner: editOwner.trim() || undefined,
+        business_problem_statement: editProblemStatement.trim() || undefined,
+        expected_benefits: editExpectedBenefits.trim() || undefined,
+        solution_approach: editSolutionApproach.trim() || undefined,
+      } as any);
+      handleUseCaseSaved({
+        title: editTitle.trim(),
+        description: editDescription.trim(),
+        problemStatement: editProblemStatement.trim(),
+        expectedBenefits: editExpectedBenefits.trim(),
+        priority: editPriority,
+        solutionApproach: editSolutionApproach.trim(),
+        owner: editOwner.trim(),
+      });
+      setIsEditing(false);
+    } catch (err: any) {
+      setEditError(err.message || 'Failed to update use case.');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleStartInlineEdit = (field: string, value: string) => {
+    setInlineEdit({ field, value });
+  };
+
+  const handleCancelInlineEdit = () => setInlineEdit(null);
+
+  const handleSaveInlineEdit = async () => {
+    if (!inlineEdit || !id) return;
+    const { field, value } = inlineEdit;
+    setInlineSaving(field);
+    try {
+      const payload: any = {};
+      if (field === 'title') payload.title = value.trim();
+      else if (field === 'description') payload.description = value.trim();
+      else if (field === 'priority') payload.priority = value;
+      else if (field === 'owner') payload.use_case_owner = value.trim();
+      else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
+      else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
+      else if (field === 'solution_approach') payload.solution_approach = value.trim();
+      await useCaseApi.updateUseCase(id, payload);
+      setUseCase(prev => {
+        if (!prev) return prev;
+        const next = { ...prev } as any;
+        if (field === 'title') { next.name = value.trim(); next.title = value.trim(); }
+        else if (field === 'description') next.description = value.trim();
+        else if (field === 'priority') next.priority = value;
+        else if (field === 'owner') { next.owner = value.trim(); next.use_case_owner = value.trim(); }
+        else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
+        else if (field === 'expected_benefits') next.expected_benefits = value.trim();
+        else if (field === 'solution_approach') next.solution_approach = value.trim();
+        return next as UseCaseDetail;
+      });
+      setInlineEdit(null);
+      mcpClient.invalidateCache();
+      refreshUseCases();
+    } catch (err: any) {
+      console.error('Failed to save inline edit:', err);
+    } finally {
+      setInlineSaving(null);
+    }
+  };
+
   const handleUseCaseSaved = (updated: {
     title: string;
     description: string;
@@ -817,8 +919,8 @@ const UseCaseViewPage: React.FC = () => {
   const useCaseName = useCase ? ((useCase as any).name ?? (useCase as any).title ?? useCase.identifier ?? '') : '';
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fade-in pb-12">
-      <div className="flex items-center justify-between w-full max-w-[1400px] mx-auto">
+    <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-12">
+      <div className="flex items-center justify-between">
         <button
           onClick={() => {
             const page = (location.state as any)?.page;
@@ -838,31 +940,53 @@ const UseCaseViewPage: React.FC = () => {
         </button>
         {useCase && (
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setAuditModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
-            >
-              <ShieldCheck size={15} /> Audit
-            </button>
-            <button
-              onClick={() => setJsonOpen(true)}
-              title="AI Use Case Card"
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Code2 size={14} /> AI Use Case Card
-            </button>
-            <button
-              onClick={() => setEditOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-            >
-              <Pencil size={15} /> Edit
-            </button>
-            <button
-              onClick={() => setDeleteConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
-            >
-              <Trash2 size={15} /> Delete
-            </button>
+            {isEditing ? (
+              <>
+                {editError && <span className="text-xs text-red-500 font-medium">{editError}</span>}
+                <button
+                  onClick={handleCancelEdit}
+                  disabled={editSaving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={editSaving || !editTitle.trim() || !editDescription.trim()}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {editSaving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : 'Save'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setAuditModalOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
+                >
+                  <ShieldCheck size={15} /> Audit
+                </button>
+                <button
+                  onClick={() => setJsonOpen(true)}
+                  title="AI Use Case Card"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
+                >
+                  <Code2 size={14} /> AI Use Case Card
+                </button>
+                <button
+                  onClick={handleStartEdit}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                >
+                  <Pencil size={15} /> Edit
+                </button>
+                <button
+                  onClick={() => setDeleteConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all shadow-sm"
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -894,15 +1018,27 @@ const UseCaseViewPage: React.FC = () => {
           useCase={useCase}
           agentsComponent={<AgentsSection useCase={useCase} agents={agents} onSilentRefetch={fetchUseCaseSilently} />}
           businessImpactComponent={<ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />}
-        />
-      )}
-
-      {useCase && (
-        <EditUseCaseModal
-          useCase={useCase}
-          open={editOpen}
-          onClose={() => setEditOpen(false)}
-          onSaved={handleUseCaseSaved}
+          isEditing={isEditing}
+          editTitle={editTitle}
+          onEditTitleChange={setEditTitle}
+          editDescription={editDescription}
+          onEditDescriptionChange={setEditDescription}
+          editPriority={editPriority}
+          onEditPriorityChange={setEditPriority}
+          editOwner={editOwner}
+          onEditOwnerChange={setEditOwner}
+          editProblemStatement={editProblemStatement}
+          onEditProblemStatementChange={setEditProblemStatement}
+          editExpectedBenefits={editExpectedBenefits}
+          onEditExpectedBenefitsChange={setEditExpectedBenefits}
+          editSolutionApproach={editSolutionApproach}
+          onEditSolutionApproachChange={setEditSolutionApproach}
+          inlineEdit={inlineEdit}
+          inlineSaving={inlineSaving}
+          onStartInlineEdit={handleStartInlineEdit}
+          onInlineValueChange={(v) => setInlineEdit(prev => prev ? { ...prev, value: v } : null)}
+          onSaveInlineEdit={handleSaveInlineEdit}
+          onCancelInlineEdit={handleCancelInlineEdit}
         />
       )}
 
