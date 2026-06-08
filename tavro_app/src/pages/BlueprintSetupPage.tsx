@@ -92,7 +92,7 @@ const TEMPLATES = [
 
 const BlueprintSetupPage: React.FC = () => {
   const navigate = useNavigate();
-  const { selectCompany } = useBlueprint();
+  const { selectCompany, refreshCompanies } = useBlueprint();
 
   // ── Step state ─────────────────────────────────────────────────────────────
   // Steps: 1=identity, 2=research (public only), 3=template, 4=confirm
@@ -219,6 +219,7 @@ const BlueprintSetupPage: React.FC = () => {
       }
 
       // 4. Navigate to blueprint
+      refreshCompanies();
       selectCompany(company);
       navigate('/blueprint');
     } catch (err: any) {
