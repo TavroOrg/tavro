@@ -27,12 +27,14 @@ interface BlueprintState {
   selectCompany: (company: Company) => void;
   /** Remove a company from the list and clear state if it was active. */
   removeCompany: (id: string) => void;
-  /** Hard refresh — invalidates nodes and graph. */
+  /** Hard refresh — invalidates nodes, graph, and companies. */
   refresh: () => void;
   /** Reload just the graph (e.g. after adding an edge). */
   refreshGraph: () => void;
   /** Reload just the nodes (e.g. after editing a node). */
   refreshNodes: () => void;
+  /** Reload just the companies list (e.g. after creating a company). */
+  refreshCompanies: () => void;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -40,7 +42,7 @@ interface BlueprintState {
 const BlueprintContext = createContext<BlueprintState>({
   companies: [], activeCompany: null, dimTypes: [], nodes: [], graph: null,
   loading: false, graphLoading: false, error: null, lastFetched: null,
-  selectCompany: () => {}, removeCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {},
+  selectCompany: () => {}, removeCompany: () => {}, refresh: () => {}, refreshGraph: () => {}, refreshNodes: () => {}, refreshCompanies: () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -59,6 +61,17 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [lastFetched,   setLastFetched]   = useState<Date | null>(null);
 
   const fetchingRef = useRef(false);
+
+  // ── Fetch companies list ─────────────────────────────────────────────────
+  const fetchCompanies = useCallback(async () => {
+    try {
+      const companiesPage = await blueprintApi.listCompanies();
+      setCompanies(companiesPage.items);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load companies');
+    }
+  }, []);
 
   // ── Load companies + dim types once ──────────────────────────────────────
   useEffect(() => {
@@ -137,11 +150,12 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const refresh = useCallback(() => {
+    fetchCompanies();
     if (activeCompany) {
       fetchNodes(activeCompany);
       fetchGraph(activeCompany);
     }
-  }, [activeCompany, fetchNodes, fetchGraph]);
+  }, [activeCompany, fetchNodes, fetchGraph, fetchCompanies]);
 
   const refreshGraph = useCallback(() => {
     if (activeCompany) fetchGraph(activeCompany);
@@ -155,7 +169,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <BlueprintContext.Provider value={{
       companies, activeCompany, dimTypes, nodes, graph,
       loading, graphLoading, error, lastFetched,
-      selectCompany, removeCompany, refresh, refreshGraph, refreshNodes,
+      selectCompany, removeCompany, refresh, refreshGraph, refreshNodes, refreshCompanies: fetchCompanies,
     }}>
       {children}
     </BlueprintContext.Provider>
