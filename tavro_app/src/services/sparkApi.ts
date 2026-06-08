@@ -61,10 +61,12 @@ class SparkApi {
     companyId: string,
     dimensions?: string[],
     direction?: string,
+    ideaCount?: number,
   ): AsyncGenerator<SparkIdea> {
     const params = new URLSearchParams({ company_id: companyId });
     if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
     if (direction && direction.trim()) params.set('direction', direction.trim());
+    if (ideaCount) params.set('idea_count', String(ideaCount));
 
     const res = await fetch(`${V1}/spark/generate/stream?${params}`, {
       method: 'POST',
@@ -121,12 +123,13 @@ class SparkApi {
   }
 
   /** Generate fresh ideas, persist to DB, return them. */
-  async generateIdeas(companyId: string, dimensions?: string[], direction?: string): Promise<SparkIdea[]> {
+  async generateIdeas(companyId: string, dimensions?: string[], direction?: string, ideaCount?: number): Promise<SparkIdea[]> {
     const params = new URLSearchParams({ company_id: companyId });
     if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
     if (direction && direction.trim()) params.set('direction', direction.trim());
+    if (ideaCount) params.set('idea_count', String(ideaCount));
     const path = `/spark/generate?${params.toString()}`;
-    appLogger.req('Spark generateIdeas → request', { companyId, dimensions, direction: direction ?? '(none)' });
+    appLogger.req('Spark generateIdeas → request', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
     const t0 = Date.now();
     try {
       const result = await req<SparkIdea[]>(path, { method: 'POST' });
