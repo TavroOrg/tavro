@@ -3,6 +3,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -22,6 +23,18 @@ from api.routers.blueprint import (
 router = APIRouter()
 
 CORE    = os.getenv("CORE_DB_NAME",       "core")
+
+
+def _coerce_dt(value: Any) -> Optional[datetime]:
+    """Convert a value to datetime or None. Handles Python datetime, ISO strings, and None."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 CURATED = os.getenv("CURATED_DB_NAME",    "curated")
 RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
 _RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
@@ -100,12 +113,14 @@ class AgentCreateRequest(BaseModel):
     owner: Optional[str] = None
     tools: Optional[List[Dict[str, str]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
+    issues: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = None
     description: Optional[str] = None
     instruction: Optional[str] = None
+    issues: Optional[List[Dict[str, Any]]] = None
 
 class SuggestAgentDescriptionRequest(BaseModel):
     agent_name: str
@@ -192,6 +207,7 @@ def _write_agent_card(
     instruction: str,
     tools: Optional[List[Dict[str, str]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
+    issues: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
     try:
@@ -295,6 +311,25 @@ def _write_agent_card(
             "memory": {"identifier": None, "name": None, "type": None},
             "regulation_or_framework": {"name": None, "type": None, "regulatory_authority": None, "jurisdiction": None, "requirement": None},
             "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
+            "issues": [
+                {
+                    "issue_id": iss.get("issue_id"),
+                    "issue_name": iss.get("issue_name"),
+                    "reported_by": iss.get("reported_by"),
+                    "reported_date": iss.get("reported_date"),
+                    "reported_department": iss.get("reported_department"),
+                    "description": iss.get("description"),
+                    "assigned_to": iss.get("assigned_to"),
+                    "practice_area": iss.get("practice_area"),
+                    "due_date": iss.get("due_date"),
+                    "mitigation_state": iss.get("mitigation_state"),
+                    "line_of_defense": iss.get("line_of_defense"),
+                    "created_ts": None,
+                    "updated_ts": None,
+                }
+                for iss in (issues or [])
+                if str(iss.get("issue_name", "")).strip()
+            ],
             "risk_assessment": None,
         }
 
@@ -305,6 +340,24 @@ def _write_agent_card(
 
     except Exception as e:
         print(f"[create_agent] Warning: failed to write agent card file: {e}")
+
+
+async def _get_agent_identity(db: AsyncSession, agent_id: str, tenant_id: str):
+    result = await db.execute(
+        text(f"""
+            SELECT agent_id, agent_name, agent_internal_id
+            FROM {CORE}.agents
+            WHERE agent_id = :aid
+              AND tenant_id = :tid
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+        """),
+        {"aid": agent_id, "tid": tenant_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +435,57 @@ async def create_agent(
                  "desc": body.knowledge_source.get("description", "")},
             )
 
+
+        issue_entries_for_card: List[Dict[str, Any]] = []
+        for issue in (body.issues or []):
+            issue_name = str(issue.get("issue_name", "")).strip()
+            if not issue_name:
+                continue
+            issue_id = str(uuid.uuid4())
+            issue_entries_for_card.append({"issue_id": issue_id, **issue, "issue_name": issue_name})
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.issues (
+                        tenant_id, issue_id, issue_name, reported_by, reported_date,
+                        reported_department, description, mitigation_state, line_of_defense,
+                        assigned_to, practice_area, due_date, created_ts, updated_ts
+                    ) VALUES (
+                        :tid, :issue_id, :issue_name, :reported_by, :reported_date,
+                        :reported_department, :description, :mitigation_state, :line_of_defense,
+                        :assigned_to, :practice_area, :due_date,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """),
+                {
+                    "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                    "reported_by": issue.get("reported_by"),
+                    "reported_date": _coerce_dt(issue.get("reported_date")),
+                    "reported_department": issue.get("reported_department"),
+                    "description": issue.get("description"),
+                    "mitigation_state": issue.get("mitigation_state"),
+                    "line_of_defense": issue.get("line_of_defense"),
+                    "assigned_to": issue.get("assigned_to"),
+                    "practice_area": issue.get("practice_area"),
+                    "due_date": _coerce_dt(issue.get("due_date")),
+                },
+            )
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_issues (
+                        tenant_id, issue_id, issue_name, agent_id, agent_name,
+                        agent_internal_id, created_ts, updated_ts
+                    ) VALUES (
+                        :tid, :issue_id, :issue_name, :agent_id, :agent_name,
+                        :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """),
+                {
+                    "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                    "agent_id": agent_id, "agent_name": body.agent_name,
+                    "agent_internal_id": agent_internal_id,
+                },
+            )
+
         # Insert a placeholder row into curated.agent_360 immediately so the
         # agent appears in the catalog straight away. Risk data is filled in
         # later when the Temporal workflow completes.
@@ -417,6 +521,7 @@ async def create_agent(
         instruction=body.instruction,
         tools=body.tools,
         knowledge_source=body.knowledge_source,
+        issues=issue_entries_for_card,
     )
 
     background_tasks.add_task(
@@ -511,7 +616,27 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
         row = result.mappings().first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
-        return dict(row)
+
+        issues_result = await db.execute(
+            text(f"""
+                SELECT i.issue_id, i.issue_name, i.reported_by, i.reported_date,
+                       i.reported_department, i.description, i.mitigation_state, i.line_of_defense,
+                       i.assigned_to, i.practice_area, i.due_date,
+                       i.created_ts, i.updated_ts
+                FROM {CORE}.agent_issues rel
+                JOIN {CORE}.issues i
+                  ON i.issue_id = rel.issue_id
+                 AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                WHERE rel.agent_id = :aid
+                  AND rel.tenant_id = :tid
+                ORDER BY COALESCE(i.updated_ts, i.created_ts) DESC NULLS LAST,
+                         i.issue_name ASC
+            """),
+            {"aid": agent_id, "tid": tenant_id},
+        )
+        card = dict(row)
+        card["issues"] = [dict(r) for r in issues_result.mappings().all()]
+        return card
     except HTTPException:
         raise
     except Exception as e:
@@ -521,6 +646,50 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
 # ---------------------------------------------------------------------------
 # POST /{agent_id}/risk-assessment  — trigger risk assessment
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# GET /issues/{issue_id}  — fetch a single issue by its issue_id
+# ---------------------------------------------------------------------------
+
+@router.get("/issues/{issue_id}", summary="Get Issue by ID")
+async def get_issue(issue_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    tenant_id = _require_tenant(request)
+    try:
+
+        result = await db.execute(
+            text(f"""
+                SELECT issue_id, issue_name, reported_by, reported_date,
+                       reported_department, description, mitigation_state, line_of_defense,
+                       assigned_to, practice_area, due_date,
+                       created_ts, updated_ts
+                FROM {CORE}.issues
+                WHERE issue_id = :iid
+                  AND tenant_id = :tid
+                LIMIT 1
+            """),
+            {"iid": issue_id, "tid": tenant_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Issue '{issue_id}' not found.")
+        agents_result = await db.execute(
+            text(f"""
+                SELECT agent_id, agent_name
+                FROM {CORE}.agent_issues
+                WHERE issue_id = :iid
+                  AND tenant_id = :tid
+            """),
+            {"iid": issue_id, "tid": tenant_id},
+        )
+        issue = dict(row)
+        issue["linked_agents"] = [dict(r) for r in agents_result.mappings().all()]
+        return issue
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/{agent_id}/risk-assessment", summary="Trigger Risk Assessment")
 async def trigger_risk_assessment(
@@ -629,6 +798,78 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 curated_params,
             )
 
+        if body.issues is not None:
+    
+            # Delete orphaned core.issues rows for this agent before relinking
+            await db.execute(
+                text(f"""
+                    DELETE FROM {CORE}.issues
+                    WHERE issue_id IN (
+                        SELECT issue_id FROM {CORE}.agent_issues
+                        WHERE agent_id = :aid AND tenant_id = :tid
+                    ) AND tenant_id = :tid
+                """),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            await db.execute(
+                text(f"DELETE FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            agent_row = await db.execute(
+                text(f"SELECT agent_name, agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            agent_info = agent_row.mappings().first() or {}
+            for issue in body.issues:
+                issue_name = str(issue.get("issue_name", "")).strip()
+                if not issue_name:
+                    continue
+                # Preserve existing issue_id so detail-page URLs remain stable
+                issue_id = str(issue.get("issue_id") or "").strip() or str(uuid.uuid4())
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.issues (
+                            tenant_id, issue_id, issue_name, reported_by, reported_date,
+                            reported_department, description, mitigation_state, line_of_defense,
+                            assigned_to, practice_area, due_date, created_ts, updated_ts
+                        ) VALUES (
+                            :tid, :issue_id, :issue_name, :reported_by, :reported_date,
+                            :reported_department, :description, :mitigation_state, :line_of_defense,
+                            :assigned_to, :practice_area, :due_date,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                    """),
+                    {
+                        "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                        "reported_by": issue.get("reported_by"),
+                        "reported_date": _coerce_dt(issue.get("reported_date")),
+                        "reported_department": issue.get("reported_department"),
+                        "description": issue.get("description"),
+                        "mitigation_state": issue.get("mitigation_state"),
+                        "line_of_defense": issue.get("line_of_defense"),
+                        "assigned_to": issue.get("assigned_to"),
+                        "practice_area": issue.get("practice_area"),
+                        "due_date": _coerce_dt(issue.get("due_date")),
+                    },
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_issues (
+                            tenant_id, issue_id, issue_name, agent_id, agent_name,
+                            agent_internal_id, created_ts, updated_ts
+                        ) VALUES (
+                            :tid, :issue_id, :issue_name, :agent_id, :agent_name,
+                            :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                    """),
+                    {
+                        "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                        "agent_id": agent_id,
+                        "agent_name": agent_info.get("agent_name", ""),
+                        "agent_internal_id": agent_info.get("agent_internal_id", ""),
+                    },
+                )
+
         await db.commit()
         return {"message": "Agent updated successfully.", "agent_id": agent_id}
     except HTTPException:
@@ -688,7 +929,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
             {"aid": agent_id, "tid": tenant_id},
         )
 
-        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
+        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications", "agent_issues"):
             await db.execute(
                 text(f"DELETE FROM {CORE}.{table} WHERE agent_id = :aid AND tenant_id = :tid"),
                 {"aid": agent_id, "tid": tenant_id},

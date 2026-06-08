@@ -41,6 +41,7 @@ import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
 import ContainerLogsPage from './pages/ContainerLogsPage';
+import IssueViewPage from './pages/IssueViewPage';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -175,6 +176,7 @@ function App() {
                 <Route path="integrations/new" element={<IntegrationViewPage />} />
                 <Route path="integrations/:id" element={<IntegrationViewPage />} />
 
+                <Route path="issues/:id" element={<IssueViewPage />} />
                 <Route path="spark" element={<SparkPage />} />
 
               </Route>

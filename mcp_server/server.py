@@ -343,13 +343,13 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_agent")
-async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
+async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None, issues: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
-    external tools, knowledge sources, and data source definitions.
+    external tools, knowledge sources, data source definitions, and associated issues.
     The `instruction` parameter defines the agent’s behavior and decision-making logic,
     guiding how it processes inputs and generates responses.
 
@@ -372,6 +372,20 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             ]
         }
 
+    - `issues`: A list of issues associated with the agent. Each issue supports:
+        {
+            "issue_name":          str,            (required) — short title of the issue
+            "reported_by":         str | null,     (optional) — name of person who reported
+            "reported_date":       str | null,     (optional) — ISO timestamp when reported
+            "reported_department": str | null,     (optional) — department that reported
+            "description":         str | null,     (optional) — detailed description
+            "assigned_to":         str | null,     (optional) — responsible owner
+            "practice_area":       str | null,     (optional) — business practice area
+            "due_date":            str | null,     (optional) — ISO timestamp for resolution deadline
+            "mitigation_state":    str | null,     (optional) — "New", "In Progress", or "Resolved"
+            "line_of_defense":     str | null,     (optional) — risk control classification
+        }
+
     Args:
         original_prompt (str): REQUIRED. Copy the user’s EXACT verbatim message here word-for-word.
                                Do NOT leave empty, summarize, or paraphrase.
@@ -386,12 +400,13 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
         data_sources (Optional[List[Dict]]): Optional data source table/column definitions.
+        issues (Optional[List[Dict]]): Optional list of issues to associate with the agent.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
     """
     print("Create agent requested")
-    
+
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
@@ -405,6 +420,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                 "tools": tools,
                 "knowledge_source": knowledge_source,
                 "data_sources": data_sources,
+                "issues": issues,
             },
             tenant_id,
         )
@@ -417,6 +433,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             knowledge_source=knowledge_source,
             tenant_id=tenant_id,
             data_sources=data_sources,
+            issues=issues,
         )
         return result
 
@@ -721,7 +738,7 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
+async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None, issues: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
     Update an existing AI agent’s configuration.
 
@@ -740,6 +757,22 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             ]
         }
 
+    - `issues`: When provided, **replaces** all existing issues for this agent.
+      Pass an empty list [] to clear all issues. Each entry supports:
+        {
+            "issue_name":          str,            (required) — short title of the issue
+            "reported_by":         str | null,     (optional) — name of person who reported
+            "reported_date":       str | null,     (optional) — ISO timestamp when reported
+            "reported_department": str | null,     (optional) — department that reported
+            "description":         str | null,     (optional) — detailed description
+            "assigned_to":         str | null,     (optional) — responsible owner
+            "practice_area":       str | null,     (optional) — business practice area
+            "due_date":            str | null,     (optional) — ISO timestamp for resolution deadline
+            "mitigation_state":    str | null,     (optional) — "New", "In Progress", or "Resolved"
+            "line_of_defense":     str | null,     (optional) — risk control classification
+        }
+      Omit to leave existing issues unchanged.
+
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
         agent_id (Optional[str]): Unique identifier of the agent to update.
@@ -748,10 +781,12 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
         instruction (Optional[str]): Updated behavior instructions. Do NOT invent or reference
                            other agent names unless the user has explicitly named them or they are
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
-        tools (Optional[List[Dict[str, str]]]): Updated tool list.
+        tools (Optional[List[Dict[str, str]]]): Updated tool list. When provided, replaces all existing tools.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
         data_sources (Optional[List[Dict]]): Replacement data source table/column definitions.
                                              Omit to leave existing data sources unchanged.
+        issues (Optional[List[Dict]]): Replacement issue list. When provided, replaces all existing issues.
+                                       Omit to leave existing issues unchanged.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -773,6 +808,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "tools": tools,
                 "knowledge_source": knowledge_source,
                 "data_sources": data_sources,
+                "issues": issues,
             },
             tenant_id,
         )
@@ -786,6 +822,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             knowledge_source=knowledge_source,
             tenant_id=str(tenant_id),
             data_sources=data_sources,
+            issues=issues,
         )
 
         return result

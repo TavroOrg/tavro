@@ -52,6 +52,12 @@ ON core.agent_ai_models (agent_internal_id, model_name);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_issues
+ON core.issues (tenant_id, issue_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_issues
+ON core.agent_issues (tenant_id, issue_id, agent_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
 ON core.business_applications (business_application_id);
 
@@ -248,6 +254,37 @@ BEGIN
             FOREIGN KEY (business_process_id)
             REFERENCES core.business_processes (business_process_id)
             ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- Add missing columns to core.issues for new issue tracking fields
+    IF to_regclass('core.issues') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'reported_department'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN reported_department TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'description'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN description TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'mitigation_state'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN mitigation_state TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'line_of_defense'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN line_of_defense TEXT;
         END IF;
     END IF;
 

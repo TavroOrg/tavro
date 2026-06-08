@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
@@ -166,6 +166,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            issues: [],
             application: [],
             business_process: [],
             risk_assessment: null,
@@ -232,6 +233,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    issues: mcpData.issues ?? apiData?.issues ?? existingCatalog?.issues ?? [],
                 };
             } else if (apiData) {
                 // Preserve governance/risk snapshot from existing catalog entry if REST API returns null
@@ -256,6 +258,7 @@ const AgentViewPage: React.FC = () => {
                     data_source: apiCatalog?.data_source ?? [],
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
+                    issues: apiData.issues ?? apiCatalog?.issues ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
@@ -385,6 +388,15 @@ const AgentViewPage: React.FC = () => {
         }, 500);
     };
 
+    const handleIssuesChange = (issues: AgentIssue[]) => {
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = { ...prev, issues };
+            upsertAgent(next);
+            return next;
+        });
+    };
+
     if (loading && !agent) {
         return <div className="flex-row justify-center items-center h-64 text-secondary">Loading Agent Details...</div>;
     }
@@ -471,7 +483,11 @@ const AgentViewPage: React.FC = () => {
                 </div>
             )}
 
-            <AgentView agent={agent} onBusinessImpactChange={handleBusinessImpactChange} />
+            <AgentView
+                agent={agent}
+                onBusinessImpactChange={handleBusinessImpactChange}
+                onIssuesChange={handleIssuesChange}
+            />
 
             {/* JSON Inspector Modal */}
             {jsonOpen && createPortal(

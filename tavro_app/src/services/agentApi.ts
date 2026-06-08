@@ -49,12 +49,44 @@ export interface AgentCreatePayload {
     owner?: string;
     tools?: Array<{ name: string; description: string }>;
     knowledge_source?: { name: string; description: string };
+    issues?: AgentIssuePayload[];
 }
 
 export interface AgentUpdatePayload {
     agent_name?: string;
     description?: string;
     instruction?: string;
+    issues?: AgentIssuePayload[];
+}
+
+export interface AgentIssuePayload {
+    issue_id?: string;
+    issue_name: string;
+    reported_by?: string;
+    reported_date?: string;
+    assigned_to?: string;
+    practice_area?: string;
+    due_date?: string;
+    reported_department?: string;
+    description?: string;
+    mitigation_state?: 'New' | 'In Progress' | 'Resolved' | string;
+    line_of_defense?: string;
+}
+
+export interface AgentIssue {
+    issue_id: string;
+    issue_name: string;
+    reported_by?: string | null;
+    reported_date?: string | null;
+    reported_department?: string | null;
+    description?: string | null;
+    mitigation_state?: string | null;
+    line_of_defense?: string | null;
+    assigned_to?: string | null;
+    practice_area?: string | null;
+    due_date?: string | null;
+    created_ts?: string | null;
+    updated_ts?: string | null;
 }
 
 export interface AgentCatalogResponse {
@@ -108,6 +140,10 @@ class AgentApiService {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
+    }
+
+    async getIssue(issueId: string): Promise<AgentIssue & { linked_agents?: Array<{ agent_id: string; agent_name: string }> }> {
+        return req(`/agents/issues/${encodeURIComponent(issueId)}`);
     }
 
     async deleteAgent(agentId: string): Promise<{ message: string; agent_id: string }> {

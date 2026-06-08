@@ -161,6 +161,22 @@ export interface AgentSkill {
   tags?: string[] | null;
 }
 
+export interface AgentIssue {
+  issue_id: string;
+  issue_name: string;
+  reported_by?: string | null;
+  reported_date?: string | null;
+  reported_department?: string | null;
+  description?: string | null;
+  mitigation_state?: string | null;
+  line_of_defense?: string | null;
+  assigned_to?: string | null;
+  practice_area?: string | null;
+  due_date?: string | null;
+  created_ts?: string | null;
+  updated_ts?: string | null;
+}
+
 // ── Instruction Set ───────────────────────────────────────────────────────────
 
 export interface InstructionSet {
@@ -245,6 +261,7 @@ export interface AgentData {
 
   // Skills & instructions
   skills?: AgentSkill[] | null;
+  issues?: AgentIssue[] | null;
   instruction_sets?: InstructionSet[] | null;
 
   // Business
