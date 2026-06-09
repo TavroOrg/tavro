@@ -436,6 +436,8 @@ BEGIN
         ) THEN
             ALTER TABLE core.tables DROP COLUMN agent_internal_id;
         END IF;
+    END IF;
+
     -- Agent-to-agent (parent/child) self-reference on core.agents.
     -- Mirrors business_processes.parent_process_id. No FK is added because
     -- core.agents is versioned (agent_internal_id is not unique), so it cannot
