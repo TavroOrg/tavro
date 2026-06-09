@@ -12,15 +12,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.db import DATABASE_URL
-from utils.set_environment import set_environment
 from api.database import get_db
 
 from temporalio.client import Client
 
 from services.workflow.workflow import RiskManagerWorkflow
-
-set_environment("databases")
-set_environment("environment")
 
 TASK_QUEUE = "risk-classification-queue"
 TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")

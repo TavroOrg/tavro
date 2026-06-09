@@ -4,7 +4,6 @@ from crewai import Agent, Task, Crew, Process
 from crewai_tools import TXTSearchTool
 from pydantic import BaseModel
 from services.risk_agents.llm_config import get_crewai_llm
-from utils.set_environment import set_environment
 
 DEFAULT_TXT_SEARCH_EMBEDDER = "onnx"
 
@@ -44,8 +43,8 @@ class RiskClassificationOutput(BaseModel):
     article_6: Article6Output
     risk_rating_rationale: str
 
+
 def classify_risk(agent_name: str, agent_description: str, agent_instructions: str):
-    set_environment("secrets")
     skills_file = Path(__file__).resolve().parent.parent / "skills" / "EU_AI_Act.txt"
     txt_tool = TXTSearchTool(
         txt=str(skills_file),
