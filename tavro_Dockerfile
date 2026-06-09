@@ -1,7 +1,6 @@
 FROM postgres:16-bookworm
 
 ARG PG_MAJOR=16
-ARG PGVECTOR_VERSION=0.7.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -21,16 +20,8 @@ RUN apt-get update -qq && \
     && rm -rf /var/lib/apt/lists/*
 
 # pgvector
-RUN set -eux; \
-    PGVECTOR_URL_PRIMARY="https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz"; \
-    PGVECTOR_URL_FALLBACK="https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v${PGVECTOR_VERSION}"; \
-    curl --fail --show-error --location \
-        --retry 5 --retry-delay 2 --retry-all-errors \
-        "$PGVECTOR_URL_PRIMARY" \
-        -o /tmp/pgvector.tar.gz \
-    || curl --fail --show-error --location \
-        --retry 5 --retry-delay 2 --retry-all-errors \
-        "$PGVECTOR_URL_FALLBACK" \
+RUN curl -fsSL \
+        "https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.0.tar.gz" \
         -o /tmp/pgvector.tar.gz \
     && mkdir -p /tmp/pgvector-src \
     && tar -xzf /tmp/pgvector.tar.gz -C /tmp/pgvector-src --strip-components=1 \

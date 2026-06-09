@@ -2,10 +2,7 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
-
-load_dotenv(override=False)
 from fastapi.middleware.cors import CORSMiddleware
 from temporalio.worker import Worker
 from temporalio.client import Client
