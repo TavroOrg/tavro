@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS core.agents (
 	is_current boolean,
 	created_ts timestamp,
 	updated_ts timestamp,
-	agent_internal_id TEXT
+	agent_internal_id TEXT,
+	parent_agent_internal_id TEXT
 );
 
