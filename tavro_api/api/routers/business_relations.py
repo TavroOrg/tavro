@@ -2456,23 +2456,21 @@ async def get_agent_relations(
                 use_case_rows = await db.execute(
                     text(
                         f"""
-                        SELECT identifier, name, description, owner, priority, status
-                        FROM (
-                            SELECT DISTINCT
-                                rel.ai_use_case_id AS identifier,
-                                {name_expr} AS name,
-                                {description_expr} AS description,
-                                {owner_expr} AS owner,
-                                {priority_expr} AS priority,
-                                {status_expr} AS status
-                            FROM core.agent_ai_use_cases rel
-                            {uc_join}
-                            WHERE ({' OR '.join(match_parts)})
-                              {tenant_filter}
-                              AND rel.ai_use_case_id IS NOT NULL
-                              AND rel.ai_use_case_id <> ''
-                        ) sub
-                        ORDER BY LOWER(name)
+                        SELECT DISTINCT
+                            rel.ai_use_case_id AS identifier,
+                            {name_expr} AS name,
+                            {description_expr} AS description,
+                            {owner_expr} AS owner,
+                            {priority_expr} AS priority,
+                            {status_expr} AS status,
+                            LOWER({name_expr}) AS _sort_key
+                        FROM core.agent_ai_use_cases rel
+                        {uc_join}
+                        WHERE ({' OR '.join(match_parts)})
+                          {tenant_filter}
+                          AND rel.ai_use_case_id IS NOT NULL
+                          AND rel.ai_use_case_id <> ''
+                        ORDER BY _sort_key
                         """
                     ),
                     params,
