@@ -1637,7 +1637,6 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
         "agent_memories",
         "agent_regulations_or_frameworks",
         "agent_controls",
-        "agent_risk_assessments",
     ]
 
     with _db_connection() as connection:
@@ -1645,6 +1644,20 @@ def create_local_agent_card(agent_internal_id: str, output_dir: str = None):
             data = {name: _query_core_rows(cursor, name, agent_internal_id) for name in table_names}
             application_rows = _query_agent_application_rows(cursor, agent_internal_id)
             process_rows = _query_agent_process_rows(cursor, agent_internal_id)
+            # Query latest risk assessment separately with explicit ordering so the
+            # most recent completed assessment is always written to the card file.
+            ra_query = sql.SQL(
+                """
+                SELECT * FROM {}
+                WHERE agent_internal_id = %s
+                ORDER BY updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
+                LIMIT 1
+                """
+            ).format(_table(CORE_SCHEMA, "agent_risk_assessments"))
+            cursor.execute(ra_query, (agent_internal_id,))
+            ra_rows = cursor.fetchall()
+            ra_columns = [d[0] for d in cursor.description] if cursor.description else []
+            data["agent_risk_assessments"] = [dict(zip(ra_columns, row)) for row in ra_rows]
 
     def first(name: str) -> dict:
         rows = data.get(name, [])

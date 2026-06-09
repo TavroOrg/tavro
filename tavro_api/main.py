@@ -22,6 +22,8 @@ from api.routers import use_cases
 from api.routers import use_case_upload
 from api.routers import drive_import
 from api.routers import spark
+from api.routers import docker_logs
+from api.routers.docker_logs import start_log_collector
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -71,6 +73,7 @@ async def _run_temporal_worker():
 async def lifespan(app: FastAPI):
     await seed_system_dim_types()
     await ensure_spark_table()
+    await start_log_collector()
     worker_task = asyncio.create_task(_run_temporal_worker())
     yield
     worker_task.cancel()
@@ -114,6 +117,7 @@ app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["
 app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 app.include_router(drive_import.router,     prefix="/api/v1/drive",      tags=["Drive Import"])
 app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["Spark"])
+app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])

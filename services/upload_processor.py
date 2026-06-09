@@ -1020,6 +1020,38 @@ def _upsert_agent_data_sources(conn, card: dict, agent_internal_id: str, now_str
 
 
 # ---------------------------------------------------------------------------
+# Card validation  (mirrors worker.py Step 0)
+# ---------------------------------------------------------------------------
+
+def _validate_agent_card(card_dict: dict) -> tuple:
+    """Validate the card against the TavroAgentCard schema before any DB writes.
+
+    Returns (True, '') on success, or (False, error_message) on failure.
+    """
+    tmp_path = None
+    try:
+        from tavro_agent_card import TavroAgentCard
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp:
+            json.dump(card_dict, tmp)
+            tmp_path = tmp.name
+        TavroAgentCard.from_json_file(tmp_path)
+        print("[INFO] AgentCard validation successful")
+        return True, ""
+    except Exception as e:
+        msg = str(e)
+        print(f"[ERROR] TavroAgentCard validation failed: {msg}")
+        return False, msg
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -1027,8 +1059,9 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
     """
     Process a single agent card from an uploaded JSON file.
 
-    Runs all 20 upsert steps (identical pipeline to worker.py) without triggering
-    risk assessment. The tenant_id from the uploading user is stored in core.agents
+    Validates the card against TavroAgentCard schema first, then runs all 20
+    upsert steps (identical pipeline to worker.py) without triggering risk
+    assessment. The tenant_id from the uploading user is stored in core.agents
     so the agent is scoped to their tenant in the catalog.
 
     Args:
@@ -1036,8 +1069,12 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
         tenant_id: Tenant ID from the uploading user (x-tenant-id header).
 
     Returns:
-        True on success or no-op, False on fatal error.
+        True on success or no-op, False on validation/fatal error.
     """
+    valid, _ = _validate_agent_card(card_dict)
+    if not valid:
+        raise ValueError("Invalid")
+
     now_str  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     agent_id = card_dict.get("identification", {}).get("agent_id")
     if not agent_id:

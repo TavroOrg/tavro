@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Code2,
     BotMessageSquare, Eye, EyeOff, Trash2, Terminal,
-    Database, CircleHelp, ExternalLink
+    Database, Box, ChevronRight
 } from 'lucide-react';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
@@ -31,6 +32,7 @@ import { useChatContext } from '../context/ChatContext';
 
 const Settings: React.FC = () => {
     const { setViewContext } = useChatContext();
+    const navigate = useNavigate();
 
     useEffect(() => {
         setViewContext('settings');
@@ -404,25 +406,25 @@ const Settings: React.FC = () => {
                             <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${showLogs ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                     </div>
-                </div>
-            </div>
 
-            {/* Help */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-5 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <CircleHelp size={16} className="text-blue-500" />
-                        <span className="font-bold text-slate-800 dark:text-white">Help</span>
+                    {/* Container Logs navigation */}
+                    <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                        <button
+                            onClick={() => navigate('/settings/logs')}
+                            className="flex items-center justify-between w-full group"
+                        >
+                            <div className="text-left">
+                                <p className="text-sm font-bold text-slate-800 dark:text-slate-200 font-sans flex items-center gap-2">
+                                    <Box size={14} className="text-purple-500" />
+                                    Container Logs
+                                </p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    View real-time logs from all running Docker containers
+                                </p>
+                            </div>
+                            <ChevronRight size={16} className="text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 transition-colors shrink-0 ml-4" />
+                        </button>
                     </div>
-                    <a
-                        href="https://www.tavro.ai/wp-content/uploads/2026/04/Tavro_2.1-Getting-Started-User-Guide.pdf"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors"
-                        title="Open guide in new tab"
-                    >
-                        <ExternalLink size={16} />
-                    </a>
                 </div>
             </div>
 

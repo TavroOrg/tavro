@@ -46,6 +46,7 @@ type ChatViewContext = {
         industry: string;
         region: string;
         dimensions: { label: string; category: string; summary?: string | null }[];
+        edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
     } | null;
 };
 
@@ -685,6 +686,10 @@ ${toolSummary}`;
                     .map(([cat, items]) => `  [${cat}]: ${items.join(' | ')}`)
                     .join('\n');
 
+                const edgeBlock = bp.edges?.length
+                    ? bp.edges.map(e => `  ${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`).join('\n')
+                    : '';
+
                 const writeToolList = writeTools.map(t => `  • ${t.name}`).join('\n');
 
                 return `
@@ -694,15 +699,15 @@ Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}
 
 Blueprint dimensions active for this company:
 ${dimBlock}
-
+${edgeBlock ? `\nDimension relationships (use these to understand how dimensions connect when generating values):\n${edgeBlock}` : ''}
 ### Intent-based parameter enrichment — MANDATORY for write operations
 The following tools (detected from the live tool list) create or modify resources:
 ${writeToolList}
 
-When calling any of these tools, derive generated parameter values from the blueprint dimensions above using this field-level mapping:
+When calling any of these tools, derive generated parameter values from the blueprint dimensions and their relationships above using this field-level mapping:
 - Parameters describing purpose, role, or behaviour (e.g. \`description\`, \`instructions\`, \`summary\`): ground in [strategy] and [process] dimensions.
-- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions.
-- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions.
+- Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions and any dimension that has a [risks] or [depends_on] relationship to a risk node.
+- Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions and dimensions connected via [enables] or [supports] relationships.
 - Parameters describing technical context (e.g. \`tools\`, \`integrations\`, \`platform\`): ground in [technology] and [integration] dimensions.
 - Parameters describing industry or geography (e.g. \`industry\`, \`region\`, \`sector\`): always use "${bp.industry}" and "${bp.region}" from the blueprint — never override these.
 
@@ -714,9 +719,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 (context.systemPrompt ||
                     `You are Tavro AI assistant. Use the available MCP tools to answer questions about AI agents, use cases, and risk assessments. Call tools whenever you need live data.`) +
                 toolGuidance +
-                blueprintToolGuidance;
-                MULTI_AGENT_DEFAULTS +
-                toolGuidance;
+                blueprintToolGuidance +
+                MULTI_AGENT_DEFAULTS;
 
             if (toolDefs.length === 0) {
                 // No MCP tools — enrich context with catalog snapshot and stream directly.
@@ -978,23 +982,27 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     }
 
     async getAgentRiskSummary(agentId: string): Promise<any> {
-        if (this._riskSummaryCache.has(agentId)) return this._riskSummaryCache.get(agentId);
+        // Always bypass cache so the UI reflects the latest completed assessment.
+        // The MCP tool overlays risk_assessment from DB on every call, so we must
+        // not serve a stale cached copy.
         try {
-            const details = await this.getAgentDetails(agentId);
+            const data = await this.callTool('get_agent_card', { agent_id: agentId });
+            if (data?.error) return undefined;
+            const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
+            if (!agent || agent?.error) return undefined;
+            // Refresh the agent detail cache so other consumers see the latest data too.
+            this._agentDetailCache.set(agentId, agent);
             const summary =
-                (details as any)?.risk_summary ??
-                (details as any)?.summary ??
-                (details as any)?.risk_assessment?.summary ??
+                (agent as any)?.risk_assessment?.summary ??
+                (agent as any)?.risk_summary ??
+                (agent as any)?.summary ??
                 '';
             if (!summary) return undefined;
-
-            const payload = {
-                agent_id: details?.identification?.agent_id || agentId,
-                agent_name: details?.name || agentId,
+            return {
+                agent_id: (agent as any)?.identification?.agent_id || agentId,
+                agent_name: (agent as any)?.name || agentId,
                 risk_summary: String(summary),
             };
-            this._riskSummaryCache.set(agentId, payload);
-            return payload;
         } catch {
             return undefined;
         }

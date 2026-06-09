@@ -28,6 +28,7 @@ ANTHROPIC_API_URL       = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL         = "claude-sonnet-4-6"
 SPARK_MAX_TOKENS        = 2000
 SPARK_MAX_TOKENS_DIR    = 4000   # direction mode needs room for N structured ideas
+SPARK_DEFAULT_IDEAS     = 5
 SPARK_MAX_IDEAS         = 16
 SPARK_DDL_CANDIDATE_PATHS = (
     Path("/sql/core/spark_ideas.sql"),
@@ -315,16 +316,18 @@ def _build_direction_prompt(company_nodes: list[dict], direction: str, count: in
     system = (
         f"You are a senior AI implementation consultant specialising in manufacturing operations. "
         f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
-        "Generate specific, concrete, buildable AI agent ideas with measurable ROI. "
+        "Generate specific, concrete, buildable AI use case ideas with measurable ROI. "
+        "Do not generate agents here. Do not include agent names in titles. "
         "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
     )
     user = (
-        f"FOCUS: Generate exactly {count} distinct AI agent ideas, ALL specifically about: \"{direction}\"\n\n"
+        f"FOCUS: Generate exactly {count} distinct AI use case ideas, ALL specifically about: \"{direction}\"\n\n"
         f"Company context (systems, processes, and integrations — reference them where applicable):\n"
         f"{context_lines}\n\n"
         "For each idea return a JSON object with:\n"
-        "- title: specific agent name, max 8 words "
-        "(good: 'OData Quality Gate Anomaly Detector'; bad: 'AI for OData')\n"
+        "- title: formal AI use case title, max 8 words. "
+        "Do NOT include the word 'Agent'. Do NOT write an agent name. "
+        "(good: 'OData Quality Gate Anomaly Detection'; bad: 'OData Quality Gate Agent')\n"
         "- description: exactly 2 sentences — "
         "sentence 1: what the agent does and which system/integration it connects to; "
         "sentence 2: what output it produces and how it is acted on\n"
@@ -541,7 +544,7 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
 
     system = (
         f"You are a senior AI implementation consultant specialising in manufacturing operations. "
-        f"Your job is to identify specific, high-ROI AI agent ideas that can realistically be built and deployed in 3–18 months. "
+        f"Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months. "
         f"Today's year is {CURRENT_YEAR}. "
         f"NEVER reference goals, targets, revenue plans, or milestones tied to years before {CURRENT_YEAR}. "
         f"If a signal mentions a past-year goal (e.g. FY2024, FY2025), ignore the goal framing and focus on the underlying system or process instead."
@@ -559,9 +562,10 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
         "  • Disconnected: idea has no real link to the specific system named in the context signal"
     )
     user = (
-        "For each signal below, generate ONE specific AI agent idea as a JSON object with exactly these fields:\n"
-        "- title: specific agent name, max 8 words "
-        "(good: 'MES Downtime Root-Cause Classifier'; bad: 'AI for Manufacturing Operations')\n"
+        "For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n"
+        "- title: formal AI use case title, max 8 words. "
+        "Do NOT include the word 'Agent'. Do NOT write an agent name. "
+        "(good: 'MES Downtime Root-Cause Classification'; bad: 'MES Downtime Agent')\n"
         "- description: exactly 2 sentences — "
         "sentence 1: what the agent does and which specific system/process it connects to; "
         "sentence 2: what output it produces and how a user or downstream system acts on it\n"
@@ -699,7 +703,7 @@ async def _generate_direction_ideas(
         return []
 
 
-async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: list[str]) -> list[dict]:
+async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: list[str], count: int = SPARK_DEFAULT_IDEAS) -> list[dict]:
     candidates: list[dict] = []
     active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration"]
 
@@ -727,7 +731,7 @@ async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: lis
             seen.add(c["node_id"])
             unique.append(c)
 
-    return unique[:SPARK_MAX_IDEAS]
+    return unique[:count]
 
 
 async def _upsert_ideas(company_id: str, ideas: list[SparkIdea]) -> None:
@@ -849,6 +853,7 @@ async def generate_spark_ideas(
     company_id: str = Query(..., description="Company UUID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area (e.g. 'Quality management')"),
+    idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Generate fresh ideas from company context, persist to DB, return them."""
@@ -860,14 +865,14 @@ async def generate_spark_ideas(
         # Direction mode: Claude generates ideas *about* the topic using all company nodes as context.
         # Does not depend on which nodes happen to be randomly selected.
         company_nodes = await _fetch_all_company_nodes(db, company_id)
-        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean)
+        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean, idea_count)
         if not ideas:
             # Fallback to normal flow if direction generation fails
-            unique = await _collect_candidates(db, company_id, dim_filter)
+            unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
             all_agents = await _fetch_agents(db)
             ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean)
     else:
-        unique = await _collect_candidates(db, company_id, dim_filter)
+        unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
         if not unique:
             return []
         all_agents = await _fetch_agents(db)
@@ -895,6 +900,7 @@ async def generate_spark_ideas_stream(
     company_id: str = Query(..., description="Company UUID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area"),
+    idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -912,8 +918,7 @@ async def generate_spark_ideas_stream(
         try:
             if direction_clean and api_key:
                 company_nodes = await _fetch_all_company_nodes(db, company_id)
-                count = SPARK_MAX_IDEAS
-                system, user = _build_direction_prompt(company_nodes, direction_clean, count)
+                system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count)
 
                 buffer = ""
                 async for chunk in _stream_anthropic(
@@ -925,6 +930,8 @@ async def generate_spark_ideas_stream(
                     buffer += chunk
                     new_objects, buffer = _extract_complete_objects(buffer)
                     for obj in new_objects:
+                        if len(collected) >= idea_count:
+                            break
                         category = obj.get("category", "process")
                         signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
                         node_id = f"dir:{hashlib.sha256(f'{direction_clean}:{len(collected)}'.encode()).hexdigest()[:8]}"
@@ -943,10 +950,12 @@ async def generate_spark_ideas_stream(
                         )
                         collected.append(idea)
                         yield f"event: idea\ndata: {idea.model_dump_json()}\n\n"
+                    if len(collected) >= idea_count:
+                        break
 
             else:
                 # Gap-analysis mode: stream ideas as each enriched object arrives
-                unique = await _collect_candidates(db, company_id, dim_filter)
+                unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
                 if unique:
                     all_agents = await _fetch_agents(db)
 
@@ -1073,7 +1082,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Context: {request.signal_label or ''}\n"
         f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
         "Return a single JSON object with exactly these fields:\n"
-        "- title: formal use case name (keep close to the idea title)\n"
+        "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
         "- business_problem_statement: the specific business problem or gap being addressed\n"
         "- expected_benefits: concrete outcomes (efficiency %, cost reduction, risk reduction, etc.)\n"

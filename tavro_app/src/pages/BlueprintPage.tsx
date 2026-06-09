@@ -3,7 +3,7 @@
 // Layout: sidebar node list (left) + graph (centre) + detail panel (right).
 // Matches the structural pattern of Dashboard + AgentViewPage.
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, Building2,
   Plus, ChevronDown, Network, Layers, Link2, Trash2,
@@ -14,7 +14,7 @@ import { blueprintApi } from '../services/blueprintApi';
 import BlueprintGraph from '../components/BlueprintGraphRF';
 import BlueprintDimCard, { BlueprintDimRow } from '../components/BlueprintDimCard';
 import BlueprintDimPanel from '../components/BlueprintDimPanel';
-import type { DimNode, DimCategory } from '../types/blueprint';
+import type { Company, DimNode, DimCategory } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
 import AddDimNodeModal from '../components/AddDimNodeModal';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
@@ -31,7 +31,7 @@ const BlueprintPage: React.FC = () => {
   const {
     companies, activeCompany, dimTypes, nodes, graph,
     loading, graphLoading, error, lastFetched,
-    selectCompany, removeCompany, refresh, refreshNodes, refreshGraph
+    selectCompany, removeCompany, refresh, refreshNodes, refreshGraph, refreshCompanies
   } = useBlueprint();
 
   // ── Local UI state ───────────────────────────────────────────────────────
@@ -40,8 +40,11 @@ const BlueprintPage: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<DimCategory | 'all'>('all');
   const [selectedNode, setSelectedNode] = useState<DimNode | null>(null);
   const [companyDropdown, setCompanyDropdown] = useState(false);
+  const [companySearch, setCompanySearch] = useState('');
   const [showAddNode, setShowAddNode] = useState(false);
   const [showAddEdge, setShowAddEdge] = useState(false);
+  const companyMenuRef = useRef<HTMLDivElement>(null);
+  const companySearchRef = useRef<HTMLInputElement>(null);
 
   // ── Filtered nodes ───────────────────────────────────────────────────────
   const filteredNodes = useMemo(() => {
@@ -67,12 +70,39 @@ const BlueprintPage: React.FC = () => {
     }, {} as Record<string, number>),
     [nodes]);
 
+const filteredCompanies = useMemo(() => {
+  const q = companySearch.trim().toLowerCase();  
+  if (!q) return [];
+
+  return companies.filter(c => c.name.toLowerCase().includes(q));
+}, [companies, companySearch]);
+
   // ── Sync selectedNode with refreshed nodes ──────────────────────────────
   useEffect(() => {
     if (!selectedNode) return;
     const updated = nodes.find(n => n.id === selectedNode.id);
     if (updated) setSelectedNode(updated);
   }, [nodes]);
+
+  useEffect(() => {
+    if (!companyDropdown) {
+      setCompanySearch('');
+      return;
+    }
+
+    const id = window.setTimeout(() => companySearchRef.current?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!companyMenuRef.current?.contains(event.target as Node)) {
+        setCompanyDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [companyDropdown]);
 
   // ── Chat sync — keeps chat context in sync with blueprint state ──────────
   useBlueprintChatSync(
@@ -92,6 +122,13 @@ const BlueprintPage: React.FC = () => {
     await blueprintApi.deleteCompany(c.id);
     removeCompany(c.id);
     setCompanyDropdown(false);
+  };
+
+  const handleSelectCompany = (company: Company) => {
+    selectCompany(company);
+    setCompanyDropdown(false);
+    setCompanySearch('');
+    setSelectedNode(null);
   };
 
   const handleDeleteNode = async (node: DimNode) => {
@@ -137,38 +174,75 @@ const BlueprintPage: React.FC = () => {
         <div className="flex items-center gap-2 flex-wrap">
 
           {/* Company selector */}
-          <div className="relative">
+          <div className="relative" ref={companyMenuRef}>
             <button
-              onClick={() => setCompanyDropdown(p => !p)}
-              className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600 px-3 py-2 rounded-lg transition-colors"
+              onClick={() => {
+                const nextOpen = !companyDropdown;
+                setCompanyDropdown(nextOpen);
+
+                if (nextOpen) {
+                  refresh();
+                }
+              }}
+              className="flex max-w-[240px] items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600 px-3 py-2 rounded-lg transition-colors"
+              aria-haspopup="listbox"
+              aria-expanded={companyDropdown}
             >
               <Building2 size={14} className="text-blue-600 dark:text-blue-400" />
-              {activeCompany?.name ?? 'Select company'}
+              <span className="truncate">{activeCompany?.name ?? 'Select company'}</span>
               <ChevronDown size={13} className="text-slate-400" />
             </button>
             {companyDropdown && (
-              <div className="absolute top-full left-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 min-w-[220px] py-1">
-                {companies.map(c => (
-                  <div key={c.id} className="flex items-center group">
-                    <button
-                      onClick={() => { selectCompany(c); setCompanyDropdown(false); setSelectedNode(null); }}
-                      className={`flex-1 text-left px-4 py-2.5 text-sm transition-colors ${c.id === activeCompany?.id
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
-                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
-                        }`}>
-                      <div className="font-semibold">{c.name}</div>
-                      <div className="text-[11px] text-slate-400 dark:text-slate-500">{c.industry} · {c.region}</div>
-                    </button>
-                    <button
-                      onClick={() => handleDeleteCompany(c)}
-                      className="opacity-0 group-hover:opacity-100 mr-2 p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all flex-shrink-0"
-                      title={`Delete ${c.name}`}>
-                      <Trash2 size={13} />
-                    </button>
+              <div className="absolute top-full left-0 mt-1 w-[280px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="p-2 border-b border-slate-100 dark:border-slate-700">
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+                    <input
+                      ref={companySearchRef}
+                      value={companySearch}
+                      onChange={e => setCompanySearch(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') setCompanyDropdown(false);
+                        if (e.key === 'Enter' && filteredCompanies.length === 1) handleSelectCompany(filteredCompanies[0]);
+                      }}
+                      placeholder="Search company..."
+                      className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 focus:border-blue-300 dark:focus:border-blue-600 text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 transition-all"
+                    />
                   </div>
-                ))}
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                {!companySearch.trim() ? (
+                  <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                    Search company name
+                  </div>
+                ) : filteredCompanies.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                    No companies found
+                  </div>
+                  ) : filteredCompanies.map(c => (
+                    <div key={c.id} className="flex items-center group">
+                      <button
+                        onClick={() => handleSelectCompany(c)}
+                        role="option"
+                        aria-selected={c.id === activeCompany?.id}
+                        className={`min-w-0 flex-1 text-left px-4 py-2.5 text-sm transition-colors ${c.id === activeCompany?.id
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
+                          : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                          }`}>
+                        <div className="font-semibold truncate">{c.name}</div>
+                        <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{c.industry} · {c.region}</div>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCompany(c)}
+                        className="opacity-0 group-hover:opacity-100 mr-2 p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all flex-shrink-0"
+                        title={`Delete ${c.name}`}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
                 <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1 px-2 pb-1">
-                  <button onClick={() => { navigate('/blueprint/setup'); setCompanyDropdown(false); }}
+                  <button onClick={() => { refreshCompanies(); navigate('/blueprint/setup'); setCompanyDropdown(false); }}
                     className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
                     <Plus size={11} /> Add company
                   </button>
