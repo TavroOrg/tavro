@@ -413,42 +413,52 @@ class AgentMetadataExporter:
 
                     issue_rows = cls.execute_select(
                         f"""
-                        SELECT DISTINCT ON (rel.issue_id)
-                            rel.issue_id,
-                            COALESCE(i.issue_name, rel.issue_name, rel.issue_id) AS issue_name,
-                            i.reported_by,
-                            i.reported_date,
-                            i.assigned_to,
-                            i.practice_area,
-                            i.due_date,
+                        SELECT DISTINCT ON (rel.identifier)
+                            rel.identifier,
+                            COALESCE(i.title, rel.title, rel.identifier) AS title,
+                            i.description,
+                            i.issue_type,
+                            i.severity,
+                            i.source,
+                            i.detected_at,
+                            i.resolved_at,
+                            i.status,
+                            i.resolution_notes,
+                            i.assignee,
+                            i.owner,
                             COALESCE(i.updated_ts, rel.updated_ts) AS updated_ts,
                             COALESCE(i.created_ts, rel.created_ts) AS created_ts
                         FROM {cls.CORE_DB_NAME}.agent_issues rel
                         LEFT JOIN {cls.CORE_DB_NAME}.issues i
-                          ON i.issue_id = rel.issue_id
+                          ON i.identifier = rel.identifier
                          AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
                         WHERE rel.agent_id = %s
                           {issue_tenant_where}
-                          AND rel.issue_id IS NOT NULL
-                          AND rel.issue_id <> ''
-                        ORDER BY rel.issue_id, COALESCE(i.updated_ts, rel.updated_ts) DESC NULLS LAST
+                          AND rel.identifier IS NOT NULL
+                          AND rel.identifier <> ''
+                        ORDER BY rel.identifier, COALESCE(i.updated_ts, rel.updated_ts) DESC NULLS LAST
                         """,
                         tuple(issue_params),
                     )
                     local_card["issues"] = [
                         {
-                            "issue_id": r.get("issue_id"),
-                            "issue_name": r.get("issue_name"),
-                            "reported_by": r.get("reported_by"),
-                            "reported_date": str(r.get("reported_date")) if r.get("reported_date") else None,
-                            "assigned_to": r.get("assigned_to"),
-                            "practice_area": r.get("practice_area"),
-                            "due_date": str(r.get("due_date")) if r.get("due_date") else None,
+                            "identifier": r.get("identifier"),
+                            "title": r.get("title"),
+                            "description": r.get("description"),
+                            "issue_type": r.get("issue_type"),
+                            "severity": r.get("severity"),
+                            "source": r.get("source"),
+                            "detected_at": str(r.get("detected_at")) if r.get("detected_at") else None,
+                            "resolved_at": str(r.get("resolved_at")) if r.get("resolved_at") else None,
+                            "status": r.get("status"),
+                            "resolution_notes": r.get("resolution_notes"),
+                            "assignee": r.get("assignee"),
+                            "owner": r.get("owner"),
                             "created_ts": str(r.get("created_ts")) if r.get("created_ts") else None,
                             "updated_ts": str(r.get("updated_ts")) if r.get("updated_ts") else None,
                         }
                         for r in issue_rows
-                        if r.get("issue_id")
+                        if r.get("identifier")
                     ]
                 except Exception as issue_overlay_err:
                     print(f"[get_agent_card] Issues overlay failed: {issue_overlay_err}")
@@ -945,22 +955,23 @@ class AgentMetadataExporter:
                 "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
                 "issues": [
                     {
-                        "issue_id": iss.get("issue_id"),
-                        "issue_name": iss.get("issue_name"),
-                        "reported_by": iss.get("reported_by"),
-                        "reported_date": str(iss.get("reported_date")) if iss.get("reported_date") else None,
-                        "reported_department": iss.get("reported_department"),
+                        "identifier": iss.get("identifier"),
+                        "title": iss.get("title"),
                         "description": iss.get("description"),
-                        "assigned_to": iss.get("assigned_to"),
-                        "practice_area": iss.get("practice_area"),
-                        "due_date": str(iss.get("due_date")) if iss.get("due_date") else None,
-                        "mitigation_state": iss.get("mitigation_state"),
-                        "line_of_defense": iss.get("line_of_defense"),
+                        "issue_type": iss.get("issue_type"),
+                        "severity": iss.get("severity"),
+                        "source": iss.get("source"),
+                        "detected_at": str(iss.get("detected_at")) if iss.get("detected_at") else None,
+                        "resolved_at": str(iss.get("resolved_at")) if iss.get("resolved_at") else None,
+                        "status": iss.get("status"),
+                        "resolution_notes": iss.get("resolution_notes"),
+                        "assignee": iss.get("assignee"),
+                        "owner": iss.get("owner"),
                         "created_ts": None,
                         "updated_ts": None,
                     }
                     for iss in (issues or [])
-                    if str(iss.get("issue_name", "")).strip()
+                    if str(iss.get("title", "")).strip()
                 ],
                 "risk_assessment": None,
             }
@@ -1125,64 +1136,64 @@ class AgentMetadataExporter:
             issue_rows_i: List[str] = []
             issue_rows_ai: List[str] = []
             for issue in issues:
-                issue_name_raw = str(issue.get("issue_name", "")).strip()
-                if not issue_name_raw:
+                title_raw = str(issue.get("title", "")).strip()
+                if not title_raw:
                     continue
-                issue_id = str(uuid.uuid4())
-                i_name = cls.sanitize(issue_name_raw)
-                i_reported_by   = f"'{cls.sanitize(str(issue['reported_by']))}'" if issue.get("reported_by") else "NULL"
-                i_reported_date = f"TIMESTAMP '{cls.sanitize(str(issue['reported_date']))}'" if issue.get("reported_date") else "NULL"
-                i_reported_dept = f"'{cls.sanitize(str(issue['reported_department']))}'" if issue.get("reported_department") else "NULL"
-                i_description   = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
-                i_assigned_to   = f"'{cls.sanitize(str(issue['assigned_to']))}'" if issue.get("assigned_to") else "NULL"
-                i_practice_area = f"'{cls.sanitize(str(issue['practice_area']))}'" if issue.get("practice_area") else "NULL"
-                i_due_date      = f"TIMESTAMP '{cls.sanitize(str(issue['due_date']))}'" if issue.get("due_date") else "NULL"
-                i_mitigation    = f"'{cls.sanitize(str(issue['mitigation_state']))}'" if issue.get("mitigation_state") else "NULL"
-                i_lod           = f"'{cls.sanitize(str(issue['line_of_defense']))}'" if issue.get("line_of_defense") else "NULL"
+                identifier = str(uuid.uuid4())
+                i_title           = cls.sanitize(title_raw)
+                i_description     = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
+                i_issue_type      = f"'{cls.sanitize(str(issue['issue_type']))}'" if issue.get("issue_type") else "NULL"
+                i_severity        = f"'{cls.sanitize(str(issue['severity']))}'" if issue.get("severity") else "NULL"
+                i_source          = f"'{cls.sanitize(str(issue['source']))}'" if issue.get("source") else "NULL"
+                i_detected_at     = f"TIMESTAMP '{cls.sanitize(str(issue['detected_at']))}'" if issue.get("detected_at") else "NULL"
+                i_resolved_at     = f"TIMESTAMP '{cls.sanitize(str(issue['resolved_at']))}'" if issue.get("resolved_at") else "NULL"
+                i_status          = f"'{cls.sanitize(str(issue['status']))}'" if issue.get("status") else "NULL"
+                i_resolution_notes = f"'{cls.sanitize(str(issue['resolution_notes']))}'" if issue.get("resolution_notes") else "NULL"
+                i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
+                i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
                 issue_rows_i.append(
-                    f"({tenant_id_value}'{issue_id}', '{i_name}', "
-                    f"{i_reported_by}, {i_reported_date}, "
-                    f"{i_reported_dept}, {i_description}, "
-                    f"{i_assigned_to}, {i_practice_area}, "
-                    f"{i_due_date}, {i_mitigation}, "
-                    f"{i_lod}, "
+                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"{i_description}, {i_issue_type}, {i_severity}, "
+                    f"{i_source}, {i_detected_at}, {i_resolved_at}, "
+                    f"{i_status}, {i_resolution_notes}, "
+                    f"{i_assignee}, {i_owner}, "
                     f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                 )
                 issue_rows_ai.append(
-                    f"({tenant_id_value}'{issue_id}', '{i_name}', "
+                    f"({tenant_id_value}'{identifier}', '{i_title}', "
                     f"'{agent_id}', '{agent_name}', "
                     f"'{agent_internal_id}', "
                     f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                 )
                 issue_entries_for_card.append({
-                    "issue_id": issue_id,
-                    "issue_name": issue_name_raw,
-                    "reported_by": issue.get("reported_by"),
-                    "reported_date": issue.get("reported_date"),
-                    "reported_department": issue.get("reported_department"),
+                    "identifier": identifier,
+                    "title": title_raw,
                     "description": issue.get("description"),
-                    "assigned_to": issue.get("assigned_to"),
-                    "practice_area": issue.get("practice_area"),
-                    "due_date": issue.get("due_date"),
-                    "mitigation_state": issue.get("mitigation_state"),
-                    "line_of_defense": issue.get("line_of_defense"),
+                    "issue_type": issue.get("issue_type"),
+                    "severity": issue.get("severity"),
+                    "source": issue.get("source"),
+                    "detected_at": issue.get("detected_at"),
+                    "resolved_at": issue.get("resolved_at"),
+                    "status": issue.get("status"),
+                    "resolution_notes": issue.get("resolution_notes"),
+                    "assignee": issue.get("assignee"),
+                    "owner": issue.get("owner"),
                 })
             if issue_rows_i:
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.issues (
-                    {tenant_id_column}issue_id, issue_name,
-                    reported_by, reported_date,
-                    reported_department, description,
-                    assigned_to, practice_area,
-                    due_date, mitigation_state,
-                    line_of_defense,
+                    {tenant_id_column}identifier, title,
+                    description, issue_type, severity,
+                    source, detected_at, resolved_at,
+                    status, resolution_notes,
+                    assignee, owner,
                     created_ts, updated_ts
                 )
                 VALUES {','.join(issue_rows_i)}
                 """)
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_issues (
-                    {tenant_id_column}issue_id, issue_name,
+                    {tenant_id_column}identifier, title,
                     agent_id, agent_name,
                     agent_internal_id,
                     created_ts, updated_ts
@@ -2133,6 +2144,13 @@ class AgentMetadataExporter:
         # Update issues — None means "leave unchanged"; [] means "clear all issues"
         if issues is not None:
             cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.issues "
+                f"WHERE identifier IN ("
+                f"  SELECT identifier FROM {cls.CORE_DB_NAME}.agent_issues "
+                f"  WHERE agent_id = '{agent_id}' {tenant_where}"
+                f") {tenant_where}"
+            )
+            cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_issues "
                 f"WHERE agent_id = '{agent_id}' {tenant_where}"
             )
@@ -2140,31 +2158,31 @@ class AgentMetadataExporter:
                 u_issue_rows_i: List[str] = []
                 u_issue_rows_ai: List[str] = []
                 for issue in issues:
-                    issue_name_raw = str(issue.get("issue_name", "")).strip()
-                    if not issue_name_raw:
+                    title_raw = str(issue.get("title", "")).strip()
+                    if not title_raw:
                         continue
-                    issue_id = str(uuid.uuid4())
-                    i_name = cls.sanitize(issue_name_raw)
-                    i_reported_by   = f"'{cls.sanitize(str(issue['reported_by']))}'" if issue.get("reported_by") else "NULL"
-                    i_reported_date = f"TIMESTAMP '{cls.sanitize(str(issue['reported_date']))}'" if issue.get("reported_date") else "NULL"
-                    i_reported_dept = f"'{cls.sanitize(str(issue['reported_department']))}'" if issue.get("reported_department") else "NULL"
-                    i_description   = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
-                    i_assigned_to   = f"'{cls.sanitize(str(issue['assigned_to']))}'" if issue.get("assigned_to") else "NULL"
-                    i_practice_area = f"'{cls.sanitize(str(issue['practice_area']))}'" if issue.get("practice_area") else "NULL"
-                    i_due_date      = f"TIMESTAMP '{cls.sanitize(str(issue['due_date']))}'" if issue.get("due_date") else "NULL"
-                    i_mitigation    = f"'{cls.sanitize(str(issue['mitigation_state']))}'" if issue.get("mitigation_state") else "NULL"
-                    i_lod           = f"'{cls.sanitize(str(issue['line_of_defense']))}'" if issue.get("line_of_defense") else "NULL"
+                    identifier = str(issue.get("identifier") or "").strip() or str(uuid.uuid4())
+                    i_title           = cls.sanitize(title_raw)
+                    i_description     = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
+                    i_issue_type      = f"'{cls.sanitize(str(issue['issue_type']))}'" if issue.get("issue_type") else "NULL"
+                    i_severity        = f"'{cls.sanitize(str(issue['severity']))}'" if issue.get("severity") else "NULL"
+                    i_source          = f"'{cls.sanitize(str(issue['source']))}'" if issue.get("source") else "NULL"
+                    i_detected_at     = f"TIMESTAMP '{cls.sanitize(str(issue['detected_at']))}'" if issue.get("detected_at") else "NULL"
+                    i_resolved_at     = f"TIMESTAMP '{cls.sanitize(str(issue['resolved_at']))}'" if issue.get("resolved_at") else "NULL"
+                    i_status          = f"'{cls.sanitize(str(issue['status']))}'" if issue.get("status") else "NULL"
+                    i_resolution_notes = f"'{cls.sanitize(str(issue['resolution_notes']))}'" if issue.get("resolution_notes") else "NULL"
+                    i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
+                    i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
                     u_issue_rows_i.append(
-                        f"({tenant_val}'{issue_id}', '{i_name}', "
-                        f"{i_reported_by}, {i_reported_date}, "
-                        f"{i_reported_dept}, {i_description}, "
-                        f"{i_assigned_to}, {i_practice_area}, "
-                        f"{i_due_date}, {i_mitigation}, "
-                        f"{i_lod}, "
+                        f"({tenant_val}'{identifier}', '{i_title}', "
+                        f"{i_description}, {i_issue_type}, {i_severity}, "
+                        f"{i_source}, {i_detected_at}, {i_resolved_at}, "
+                        f"{i_status}, {i_resolution_notes}, "
+                        f"{i_assignee}, {i_owner}, "
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                     u_issue_rows_ai.append(
-                        f"({tenant_val}'{issue_id}', '{i_name}', "
+                        f"({tenant_val}'{identifier}', '{i_title}', "
                         f"'{agent_id}', '{cls.sanitize(effective_agent_name)}', "
                         f"'{agent_internal_id}', "
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
@@ -2172,18 +2190,17 @@ class AgentMetadataExporter:
                 if u_issue_rows_i:
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.issues "
-                        f"({tenant_col}issue_id, issue_name, "
-                        f"reported_by, reported_date, "
-                        f"reported_department, description, "
-                        f"assigned_to, practice_area, "
-                        f"due_date, mitigation_state, "
-                        f"line_of_defense, "
+                        f"({tenant_col}identifier, title, "
+                        f"description, issue_type, severity, "
+                        f"source, detected_at, resolved_at, "
+                        f"status, resolution_notes, "
+                        f"assignee, owner, "
                         f"created_ts, updated_ts) "
                         f"VALUES {','.join(u_issue_rows_i)}"
                     )
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_issues "
-                        f"({tenant_col}issue_id, issue_name, "
+                        f"({tenant_col}identifier, title, "
                         f"agent_id, agent_name, "
                         f"agent_internal_id, "
                         f"created_ts, updated_ts) "

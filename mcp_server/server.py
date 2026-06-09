@@ -374,16 +374,17 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
 
     - `issues`: A list of issues associated with the agent. Each issue supports:
         {
-            "issue_name":          str,            (required) — short title of the issue
-            "reported_by":         str | null,     (optional) — name of person who reported
-            "reported_date":       str | null,     (optional) — ISO timestamp when reported
-            "reported_department": str | null,     (optional) — department that reported
-            "description":         str | null,     (optional) — detailed description
-            "assigned_to":         str | null,     (optional) — responsible owner
-            "practice_area":       str | null,     (optional) — business practice area
-            "due_date":            str | null,     (optional) — ISO timestamp for resolution deadline
-            "mitigation_state":    str | null,     (optional) — "New", "In Progress", or "Resolved"
-            "line_of_defense":     str | null,     (optional) — risk control classification
+            "title":            str,            (required) — short human-readable summary of the issue
+            "description":      str | null,     (optional) — detailed explanation of what was observed and why it was flagged
+            "issue_type":       str | null,     (optional) — category: "Hallucination", "Tool Failure", "Latency Breach", "Drift Violation", "Guardrail Trigger", "Data Quality", "Authorization Failure", "Output Policy Violation", "Risk Management", "Fraud Detection", "Customer Engagement"
+            "severity":         str | null,     (optional) — impact level: "Critical", "High", "Medium", "Low", "Informational"
+            "source":           str | null,     (optional) — detection mechanism: "Evaluation Framework", "Alert Monitor", "Drift Detector", "Manual Review"
+            "detected_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was first detected
+            "resolved_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was resolved or closed
+            "status":           str | null,     (optional) — current state: "Open", "In Progress", "Resolved", "Dismissed", "Escalated"
+            "resolution_notes": str | null,     (optional) — action taken to resolve or reason for dismissal
+            "assignee":         str | null,     (optional) — team member or team responsible for investigating and resolving
+            "owner":            str | null,     (optional) — team or individual accountable for the agent where the issue occurred
         }
 
     Args:
@@ -760,16 +761,18 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
     - `issues`: When provided, **replaces** all existing issues for this agent.
       Pass an empty list [] to clear all issues. Each entry supports:
         {
-            "issue_name":          str,            (required) — short title of the issue
-            "reported_by":         str | null,     (optional) — name of person who reported
-            "reported_date":       str | null,     (optional) — ISO timestamp when reported
-            "reported_department": str | null,     (optional) — department that reported
-            "description":         str | null,     (optional) — detailed description
-            "assigned_to":         str | null,     (optional) — responsible owner
-            "practice_area":       str | null,     (optional) — business practice area
-            "due_date":            str | null,     (optional) — ISO timestamp for resolution deadline
-            "mitigation_state":    str | null,     (optional) — "New", "In Progress", or "Resolved"
-            "line_of_defense":     str | null,     (optional) — risk control classification
+            "identifier":       str | null,     (optional) — preserve existing UUID to keep detail-page URLs stable
+            "title":            str,            (required) — short human-readable summary of the issue
+            "description":      str | null,     (optional) — detailed explanation of what was observed and why it was flagged
+            "issue_type":       str | null,     (optional) — category: "Hallucination", "Tool Failure", "Latency Breach", "Drift Violation", "Guardrail Trigger", "Data Quality", "Authorization Failure", "Output Policy Violation", "Risk Management", "Fraud Detection", "Customer Engagement"
+            "severity":         str | null,     (optional) — impact level: "Critical", "High", "Medium", "Low", "Informational"
+            "source":           str | null,     (optional) — detection mechanism: "Evaluation Framework", "Alert Monitor", "Drift Detector", "Manual Review"
+            "detected_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was first detected
+            "resolved_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was resolved or closed
+            "status":           str | null,     (optional) — current state: "Open", "In Progress", "Resolved", "Dismissed", "Escalated"
+            "resolution_notes": str | null,     (optional) — action taken to resolve or reason for dismissal
+            "assignee":         str | null,     (optional) — team member or team responsible for investigating and resolving
+            "owner":            str | null,     (optional) — team or individual accountable for the agent where the issue occurred
         }
       Omit to leave existing issues unchanged.
 

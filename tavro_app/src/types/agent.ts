@@ -162,17 +162,18 @@ export interface AgentSkill {
 }
 
 export interface AgentIssue {
-  issue_id: string;
-  issue_name: string;
-  reported_by?: string | null;
-  reported_date?: string | null;
-  reported_department?: string | null;
+  identifier: string;
+  title: string;
   description?: string | null;
-  mitigation_state?: string | null;
-  line_of_defense?: string | null;
-  assigned_to?: string | null;
-  practice_area?: string | null;
-  due_date?: string | null;
+  issue_type?: string | null;
+  severity?: string | null;
+  source?: string | null;
+  detected_at?: string | null;
+  resolved_at?: string | null;
+  status?: string | null;
+  resolution_notes?: string | null;
+  assignee?: string | null;
+  owner?: string | null;
   created_ts?: string | null;
   updated_ts?: string | null;
 }

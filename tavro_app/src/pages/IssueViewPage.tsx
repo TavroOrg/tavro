@@ -8,10 +8,20 @@ type IssueDetail = AgentIssue & {
   linked_agents?: Array<{ agent_id: string; agent_name: string }>;
 };
 
-const MITIGATION_COLORS: Record<string, string> = {
-  'New': 'bg-amber-50 text-amber-700 border-amber-200',
+const SEVERITY_COLORS: Record<string, string> = {
+  Critical: 'bg-red-50 text-red-700 border-red-200',
+  High: 'bg-orange-50 text-orange-700 border-orange-200',
+  Medium: 'bg-amber-50 text-amber-700 border-amber-200',
+  Low: 'bg-blue-50 text-blue-700 border-blue-200',
+  Informational: 'bg-slate-50 text-slate-600 border-slate-200',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  Open: 'bg-amber-50 text-amber-700 border-amber-200',
   'In Progress': 'bg-blue-50 text-blue-700 border-blue-200',
-  'Resolved': 'bg-green-50 text-green-700 border-green-200',
+  Resolved: 'bg-green-50 text-green-700 border-green-200',
+  Dismissed: 'bg-slate-50 text-slate-600 border-slate-200',
+  Escalated: 'bg-red-50 text-red-700 border-red-200',
 };
 
 const formatDate = (value?: string | null): string => {
@@ -99,17 +109,22 @@ const IssueViewPage: React.FC = () => {
                 <AlertTriangle size={24} />
               </div>
               <div className="min-w-0 flex-1">
-                <h1 className="text-2xl font-bold text-slate-800 tracking-tight">{issue.issue_name}</h1>
-                <p className="text-xs font-mono text-slate-400 mt-1">{issue.issue_id}</p>
+                <h1 className="text-2xl font-bold text-slate-800 tracking-tight">{issue.title}</h1>
+                <p className="text-xs font-mono text-slate-400 mt-1">{issue.identifier}</p>
                 <div className="flex flex-wrap items-center gap-2 mt-3">
-                  {issue.mitigation_state && (
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full border uppercase ${MITIGATION_COLORS[issue.mitigation_state] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                      {issue.mitigation_state}
+                  {issue.severity && (
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full border uppercase ${SEVERITY_COLORS[issue.severity] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                      {issue.severity}
                     </span>
                   )}
-                  {issue.practice_area && (
-                    <span className="text-xs font-bold px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-blue-700 uppercase">
-                      {issue.practice_area}
+                  {issue.status && (
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full border uppercase ${STATUS_COLORS[issue.status] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                      {issue.status}
+                    </span>
+                  )}
+                  {issue.issue_type && (
+                    <span className="text-xs font-bold px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 uppercase">
+                      {issue.issue_type}
                     </span>
                   )}
                 </div>
@@ -129,15 +144,21 @@ const IssueViewPage: React.FC = () => {
                   <p className="text-sm text-slate-700 leading-relaxed">{issue.description}</p>
                 </div>
               )}
+              {issue.resolution_notes && (
+                <div className="bg-green-50 rounded-xl border border-green-100 p-4">
+                  <p className="text-[11px] font-bold text-green-500 uppercase tracking-wide mb-2">Resolution Notes</p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{issue.resolution_notes}</p>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-                <Field label="Reported By" value={issue.reported_by} />
-                <Field label="Assigned To" value={issue.assigned_to} />
-                <Field label="Department" value={issue.reported_department} />
-                <Field label="Reported Date" value={formatDate(issue.reported_date)} />
-                <Field label="Due Date" value={formatDate(issue.due_date)} />
-                <Field label="Line Of Defense" value={issue.line_of_defense} />
-                <Field label="Practice Area" value={issue.practice_area} />
-                <Field label="Mitigation State" value={issue.mitigation_state} />
+                <Field label="Issue Type" value={issue.issue_type} />
+                <Field label="Severity" value={issue.severity} />
+                <Field label="Source" value={issue.source} />
+                <Field label="Status" value={issue.status} />
+                <Field label="Assignee" value={issue.assignee} />
+                <Field label="Owner" value={issue.owner} />
+                <Field label="Detected At" value={formatDate(issue.detected_at)} />
+                <Field label="Resolved At" value={formatDate(issue.resolved_at)} />
                 <Field label="Created" value={formatDate(issue.created_ts)} />
               </div>
             </div>

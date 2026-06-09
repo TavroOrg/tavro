@@ -53,10 +53,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_issues
-ON core.issues (tenant_id, issue_id);
+ON core.issues (tenant_id, identifier);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_issues
-ON core.agent_issues (tenant_id, issue_id, agent_id);
+ON core.agent_issues (tenant_id, identifier, agent_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
 ON core.business_applications (business_application_id);
@@ -257,13 +257,43 @@ BEGIN
         END IF;
     END IF;
 
-    -- Add missing columns to core.issues for new issue tracking fields
+    -- Rename issue_id → identifier on core.issues and core.agent_issues
+    IF to_regclass('core.issues') IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'issue_id'
+        ) THEN
+            ALTER TABLE core.issues RENAME COLUMN issue_id TO identifier;
+        END IF;
+    END IF;
+
+    IF to_regclass('core.agent_issues') IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_issues' AND column_name = 'issue_id'
+        ) THEN
+            ALTER TABLE core.agent_issues RENAME COLUMN issue_id TO identifier;
+        END IF;
+    END IF;
+
+    -- Drop and recreate unique indexes with new column name
+    IF to_regclass('core.issues') IS NOT NULL THEN
+        DROP INDEX IF EXISTS core.ux_core_issues;
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_core_issues ON core.issues (tenant_id, identifier);
+    END IF;
+
+    IF to_regclass('core.agent_issues') IS NOT NULL THEN
+        DROP INDEX IF EXISTS core.ux_core_agent_issues;
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_issues ON core.agent_issues (tenant_id, identifier, agent_id);
+    END IF;
+
+    -- Migrate core.issues to new schema
     IF to_regclass('core.issues') IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'reported_department'
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'title'
         ) THEN
-            ALTER TABLE core.issues ADD COLUMN reported_department TEXT;
+            ALTER TABLE core.issues ADD COLUMN title TEXT;
         END IF;
 
         IF NOT EXISTS (
@@ -275,16 +305,111 @@ BEGIN
 
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'mitigation_state'
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'issue_type'
         ) THEN
-            ALTER TABLE core.issues ADD COLUMN mitigation_state TEXT;
+            ALTER TABLE core.issues ADD COLUMN issue_type TEXT;
         END IF;
 
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'line_of_defense'
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'severity'
         ) THEN
-            ALTER TABLE core.issues ADD COLUMN line_of_defense TEXT;
+            ALTER TABLE core.issues ADD COLUMN severity TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'source'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN source TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'detected_at'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN detected_at TIMESTAMP;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'resolved_at'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN resolved_at TIMESTAMP;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'status'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN status TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'resolution_notes'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN resolution_notes TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'assignee'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN assignee TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'owner'
+        ) THEN
+            ALTER TABLE core.issues ADD COLUMN owner TEXT;
+        END IF;
+
+        -- Migrate data from old columns to new ones
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'issue_name'
+        ) THEN
+            UPDATE core.issues SET title = COALESCE(NULLIF(title, ''), issue_name) WHERE COALESCE(title, '') = '';
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'assigned_to'
+        ) THEN
+            UPDATE core.issues SET assignee = COALESCE(NULLIF(assignee, ''), assigned_to) WHERE COALESCE(assignee, '') = '';
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'reported_date'
+        ) THEN
+            UPDATE core.issues SET detected_at = COALESCE(detected_at, reported_date) WHERE detected_at IS NULL;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'issues' AND column_name = 'mitigation_state'
+        ) THEN
+            UPDATE core.issues SET status = COALESCE(NULLIF(status, ''), mitigation_state) WHERE COALESCE(status, '') = '';
+        END IF;
+    END IF;
+
+    -- Migrate core.agent_issues to use title instead of issue_name
+    IF to_regclass('core.agent_issues') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_issues' AND column_name = 'title'
+        ) THEN
+            ALTER TABLE core.agent_issues ADD COLUMN title TEXT;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_issues' AND column_name = 'issue_name'
+        ) THEN
+            UPDATE core.agent_issues SET title = COALESCE(NULLIF(title, ''), issue_name) WHERE COALESCE(title, '') = '';
         END IF;
     END IF;
 

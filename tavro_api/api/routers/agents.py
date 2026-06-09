@@ -313,22 +313,23 @@ def _write_agent_card(
             "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
             "issues": [
                 {
-                    "issue_id": iss.get("issue_id"),
-                    "issue_name": iss.get("issue_name"),
-                    "reported_by": iss.get("reported_by"),
-                    "reported_date": iss.get("reported_date"),
-                    "reported_department": iss.get("reported_department"),
+                    "identifier": iss.get("identifier"),
+                    "title": iss.get("title"),
                     "description": iss.get("description"),
-                    "assigned_to": iss.get("assigned_to"),
-                    "practice_area": iss.get("practice_area"),
-                    "due_date": iss.get("due_date"),
-                    "mitigation_state": iss.get("mitigation_state"),
-                    "line_of_defense": iss.get("line_of_defense"),
+                    "issue_type": iss.get("issue_type"),
+                    "severity": iss.get("severity"),
+                    "source": iss.get("source"),
+                    "detected_at": iss.get("detected_at"),
+                    "resolved_at": iss.get("resolved_at"),
+                    "status": iss.get("status"),
+                    "resolution_notes": iss.get("resolution_notes"),
+                    "assignee": iss.get("assignee"),
+                    "owner": iss.get("owner"),
                     "created_ts": None,
                     "updated_ts": None,
                 }
                 for iss in (issues or [])
-                if str(iss.get("issue_name", "")).strip()
+                if str(iss.get("title", "")).strip()
             ],
             "risk_assessment": None,
         }
@@ -438,49 +439,50 @@ async def create_agent(
 
         issue_entries_for_card: List[Dict[str, Any]] = []
         for issue in (body.issues or []):
-            issue_name = str(issue.get("issue_name", "")).strip()
-            if not issue_name:
+            title = str(issue.get("title", "")).strip()
+            if not title:
                 continue
-            issue_id = str(uuid.uuid4())
-            issue_entries_for_card.append({"issue_id": issue_id, **issue, "issue_name": issue_name})
+            identifier = str(uuid.uuid4())
+            issue_entries_for_card.append({"identifier": identifier, **issue, "title": title})
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.issues (
-                        tenant_id, issue_id, issue_name, reported_by, reported_date,
-                        reported_department, description, mitigation_state, line_of_defense,
-                        assigned_to, practice_area, due_date, created_ts, updated_ts
+                        tenant_id, identifier, title, description, issue_type, severity,
+                        source, detected_at, resolved_at, status, resolution_notes,
+                        assignee, owner, created_ts, updated_ts
                     ) VALUES (
-                        :tid, :issue_id, :issue_name, :reported_by, :reported_date,
-                        :reported_department, :description, :mitigation_state, :line_of_defense,
-                        :assigned_to, :practice_area, :due_date,
+                        :tid, :identifier, :title, :description, :issue_type, :severity,
+                        :source, :detected_at, :resolved_at, :status, :resolution_notes,
+                        :assignee, :owner,
                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     )
                 """),
                 {
-                    "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
-                    "reported_by": issue.get("reported_by"),
-                    "reported_date": _coerce_dt(issue.get("reported_date")),
-                    "reported_department": issue.get("reported_department"),
+                    "tid": tenant_id, "identifier": identifier, "title": title,
                     "description": issue.get("description"),
-                    "mitigation_state": issue.get("mitigation_state"),
-                    "line_of_defense": issue.get("line_of_defense"),
-                    "assigned_to": issue.get("assigned_to"),
-                    "practice_area": issue.get("practice_area"),
-                    "due_date": _coerce_dt(issue.get("due_date")),
+                    "issue_type": issue.get("issue_type"),
+                    "severity": issue.get("severity"),
+                    "source": issue.get("source"),
+                    "detected_at": _coerce_dt(issue.get("detected_at")),
+                    "resolved_at": _coerce_dt(issue.get("resolved_at")),
+                    "status": issue.get("status"),
+                    "resolution_notes": issue.get("resolution_notes"),
+                    "assignee": issue.get("assignee"),
+                    "owner": issue.get("owner"),
                 },
             )
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_issues (
-                        tenant_id, issue_id, issue_name, agent_id, agent_name,
+                        tenant_id, identifier, title, agent_id, agent_name,
                         agent_internal_id, created_ts, updated_ts
                     ) VALUES (
-                        :tid, :issue_id, :issue_name, :agent_id, :agent_name,
+                        :tid, :identifier, :title, :agent_id, :agent_name,
                         :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                     )
                 """),
                 {
-                    "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                    "tid": tenant_id, "identifier": identifier, "title": title,
                     "agent_id": agent_id, "agent_name": body.agent_name,
                     "agent_internal_id": agent_internal_id,
                 },
@@ -619,18 +621,18 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
 
         issues_result = await db.execute(
             text(f"""
-                SELECT i.issue_id, i.issue_name, i.reported_by, i.reported_date,
-                       i.reported_department, i.description, i.mitigation_state, i.line_of_defense,
-                       i.assigned_to, i.practice_area, i.due_date,
+                SELECT i.identifier, i.title, i.description, i.issue_type, i.severity,
+                       i.source, i.detected_at, i.resolved_at, i.status,
+                       i.resolution_notes, i.assignee, i.owner,
                        i.created_ts, i.updated_ts
                 FROM {CORE}.agent_issues rel
                 JOIN {CORE}.issues i
-                  ON i.issue_id = rel.issue_id
+                  ON i.identifier = rel.identifier
                  AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
                 WHERE rel.agent_id = :aid
                   AND rel.tenant_id = :tid
                 ORDER BY COALESCE(i.updated_ts, i.created_ts) DESC NULLS LAST,
-                         i.issue_name ASC
+                         i.title ASC
             """),
             {"aid": agent_id, "tid": tenant_id},
         )
@@ -649,38 +651,38 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
 
 
 # ---------------------------------------------------------------------------
-# GET /issues/{issue_id}  — fetch a single issue by its issue_id
+# GET /issues/{identifier}  — fetch a single issue by its identifier
 # ---------------------------------------------------------------------------
 
-@router.get("/issues/{issue_id}", summary="Get Issue by ID")
-async def get_issue(issue_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+@router.get("/issues/{identifier}", summary="Get Issue by ID")
+async def get_issue(identifier: str, request: Request, db: AsyncSession = Depends(get_db)):
     tenant_id = _require_tenant(request)
     try:
 
         result = await db.execute(
             text(f"""
-                SELECT issue_id, issue_name, reported_by, reported_date,
-                       reported_department, description, mitigation_state, line_of_defense,
-                       assigned_to, practice_area, due_date,
+                SELECT identifier, title, description, issue_type, severity,
+                       source, detected_at, resolved_at, status,
+                       resolution_notes, assignee, owner,
                        created_ts, updated_ts
                 FROM {CORE}.issues
-                WHERE issue_id = :iid
+                WHERE identifier = :iid
                   AND tenant_id = :tid
                 LIMIT 1
             """),
-            {"iid": issue_id, "tid": tenant_id},
+            {"iid": identifier, "tid": tenant_id},
         )
         row = result.mappings().first()
         if not row:
-            raise HTTPException(status_code=404, detail=f"Issue '{issue_id}' not found.")
+            raise HTTPException(status_code=404, detail=f"Issue '{identifier}' not found.")
         agents_result = await db.execute(
             text(f"""
                 SELECT agent_id, agent_name
                 FROM {CORE}.agent_issues
-                WHERE issue_id = :iid
+                WHERE identifier = :iid
                   AND tenant_id = :tid
             """),
-            {"iid": issue_id, "tid": tenant_id},
+            {"iid": identifier, "tid": tenant_id},
         )
         issue = dict(row)
         issue["linked_agents"] = [dict(r) for r in agents_result.mappings().all()]
@@ -804,8 +806,8 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
             await db.execute(
                 text(f"""
                     DELETE FROM {CORE}.issues
-                    WHERE issue_id IN (
-                        SELECT issue_id FROM {CORE}.agent_issues
+                    WHERE identifier IN (
+                        SELECT identifier FROM {CORE}.agent_issues
                         WHERE agent_id = :aid AND tenant_id = :tid
                     ) AND tenant_id = :tid
                 """),
@@ -821,49 +823,50 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
             )
             agent_info = agent_row.mappings().first() or {}
             for issue in body.issues:
-                issue_name = str(issue.get("issue_name", "")).strip()
-                if not issue_name:
+                title = str(issue.get("title", "")).strip()
+                if not title:
                     continue
-                # Preserve existing issue_id so detail-page URLs remain stable
-                issue_id = str(issue.get("issue_id") or "").strip() or str(uuid.uuid4())
+                # Preserve existing identifier so detail-page URLs remain stable
+                identifier = str(issue.get("identifier") or "").strip() or str(uuid.uuid4())
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.issues (
-                            tenant_id, issue_id, issue_name, reported_by, reported_date,
-                            reported_department, description, mitigation_state, line_of_defense,
-                            assigned_to, practice_area, due_date, created_ts, updated_ts
+                            tenant_id, identifier, title, description, issue_type, severity,
+                            source, detected_at, resolved_at, status, resolution_notes,
+                            assignee, owner, created_ts, updated_ts
                         ) VALUES (
-                            :tid, :issue_id, :issue_name, :reported_by, :reported_date,
-                            :reported_department, :description, :mitigation_state, :line_of_defense,
-                            :assigned_to, :practice_area, :due_date,
+                            :tid, :identifier, :title, :description, :issue_type, :severity,
+                            :source, :detected_at, :resolved_at, :status, :resolution_notes,
+                            :assignee, :owner,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
                     """),
                     {
-                        "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
-                        "reported_by": issue.get("reported_by"),
-                        "reported_date": _coerce_dt(issue.get("reported_date")),
-                        "reported_department": issue.get("reported_department"),
+                        "tid": tenant_id, "identifier": identifier, "title": title,
                         "description": issue.get("description"),
-                        "mitigation_state": issue.get("mitigation_state"),
-                        "line_of_defense": issue.get("line_of_defense"),
-                        "assigned_to": issue.get("assigned_to"),
-                        "practice_area": issue.get("practice_area"),
-                        "due_date": _coerce_dt(issue.get("due_date")),
+                        "issue_type": issue.get("issue_type"),
+                        "severity": issue.get("severity"),
+                        "source": issue.get("source"),
+                        "detected_at": _coerce_dt(issue.get("detected_at")),
+                        "resolved_at": _coerce_dt(issue.get("resolved_at")),
+                        "status": issue.get("status"),
+                        "resolution_notes": issue.get("resolution_notes"),
+                        "assignee": issue.get("assignee"),
+                        "owner": issue.get("owner"),
                     },
                 )
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_issues (
-                            tenant_id, issue_id, issue_name, agent_id, agent_name,
+                            tenant_id, identifier, title, agent_id, agent_name,
                             agent_internal_id, created_ts, updated_ts
                         ) VALUES (
-                            :tid, :issue_id, :issue_name, :agent_id, :agent_name,
+                            :tid, :identifier, :title, :agent_id, :agent_name,
                             :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
                     """),
                     {
-                        "tid": tenant_id, "issue_id": issue_id, "issue_name": issue_name,
+                        "tid": tenant_id, "identifier": identifier, "title": title,
                         "agent_id": agent_id,
                         "agent_name": agent_info.get("agent_name", ""),
                         "agent_internal_id": agent_info.get("agent_internal_id", ""),
