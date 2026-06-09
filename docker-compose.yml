@@ -97,6 +97,7 @@ services:
       - ./services:/app/services:ro         # live reload — risk services
       - ./utils:/app/utils:ro               # live reload — risk utils
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
+      - ./config.yaml:/app/config.yaml:ro   # risk config
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
     healthcheck:
@@ -399,9 +400,6 @@ services:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
       DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-      CORE_DB_NAME:            core
-      CURATED_DB_NAME:         curated
-      RISK_MANAGEMENT_DB_NAME: risk_management
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
@@ -416,12 +414,8 @@ services:
       VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
       VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
       TAVRO_API_URL: http://tavro-api:8000
-      GITHUB_CLIENT_ID:     ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
-      OPENAI_API_KEY:       ${OPENAI_API_KEY}
-      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
     volumes:
+      - ./config.yaml:/app/config.yaml:ro
       - ./tavro_api/agent_cards:/app/agent_cards
       - tavro_runtime_config:/app/runtime:ro
     depends_on:
@@ -477,12 +471,9 @@ services:
     container_name: risk-connector
     command: python -u run_connectors.py
     environment:
-      DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-      AZURE_CLIENT_ID:      ${AZURE_CLIENT_ID}
-      AZURE_CLIENT_SECRET:  ${AZURE_CLIENT_SECRET}
-      AZURE_TENANT_ID:      ${AZURE_TENANT_ID}
-      AZURE_SCOPE:          ${AZURE_SCOPE}
-      AZURE_ORG_URL:        ${AZURE_ORG_URL}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
     depends_on:
       tavro-postgres:
         condition: service_healthy
