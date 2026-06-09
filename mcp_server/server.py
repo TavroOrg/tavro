@@ -1027,6 +1027,220 @@ async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
+
+@core.tool(name="generate_agent_artifacts")
+async def generate_agent_artifacts(
+    original_prompt: str,
+    *,
+    agent_id: str,
+    agent_name: str,
+    requirements_markdown: str,
+    technical_markdown: str,
+) -> Dict[str, Any]:
+    """
+    Convert the Requirements and Technical Design markdown documents to PDF files
+    and attach them to the specified agent record.
+
+    Call this tool immediately after generating both documents for a newly created agent.
+    It produces two PDFs:
+      - "{agent_name} Requirement.pdf"
+      - "{agent_name} Technical.pdf"
+    Both are uploaded as attachments to the agent and visible in the Attachments tab.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        agent_id (str): The agent_id returned by create_agent.
+        agent_name (str): The exact name of the agent (used to name the PDF files).
+        requirements_markdown (str): The full markdown content of the Requirements document.
+        technical_markdown (str): The full markdown content of the Technical Design document.
+
+    Returns:
+        Dict[str, Any]: Attachment metadata for both uploaded PDFs, or error details.
+    """
+    print(f"generate_agent_artifacts requested for agent_id={agent_id}")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "generate_agent_artifacts",
+            original_prompt,
+            {"agent_id": agent_id, "agent_name": agent_name},
+            tenant_id,
+        )
+
+        import base64 as _base64
+        req_pdf_bytes = _markdown_to_pdf(requirements_markdown)
+        tech_pdf_bytes = _markdown_to_pdf(technical_markdown)
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        results = []
+        for pdf_bytes, doc_type in (
+            (req_pdf_bytes, "Requirement"),
+            (tech_pdf_bytes, "Technical"),
+        ):
+            filename = f"{agent_name} {doc_type}.pdf"
+            payload = {
+                "filename": filename,
+                "mime_type": "application/pdf",
+                "content_base64": _base64.b64encode(pdf_bytes).decode("utf-8"),
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{TAVRO_API_URL}/api/v1/agents/{agent_id}/attachments",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                results.append(resp.json())
+
+        return {
+            "message": f"Artifacts generated and attached to agent '{agent_name}'.",
+            "attachments": results,
+        }
+
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error in generate_agent_artifacts: %s", e)
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+def _markdown_to_pdf(markdown_content: str) -> bytes:
+    """Convert a markdown string to a PDF byte string using fpdf2."""
+    from fpdf import FPDF
+
+    class _PDF(FPDF):
+        def header(self):
+            pass
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(150, 150, 150)
+            self.cell(0, 8, f"Page {self.page_no()}", align="C")
+
+    pdf = _PDF()
+    pdf.set_margins(20, 20, 20)
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=18)
+
+    def _strip_inline(text: str) -> str:
+        import re
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+        text = re.sub(r"\*(.+?)\*", r"\1", text)
+        text = re.sub(r"`(.+?)`", r"\1", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        return text.strip()
+
+    def _is_table_sep(line: str) -> bool:
+        s = line.strip()
+        return bool(s) and all(c in "|:- " for c in s)
+
+    lines = markdown_content.split("\n")
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        stripped = raw.strip()
+
+        if stripped.startswith("# "):
+            pdf.set_font("Helvetica", "B", 18)
+            pdf.set_text_color(30, 30, 30)
+            pdf.multi_cell(0, 10, _strip_inline(stripped[2:]))
+            pdf.ln(3)
+
+        elif stripped.startswith("## "):
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.set_text_color(40, 40, 40)
+            pdf.ln(3)
+            pdf.multi_cell(0, 8, _strip_inline(stripped[3:]))
+            pdf.ln(1)
+
+        elif stripped.startswith("### "):
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_text_color(50, 50, 50)
+            pdf.ln(2)
+            pdf.multi_cell(0, 7, _strip_inline(stripped[4:]))
+            pdf.ln(1)
+
+        elif stripped.startswith("#### "):
+            pdf.set_font("Helvetica", "BI", 11)
+            pdf.set_text_color(60, 60, 60)
+            pdf.multi_cell(0, 6, _strip_inline(stripped[5:]))
+
+        elif stripped.startswith("- [ ] ") or stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
+            checked = stripped[3] in ("x", "X")
+            text = ("[x] " if checked else "[ ] ") + _strip_inline(stripped[6:])
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_text_color(60, 60, 60)
+            pdf.set_x(26)
+            pdf.multi_cell(0, 6, text)
+
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            indent = len(raw) - len(raw.lstrip())
+            bullet_text = _strip_inline(stripped[2:])
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_text_color(60, 60, 60)
+            left_margin = 20 + min(indent // 2, 3) * 4
+            pdf.set_x(left_margin)
+            pdf.cell(5, 6, chr(149))
+            pdf.multi_cell(0, 6, bullet_text)
+
+        elif stripped and stripped[0].isdigit() and ". " in stripped[:5]:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_text_color(60, 60, 60)
+            pdf.set_x(24)
+            pdf.multi_cell(0, 6, _strip_inline(stripped))
+
+        elif stripped.startswith("|") and not _is_table_sep(stripped):
+            cols = [c.strip() for c in stripped.strip("|").split("|")]
+            col_w = (pdf.w - pdf.l_margin - pdf.r_margin) / max(len(cols), 1)
+            is_header = i + 1 < len(lines) and _is_table_sep(lines[i + 1])
+            if is_header:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.set_text_color(40, 40, 40)
+                pdf.set_fill_color(230, 230, 230)
+                for col in cols:
+                    pdf.cell(col_w, 7, _strip_inline(col)[:35], border=1, fill=True)
+                pdf.ln()
+                i += 2
+                continue
+            else:
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(60, 60, 60)
+                pdf.set_fill_color(255, 255, 255)
+                for col in cols:
+                    pdf.cell(col_w, 6, _strip_inline(col)[:35], border=1)
+                pdf.ln()
+
+        elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(40, 40, 40)
+            pdf.multi_cell(0, 6, stripped[2:-2].strip())
+
+        elif stripped in ("---", "***", "___"):
+            pdf.ln(2)
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+            pdf.ln(2)
+
+        elif stripped == "":
+            pdf.ln(2)
+
+        else:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_text_color(60, 60, 60)
+            pdf.multi_cell(0, 6, _strip_inline(stripped))
+
+        i += 1
+
+    return bytes(pdf.output())
+
+
 @core.tool(name="update_company")
 async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
     """

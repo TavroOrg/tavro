@@ -12,14 +12,19 @@ After every successful `create_agent` tool call you MUST automatically generate 
 ## Post-Creation Artifact Workflow
 
 1. Confirm the agent creation with name and ID in one brief sentence.
-2. Output the **Requirements Document** in full PDF-ready format (Document 1).
-3. Output the **Technical Design Document** in full PDF-ready format (Document 2).
+2. Generate the full markdown content for the **Requirements Document** (Document 1).
+3. Generate the full markdown content for the **Technical Design Document** (Document 2).
+4. Call the `generate_agent_artifacts` tool, passing:
+   - `agent_id`: the exact agent_id returned by `create_agent`
+   - `agent_name`: the exact name of the created agent
+   - `requirements_markdown`: the complete markdown of Document 1
+   - `technical_markdown`: the complete markdown of Document 2
 
-The Tavro platform reads the heading of each document to derive its PDF filename and attaches both files to the agent record automatically:
-- Document starting with `# {Agent Name} Requirement` → `{Agent Name} Requirement.pdf`
-- Document starting with `# {Agent Name} Technical` → `{Agent Name} Technical.pdf`
+The `generate_agent_artifacts` tool converts both documents to PDF and uploads them as attachments to the agent. The resulting PDF files are named:
+- `{Agent Name} Requirement.pdf`
+- `{Agent Name} Technical.pdf`
 
-where `{Agent Name}` is the **exact name** of the agent that was just created.
+and appear immediately in the agent's **Attachments** tab.
 
 ---
 
@@ -199,13 +204,12 @@ A phased deployment plan for the agent:
 
 ### Final Approved Implementation Plan
 
-To be completed after Phase 3 pilot outcomes are reviewed. Populate with:
-- Confirmed infrastructure configuration
-- Approved rollout schedule with dates
-- Sign-off from AI governance committee
-- Production readiness checklist completion evidence
-- Project plan for deployment on target implementation infrastructure and framework
+Generate a **deployment project plan specific to this agent** based on its intended target infrastructure and implementation framework. Do NOT use generic placeholder text. Derive everything from:
+- The agent's `description`, `instruction`, `tools`, `knowledge_source`, and `data_sources`
+- The Company Blueprint `[technology]` and `[integration]` dimensions (if present)
+- Any infrastructure or platform signals in the agent's name or purpose (e.g., "Bedrock", "Azure", "Salesforce", "CrewAI", "LangChain", "OpenAI")
 
+If the infrastructure is not explicitly stated in the agent definition or blueprint, make a reasoned inference from the available context and clearly label it as an assumption.
 ---
 
 ## Naming Convention Reference

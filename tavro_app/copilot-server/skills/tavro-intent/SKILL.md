@@ -50,6 +50,12 @@ Get full metadata for a specific agent by name or ID.
 **`create_agent`**
 Register a new AI agent with name, description, instructions, optional tools, and optional knowledge source.
 - Triggers: "create agent", "register agent", "add new agent", "onboard agent", "set up agent called X"
+- **Post-creation**: After every successful `create_agent` call, immediately generate Requirements and Technical Design documents, then call `generate_agent_artifacts` to convert them to PDFs and attach them to the agent. See the Agent Artifact Generation section for the full workflow.
+
+**`generate_agent_artifacts`**
+Convert Requirements and Technical Design markdown documents to PDF files and upload them as attachments to an agent.
+- Triggers: Called automatically after every successful `create_agent`. Also triggers on "generate artifacts for agent X", "create PDFs for agent X", "attach documents to agent X".
+- Requires: `agent_id`, `agent_name`, `requirements_markdown`, `technical_markdown`.
 
 **`update_agent`**
 Modify an existing agent's configuration (name, description, instructions, tools, knowledge source).
