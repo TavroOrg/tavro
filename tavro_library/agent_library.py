@@ -10,11 +10,10 @@ from rapidfuzz import process, fuzz
 from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
 from utils.db import DATABASE_URL, SyncSessionLocal
+from utils.set_environment import set_environment
 from services.db.db_functions import refresh_curated_agent_360, create_local_agent_card
-from dotenv import load_dotenv
 
-load_dotenv(override=False)
-
+set_environment('databases')
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")

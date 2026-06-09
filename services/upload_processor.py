@@ -21,6 +21,9 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from utils.db import db_connection as _db
+from utils.set_environment import set_environment
+
+set_environment("databases")
 
 CORE = os.getenv("CORE_DB_NAME", "core")
 
