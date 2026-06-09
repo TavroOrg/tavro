@@ -220,14 +220,14 @@ async def upload_use_cases(
                          solution_approach, agent_risk_exposure_are, no_of_associated_agents,
                          inherent_risk_classification, residual_risk_classification,
                          inherent_risk_classification_score, residual_risk_classification_score,
-                         agent_risk_tier_art, created_ts, updated_ts, agent_internal_id)
+                         agent_risk_tier_art, created_ts, updated_ts)
                     VALUES
                         (:tid, :uid, :name, :desc, :owner,
                          :problem, :benefits, :priority, :status,
                          :solution, :are, :num_agents,
                          :inherent_class, :residual_class,
                          :inherent_score, :residual_score,
-                         :art, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
+                         :art, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
                 {
                     "tid": tenant_id,
