@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import base64
+import textwrap
 from pathlib import Path
 import uvicorn
 import httpx
@@ -219,6 +221,300 @@ def log_tool_call(
     except Exception as e:
         print(f"[LOG ERROR] Failed to write log for {tool_name}: {e}")
 
+
+def _ascii_only(text: str) -> str:
+    return text.encode("ascii", "replace").decode("ascii")
+
+
+def _pdf_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _wrap_pdf_lines(text: str, width: int = 92) -> List[str]:
+    lines: List[str] = []
+    for raw_line in _ascii_only(text).splitlines():
+        if not raw_line.strip():
+            lines.append("")
+            continue
+        wrapped = textwrap.wrap(
+            raw_line,
+            width=width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        lines.extend(wrapped)
+    return lines
+
+
+def _build_pdf_bytes(title: str, body: str) -> bytes:
+    page_width = 595.28
+    page_height = 841.89
+    margin_left = 48.0
+    margin_top = 54.0
+    margin_bottom = 48.0
+    font_size = 11.0
+    line_height = 14.0
+    max_lines_per_page = int((page_height - margin_top - margin_bottom) // line_height)
+
+    content_lines = [
+        _ascii_only(title),
+        "",
+        *_wrap_pdf_lines(body),
+    ]
+
+    pages: List[str] = []
+    current_page_lines: List[str] = []
+    for line in content_lines:
+        current_page_lines.append(line)
+        if len(current_page_lines) >= max_lines_per_page:
+            pages.append("\n".join(current_page_lines))
+            current_page_lines = []
+    if current_page_lines or not pages:
+        pages.append("\n".join(current_page_lines))
+
+    objects: List[bytes] = []
+
+    def add_object(content: bytes) -> int:
+        objects.append(content)
+        return len(objects)
+
+    font_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    page_ids: List[int] = []
+    content_ids: List[int] = []
+
+    for page_text in pages:
+        content_stream_lines = [
+            "BT",
+            f"/F1 {font_size:.0f} Tf",
+            f"1 0 0 1 {margin_left:.2f} {page_height - margin_top:.2f} Tm",
+            f"{line_height:.2f} TL",
+        ]
+        first_line = True
+        for line in page_text.split("\n"):
+            safe = _pdf_escape(_ascii_only(line))
+            if first_line:
+                content_stream_lines.append(f"({safe}) Tj")
+                first_line = False
+            else:
+                content_stream_lines.append("T*")
+                content_stream_lines.append(f"({safe}) Tj")
+        content_stream_lines.append("ET")
+        content_data = "\n".join(content_stream_lines).encode("ascii", "replace")
+        content_id = add_object(b"<< /Length " + str(len(content_data)).encode("ascii") + b" >>\nstream\n" + content_data + b"\nendstream")
+        content_ids.append(content_id)
+
+        page_placeholder = (
+            f"<< /Type /Page /Parent 0 0 R /MediaBox [0 0 {page_width:.2f} {page_height:.2f}] "
+            f"/Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>"
+        ).encode("ascii")
+        page_ids.append(add_object(page_placeholder))
+
+    pages_id = add_object(
+        ("<< /Type /Pages /Count " + str(len(page_ids)) + " /Kids [" + " ".join(f"{pid} 0 R" for pid in page_ids) + "] >>").encode("ascii")
+    )
+
+    # Replace the page parent placeholders now that the /Pages object is known.
+    for idx, page_id in enumerate(page_ids):
+        page_text = objects[page_id - 1].decode("ascii")
+        objects[page_id - 1] = page_text.replace("/Parent 0 0 R", f"/Parent {pages_id} 0 R").encode("ascii")
+
+    catalog_id = add_object(f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode("ascii"))
+    info_id = add_object(
+        f"<< /Title ({_pdf_escape(_ascii_only(title))}) /Producer (Tavro MCP) >>".encode("ascii")
+    )
+
+    # Ensure the catalog is the root object by moving it to the end after all dependencies.
+    # PDF object numbers are already fixed by append order.
+    offsets: List[int] = []
+    buffer = bytearray(b"%PDF-1.4\n")
+    for obj_num, obj in enumerate(objects, start=1):
+        offsets.append(len(buffer))
+        buffer.extend(f"{obj_num} 0 obj\n".encode("ascii"))
+        buffer.extend(obj)
+        buffer.extend(b"\nendobj\n")
+
+    xref_offset = len(buffer)
+    buffer.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    buffer.extend(b"0000000000 65535 f \n")
+    for offset in offsets:
+        buffer.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buffer.extend(
+        (
+            "trailer\n"
+            f"<< /Size {len(objects) + 1} /Root {catalog_id} 0 R /Info {info_id} 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF"
+        ).encode("ascii")
+    )
+    return bytes(buffer)
+
+
+def _build_agent_requirements_pdf(agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]], knowledge_source: Optional[Dict[str, str]], data_sources: Optional[List[Dict]]) -> bytes:
+    tool_lines = [f"- {tool.get('name', '')}: {tool.get('description', '')}" for tool in (tools or []) if tool.get("name") or tool.get("description")]
+    data_lines: List[str] = []
+    for source in data_sources or []:
+        table_name = source.get("table_name") or source.get("name") or "Unnamed table"
+        data_lines.append(f"- Table: {table_name}")
+        for column in source.get("columns", []) or []:
+            data_lines.append(f"  - Column: {column.get('column_name', 'Unnamed column')}")
+
+    body = f"""
+Summary
+{description}
+
+Business Context
+The agent operates in the Tavro agent management environment and supports creation and governance of AI agents.
+
+Problem Statement
+The agent needs to be created with the supplied behavior, integrations, and data relationships in a way that preserves governance and traceability.
+
+Objectives
+- Create a new agent record with the supplied identity and instructions.
+- Preserve tool, knowledge source, and data source metadata.
+- Make the generated governance artifacts available as agent attachments.
+
+Functional Requirements
+1. Create the agent with the supplied name, description, and instruction.
+2. Store any provided tools as part of the agent metadata.
+3. Store any provided knowledge source metadata.
+4. Store any provided data sources.
+5. Generate Requirements and Technical Design documents after creation.
+6. Upload both generated documents to the agent attachment list.
+
+Non-Functional Requirements
+- The workflow should complete without manual follow-up after agent creation.
+- The attachment upload should be resilient to transient API failures.
+- The generated PDFs should remain ASCII-safe and readable.
+- The attachment step should not block the agent creation result from returning.
+
+Data Requirements
+- Input data: agent name, description, instruction, tools, knowledge source, and data sources.
+- Output data: two PDF attachments with the names "{agent_name} Requirement.pdf" and "{agent_name} Technical.pdf".
+
+Constraints and Assumptions
+- No company blueprint is available in this request.
+- The PDFs are generated directly in the MCP server without external rendering dependencies.
+
+Acceptance Criteria
+- Given a successful agent creation, when the post-create hook runs, then both PDF attachments are uploaded to the agent.
+- Given valid attachment payloads, when they are uploaded, then they appear in the agent attachment panel.
+- Given an upload failure, when the agent creation succeeds, then the create response still returns the created agent identifier.
+
+Tools
+{chr(10).join(tool_lines) if tool_lines else '- No tools were specified.'}
+
+Knowledge Source
+- Name: {knowledge_source.get('name') if knowledge_source else 'Not provided'}
+- Description: {knowledge_source.get('description') if knowledge_source else 'Not provided'}
+
+Data Sources
+{chr(10).join(data_lines) if data_lines else '- No data sources were specified.'}
+""".strip()
+
+    return _build_pdf_bytes(f"{agent_name} Requirement", body)
+
+
+def _build_agent_technical_pdf(agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]], knowledge_source: Optional[Dict[str, str]], data_sources: Optional[List[Dict]]) -> bytes:
+    tool_lines = [f"- {tool.get('name', '')}: {tool.get('description', '')}" for tool in (tools or []) if tool.get("name") or tool.get("description")]
+    body = f"""
+Platform Considerations
+The agent runs in the Tavro MCP environment and uses the Tavro API attachment endpoint to persist generated PDFs.
+
+Architecture
+The create_agent tool creates the agent record, then the post-create hook generates two governance PDFs and uploads them to the agent attachment panel.
+
+Components
+- {agent_name}: core agent definition
+- upload_agent_attachments: MCP tool used to store generated PDFs
+
+Tools and Integrations
+{chr(10).join(tool_lines) if tool_lines else '- No tools were specified.'}
+
+Security and Compliance
+- Agent attachments are associated with the authenticated tenant context.
+- The upload path should not persist file contents in runtime logs.
+
+Implementation Considerations
+- Use a local PDF writer to avoid adding a new rendering dependency.
+- Keep the generated content ASCII-safe so the PDF text stream remains stable.
+- Treat attachment upload as best-effort so creation is not blocked by a transient upload failure.
+
+Deployment and Operations
+- Target environment: Tavro MCP server and Tavro API.
+- Monitoring: attachment upload success rate and API error rate.
+- Incident response: retry the upload path or re-run the attachment tool for the created agent.
+
+Implementation Plan Draft
+Phase 1 - Design and Validation
+Phase 2 - Development and Testing
+Phase 3 - Pilot Deployment
+Phase 4 - Production Deployment
+Phase 5 - Post-Deployment Review
+
+Final Approved Implementation Plan
+To be completed after pilot validation.
+""".strip()
+
+    return _build_pdf_bytes(f"{agent_name} Technical", body)
+
+
+async def _upload_agent_attachments_via_api(
+    *,
+    agent_id: str,
+    attachments: List[Dict[str, str]],
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+    results: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for attachment in attachments:
+            filename = str(attachment.get("filename", "")).strip()
+            mime_type = str(attachment.get("mime_type", "application/octet-stream")).strip() or "application/octet-stream"
+            content_base64 = str(attachment.get("content_base64", "")).strip()
+
+            if not filename:
+                results.append({"filename": "", "status": "error", "error": "filename is required"})
+                continue
+            if not content_base64:
+                results.append({"filename": filename, "status": "error", "error": "content_base64 is required"})
+                continue
+
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/agents/{agent_id}/attachments",
+                json={
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "content_base64": content_base64,
+                },
+                headers=headers,
+            )
+
+            if resp.is_success:
+                payload = resp.json()
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "uploaded",
+                        "attachment_id": payload.get("id"),
+                        "file_size_bytes": payload.get("file_size_bytes"),
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "error",
+                        "error": f"API {resp.status_code}: {resp.text[:250]}",
+                    }
+                )
+
+    uploaded_count = sum(1 for item in results if item.get("status") == "uploaded")
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(attachments),
+        "results": results,
+    }
+
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, agent_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -418,11 +714,108 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             tenant_id=tenant_id,
             data_sources=data_sources,
         )
+
+        agent_id = str(result.get("agent_id", "")).strip()
+        if agent_id:
+            generated_attachments = [
+                {
+                    "filename": f"{agent_name} Requirement.pdf",
+                    "mime_type": "application/pdf",
+                    "content_base64": base64.b64encode(
+                        _build_agent_requirements_pdf(agent_name, description, instruction, tools, knowledge_source, data_sources)
+                    ).decode("ascii"),
+                },
+                {
+                    "filename": f"{agent_name} Technical.pdf",
+                    "mime_type": "application/pdf",
+                    "content_base64": base64.b64encode(
+                        _build_agent_technical_pdf(agent_name, description, instruction, tools, knowledge_source, data_sources)
+                    ).decode("ascii"),
+                },
+            ]
+            attachment_result = await _upload_agent_attachments_via_api(
+                agent_id=agent_id,
+                attachments=generated_attachments,
+                tenant_id=tenant_id,
+            )
+            result["attachment_upload"] = attachment_result
+            if attachment_result["uploaded_count"] != len(generated_attachments):
+                result["attachment_upload_warning"] = "Agent was created, but one or more generated PDF attachments were not uploaded."
         return result
 
     except ValueError as ve:
         print("Validation error: %s", ve)
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
+
+    except Exception as e:
+        print("Unexpected error")
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="upload_agent_attachments")
+async def upload_agent_attachments(
+    original_prompt: str,
+    *,
+    agent_id: str,
+    attachments: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    """
+    Upload one or more attachments to an existing agent.
+
+    Use this tool when generated artifacts such as Requirement and Technical Design
+    documents need to be stored in the agent's attachment panel.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        agent_id (str): The target agent identifier.
+        attachments (List[Dict[str, str]]): A list of attachment payloads. Each item must include:
+            - filename: attachment file name
+            - mime_type: MIME type such as application/pdf
+            - content_base64: base64-encoded file content
+
+    Returns:
+        Dict[str, Any]: Upload summary including per-file results.
+    """
+    print(f"Upload agent attachments requested for agent_id={agent_id}")
+
+    try:
+        if not agent_id:
+            return {"error": "VALIDATION_ERROR", "details": "agent_id is required"}
+        if not attachments:
+            return {"error": "VALIDATION_ERROR", "details": "attachments are required"}
+
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "upload_agent_attachments",
+            original_prompt,
+            {
+                "agent_id": agent_id,
+                "attachment_count": len(attachments),
+                "attachments": [
+                    {
+                        "filename": attachment.get("filename"),
+                        "mime_type": attachment.get("mime_type"),
+                    }
+                    for attachment in attachments
+                ],
+            },
+            tenant_id,
+        )
+
+        attachment_result = await _upload_agent_attachments_via_api(
+            agent_id=agent_id,
+            attachments=attachments,
+            tenant_id=tenant_id,
+        )
+        return {
+            "message": f"Uploaded {attachment_result['uploaded_count']} of {len(attachments)} attachment(s).",
+            "agent_id": agent_id,
+            "uploaded_count": attachment_result["uploaded_count"],
+            "total_submitted": len(attachments),
+            "results": attachment_result["results"],
+        }
 
     except Exception as e:
         print("Unexpected error")
