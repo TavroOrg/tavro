@@ -68,9 +68,10 @@ def transform_to_agent_cards(bots, components_map, template, connector_type=None
             raw_skills = raw.get("skills") or bot.get("skills") or []
 
             for s in raw_skills:
-
+                skill_id = s.get("identifier") or s.get("skill_id") or s.get("id")
                 skills.append({
-                    "id": s.get("id"),
+                    "identifier": skill_id,
+                    "skill_id": skill_id,
                     "name": s.get("name"),
                     "description": s.get("description"),
                     "input": None,

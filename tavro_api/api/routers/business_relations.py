@@ -2477,6 +2477,94 @@ async def get_agent_relations(
                 )
                 ai_use_cases = [dict(r._mapping) for r in use_case_rows]
 
+    skills: list[dict[str, Any]] = []
+    has_agent_skills = await _table_exists(db, "core", "agent_skills")
+    if has_agent_skills:
+        rel_cols = await _table_columns(db, "core", "agent_skills")
+        if "skill_id" in rel_cols:
+            match_parts: list[str] = []
+            tenant_filter = ""
+            params: dict[str, Any] = {
+                "agent_internal_id": agent.get("agent_internal_id"),
+                "agent_id": agent.get("agent_id"),
+                "agent_name": agent.get("agent_name"),
+                "tenant_id": agent.get("tenant_id"),
+            }
+
+            if "agent_internal_id" in rel_cols:
+                match_parts.append("rel.agent_internal_id = :agent_internal_id")
+            if "agent_id" in rel_cols:
+                match_parts.append("rel.agent_id = :agent_id")
+            if "agent_name" in rel_cols and agent.get("agent_name"):
+                match_parts.append("rel.agent_name = :agent_name")
+            if "tenant_id" in rel_cols and agent.get("tenant_id"):
+                tenant_filter = (
+                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                )
+
+            if match_parts:
+                has_skills = await _table_exists(db, "core", "skills")
+                skill_cols: set[str] = set()
+                if has_skills:
+                    skill_cols = await _table_columns(db, "core", "skills")
+
+                rel_name_expr = "rel.skill_name" if "skill_name" in rel_cols else "NULL::text"
+                skill_name_expr = "s.name" if "name" in skill_cols else "NULL::text"
+                name_expr = f"COALESCE({skill_name_expr}, {rel_name_expr}, rel.skill_id)"
+                description_expr = "s.description" if "description" in skill_cols else "NULL::text"
+                tags_expr = "s.tags" if "tags" in skill_cols else "ARRAY[]::text[]"
+                input_modes_expr = "s.input_modes" if "input_modes" in skill_cols else "ARRAY[]::text[]"
+                output_modes_expr = "s.output_modes" if "output_modes" in skill_cols else "ARRAY[]::text[]"
+
+                skill_join = ""
+                if has_skills and "skill_id" in skill_cols:
+                    tenant_join = ""
+                    if "tenant_id" in skill_cols and "tenant_id" in rel_cols:
+                        tenant_join = "AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')"
+                    skill_join = """
+                    LEFT JOIN core.skills s
+                        ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                        {tenant_join}
+                    """
+                    skill_join = skill_join.format(tenant_join=tenant_join)
+
+                skill_rows = await db.execute(
+                    text(
+                        f"""
+                        SELECT
+                            identifier,
+                            identifier AS id,
+                            identifier AS skill_id,
+                            name,
+                            name AS skill_name,
+                            description,
+                            tags,
+                            input_modes,
+                            output_modes,
+                            input_modes AS "inputModes",
+                            output_modes AS "outputModes"
+                        FROM (
+                            SELECT DISTINCT ON (LOWER(TRIM(rel.skill_id)))
+                                rel.skill_id AS identifier,
+                                {name_expr} AS name,
+                                {description_expr} AS description,
+                                {tags_expr} AS tags,
+                                {input_modes_expr} AS input_modes,
+                                {output_modes_expr} AS output_modes
+                            FROM core.agent_skills rel
+                            {skill_join}
+                            WHERE ({' OR '.join(match_parts)})
+                              {tenant_filter}
+                              AND rel.skill_id IS NOT NULL
+                              AND rel.skill_id <> ''
+                            ORDER BY LOWER(TRIM(rel.skill_id))
+                        ) skill_rows
+                        ORDER BY LOWER(COALESCE(name, identifier))
+                        """
+                    ),
+                    params,
+                )
+                skills = [dict(r._mapping) for r in skill_rows]
     # Agent-to-agent (parent/child) relationships are stored as a
     # self-reference on core.agents (parent_agent_internal_id), mirroring
     # core.business_processes.parent_process_id. We surface both directions:
@@ -2583,6 +2671,7 @@ async def get_agent_relations(
         "applications": applications,
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,
+        "skills": skills,
         "child_agents": child_agents,
         "ai_models": ai_models,
     }

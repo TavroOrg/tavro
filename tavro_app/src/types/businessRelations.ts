@@ -143,6 +143,19 @@ export interface AgentRelationsPayload {
     related_processes: RelatedProcessReference[];
   }>;
   ai_use_cases?: RelatedUseCaseReference[];
+  skills?: Array<{
+    identifier: string;
+    id?: string | null;
+    skill_id?: string | null;
+    name: string | null;
+    skill_name?: string | null;
+    description: string | null;
+    tags: string[] | null;
+    inputModes?: string[] | null;
+    outputModes?: string[] | null;
+    input_modes?: string[] | null;
+    output_modes?: string[] | null;
+  }>;
   child_agents?: ChildAgentReference[];
   ai_models?: AgentAiModelReference[];
 }
