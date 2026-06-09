@@ -28,6 +28,9 @@ ON core.agent_business_processes (agent_internal_id, business_process_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_applications
 ON core.agent_business_applications (agent_internal_id, business_application_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_integrations
+ON core.agent_business_integrations (agent_internal_id, integration_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_guardrails
 ON core.agent_guardrails (agent_internal_id, name);
 
@@ -289,6 +292,20 @@ BEGIN
         FOREIGN KEY (business_process_id)
         REFERENCES core.business_processes (business_process_id)
         ON DELETE CASCADE;
+    END IF;
+
+    IF to_regclass('core.agent_business_integrations') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_agent_business_integrations_integration'
+        ) THEN
+            ALTER TABLE core.agent_business_integrations
+            ADD CONSTRAINT fk_core_agent_business_integrations_integration
+            FOREIGN KEY (integration_id)
+            REFERENCES core.business_integrations (integration_id)
+            ON DELETE CASCADE;
+        END IF;
     END IF;
 
     IF NOT EXISTS (
