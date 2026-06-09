@@ -2,7 +2,7 @@ name: Auto-merge PRs to dev at 6PM IST
 
 on:
   schedule:
-    - cron: '35 11 * * 1-5'  # 6:00 PM IST (UTC+5:30) = 12:30 UTC, weekdays only
+    - cron: '15 01 * * 1-5'  # 6:00 PM IST (UTC+5:30) = 12:30 UTC, weekdays only
 
 permissions:
   contents: write
