@@ -74,6 +74,75 @@ def execute_dml(sql: str, label: str = ""):
         print(f"  ✓ {label} succeeded")
 
 
+def ensure_tools_tables():
+    """Idempotent DDL migration: create core.tools master table and slim agent_tools if needed."""
+    with SyncSessionLocal() as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS core.tools (
+                tenant_id TEXT,
+                tool_id TEXT,
+                tool_name TEXT,
+                tool_description TEXT,
+                delegation_possible boolean,
+                allowed_delegates TEXT,
+                input_schema_json_text TEXT,
+                output_schema_json_text TEXT,
+                default_config_json_text TEXT,
+                mcp_server_id TEXT,
+                created_ts timestamp,
+                updated_ts timestamp
+            )
+        """))
+        idx_exists = session.execute(text("""
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'core' AND indexname = 'ux_core_tools'
+        """)).first()
+        if not idx_exists:
+            session.execute(text("CREATE UNIQUE INDEX ux_core_tools ON core.tools (tool_id)"))
+
+        has_old_col = session.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_tools'
+              AND column_name = 'tool_description'
+        """)).first()
+        if has_old_col:
+            session.execute(text("""
+                INSERT INTO core.tools (
+                    tenant_id, tool_id, tool_name, tool_description,
+                    delegation_possible, allowed_delegates,
+                    input_schema_json_text, output_schema_json_text,
+                    default_config_json_text, mcp_server_id,
+                    created_ts, updated_ts
+                )
+                SELECT DISTINCT ON (tool_id)
+                    tenant_id, tool_id, tool_name, tool_description,
+                    delegation_possible, allowed_delegates,
+                    input_schema_json_text, output_schema_json_text,
+                    default_config_json_text, mcp_server_id,
+                    COALESCE(created_ts, CURRENT_TIMESTAMP),
+                    COALESCE(updated_ts, CURRENT_TIMESTAMP)
+                FROM core.agent_tools
+                WHERE tool_id IS NOT NULL AND tool_id <> ''
+                ORDER BY tool_id, updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
+                ON CONFLICT (tool_id) DO UPDATE SET
+                    tool_name                = EXCLUDED.tool_name,
+                    tool_description         = EXCLUDED.tool_description,
+                    delegation_possible      = EXCLUDED.delegation_possible,
+                    allowed_delegates        = EXCLUDED.allowed_delegates,
+                    input_schema_json_text   = EXCLUDED.input_schema_json_text,
+                    output_schema_json_text  = EXCLUDED.output_schema_json_text,
+                    default_config_json_text = EXCLUDED.default_config_json_text,
+                    mcp_server_id            = EXCLUDED.mcp_server_id,
+                    updated_ts               = EXCLUDED.updated_ts
+            """))
+            for col in ("tool_description", "delegation_possible", "allowed_delegates",
+                        "input_schema_json_text", "output_schema_json_text",
+                        "default_config_json_text", "mcp_server_id"):
+                session.execute(text(f"ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS {col}"))
+        session.commit()
+        print("  ✓ core.tools migration complete")
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -348,7 +417,8 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
         return
 
     agent_id = ident.get("agent_id")
-    select_rows = []
+    tools_master_rows = []
+    relation_rows = []
 
     for tool in tools:
         tool_id = tool.get("identifier")
@@ -356,10 +426,8 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             str(tool.get("delegation_possible")).lower() == "true"
             if tool.get("delegation_possible") is not None else None
         )
-        select_rows.append(f"""
+        tools_master_rows.append(f"""
             SELECT
-                {_sq(agent_internal_id)}             AS agent_internal_id,
-                {_sq(agent_id)}                      AS agent_id,
                 {_sq(tool_id)}                       AS tool_id,
                 {_sq(tool.get('name'))}              AS tool_name,
                 {_sq(tool.get('description'))}       AS tool_description,
@@ -370,25 +438,32 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(tool.get('default_value'))}     AS default_config_json_text,
                 TIMESTAMP '{now_str}'                AS now_ts
         """.strip())
+        relation_rows.append(f"""
+            SELECT
+                {_sq(agent_internal_id)}             AS agent_internal_id,
+                {_sq(agent_id)}                      AS agent_id,
+                {_sq(tool_id)}                       AS tool_id,
+                {_sq(tool.get('name'))}              AS tool_name,
+                TIMESTAMP '{now_str}'                AS now_ts
+        """.strip())
 
-    union_all = "\nUNION ALL\n".join(select_rows)
-
-    sql = f"""
-        INSERT INTO core.agent_tools (
-            agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+    tools_union = "\nUNION ALL\n".join(tools_master_rows)
+    execute_dml(f"""
+        INSERT INTO core.tools (
+            tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             created_ts, updated_ts
         )
         SELECT
-            agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+            tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             now_ts, now_ts
-        FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, tool_id)
+        FROM ({tools_union}) AS s
+        ON CONFLICT (tool_id)
         DO UPDATE SET
-            agent_id                 = EXCLUDED.agent_id,
+            tool_name                = EXCLUDED.tool_name,
             tool_description         = EXCLUDED.tool_description,
             delegation_possible      = EXCLUDED.delegation_possible,
             allowed_delegates        = EXCLUDED.allowed_delegates,
@@ -396,9 +471,26 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
-    """
+    """, label="tools BULK INSERT ON CONFLICT")
+
+    relation_union = "\nUNION ALL\n".join(relation_rows)
+    execute_dml(f"""
+        INSERT INTO core.agent_tools (
+            agent_internal_id, agent_id, tool_id, tool_name,
+            created_ts, updated_ts
+        )
+        SELECT
+            agent_internal_id, agent_id, tool_id, tool_name,
+            now_ts, now_ts
+        FROM ({relation_union}) AS s
+        ON CONFLICT (agent_internal_id, tool_id)
+        DO UPDATE SET
+            agent_id   = EXCLUDED.agent_id,
+            tool_name  = EXCLUDED.tool_name,
+            updated_ts = EXCLUDED.updated_ts
+    """, label="agent_tools BULK INSERT ON CONFLICT")
+
     print(f"  Upserting {len(tools)} tools …")
-    execute_dml(sql, label="agent_tools BULK INSERT ON CONFLICT")
 
 
 def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):

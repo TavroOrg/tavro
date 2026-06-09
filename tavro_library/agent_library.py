@@ -436,13 +436,14 @@ class AgentMetadataExporter:
                 try:
                     tool_rows = cls.execute_select(
                         f"""
-                        SELECT tool_id, tool_name, tool_description,
-                               delegation_possible, allowed_delegates,
-                               input_schema_json_text, output_schema_json_text,
-                               default_config_json_text
-                        FROM {cls.CORE_DB_NAME}.agent_tools
-                        WHERE agent_id = %s
-                        ORDER BY created_ts NULLS LAST
+                        SELECT at.tool_id, t.tool_name, t.tool_description,
+                               t.delegation_possible, t.allowed_delegates,
+                               t.input_schema_json_text, t.output_schema_json_text,
+                               t.default_config_json_text
+                        FROM {cls.CORE_DB_NAME}.agent_tools at
+                        JOIN {cls.CORE_DB_NAME}.tools t ON t.tool_id = at.tool_id
+                        WHERE at.agent_id = %s
+                        ORDER BY at.created_ts NULLS LAST
                         """,
                         (agent_id_clean,),
                     )
