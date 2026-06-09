@@ -100,12 +100,14 @@ class AgentCreateRequest(BaseModel):
     owner: Optional[str] = None
     tools: Optional[List[Dict[str, str]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
+    skills: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = None
     description: Optional[str] = None
     instruction: Optional[str] = None
+    skills: Optional[List[Any]] = None
 
 class SuggestAgentDescriptionRequest(BaseModel):
     agent_name: str
@@ -184,6 +186,162 @@ def _agent_card_dir() -> Path:
     return Path(os.getenv("LOCAL_AGENT_CARD_DIR", "./agent_cards"))
 
 
+def _list_text_values(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if "," in stripped:
+            return [part.strip() for part in stripped.split(",") if part.strip()]
+        return [stripped]
+    return []
+
+
+def _first_present(mapping: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _has_any_key(mapping: Dict[str, Any], *keys: str) -> bool:
+    return any(key in mapping for key in keys)
+
+
+def _skill_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_existing_skill_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for row in rows:
+        skill_id = _skill_text(row.get("skill_id") or row.get("identifier") or row.get("id"))
+        if not skill_id:
+            continue
+        skill_name = _skill_text(row.get("name") or row.get("skill_name") or skill_id)
+        entries.append({
+            "skill_id": skill_id,
+            "skill_name": skill_name,
+            "description": _skill_text(row.get("description")),
+            "tags": _list_text_values(row.get("tags")),
+            "input_modes": _list_text_values(row.get("input_modes") or row.get("inputModes")),
+            "output_modes": _list_text_values(row.get("output_modes") or row.get("outputModes")),
+        })
+    return entries
+
+
+def _find_existing_skill(
+    existing: List[Dict[str, Any]],
+    *,
+    explicit_id: str,
+    skill_name: str,
+    single_skill_patch: bool,
+) -> Optional[Dict[str, Any]]:
+    explicit_key = explicit_id.lower()
+    name_key = skill_name.lower()
+    for row in existing:
+        if explicit_key and row["skill_id"].lower() == explicit_key:
+            return row
+    for row in existing:
+        candidates = {row["skill_id"].lower(), row["skill_name"].lower()}
+        if name_key and name_key in candidates:
+            return row
+    if single_skill_patch and len(existing) == 1:
+        return existing[0]
+    return None
+
+
+def _normalize_skill_entries(
+    skills: Optional[List[Any]],
+    existing: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    seen_skill_ids: set[str] = set()
+    existing_entries = _normalize_existing_skill_rows(existing or [])
+    single_skill_patch = len(skills or []) == 1
+
+    for skill in (skills or []):
+        existing_match: Optional[Dict[str, Any]] = None
+        if isinstance(skill, str):
+            skill_id = _skill_text(skill)
+            skill_name = skill_id
+            existing_match = _find_existing_skill(
+                existing_entries,
+                explicit_id=skill_id,
+                skill_name=skill_name,
+                single_skill_patch=single_skill_patch,
+            )
+            if existing_match:
+                skill_id = existing_match["skill_id"]
+                skill_name = existing_match["skill_name"]
+                skill_desc = existing_match["description"]
+                tags = existing_match["tags"]
+                input_modes = existing_match["input_modes"]
+                output_modes = existing_match["output_modes"]
+            else:
+                skill_desc = ""
+                tags = []
+                input_modes = []
+                output_modes = []
+        elif isinstance(skill, dict):
+            explicit_id = _skill_text(_first_present(skill, "identifier", "skill_id", "id"))
+            requested_name = _skill_text(skill.get("name") or skill.get("skill_name"))
+            fallback_name = requested_name or _skill_text(skill.get("name")) or explicit_id
+            existing_match = _find_existing_skill(
+                existing_entries,
+                explicit_id=explicit_id,
+                skill_name=fallback_name,
+                single_skill_patch=single_skill_patch,
+            )
+            skill_id = existing_match["skill_id"] if existing_match else (explicit_id or fallback_name)
+            skill_name = requested_name or (existing_match["skill_name"] if existing_match else skill_id)
+            skill_desc = (
+                _skill_text(skill.get("description"))
+                if "description" in skill
+                else (existing_match["description"] if existing_match else "")
+            )
+            tags = (
+                _list_text_values(skill.get("tags"))
+                if "tags" in skill
+                else (existing_match["tags"] if existing_match else [])
+            )
+            input_modes = (
+                _list_text_values(_first_present(
+                    skill, "inputModes", "input_modes", "inputBounds", "input_bounds", "inputs", "input"
+                ))
+                if _has_any_key(skill, "inputModes", "input_modes", "inputBounds", "input_bounds", "inputs", "input")
+                else (existing_match["input_modes"] if existing_match else [])
+            )
+            output_modes = (
+                _list_text_values(_first_present(
+                    skill, "outputModes", "output_modes", "outputBounds", "output_bounds", "outputs", "output"
+                ))
+                if _has_any_key(skill, "outputModes", "output_modes", "outputBounds", "output_bounds", "outputs", "output")
+                else (existing_match["output_modes"] if existing_match else [])
+            )
+        else:
+            continue
+
+        if not skill_id:
+            continue
+        skill_key = skill_id.lower()
+        if skill_key in seen_skill_ids:
+            continue
+        seen_skill_ids.add(skill_key)
+        entries.append({
+            "skill_id": skill_id,
+            "skill_name": skill_name,
+            "description": skill_desc,
+            "tags": tags,
+            "input_modes": input_modes,
+            "output_modes": output_modes,
+        })
+
+    return entries
+
+
 def _write_agent_card(
     agent_id: str,
     agent_internal_id: str,
@@ -192,6 +350,7 @@ def _write_agent_card(
     instruction: str,
     tools: Optional[List[Dict[str, str]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
+    skills: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
     try:
@@ -240,6 +399,21 @@ def _write_agent_card(
                 "access_mechanism": None,
             }
 
+        skill_entries = []
+        for s in (skills or []):
+            if isinstance(s, str):
+                skill_entries.append({"identifier": s, "name": s, "description": None, "tags": [], "inputModes": [], "outputModes": []})
+            elif isinstance(s, dict):
+                skill_id = s.get("identifier") or s.get("skill_id") or s.get("id") or s.get("name") or ""
+                skill_entries.append({
+                    "identifier": skill_id,
+                    "name": s.get("name") or s.get("skill_name") or skill_id,
+                    "description": s.get("description"),
+                    "tags": s.get("tags") if isinstance(s.get("tags"), list) else [],
+                    "inputModes": s.get("inputModes") or s.get("input_modes") or [],
+                    "outputModes": s.get("outputModes") or s.get("output_modes") or [],
+                })
+
         card = {
             "capabilities": {"streaming": False},
             "defaultInputModes": ["text"],
@@ -249,7 +423,7 @@ def _write_agent_card(
             "preferredTransport": None,
             "protocol_version": None,
             "instruction_sets": [],
-            "skills": [],
+            "skills": skill_entries,
             "provider": {"organization": None, "url": ""},
             "url": "",
             "documentation_url": None,
@@ -382,6 +556,41 @@ async def create_agent(
                  "desc": body.knowledge_source.get("description", "")},
             )
 
+        for skill in _normalize_skill_entries(body.skills):
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.skills
+                        (tenant_id, skill_id, name, description,
+                         tags, input_modes, output_modes,
+                         created_ts, updated_ts)
+                    SELECT
+                        :tid, :sid, :sname, :sdesc,
+                        :tags, :imodes, :omodes,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM {CORE}.skills
+                        WHERE COALESCE(tenant_id, '') = COALESCE(:tid, '')
+                          AND skill_id = :sid
+                    )
+                """),
+                {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                 "sdesc": skill["description"], "tags": skill["tags"],
+                 "imodes": skill["input_modes"], "omodes": skill["output_modes"]},
+            )
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_skills
+                        (tenant_id, skill_id, skill_name, agent_id, agent_name,
+                         agent_internal_id, created_ts, updated_ts)
+                    VALUES
+                        (:tid, :sid, :sname, :aid, :aname,
+                         :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """),
+                {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                 "aid": agent_id, "aname": body.agent_name, "iid": agent_internal_id},
+            )
+
         # Insert a placeholder row into curated.agent_360 immediately so the
         # agent appears in the catalog straight away. Risk data is filled in
         # later when the Temporal workflow completes.
@@ -417,6 +626,7 @@ async def create_agent(
         instruction=body.instruction,
         tools=body.tools,
         knowledge_source=body.knowledge_source,
+        skills=body.skills,
     )
 
     background_tasks.add_task(
@@ -511,7 +721,31 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
         row = result.mappings().first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
-        return dict(row)
+        data = dict(row)
+
+        skill_result = await db.execute(
+            text(f"""
+                SELECT
+                    rel.skill_id AS identifier,
+                    COALESCE(s.name, rel.skill_name, rel.skill_id) AS name,
+                    s.description,
+                    COALESCE(s.tags, ARRAY[]::text[]) AS tags,
+                    COALESCE(s.input_modes, ARRAY[]::text[]) AS "inputModes",
+                    COALESCE(s.output_modes, ARRAY[]::text[]) AS "outputModes"
+                FROM {CORE}.agent_skills rel
+                LEFT JOIN {CORE}.skills s
+                  ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                 AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                WHERE rel.agent_id = :aid
+                  AND rel.tenant_id = :tid
+                  AND rel.skill_id IS NOT NULL
+                  AND rel.skill_id <> ''
+                ORDER BY LOWER(COALESCE(s.name, rel.skill_name, rel.skill_id))
+            """),
+            {"aid": agent_id, "tid": tenant_id},
+        )
+        data["skills"] = [dict(skill) for skill in skill_result.mappings().all()]
+        return data
     except HTTPException:
         raise
     except Exception as e:
@@ -580,18 +814,26 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
     tenant_id = _require_tenant(request)
     try:
         exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+            text(f"""
+                SELECT agent_internal_id, agent_name
+                FROM {CORE}.agents
+                WHERE agent_id = :aid AND tenant_id = :tid
+                LIMIT 1
+            """),
             {"aid": agent_id, "tid": tenant_id},
         )
-        if not exists.first():
+        agent_row = exists.mappings().first()
+        if not agent_row:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
 
         agent_sets = ["updated_ts = CURRENT_TIMESTAMP"]
         params: Dict[str, Any] = {"aid": agent_id, "tid": tenant_id}
+        effective_agent_name = str(agent_row["agent_name"] or "")
 
         if body.agent_name and body.agent_name.strip():
             agent_sets.append("agent_name = :name")
             params["name"] = body.agent_name.strip()
+            effective_agent_name = body.agent_name.strip()
         if body.description and body.description.strip():
             agent_sets.append("agent_description = :desc")
             params["desc"] = body.description.strip()
@@ -628,6 +870,66 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid AND tenant_id = :tid"),
                 curated_params,
             )
+
+        if body.skills is not None:
+            existing_skill_result = await db.execute(
+                text(f"""
+                    SELECT rel.skill_id, rel.skill_name, s.name, s.description,
+                           s.tags, s.input_modes, s.output_modes
+                    FROM {CORE}.agent_skills rel
+                    LEFT JOIN {CORE}.skills s
+                      ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                     AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                    WHERE rel.agent_id = :aid
+                      AND rel.tenant_id = :tid
+                      AND rel.skill_id IS NOT NULL
+                      AND rel.skill_id <> ''
+                """),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            existing_skills = [dict(row) for row in existing_skill_result.mappings().all()]
+            skill_entries = _normalize_skill_entries(body.skills, existing_skills)
+            for skill in skill_entries:
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.skills
+                            (tenant_id, skill_id, name, description,
+                             tags, input_modes, output_modes,
+                             created_ts, updated_ts)
+                        VALUES
+                            (:tid, :sid, :sname, :sdesc,
+                             :tags, :imodes, :omodes,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, skill_id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            description = EXCLUDED.description,
+                            tags = EXCLUDED.tags,
+                            input_modes = EXCLUDED.input_modes,
+                            output_modes = EXCLUDED.output_modes,
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                     "sdesc": skill["description"], "tags": skill["tags"],
+                     "imodes": skill["input_modes"], "omodes": skill["output_modes"]},
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_skills
+                            (tenant_id, skill_id, skill_name, agent_id, agent_name,
+                             agent_internal_id, created_ts, updated_ts)
+                        VALUES
+                            (:tid, :sid, :sname, :aid, :aname,
+                             :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
+                            skill_name = EXCLUDED.skill_name,
+                            agent_name = EXCLUDED.agent_name,
+                            agent_internal_id = EXCLUDED.agent_internal_id,
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                     "aid": agent_id, "aname": effective_agent_name,
+                     "iid": str(agent_row["agent_internal_id"])},
+                )
 
         await db.commit()
         return {"message": "Agent updated successfully.", "agent_id": agent_id}

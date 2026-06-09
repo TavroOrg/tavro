@@ -41,6 +41,12 @@ function maxTokensKey(model: string): string {
     return /^(o\d|gpt-5)/i.test(model) ? 'max_completion_tokens' : 'max_tokens';
 }
 
+function maxTokensValue(model: string, mode: 'complete' | 'stream'): number {
+    const isGpt5 = /^gpt-5/i.test(model);
+    if (mode === 'complete') return isGpt5 ? 8192 : 2048;
+    return isGpt5 ? 4096 : 1024;
+}
+
 function toWireMessagesOpenAI(messages: RuntimeMessage[]): any[] {
     return messages.map(m => {
         if (m.role === 'tool') {
@@ -254,7 +260,7 @@ export class CopilotProvider implements ILLMProvider {
         const body: any = {
             model: this.model,
             messages: toWireMessagesOpenAI(messages),
-            [maxTokensKey(this.model)]: 2048,
+            [maxTokensKey(this.model)]: maxTokensValue(this.model, 'complete'),
         };
         if (tools.length > 0) {
             body.tools = toWireToolsOpenAI(tools);
@@ -296,7 +302,7 @@ export class CopilotProvider implements ILLMProvider {
             body: {
                 model: this.model,
                 messages: toWireMessagesOpenAI(messages),
-                [maxTokensKey(this.model)]: 1024,
+                [maxTokensKey(this.model)]: maxTokensValue(this.model, 'stream'),
             },
             ...(this.requestId ? { requestId: this.requestId } : {}),
         });

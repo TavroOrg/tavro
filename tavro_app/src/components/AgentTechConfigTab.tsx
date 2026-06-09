@@ -58,7 +58,7 @@ export const AgentTechConfigTab: React.FC<AgentTechConfigTabProps> = ({ agent })
                     <SectionHead icon={<Zap size={16} />} title="Skills" />
                     <div className="flex flex-wrap gap-2">
                         {skills.map((s, i) => (
-                            <div key={s.id ?? i} className="flex flex-col gap-0.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
+                            <div key={s.identifier ?? s.id ?? i} className="flex flex-col gap-0.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
                                 <span className="text-xs font-bold text-slate-700">{s.name ?? `Skill ${i + 1}`}</span>
                                 {s.description && <span className="text-[11px] text-slate-500 max-w-[200px]">{s.description}</span>}
                             </div>
