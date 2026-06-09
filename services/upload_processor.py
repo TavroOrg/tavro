@@ -921,29 +921,53 @@ def _upsert_agent_ai_models(conn, card: dict, agent_internal_id: str, now_str: s
     if not has_meaningful_data(models):
         return
     agent_id = ident.get("agent_id")
+    # Deterministic catalog id from model name (shared core.ai_models row across
+    # re-ingests and agents). Descriptive attributes go to the catalog; the
+    # junction holds only the link.
     select_rows = [f"""
-        SELECT NULL AS ai_model_id,
+        SELECT md5(lower(trim({_sq(m.get('name'))}))) AS ai_model_id,
                {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
                {_sq(m.get('name'))} AS model_name, {_sq(m.get('owner'))} AS owner,
                {_sq(m.get('department_executive'))} AS department_executive,
                {_sq(m.get('description'))} AS description,
+               {_sq(m.get('model_provider') or m.get('provider'))} AS provider,
+               {_sq(m.get('model_version') or m.get('version'))} AS version_number,
+               {_sq(m.get('model_type') or m.get('type'))} AS model_type,
                TIMESTAMP '{now_str}' AS now_ts
+        WHERE NULLIF(trim({_sq(m.get('name'))}), '') IS NOT NULL
     """.strip() for m in models]
     union_all = "\nUNION ALL\n".join(select_rows)
+    # 1) Catalog upsert.
+    _exec(conn, f"""
+        INSERT INTO {CORE}.ai_models (
+            ai_model_id, model_name, owner, department_executive, description,
+            provider, version_number, model_type, no_of_associated_agents, created_ts, updated_ts
+        )
+        SELECT ai_model_id, model_name, owner, department_executive, description,
+               provider, version_number, model_type, 0, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (ai_model_id) DO UPDATE SET
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), {CORE}.ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, {CORE}.ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, {CORE}.ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, {CORE}.ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, {CORE}.ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, {CORE}.ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, {CORE}.ai_models.model_type),
+            updated_ts           = EXCLUDED.updated_ts
+    """, f"ai_models catalog upsert ({len(models)})")
+    # 2) Junction link upsert.
     _exec(conn, f"""
         INSERT INTO {CORE}.agent_ai_models (
-            ai_model_id, agent_internal_id, agent_id,
-            model_name, owner, department_executive, description, created_ts, updated_ts
+            ai_model_id, model_name, agent_id, agent_internal_id, created_ts, updated_ts
         )
-        SELECT ai_model_id, agent_internal_id, agent_id,
-               model_name, owner, department_executive, description, now_ts, now_ts
+        SELECT ai_model_id, model_name, agent_id, agent_internal_id, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, model_name)
+        ON CONFLICT (agent_internal_id, ai_model_id)
         DO UPDATE SET
-            agent_id = EXCLUDED.agent_id, owner = EXCLUDED.owner,
-            department_executive = EXCLUDED.department_executive,
-            description = EXCLUDED.description, updated_ts = EXCLUDED.updated_ts
-    """, f"agent_ai_models upsert ({len(models)})")
+            model_name = EXCLUDED.model_name, agent_id = EXCLUDED.agent_id,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"agent_ai_models link upsert ({len(models)})")
 
 
 # ---------------------------------------------------------------------------
