@@ -47,7 +47,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_regulations_or_frameworks
 ON core.agent_regulations_or_frameworks (agent_internal_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_ai_models
-ON core.agent_ai_models (agent_internal_id, model_name);
+ON core.agent_ai_models (agent_internal_id, ai_model_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
+ON core.ai_models (ai_model_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
@@ -247,6 +250,29 @@ BEGIN
             ADD CONSTRAINT fk_core_ai_use_case_business_processes_business_process
             FOREIGN KEY (business_process_id)
             REFERENCES core.business_processes (business_process_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- AI Models junction: ensure agent_name exists for display (additive).
+    IF to_regclass('core.agent_ai_models') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_ai_models'
+            AND column_name = 'agent_name'
+        ) THEN
+            ALTER TABLE core.agent_ai_models ADD COLUMN agent_name TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_agent_ai_models_ai_model'
+        ) THEN
+            ALTER TABLE core.agent_ai_models
+            ADD CONSTRAINT fk_core_agent_ai_models_ai_model
+            FOREIGN KEY (ai_model_id)
+            REFERENCES core.ai_models (ai_model_id)
             ON DELETE CASCADE;
         END IF;
     END IF;

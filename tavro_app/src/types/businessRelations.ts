@@ -144,6 +144,15 @@ export interface AgentRelationsPayload {
   }>;
   ai_use_cases?: RelatedUseCaseReference[];
   child_agents?: ChildAgentReference[];
+  ai_models?: AgentAiModelReference[];
+}
+
+export interface AgentAiModelReference {
+  ai_model_id: string;
+  model_name: string | null;
+  description: string | null;
+  provider: string | null;
+  status: string | null;
 }
 
 export interface BusinessApplicationUpsertPayload {

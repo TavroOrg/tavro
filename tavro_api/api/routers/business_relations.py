@@ -2529,6 +2529,52 @@ async def get_agent_relations(
         )
         child_agents = [dict(r._mapping) for r in child_rows]
 
+    # AI Models linked to this agent (junction core.agent_ai_models -> core.ai_models).
+    ai_models: list[dict[str, Any]] = []
+    has_agent_ai_models = await _table_exists(db, "core", "agent_ai_models")
+    if has_agent_ai_models:
+        aam_cols = await _table_columns(db, "core", "agent_ai_models")
+        if "ai_model_id" in aam_cols:
+            has_models_catalog = await _table_exists(db, "core", "ai_models")
+            model_cols: set[str] = set()
+            if has_models_catalog:
+                model_cols = await _table_columns(db, "core", "ai_models")
+            rel_name_expr = "rel.model_name" if "model_name" in aam_cols else "NULL::text"
+            cat_name_expr = "m.model_name" if "model_name" in model_cols else "NULL::text"
+            name_expr = f"COALESCE({cat_name_expr}, {rel_name_expr}, rel.ai_model_id)"
+            desc_expr = "m.description" if "description" in model_cols else "NULL::text"
+            provider_expr = "m.provider" if "provider" in model_cols else "NULL::text"
+            status_expr = "m.status" if "status" in model_cols else "NULL::text"
+            join_sql = ""
+            if has_models_catalog and "ai_model_id" in model_cols:
+                join_sql = (
+                    "LEFT JOIN core.ai_models m "
+                    "ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))"
+                )
+            model_rows = await db.execute(
+                text(
+                    f"""
+                    SELECT ai_model_id, model_name, description, provider, status
+                    FROM (
+                        SELECT DISTINCT
+                            rel.ai_model_id AS ai_model_id,
+                            {name_expr} AS model_name,
+                            {desc_expr} AS description,
+                            {provider_expr} AS provider,
+                            {status_expr} AS status
+                        FROM core.agent_ai_models rel
+                        {join_sql}
+                        WHERE rel.agent_internal_id = :agent_internal_id
+                          AND rel.ai_model_id IS NOT NULL
+                          AND rel.ai_model_id <> ''
+                    ) sub
+                    ORDER BY LOWER(model_name)
+                    """
+                ),
+                {"agent_internal_id": agent["agent_internal_id"]},
+            )
+            ai_models = [dict(r._mapping) for r in model_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -2540,6 +2586,7 @@ async def get_agent_relations(
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,
         "child_agents": child_agents,
+        "ai_models": ai_models,
     }
 
 

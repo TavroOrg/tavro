@@ -36,6 +36,8 @@ import BusinessApplicationsPage from './pages/BusinessApplicationsPage';
 import BusinessApplicationViewPage from './pages/BusinessApplicationViewPage';
 import BusinessProcessesPage from './pages/BusinessProcessesPage';
 import BusinessProcessViewPage from './pages/BusinessProcessViewPage';
+import AiModelsPage from './pages/AiModelsPage';
+import AiModelViewPage from './pages/AiModelViewPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
@@ -171,6 +173,9 @@ function App() {
                 <Route path="processes" element={<BusinessProcessesPage />} />
                 <Route path="processes/new" element={<BusinessProcessViewPage />} />
                 <Route path="processes/:id" element={<BusinessProcessViewPage />} />
+                <Route path="ai-models" element={<AiModelsPage />} />
+                <Route path="ai-models/new" element={<AiModelViewPage />} />
+                <Route path="ai-models/:id" element={<AiModelViewPage />} />
                 <Route path="integrations" element={<IntegrationsPage />} />
                 <Route path="integrations/new" element={<IntegrationViewPage />} />
                 <Route path="integrations/:id" element={<IntegrationViewPage />} />
