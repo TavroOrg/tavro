@@ -2579,29 +2579,115 @@ async def get_agent_relations(
                 use_case_rows = await db.execute(
                     text(
                         f"""
-                        SELECT identifier, name, description, owner, priority, status
-                        FROM (
-                            SELECT DISTINCT
-                                rel.ai_use_case_id AS identifier,
-                                {name_expr} AS name,
-                                {description_expr} AS description,
-                                {owner_expr} AS owner,
-                                {priority_expr} AS priority,
-                                {status_expr} AS status
-                            FROM core.agent_ai_use_cases rel
-                            {uc_join}
-                            WHERE ({' OR '.join(match_parts)})
-                              {tenant_filter}
-                              AND rel.ai_use_case_id IS NOT NULL
-                              AND rel.ai_use_case_id <> ''
-                        ) sub
-                        ORDER BY LOWER(name)
+                        SELECT DISTINCT
+                            rel.ai_use_case_id AS identifier,
+                            {name_expr} AS name,
+                            {description_expr} AS description,
+                            {owner_expr} AS owner,
+                            {priority_expr} AS priority,
+                            {status_expr} AS status,
+                            LOWER({name_expr}) AS _sort_key
+                        FROM core.agent_ai_use_cases rel
+                        {uc_join}
+                        WHERE ({' OR '.join(match_parts)})
+                          {tenant_filter}
+                          AND rel.ai_use_case_id IS NOT NULL
+                          AND rel.ai_use_case_id <> ''
+                        ORDER BY _sort_key
                         """
                     ),
                     params,
                 )
                 ai_use_cases = [dict(r._mapping) for r in use_case_rows]
 
+    skills: list[dict[str, Any]] = []
+    has_agent_skills = await _table_exists(db, "core", "agent_skills")
+    if has_agent_skills:
+        rel_cols = await _table_columns(db, "core", "agent_skills")
+        if "skill_id" in rel_cols:
+            match_parts: list[str] = []
+            tenant_filter = ""
+            params: dict[str, Any] = {
+                "agent_internal_id": agent.get("agent_internal_id"),
+                "agent_id": agent.get("agent_id"),
+                "agent_name": agent.get("agent_name"),
+                "tenant_id": agent.get("tenant_id"),
+            }
+
+            if "agent_internal_id" in rel_cols:
+                match_parts.append("rel.agent_internal_id = :agent_internal_id")
+            if "agent_id" in rel_cols:
+                match_parts.append("rel.agent_id = :agent_id")
+            if "agent_name" in rel_cols and agent.get("agent_name"):
+                match_parts.append("rel.agent_name = :agent_name")
+            if "tenant_id" in rel_cols and agent.get("tenant_id"):
+                tenant_filter = (
+                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                )
+
+            if match_parts:
+                has_skills = await _table_exists(db, "core", "skills")
+                skill_cols: set[str] = set()
+                if has_skills:
+                    skill_cols = await _table_columns(db, "core", "skills")
+
+                rel_name_expr = "rel.skill_name" if "skill_name" in rel_cols else "NULL::text"
+                skill_name_expr = "s.name" if "name" in skill_cols else "NULL::text"
+                name_expr = f"COALESCE({skill_name_expr}, {rel_name_expr}, rel.skill_id)"
+                description_expr = "s.description" if "description" in skill_cols else "NULL::text"
+                tags_expr = "s.tags" if "tags" in skill_cols else "ARRAY[]::text[]"
+                input_modes_expr = "s.input_modes" if "input_modes" in skill_cols else "ARRAY[]::text[]"
+                output_modes_expr = "s.output_modes" if "output_modes" in skill_cols else "ARRAY[]::text[]"
+
+                skill_join = ""
+                if has_skills and "skill_id" in skill_cols:
+                    tenant_join = ""
+                    if "tenant_id" in skill_cols and "tenant_id" in rel_cols:
+                        tenant_join = "AND COALESCE(s.tenant_id, '') = COALESCE(rel.tenant_id, '')"
+                    skill_join = """
+                    LEFT JOIN core.skills s
+                        ON LOWER(TRIM(s.skill_id)) = LOWER(TRIM(rel.skill_id))
+                        {tenant_join}
+                    """
+                    skill_join = skill_join.format(tenant_join=tenant_join)
+
+                skill_rows = await db.execute(
+                    text(
+                        f"""
+                        SELECT
+                            identifier,
+                            identifier AS id,
+                            identifier AS skill_id,
+                            name,
+                            name AS skill_name,
+                            description,
+                            tags,
+                            input_modes,
+                            output_modes,
+                            input_modes AS "inputModes",
+                            output_modes AS "outputModes"
+                        FROM (
+                            SELECT DISTINCT ON (LOWER(TRIM(rel.skill_id)))
+                                rel.skill_id AS identifier,
+                                {name_expr} AS name,
+                                {description_expr} AS description,
+                                {tags_expr} AS tags,
+                                {input_modes_expr} AS input_modes,
+                                {output_modes_expr} AS output_modes
+                            FROM core.agent_skills rel
+                            {skill_join}
+                            WHERE ({' OR '.join(match_parts)})
+                              {tenant_filter}
+                              AND rel.skill_id IS NOT NULL
+                              AND rel.skill_id <> ''
+                            ORDER BY LOWER(TRIM(rel.skill_id))
+                        ) skill_rows
+                        ORDER BY LOWER(COALESCE(name, identifier))
+                        """
+                    ),
+                    params,
+                )
+                skills = [dict(r._mapping) for r in skill_rows]
     # Agent-to-agent (parent/child) relationships are stored as a
     # self-reference on core.agents (parent_agent_internal_id), mirroring
     # core.business_processes.parent_process_id. We surface both directions:
@@ -2652,6 +2738,52 @@ async def get_agent_relations(
         )
         child_agents = [dict(r._mapping) for r in child_rows]
 
+    # AI Models linked to this agent (junction core.agent_ai_models -> core.ai_models).
+    ai_models: list[dict[str, Any]] = []
+    has_agent_ai_models = await _table_exists(db, "core", "agent_ai_models")
+    if has_agent_ai_models:
+        aam_cols = await _table_columns(db, "core", "agent_ai_models")
+        if "ai_model_id" in aam_cols:
+            has_models_catalog = await _table_exists(db, "core", "ai_models")
+            model_cols: set[str] = set()
+            if has_models_catalog:
+                model_cols = await _table_columns(db, "core", "ai_models")
+            rel_name_expr = "rel.model_name" if "model_name" in aam_cols else "NULL::text"
+            cat_name_expr = "m.model_name" if "model_name" in model_cols else "NULL::text"
+            name_expr = f"COALESCE({cat_name_expr}, {rel_name_expr}, rel.ai_model_id)"
+            desc_expr = "m.description" if "description" in model_cols else "NULL::text"
+            provider_expr = "m.provider" if "provider" in model_cols else "NULL::text"
+            status_expr = "m.status" if "status" in model_cols else "NULL::text"
+            join_sql = ""
+            if has_models_catalog and "ai_model_id" in model_cols:
+                join_sql = (
+                    "LEFT JOIN core.ai_models m "
+                    "ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))"
+                )
+            model_rows = await db.execute(
+                text(
+                    f"""
+                    SELECT ai_model_id, model_name, description, provider, status
+                    FROM (
+                        SELECT DISTINCT
+                            rel.ai_model_id AS ai_model_id,
+                            {name_expr} AS model_name,
+                            {desc_expr} AS description,
+                            {provider_expr} AS provider,
+                            {status_expr} AS status
+                        FROM core.agent_ai_models rel
+                        {join_sql}
+                        WHERE rel.agent_internal_id = :agent_internal_id
+                          AND rel.ai_model_id IS NOT NULL
+                          AND rel.ai_model_id <> ''
+                    ) sub
+                    ORDER BY LOWER(model_name)
+                    """
+                ),
+                {"agent_internal_id": agent["agent_internal_id"]},
+            )
+            ai_models = [dict(r._mapping) for r in model_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -2662,7 +2794,9 @@ async def get_agent_relations(
         "applications": applications,
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,
+        "skills": skills,
         "child_agents": child_agents,
+        "ai_models": ai_models,
     }
 
 

@@ -52,8 +52,10 @@ Register a new AI agent with name, description, instructions, optional tools, an
 - Triggers: "create agent", "register agent", "add new agent", "onboard agent", "set up agent called X"
 
 **`update_agent`**
-Modify an existing agent's configuration (name, description, instructions, tools, knowledge source).
-- Triggers: "update agent X", "modify agent X", "change agent X", "edit agent", "rename agent X"
+Modify an existing agent's configuration (name, description, instructions, tools, knowledge source, skills).
+- Triggers: "update agent X", "modify agent X", "change agent X", "edit agent", "rename agent X", "update skills for agent X", "add tags to skill X", "update skill X", "rename skill X", "add inputs to skill X", "add outputs to skill X", "change skill description"
+- When modifying one existing skill, include the stable existing `skill_id`/`id`/`identifier` in the skill object. Use `name` or `skill_name` only as the display name so renames do not create a new skill record.
+- Skill objects support `description`, `tags`, `inputModes`, and `outputModes`.
 
 ---
 

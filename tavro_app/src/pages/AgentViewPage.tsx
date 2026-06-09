@@ -51,6 +51,50 @@ const normalizeUseCasesForCard = (agent: AgentData): any[] => {
     return fallback ? [fallback] : [];
 };
 
+const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills']> => {
+    const rawSkills = Array.isArray(payload?.skills) ? payload.skills : [];
+    return rawSkills
+        .map((skill: any) => {
+            if (typeof skill === 'string') {
+                return {
+                    identifier: skill,
+                    name: skill,
+                    description: null,
+                    tags: [],
+                    inputModes: [],
+                    outputModes: [],
+                };
+            }
+
+            const identifier = skill?.identifier ?? skill?.id ?? skill?.skill_id ?? skill?.name ?? null;
+            const name = skill?.name ?? skill?.skill_name ?? skill?.identifier ?? skill?.id ?? skill?.skill_id ?? null;
+            const inputModes = Array.isArray(skill?.inputModes)
+                ? skill.inputModes
+                : (Array.isArray(skill?.input_modes) ? skill.input_modes : []);
+            const outputModes = Array.isArray(skill?.outputModes)
+                ? skill.outputModes
+                : (Array.isArray(skill?.output_modes) ? skill.output_modes : []);
+
+            return {
+                identifier,
+                name,
+                description: skill?.description ?? null,
+                tags: Array.isArray(skill?.tags) ? skill.tags : [],
+                inputModes,
+                outputModes,
+            };
+        })
+        .filter((skill: any) => hasNonBlankText(skill.identifier ?? skill.name));
+};
+
+const firstNonEmptySkills = (...payloads: any[]): NonNullable<AgentData['skills']> => {
+    for (const payload of payloads) {
+        const skills = normalizeSkillsFromPayload(payload);
+        if (skills.length) return skills;
+    }
+    return [];
+};
+
 const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     const applications = (agent.application ?? [])
         .map((app: any) => ({
@@ -96,6 +140,7 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
         business_process: normalizedProcesses,
         ai_use_case: normalizedUseCases,
         ai_use_cases: normalizedUseCases,
+        skills: normalizeSkillsFromPayload(agent),
     };
 };
 
@@ -174,6 +219,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            skills: [],
             application: [],
             business_process: [],
             risk_assessment: null,
@@ -240,6 +286,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
                 // Preserve governance/risk snapshot from existing catalog entry if REST API returns null
@@ -262,6 +309,7 @@ const AgentViewPage: React.FC = () => {
                     configuration: { autonomy_level: null },
                     tool: apiCatalog?.tool ?? [],
                     data_source: apiCatalog?.data_source ?? [],
+                    skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
