@@ -436,6 +436,21 @@ BEGIN
         ) THEN
             ALTER TABLE core.tables DROP COLUMN agent_internal_id;
         END IF;
+    -- Agent-to-agent (parent/child) self-reference on core.agents.
+    -- Mirrors business_processes.parent_process_id. No FK is added because
+    -- core.agents is versioned (agent_internal_id is not unique), so it cannot
+    -- be used as a foreign-key target.
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents'
+              AND column_name = 'parent_agent_internal_id'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN parent_agent_internal_id TEXT;
+        END IF;
+
+        CREATE INDEX IF NOT EXISTS ix_core_agents_parent_internal_id
+        ON core.agents (parent_agent_internal_id);
     END IF;
 
 END $$;
