@@ -20,6 +20,7 @@ from api.routers import agents
 from api.routers import agent_upload
 from api.routers import use_cases
 from api.routers import use_case_upload
+from api.routers import insights
 from api.routers import ai_models
 from api.routers import drive_import
 from api.routers import spark
@@ -116,6 +117,7 @@ app.include_router(agents.router,    prefix="/api/v1/agents",     tags=["Agents"
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
+app.include_router(insights.router,         prefix="/api/v1/insights",   tags=["Insights"])
 app.include_router(ai_models.router,         prefix="/api/v1/ai-models",  tags=["AI Models"])
 app.include_router(drive_import.router,     prefix="/api/v1/drive",      tags=["Drive Import"])
 app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["Spark"])

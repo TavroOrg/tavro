@@ -736,6 +736,9 @@ async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     )
     select_agent_name = "agent_name" if "agent_name" in agent_cols else "NULL AS agent_name"
     select_tenant_id = "tenant_id" if "tenant_id" in agent_cols else "NULL AS tenant_id"
+    select_source_system = (
+        "source_system" if "source_system" in agent_cols else "NULL AS source_system"
+    )
 
     row = await db.execute(
         text(
@@ -744,7 +747,8 @@ async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
                 agent_id,
                 {select_agent_internal_id},
                 {select_agent_name},
-                {select_tenant_id}
+                {select_tenant_id},
+                {select_source_system}
             FROM core.agents
             WHERE agent_id = :agent_id
             ORDER BY {", ".join(order_parts)}
@@ -2470,7 +2474,7 @@ async def get_agent_relations(
                           {tenant_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
-                        ORDER BY _sort_key
+                        ORDER BY name
                         """
                     ),
                     params,
@@ -2668,6 +2672,10 @@ async def get_agent_relations(
             "agent_name": agent.get("agent_name"),
             "tenant_id": agent.get("tenant_id"),
         },
+        # Top-level so the agent detail page can read it as the Provider
+        # (this endpoint serves GET /agents/{id}, which the frontend agent card
+        # fetch also hits). Value is core.agents.source_system.
+        "source_system": agent.get("source_system"),
         "applications": applications,
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,
