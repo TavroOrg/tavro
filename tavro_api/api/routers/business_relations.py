@@ -2474,7 +2474,7 @@ async def get_agent_relations(
                           {tenant_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
-                        ORDER BY _sort_key
+                        ORDER BY name
                         """
                     ),
                     params,
