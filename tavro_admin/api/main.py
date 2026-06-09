@@ -15,42 +15,16 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import text
 
-from api.database import AsyncSessionLocal
-from api.routers import llm_keys, config, connectors
+from api.routers import connectors, docker_logs, env_config
 from api.dependencies.auth import require_portal_admin
-
-# ── Admin schema DDL paths ─────────────────────────────────────────────────────
-
-_DDL_CANDIDATES = (
-    Path("/sql/admin/01_admin_schema.sql"),
-    Path(__file__).resolve().parents[2] / "sql" / "admin" / "01_admin_schema.sql",
-)
-
-
-async def _bootstrap_admin_schema() -> None:
-    for path in _DDL_CANDIDATES:
-        if path.exists():
-            ddl = path.read_text(encoding="utf-8")
-            break
-    else:
-        print("[admin] WARNING: admin DDL not found — skipping schema bootstrap")
-        return
-
-    statements = [s.strip() for s in ddl.split(";") if s.strip()]
-    async with AsyncSessionLocal() as db:
-        for stmt in statements:
-            await db.execute(text(stmt))
-        await db.commit()
-    print("[admin] Admin schema bootstrap complete")
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _bootstrap_admin_schema()
+    await docker_logs.start_log_collector()
     yield
 
 
@@ -75,9 +49,9 @@ app.add_middleware(
 
 # ── API routes (must be registered before static files) ───────────────────────
 
-app.include_router(llm_keys.router,  prefix="/api/v1/admin", tags=["LLM Keys"])
-app.include_router(config.router,    prefix="/api/v1/admin", tags=["Config"])
-app.include_router(connectors.router, prefix="/api/v1/admin", tags=["Connectors"])
+app.include_router(connectors.router,     prefix="/api/v1/admin",       tags=["Connectors"])
+app.include_router(env_config.router,     prefix="/api/v1/admin",       tags=["Env Config"])
+app.include_router(docker_logs.router,    prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 
 
 @app.get("/health", tags=["Health"])

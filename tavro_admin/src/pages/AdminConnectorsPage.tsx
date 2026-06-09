@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     ChevronRight, Play, RotateCcw, CheckCircle2, AlertCircle,
-    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock,
+    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -175,6 +175,8 @@ const AdminConnectorsPage: React.FC = () => {
     const [credentials, setCredentials] = useState<Record<string, Record<string, string>>>({});
     const [runState, setRunState] = useState<Record<string, { status: RunStatus; result?: RunResult }>>({});
     const [geminiAuthUrl, setGeminiAuthUrl] = useState<{ url?: string; loading: boolean; error?: string }>({ loading: false });
+    const [credsLoading, setCredsLoading] = useState(false);
+    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
     const selectedConnector = CONNECTORS.find(c => c.id === selected) ?? null;
 
@@ -185,6 +187,36 @@ const AdminConnectorsPage: React.FC = () => {
             ...prev,
             [connId]: { ...(prev[connId] ?? {}), [key]: value },
         }));
+    };
+
+    // Auto-load credentials from .env when a connector is selected
+    const loadCredentials = useCallback(async (connId: string) => {
+        setCredsLoading(true);
+        try {
+            const res = await fetch(`/api/v1/admin/connectors/${connId}/credentials`);
+            if (res.ok) {
+                const data = await res.json();
+                setCredentials(prev => ({ ...prev, [connId]: { ...(prev[connId] ?? {}), ...data } }));
+            }
+        } catch { /* silently ignore — user can type manually */ }
+        finally { setCredsLoading(false); }
+    }, []);
+
+    useEffect(() => {
+        if (selected) loadCredentials(selected);
+    }, [selected, loadCredentials]);
+
+    const saveCredentials = async (connId: string) => {
+        setSaveState('saving');
+        try {
+            const res = await fetch(`/api/v1/admin/connectors/${connId}/credentials`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credentials: credentials[connId] ?? {} }),
+            });
+            setSaveState(res.ok ? 'saved' : 'error');
+        } catch { setSaveState('error'); }
+        finally { setTimeout(() => setSaveState('idle'), 3000); }
     };
 
     // Resolve tenant_id: prefer what was stored at login, fall back to decoding
@@ -233,6 +265,8 @@ const AdminConnectorsPage: React.FC = () => {
     };
 
     const runConnector = async (connector: ConnectorDef) => {
+        // Persist credentials to .env before running
+        await saveCredentials(connector.id);
         setRunState(prev => ({ ...prev, [connector.id]: { status: 'running' } }));
 
         try {
@@ -331,9 +365,12 @@ const AdminConnectorsPage: React.FC = () => {
 
                     {/* credential fields */}
                     <div className="space-y-4">
-                        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                            Credentials
-                        </h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                                Credentials
+                            </h3>
+                            {credsLoading && <Loader2 size={13} className="animate-spin text-slate-400" />}
+                        </div>
                         <div className="grid grid-cols-1 gap-4">
                             {selectedConnector.fields.filter(f => f.key !== 'auth_code').map(field => (
                                 <div key={field.key}>
@@ -402,15 +439,29 @@ const AdminConnectorsPage: React.FC = () => {
                                         />
                                     </div>
 
-                                    <div className="flex items-center gap-3 pt-1">
+                                    <div className="flex items-center gap-3 pt-1 flex-wrap">
                                         <button
                                             onClick={() => runConnector(selectedConnector)}
-                                            disabled={isRunning}
+                                            disabled={isRunning || saveState === 'saving'}
                                             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
                                         >
                                             {isRunning
                                                 ? <><Loader2 size={15} className="animate-spin" /> Running…</>
                                                 : <><Play size={15} /> Run Connector</>
+                                            }
+                                        </button>
+                                        <button
+                                            onClick={() => saveCredentials(selectedConnector.id)}
+                                            disabled={saveState === 'saving' || isRunning}
+                                            className="flex items-center gap-2 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-600"
+                                        >
+                                            {saveState === 'saving'
+                                                ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                                                : saveState === 'saved'
+                                                    ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
+                                                    : saveState === 'error'
+                                                        ? <><AlertCircle size={14} className="text-red-500" /> Error</>
+                                                        : <><Save size={14} /> Save Credentials</>
                                             }
                                         </button>
                                         {state && state.status !== 'idle' && (
@@ -436,15 +487,30 @@ const AdminConnectorsPage: React.FC = () => {
 
                     {/* run button — hidden for Gemini (shown inside the auth URL block instead) */}
                     {selectedConnector.id !== 'gemini' && (
-                        <div className="flex items-center gap-3 pt-2">
+                        <div className="flex items-center gap-3 pt-2 flex-wrap">
                             <button
                                 onClick={() => runConnector(selectedConnector)}
-                                disabled={isRunning}
+                                disabled={isRunning || saveState === 'saving'}
                                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
                             >
                                 {isRunning
                                     ? <><Loader2 size={15} className="animate-spin" /> Running…</>
                                     : <><Play size={15} /> Run Connector</>
+                                }
+                            </button>
+
+                            <button
+                                onClick={() => saveCredentials(selectedConnector.id)}
+                                disabled={saveState === 'saving' || isRunning}
+                                className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
+                            >
+                                {saveState === 'saving'
+                                    ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                                    : saveState === 'saved'
+                                        ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
+                                        : saveState === 'error'
+                                            ? <><AlertCircle size={14} className="text-red-500" /> Error</>
+                                            : <><Save size={14} /> Save Credentials</>
                                 }
                             </button>
 

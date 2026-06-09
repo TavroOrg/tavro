@@ -134,6 +134,11 @@ services:
       # The copilot-server registers this with each Copilot SDK session so the
       # SDK can automatically route tool calls to Tavro's MCP backend.
       MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
+      GITHUB_COPILOT_TOKEN: ${GITHUB_COPILOT_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_AI_FOUNDRY_ENDPOINT: ${AZURE_AI_FOUNDRY_ENDPOINT:-}
+      AZURE_AI_FOUNDRY_KEY: ${AZURE_AI_FOUNDRY_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "4001:4000"
     healthcheck:
@@ -177,6 +182,8 @@ services:
       - ./tavro_api/agent_cards:/app/agent_cards
       # Runtime auth config written by zitadel-configure-app; served at /runtime/tavro-admin-runtime-config.json
       - tavro_runtime_config:/app/static/runtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
+      - ./.env:/app/.env:rw                           # connector credential read/write
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:7000/health || exit 1"]
       interval: 20s

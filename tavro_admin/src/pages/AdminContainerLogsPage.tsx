@@ -48,7 +48,7 @@ function formatTime(ts: number): string {
     return new Date(ts * 1000).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ContainerLogsPage() {
+export default function AdminContainerLogsPage() {
     const navigate = useNavigate();
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [containers, setContainers] = useState<ContainerInfo[]>([]);

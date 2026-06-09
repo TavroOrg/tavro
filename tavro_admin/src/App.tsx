@@ -5,6 +5,7 @@ import AdminLogin from './pages/AdminLogin';
 import AuthCallback from './pages/AuthCallback';
 import AdminLayout from './pages/AdminLayout';
 import AdminConnectorsPage from './pages/AdminConnectorsPage';
+import AdminContainerLogsPage from './pages/AdminContainerLogsPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 
 function isAuthenticated(): boolean {
@@ -42,6 +43,7 @@ function App() {
                     >
                         <Route index element={<AdminConnectorsPage />} />
                         <Route path="connectors" element={<AdminConnectorsPage />} />
+                        <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />
                     </Route>
                     <Route path="*" element={<Navigate to="/" replace />} />

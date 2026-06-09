@@ -3,30 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Code2,
-    BotMessageSquare, Eye, EyeOff, Trash2, Terminal,
+    BotMessageSquare, Trash2, Terminal,
     Database, Box, ChevronRight
 } from 'lucide-react';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
 import {
-    DEFAULT_MODELS, /* PROVIDER_HINTS, */ PROVIDER_LABELS, LLMProvider,
+    DEFAULT_MODELS, PROVIDER_LABELS, LLMProvider,
     getProviderConfig, saveProviderConfig, clearProviderConfig,
     getActiveProvider, setActiveProvider,
 } from '../services/llmService';
 
 import { useTheme } from '../context/ThemeContext';
 
-// const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
-// const ALL_PROVIDERS: LLMProvider[] = ['openai', 'gemini', 'anthropic'];
 const ALL_PROVIDERS: LLMProvider[] = ['copilot'];
 const MCP_URL = import.meta.env.VITE_MCP_URL || 'http://localhost:9001/zitadel/mcp';
-
-// const PROVIDER_ICONS: Record<LLMProvider, string> = {
-//     openai: '🤖',
-//     gemini: '✨',
-//     anthropic: '🧠',
-//     copilot: '🪄',
-// };
 
 import { useChatContext } from '../context/ChatContext';
 
@@ -46,7 +37,7 @@ const Settings: React.FC = () => {
     // LLM config — per-provider
     type ByokType = 'github' | 'openai' | 'azure' | 'anthropic';
     type ProviderState = {
-        model: string; key: string; showKey: boolean; saved: boolean; configured: boolean;
+        model: string; saved: boolean; configured: boolean;
         // Copilot-only BYOK fields
         byokType?: ByokType;
         byokBaseUrl?: string;
@@ -68,9 +59,9 @@ const Settings: React.FC = () => {
     };
     const initProviderState = (p: LLMProvider): ProviderState => {
         const cfg = getProviderConfig(p);
-        const base: ProviderState = { model: cfg?.model || DEFAULT_MODELS[p], key: cfg?.apiKey || '', showKey: false, saved: false, configured: !!cfg };
+        const base: ProviderState = { model: cfg?.model || DEFAULT_MODELS[p], saved: false, configured: true };
         if (p === 'copilot') {
-            base.byokType  = (cfg?.byok?.type as ByokType) ?? 'github';
+            base.byokType   = (cfg?.byok?.type as ByokType) ?? 'github';
             base.byokBaseUrl = cfg?.byok?.baseUrl ?? '';
         }
         return base;
@@ -84,23 +75,21 @@ const Settings: React.FC = () => {
     const [activeProvider, setActiveProviderState] = useState<LLMProvider | null>(getActiveProvider);
 
     const updateProvider = (p: LLMProvider, patch: Partial<ProviderState>) =>
-        setProviderStates(s => ({ ...s, [p]: { ...s[p], ...patch } }));
-
+        setProviderStates((s: Record<LLMProvider, ProviderState>) => ({ ...s, [p]: { ...s[p], ...patch } }));
 
     const handleSaveProvider = (p: LLMProvider) => {
         const s = providerStates[p];
-        if (!s.key.trim()) return;
         const byok = (p === 'copilot' && s.byokType && s.byokType !== 'github')
             ? { type: s.byokType as 'openai' | 'azure' | 'anthropic', baseUrl: s.byokBaseUrl?.trim() || undefined }
             : undefined;
-        saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: s.key.trim(), byok });
+        saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: '', byok });
         updateProvider(p, { configured: true, saved: true });
         setTimeout(() => updateProvider(p, { saved: false }), 2500);
     };
 
     const handleClearProvider = (p: LLMProvider) => {
         clearProviderConfig(p);
-        updateProvider(p, { key: '', model: DEFAULT_MODELS[p], configured: false });
+        updateProvider(p, { model: DEFAULT_MODELS[p], configured: false });
         if (activeProvider === p) { setActiveProviderState(null); }
     };
 
@@ -142,7 +131,7 @@ const Settings: React.FC = () => {
                 </div>
                 <div className="p-5 flex flex-col gap-6">
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                        Configure each provider independently, then select which one the chat assistant should use.
+                        Configure each provider independently, then select which one the chat assistant should use. API keys are managed by your administrator.
                     </p>
 
                     {/* Per-provider cards */}
@@ -154,14 +143,7 @@ const Settings: React.FC = () => {
                                     ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-900/10'
                                     : 'border-slate-200 dark:border-slate-700'
                             }`}>
-                                {/* Card header */}
-                                {/* <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800"> */}
                                 <div className="flex justify-end px-4">
-                                    {/* <div className="flex items-center gap-2"> */}
-                                        {/* <span className="text-base">{PROVIDER_ICONS[p]}</span> */}
-                                        {/* <span className="font-bold text-sm text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p]}</span> */}
-                                        {/* <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{PROVIDER_HINTS[p]}</span> */}
-                                    {/* </div> */}
                                     <div className="flex items-center gap-2">
                                         {s.configured && (
                                             <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-2 py-0.5 rounded-full">
@@ -210,23 +192,6 @@ const Settings: React.FC = () => {
                                         </div>
                                     )}
 
-                                    {/* ── Copilot BYOK: Base URL (azure required; openai uses backend default) ── */}
-                                    {p === 'copilot' && s.byokType === 'azure' && (
-                                        <div className="flex flex-col gap-1">
-                                            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                                                Base URL <span className="text-rose-400">*</span>
-                                            </label>
-                                            <input
-                                                type="text"
-                                                value={s.byokBaseUrl ?? ''}
-                                                onChange={e => updateProvider(p, { byokBaseUrl: e.target.value })}
-                                                placeholder="https://my-resource.openai.azure.com"
-                                                className="text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
-                                            />
-                                            <p className="text-[10px] text-slate-400 dark:text-slate-500">Host only — do not include <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">/openai/v1</code></p>
-                                        </div>
-                                    )}
-
                                     {/* Model */}
                                     <div className="flex flex-col gap-1">
                                         <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Model</label>
@@ -235,7 +200,6 @@ const Settings: React.FC = () => {
                                             const defaultModel = p === 'copilot' ? (BYOK_DEFAULT_MODELS[s.byokType ?? 'github'] ?? DEFAULT_MODELS[p]) : DEFAULT_MODELS[p];
                                             const options = getModelOptions(p, s);
                                             if (options) {
-                                                // Include any previously saved custom value so it isn't silently dropped.
                                                 const allOptions = Array.from(new Set([...options, s.model].filter(Boolean)));
                                                 return (
                                                     <select
@@ -267,39 +231,6 @@ const Settings: React.FC = () => {
                                         </p>
                                     </div>
 
-                                    {/* API Key */}
-                                    <div className="flex flex-col gap-1">
-                                        <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                                            {p === 'copilot' && s.byokType === 'anthropic' ? 'Anthropic API Key' :
-                                             p === 'copilot' && s.byokType === 'azure'     ? 'Azure API Key' :
-                                             p === 'copilot' && s.byokType === 'openai'    ? 'OpenAI API Key' :
-                                             p === 'copilot'                               ? 'GitHub Copilot Token' :
-                                             'API Key'}
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                type={s.showKey ? 'text' : 'password'}
-                                                value={s.key}
-                                                onChange={e => updateProvider(p, { key: e.target.value })}
-                                                placeholder={
-                                                    p === 'copilot' && s.byokType === 'anthropic' ? 'sk-ant-...' :
-                                                    p === 'copilot' && s.byokType === 'azure'     ? 'Paste your Azure API key' :
-                                                    p === 'copilot' && s.byokType === 'openai'    ? 'sk-...' :
-                                                    p === 'copilot'                               ? 'Paste your GitHub Copilot token' :
-                                                    `Paste your ${PROVIDER_LABELS[p]} API key`
-                                                }
-                                                className="w-full text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 pr-9 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 transition-all font-mono"
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => updateProvider(p, { showKey: !s.showKey })}
-                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                                            >
-                                                {s.showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                                            </button>
-                                        </div>
-                                    </div>
-
                                     {/* Actions row */}
                                     <div className="flex items-center justify-between pt-1">
                                         <button
@@ -320,8 +251,7 @@ const Settings: React.FC = () => {
                                             )}
                                             <button
                                                 onClick={() => handleSaveProvider(p)}
-                                                disabled={!s.key.trim()}
-                                                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all text-white disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 disabled:cursor-not-allowed ${
+                                                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all text-white ${
                                                     s.saved ? 'bg-emerald-500' : 'bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20'
                                                 }`}
                                             >

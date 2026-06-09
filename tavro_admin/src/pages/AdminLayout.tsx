@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, ShieldCheck, Layers } from 'lucide-react';
+import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, ShieldCheck, Layers, Terminal } from 'lucide-react';
 
 const navItems = [
-    { to: '/connectors', icon: Plug,     label: 'Connectors' },
-    { to: '/settings',   icon: Settings, label: 'Settings' },
+    { to: '/connectors',     icon: Plug,      label: 'Connectors' },
+    { to: '/container-logs', icon: Terminal,  label: 'Container Logs' },
+    { to: '/settings',       icon: Settings,  label: 'Settings' },
 ];
 
 const AdminLayout: React.FC = () => {
