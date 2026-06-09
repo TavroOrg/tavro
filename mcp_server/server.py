@@ -343,14 +343,25 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_agent")
-async def create_agent(original_prompt: str, *, agent_name: str, description: str, instruction: str, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
+async def create_agent(
+    original_prompt: str,
+    *,
+    agent_name: str,
+    description: str,
+    instruction: str,
+    tools: Optional[List[Dict[str, str]]] = None,
+    knowledge_source: Optional[Dict[str, str]] = None,
+    skills: Optional[List[Dict[str, Any]]] = None,
+    data_sources: Optional[List[Dict]] = None,
+) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
-    external tools, knowledge sources, and data source definitions.
-    The `instruction` parameter defines the agent’s behavior and decision-making logic,
+    external tools, knowledge sources, skills, and data source definitions.
+
+    The `instruction` parameter defines the agent's behavior and decision-making logic,
     guiding how it processes inputs and generates responses.
 
     Optional integrations:
@@ -360,12 +371,25 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
     - `knowledge_source`: An external knowledge source the agent can reference:
         {"name": str, "description": str}
 
-    - `data_sources`: Defines the Agent → Table → Column data-lineage hierarchy.
+    - `skills`: A list of skill definitions the agent possesses. Each skill may be provided
+    as a string name or as a dictionary with:
+        {
+            "name": str,
+            "description": str,
+            "tags": List[str],
+            "inputModes": List[str],
+            "outputModes": List[str]
+        }
+    The keys "identifier" or "skill_id" may be used to provide a stable skill ID.
+    The snake_case keys "input_modes" and "output_modes" are also accepted.
+    Skills are registered as part of the agent metadata.
+
+    - `data_sources`: Defines the Agent -> Table -> Column data-lineage hierarchy.
       Each entry represents one table and its columns:
         {
-            "table_name":   str,            (required)
-            "table_domain": str | null,     (optional)
-            "access_level": str | null,     (optional)
+            "table_name": str,
+            "table_domain": str | null,
+            "access_level": str | null,
             "columns": [
                 {"column_name": str, "column_domain": str | null},
                 ...
@@ -373,11 +397,11 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
         }
 
     Args:
-        original_prompt (str): REQUIRED. Copy the user’s EXACT verbatim message here word-for-word.
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
                                Do NOT leave empty, summarize, or paraphrase.
                                Example: if the user typed "create an agent called X that does Y", set this to "create an agent called X that does Y".
         agent_name (str): Unique name of the agent.
-        description (str): Brief description of the agent’s purpose.
+        description (str): Brief description of the agent's purpose.
         instruction (str): Behavioral instructions that define how the agent operates.
                            IMPORTANT: Do NOT invent or reference other agent names (e.g. "Intelligence Agent",
                            "Revenue Agent") unless the user has explicitly named them or they are confirmed to
@@ -385,13 +409,15 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
         tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
+        skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
+            Each skill can include name, description, tags, inputModes/input_modes, and outputModes/output_modes.
         data_sources (Optional[List[Dict]]): Optional data source table/column definitions.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
     """
     print("Create agent requested")
-    
+
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
@@ -404,6 +430,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "skills": skills,
                 "data_sources": data_sources,
             },
             tenant_id,
@@ -415,6 +442,7 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
             instruction=instruction,
             tools=tools,
             knowledge_source=knowledge_source,
+            skills=skills,
             tenant_id=tenant_id,
             data_sources=data_sources,
         )
@@ -427,7 +455,6 @@ async def create_agent(original_prompt: str, *, agent_name: str, description: st
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
-
 @core.tool(name="create_risk_assessment")
 async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict[str, Any]:
     """
@@ -721,19 +748,42 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="update_agent")
-async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, agent_name: Optional[str] = None, description: Optional[str] = None, instruction: Optional[str] = None, tools: Optional[List[Dict[str, str]]] = None, knowledge_source: Optional[Dict[str, str]] = None, data_sources: Optional[List[Dict]] = None) -> Dict[str, Any]:
+async def update_agent(
+    original_prompt: str,
+    *,
+    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    description: Optional[str] = None,
+    instruction: Optional[str] = None,
+    tools: Optional[List[Dict[str, str]]] = None,
+    knowledge_source: Optional[Dict[str, str]] = None,
+    skills: Optional[List[Any]] = None,
+    data_sources: Optional[List[Dict]] = None,
+) -> Dict[str, Any]:
     """
-    Update an existing AI agent’s configuration.
+    Update an existing AI agent's configuration.
 
     Only provided fields are changed. Omitting a field leaves it unchanged.
+    Allows modification of agent metadata such as name, description,
+    behavior instructions, tools, knowledge sources, skills, and data sources.
 
-    - `data_sources`: When provided, **replaces** all existing data-source
-      relationships for this agent. Pass an empty list [] to clear them all.
-      Format per entry:
+    - `skills`: When provided, updates the skill list for this agent. Each skill can be
+      a string name or a dictionary with:
         {
-            "table_name":   str,            (required)
-            "table_domain": str | null,     (optional)
-            "access_level": str | null,     (optional)
+            "name": str,
+            "description": str,
+            "tags": List[str],
+            "inputModes": List[str],
+            "outputModes": List[str]
+        }
+      The keys "identifier"/"skill_id", "input_modes", and "output_modes" are also accepted.
+
+    - `data_sources`: When provided, replaces all existing data-source relationships for
+      this agent. Pass an empty list [] to clear them all. Format per entry:
+        {
+            "table_name": str,
+            "table_domain": str | null,
+            "access_level": str | null,
             "columns": [
                 {"column_name": str, "column_domain": str | null},
                 ...
@@ -750,6 +800,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
+        skills (Optional[List[Any]]): Updated skill list for this agent.
         data_sources (Optional[List[Dict]]): Replacement data source table/column definitions.
                                              Omit to leave existing data sources unchanged.
 
@@ -772,6 +823,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "skills": skills,
                 "data_sources": data_sources,
             },
             tenant_id,
@@ -784,6 +836,7 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
             instruction=instruction,
             tools=tools,
             knowledge_source=knowledge_source,
+            skills=skills,
             tenant_id=str(tenant_id),
             data_sources=data_sources,
         )
@@ -794,7 +847,6 @@ async def update_agent(original_prompt: str, *, agent_id: Optional[str] = None, 
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
-
 @core.tool(name="update_ai_use_case")
 async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None) -> Dict[str, Any]:
     """

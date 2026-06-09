@@ -1483,11 +1483,14 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                 ) models
                     ON models.agent_internal_id = a.agent_internal_id
                 LEFT JOIN LATERAL (
-                    SELECT model_name, model_provider
-                    FROM   {models_table} m
-                    WHERE  m.agent_internal_id = a.agent_internal_id
-                    ORDER  BY COALESCE(m.is_primary_model, FALSE) DESC,
-                              m.created_ts DESC NULLS LAST
+                    SELECT
+                        COALESCE(cat.model_name, rel.model_name) AS model_name,
+                        cat.provider                             AS model_provider
+                    FROM   {models_table} rel
+                    LEFT JOIN {models_catalog_table} cat
+                        ON LOWER(TRIM(cat.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))
+                    WHERE  rel.agent_internal_id = a.agent_internal_id
+                    ORDER  BY rel.created_ts DESC NULLS LAST
                     LIMIT  1
                 ) primary_model ON TRUE
                 LEFT JOIN LATERAL (
@@ -1525,6 +1528,7 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                 applications_table      = _table(CORE_SCHEMA,    "agent_business_applications"),
                 processes_table         = _table(CORE_SCHEMA,    "agent_business_processes"),
                 models_table            = _table(CORE_SCHEMA,    "agent_ai_models"),
+                models_catalog_table    = _table(CORE_SCHEMA,    "ai_models"),
                 governance_events_table = _table(CORE_SCHEMA,    "agent_governance_events"),
                 risk_table              = _table(CORE_SCHEMA,    "agent_risk_assessments"),
             )
