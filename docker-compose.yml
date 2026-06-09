@@ -399,6 +399,9 @@ services:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
       DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      CORE_DB_NAME:            core
+      CURATED_DB_NAME:         curated
+      RISK_MANAGEMENT_DB_NAME: risk_management
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       mcp_host:          localhost
       mcp_port:          "9001"
