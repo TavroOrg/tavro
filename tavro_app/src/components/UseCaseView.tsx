@@ -33,6 +33,7 @@ interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
     businessImpactComponent?: React.ReactNode;
+    headerActions?: React.ReactNode;
     isEditing?: boolean;
     editTitle?: string;
     onEditTitleChange?: (v: string) => void;
@@ -154,7 +155,10 @@ function MetaField({ label, children }: { label: string; children: React.ReactNo
 function formatDate(raw?: string | null): string {
     if (!raw) return '—';
     try {
-        return new Date(raw).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        const date = new Date(raw);
+        if (Number.isNaN(date.getTime())) return raw;
+        const pad = (value: number) => String(value).padStart(2, '0');
+        return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     } catch {
         return raw;
     }
@@ -179,13 +183,14 @@ function getLabel(item: any, fallback = 'N/A'): string {
 }
 
 function getId(item: any): string | undefined {
-    return item?.sys_id ?? item?.id ?? item?.identifier ?? item?.value ?? item?.agent_id;
+    return item?.sys_id ?? item?.id ?? item?.identifier ?? item?.value ?? item?.agent_id ?? item?.business_application_id;
 }
 
 const UseCaseView: React.FC<UseCaseViewProps> = ({
     useCase: uc,
     agentsComponent,
     businessImpactComponent,
+    headerActions,
     isEditing,
     editTitle, onEditTitleChange,
     editDescription, onEditDescriptionChange,
@@ -212,8 +217,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     const owner = uc.owner ?? (uc as any).use_case_owner ?? null;
     const proposedBy = uc.proposed_by ?? (uc as any).proposed_by ?? null;
-    const createdAt = (uc as any).created_at ?? (uc as any).sys_created_on ?? (uc as any).created ?? null;
-    const updatedAt = (uc as any).updated_at ?? (uc as any).sys_updated_on ?? (uc as any).updated ?? null;
+    const createdAt = (uc as any).created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
+    const updatedAt = (uc as any).updated_ts ?? (uc as any).updated_at ?? (uc as any).sys_updated_on ?? null;
     const description = uc.description ?? (uc as any).description ?? null;
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
@@ -307,6 +312,11 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                         </div>
+                        {headerActions && (
+                            <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
+                                {headerActions}
+                            </div>
+                        )}
                     </div>
 
                     {/* Metadata grid */}
@@ -612,36 +622,37 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {/* Business Impact tab */}
                 {activeTab === 'business_impact' && (
                     <div className="animate-fade-in flex flex-col gap-6">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {applications.length > 0 && (
-                                <SectionCard icon={<Building2 size={16} />} title="Applications" count={applications.length}>
-                                    <div className="flex flex-col divide-y divide-slate-100">
-                                        {applications.map((app: any, i: number) => (
-                                            <div key={getId(app) ?? i} className="py-3 first:pt-0 last:pb-0">
-                                                <div className="flex items-center justify-between mb-0.5">
-                                                    {getId(app) ? (
-                                                        <Link to={`/applications/${encodeURIComponent(String(getId(app)))}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                                                            {getLabel(app)}
-                                                        </Link>
-                                                    ) : (
-                                                        <p className="text-sm font-semibold text-slate-800">{getLabel(app)}</p>
-                                                    )}
-                                                    {getLabel(app.business_criticality ?? app.u_business_criticality, '') && (
-                                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">
-                                                            {getLabel(app.business_criticality ?? app.u_business_criticality, '')}
-                                                        </span>
+                        {businessImpactComponent ?? (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {applications.length > 0 && (
+                                    <SectionCard icon={<Building2 size={16} />} title="Applications" count={applications.length}>
+                                        <div className="flex flex-col divide-y divide-slate-100">
+                                            {applications.map((app: any, i: number) => (
+                                                <div key={getId(app) ?? i} className="py-3 first:pt-0 last:pb-0">
+                                                    <div className="flex items-center justify-between mb-0.5">
+                                                        {getId(app) ? (
+                                                            <Link to={`/applications/${encodeURIComponent(String(getId(app)))}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                                                                {getLabel(app)}
+                                                            </Link>
+                                                        ) : (
+                                                            <p className="text-sm font-semibold text-slate-800">{getLabel(app)}</p>
+                                                        )}
+                                                        {getLabel(app.business_criticality ?? app.u_business_criticality, '') && (
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">
+                                                                {getLabel(app.business_criticality ?? app.u_business_criticality, '')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {(app.description ?? app.short_description) && (
+                                                        <p className="text-xs text-slate-400 mt-0.5">{app.description ?? app.short_description}</p>
                                                     )}
                                                 </div>
-                                                {(app.description ?? app.short_description) && (
-                                                    <p className="text-xs text-slate-400 mt-0.5">{app.description ?? app.short_description}</p>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </SectionCard>
-                            )}
-                        </div>
-                        {businessImpactComponent}
+                                            ))}
+                                        </div>
+                                    </SectionCard>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 

@@ -1401,8 +1401,7 @@ class AgentMetadataExporter:
             status,
             solution_approach,
             created_ts,
-            updated_ts,
-            agent_internal_id
+            updated_ts
         )
         VALUES (
             '{tenant_id_clean}',
@@ -1416,8 +1415,7 @@ class AgentMetadataExporter:
             'New',
             '{solution_approach}',
             TIMESTAMP '{now}',
-            TIMESTAMP '{now}',
-            NULL
+            TIMESTAMP '{now}'
         )
         """
 
