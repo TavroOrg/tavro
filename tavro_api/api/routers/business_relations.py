@@ -2456,26 +2456,78 @@ async def get_agent_relations(
                 use_case_rows = await db.execute(
                     text(
                         f"""
-                        SELECT DISTINCT
-                            rel.ai_use_case_id AS identifier,
-                            {name_expr} AS name,
-                            {description_expr} AS description,
-                            {owner_expr} AS owner,
-                            {priority_expr} AS priority,
-                            {status_expr} AS status,
-                            LOWER({name_expr}) AS _sort_key
-                        FROM core.agent_ai_use_cases rel
-                        {uc_join}
-                        WHERE ({' OR '.join(match_parts)})
-                          {tenant_filter}
-                          AND rel.ai_use_case_id IS NOT NULL
-                          AND rel.ai_use_case_id <> ''
-                        ORDER BY _sort_key
+                        SELECT identifier, name, description, owner, priority, status
+                        FROM (
+                            SELECT DISTINCT
+                                rel.ai_use_case_id AS identifier,
+                                {name_expr} AS name,
+                                {description_expr} AS description,
+                                {owner_expr} AS owner,
+                                {priority_expr} AS priority,
+                                {status_expr} AS status
+                            FROM core.agent_ai_use_cases rel
+                            {uc_join}
+                            WHERE ({' OR '.join(match_parts)})
+                              {tenant_filter}
+                              AND rel.ai_use_case_id IS NOT NULL
+                              AND rel.ai_use_case_id <> ''
+                        ) sub
+                        ORDER BY LOWER(name)
                         """
                     ),
                     params,
                 )
                 ai_use_cases = [dict(r._mapping) for r in use_case_rows]
+
+    # Agent-to-agent (parent/child) relationships are stored as a
+    # self-reference on core.agents (parent_agent_internal_id), mirroring
+    # core.business_processes.parent_process_id. We surface both directions:
+    #   - agents whose parent is me        -> my children (direction CHILD)
+    #   - the agent that is my parent       -> my parent  (direction PARENT)
+    child_agents: list[dict[str, Any]] = []
+    agent_cols = await _table_columns(db, "core", "agents")
+    if "parent_agent_internal_id" in agent_cols:
+        name_expr = "agent_name" if "agent_name" in agent_cols else "NULL::text"
+        desc_expr = "agent_description" if "agent_description" in agent_cols else "NULL::text"
+        child_rows = await db.execute(
+            text(
+                f"""
+                SELECT agent_id, agent_internal_id, agent_name, agent_description, relationship_label, direction
+                FROM (
+                    -- Agents whose parent is me (my child agents)
+                    SELECT
+                        a.agent_id AS agent_id,
+                        a.agent_internal_id AS agent_internal_id,
+                        COALESCE(a.{name_expr}, a.agent_id) AS agent_name,
+                        a.{desc_expr} AS agent_description,
+                        NULL::text AS relationship_label,
+                        'CHILD'::text AS direction
+                    FROM core.agents a
+                    WHERE a.parent_agent_internal_id = :agent_internal_id
+                      AND COALESCE(a.is_current, true) = true
+                    UNION
+                    -- The agent that is my parent
+                    SELECT
+                        p.agent_id AS agent_id,
+                        p.agent_internal_id AS agent_internal_id,
+                        COALESCE(p.{name_expr}, p.agent_id) AS agent_name,
+                        p.{desc_expr} AS agent_description,
+                        NULL::text AS relationship_label,
+                        'PARENT'::text AS direction
+                    FROM core.agents me
+                    JOIN core.agents p
+                        ON p.agent_internal_id = me.parent_agent_internal_id
+                        AND COALESCE(p.is_current, true) = true
+                    WHERE me.agent_internal_id = :agent_internal_id
+                      AND COALESCE(me.is_current, true) = true
+                      AND COALESCE(me.parent_agent_internal_id, '') <> ''
+                ) rel
+                ORDER BY LOWER(COALESCE(agent_name, agent_id, ''))
+                """
+            ),
+            {"agent_internal_id": agent["agent_internal_id"]},
+        )
+        child_agents = [dict(r._mapping) for r in child_rows]
 
     return {
         "agent": {
@@ -2487,6 +2539,7 @@ async def get_agent_relations(
         "applications": applications,
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,
+        "child_agents": child_agents,
     }
 
 
@@ -2759,5 +2812,106 @@ async def remove_agent_process_relation(
         "status": "unlinked",
         "agent_id": agent_id,
         "process_id": process_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
+@router.put(
+    "/agents/{agent_id}/child-agents/{child_agent_id}",
+    tags=["Agents"],
+    summary="Link Child Agent to Parent Agent",
+)
+async def add_child_agent_relation(
+    agent_id: str,
+    child_agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    if agent_id == child_agent_id:
+        raise HTTPException(status_code=400, detail="An agent cannot be linked to itself.")
+
+    agent_cols = await _table_columns(db, "core", "agents")
+    if "parent_agent_internal_id" not in agent_cols:
+        raise HTTPException(
+            status_code=500,
+            detail="core.agents.parent_agent_internal_id column not found",
+        )
+
+    parent = await _resolve_agent(db, agent_id)
+    child = await _resolve_agent(db, child_agent_id)
+
+    if parent.get("agent_internal_id") == child.get("agent_internal_id"):
+        raise HTTPException(status_code=400, detail="An agent cannot be linked to itself.")
+
+    # The relationship lives on the child row: set its parent pointer.
+    # One parent -> many children; reassigns the child if it had another parent.
+    await db.execute(
+        text(
+            """
+            UPDATE core.agents
+            SET parent_agent_internal_id = :parent_agent_internal_id,
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE agent_internal_id = :child_agent_internal_id
+            """
+        ),
+        {
+            "parent_agent_internal_id": parent.get("agent_internal_id"),
+            "child_agent_internal_id": child.get("agent_internal_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "linked",
+        "parent_agent_id": agent_id,
+        "child_agent_id": child_agent_id,
+    }
+
+
+@router.delete(
+    "/agents/{agent_id}/child-agents/{child_agent_id}",
+    tags=["Agents"],
+    summary="Unlink Agent-to-Agent Relation",
+)
+async def remove_child_agent_relation(
+    agent_id: str,
+    child_agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent_cols = await _table_columns(db, "core", "agents")
+    if "parent_agent_internal_id" not in agent_cols:
+        raise HTTPException(
+            status_code=500,
+            detail="core.agents.parent_agent_internal_id column not found",
+        )
+
+    agent_a = await _resolve_agent(db, agent_id)
+    agent_b = await _resolve_agent(db, child_agent_id)
+
+    a_internal = agent_a.get("agent_internal_id")
+    b_internal = agent_b.get("agent_internal_id")
+
+    # Clear the parent pointer regardless of which side is parent vs child, so
+    # the link can be unlinked from either agent's Business Impact view.
+    result = await db.execute(
+        text(
+            """
+            UPDATE core.agents
+            SET parent_agent_internal_id = NULL,
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE (agent_internal_id = :a_internal AND parent_agent_internal_id = :b_internal)
+               OR (agent_internal_id = :b_internal AND parent_agent_internal_id = :a_internal)
+            """
+        ),
+        {
+            "a_internal": a_internal,
+            "b_internal": b_internal,
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "related_agent_id": child_agent_id,
         "rows_deleted": result.rowcount or 0,
     }
