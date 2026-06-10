@@ -538,14 +538,14 @@ def get_foundry_token() -> str:
     except Exception as exc:
         if "AADSTS7000215" in str(exc):
             detail = (
-                "Azure rejected AZURE_CLIENT_SECRET. Set it to the client secret value from "
+                "Azure rejected AZURE_AI_FOUNDRY_CLIENT_SECRET. Set it to the client secret value from "
                 "the Entra app registration, not the secret ID, then recreate tavro-api."
             )
         else:
             detail = (
                 "Unable to authenticate to Azure AI Foundry with DefaultAzureCredential. "
                 "When running locally outside Docker, run `az login`. When running in Docker, "
-                "configure AZURE_CLIENT_ID, AZURE_TENANT_ID, and AZURE_CLIENT_SECRET. "
+                "configure AZURE_AI_FOUNDRY_CLIENT_ID, AZURE_AI_FOUNDRY_TENANT_ID, and AZURE_AI_FOUNDRY_CLIENT_SECRET. "
                 "In Azure, configure a managed identity with access to the Foundry project."
             )
         raise HTTPException(
