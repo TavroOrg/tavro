@@ -1527,16 +1527,17 @@ async def add_agent_integration_relation(
         text(
             """
             INSERT INTO core.agent_business_integrations (
-                tenant_id, integration_id, agent_id, agent_internal_id, integration_name,
+                tenant_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tenant_id, :integration_id, :agent_id, :agent_internal_id, :integration_name,
+                :tenant_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             ON CONFLICT (agent_internal_id, integration_id)
             DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
+                agent_name = EXCLUDED.agent_name,
                 integration_name = EXCLUDED.integration_name,
                 updated_ts = EXCLUDED.updated_ts
             """
@@ -1546,6 +1547,7 @@ async def add_agent_integration_relation(
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_name": agent.get("agent_name"),
             "integration_name": integration.get("integration_name") or integration_id,
         },
     )
