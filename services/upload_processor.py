@@ -21,9 +21,6 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from utils.db import db_connection as _db
-from utils.set_environment import set_environment
-
-set_environment("databases")
 
 CORE = os.getenv("CORE_DB_NAME", "core")
 
@@ -93,6 +90,8 @@ def has_meaningful_data(data) -> bool:
             if isinstance(item, dict):
                 if any(is_meaningful(v) for v in item.values()):
                     return True
+            elif is_meaningful(item):
+                return True
         return False
     return False
 
@@ -748,6 +747,117 @@ def _upsert_agent_ai_use_cases(conn, card: dict, agent_internal_id: str, now_str
     """, f"ai_use_cases associated-count sync ({len(select_rows)})")
 
 
+# Step 8b — core.agent_skills (many-to-many relationship with skills)
+# ---------------------------------------------------------------------------
+
+def _upsert_agent_skills(conn, card: dict, agent_internal_id: str, now_str: str):
+    ident = card.get("identification", {})
+    skills = card.get("skills", []) or []
+    if not has_meaningful_data(skills):
+        return
+
+    tenant_id = ident.get("tenant_id")
+    if not tenant_id:
+        rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
+        if rows and rows[0].get("tenant_id"):
+            tenant_id = rows[0].get("tenant_id")
+    tenant_id = tenant_id or ""
+    agent_id = ident.get("agent_id")
+    agent_name = ident.get("agent_name") or card.get("name")
+    select_rows = []
+    seen_skill_ids = set()
+
+    for skill in skills:
+        if isinstance(skill, str):
+            skill_id = _clean_text(skill)
+            skill_name = skill_id
+            description = None
+            tags = []
+            input_modes = []
+            output_modes = []
+        elif isinstance(skill, dict):
+            skill_id = (
+                _clean_text(skill.get("identifier"))
+                or _clean_text(skill.get("skill_id"))
+                or _clean_text(skill.get("id"))
+                or _clean_text(skill.get("name"))
+            )
+            skill_name = (
+                _clean_text(skill.get("name"))
+                or _clean_text(skill.get("skill_name"))
+                or _clean_text(skill.get("id"))
+                or skill_id
+            )
+            description = _clean_text(skill.get("description"))
+            tags = skill.get("tags") if isinstance(skill.get("tags"), list) else []
+            input_modes = skill.get("inputModes") or skill.get("input_modes") or []
+            output_modes = skill.get("outputModes") or skill.get("output_modes") or []
+            input_modes = input_modes if isinstance(input_modes, list) else []
+            output_modes = output_modes if isinstance(output_modes, list) else []
+        else:
+            continue
+
+        if not skill_id:
+            continue
+        skill_key = skill_id.strip().lower()
+        if skill_key in seen_skill_ids:
+            continue
+        seen_skill_ids.add(skill_key)
+
+        select_rows.append(f"""
+            SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tenant_id)} AS tenant_id,
+                   {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name,
+                   {_sq(skill_id)} AS skill_id, {_sq(skill_name)} AS skill_name,
+                   {_sq(description)} AS description,
+                   {_array_str(tags)} AS tags,
+                   {_array_str(input_modes)} AS input_modes,
+                   {_array_str(output_modes)} AS output_modes,
+                   TIMESTAMP '{now_str}' AS now_ts
+        """.strip())
+
+    if not select_rows:
+        return
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+
+    # Upsert master skills table
+    _exec(conn, f"""
+        INSERT INTO {CORE}.skills (
+            tenant_id, skill_id, name, description,
+            tags, input_modes, output_modes,
+            created_ts, updated_ts
+        )
+        SELECT DISTINCT tenant_id, skill_id, skill_name, description,
+               tags, input_modes, output_modes,
+               now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (tenant_id, skill_id)
+        DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            tags = EXCLUDED.tags,
+            input_modes = EXCLUDED.input_modes,
+            output_modes = EXCLUDED.output_modes,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"skills upsert ({len(select_rows)})")
+
+    # Upsert junction table (many-to-many)
+    _exec(conn, f"""
+        INSERT INTO {CORE}.agent_skills (
+            tenant_id, skill_id, skill_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts
+        )
+        SELECT tenant_id, skill_id, skill_name, agent_id, agent_name, agent_internal_id, now_ts, now_ts
+        FROM ({union_all}) AS s
+        WHERE agent_id IS NOT NULL AND agent_id <> ''
+        ON CONFLICT (tenant_id, skill_id, agent_id)
+        DO UPDATE SET
+            skill_name = EXCLUDED.skill_name,
+            agent_name = EXCLUDED.agent_name,
+            agent_internal_id = EXCLUDED.agent_internal_id,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"agent_skills upsert ({len(select_rows)})")
+
+
 # ---------------------------------------------------------------------------
 # Step 9 — core.business_processes
 # ---------------------------------------------------------------------------
@@ -1130,29 +1240,53 @@ def _upsert_agent_ai_models(conn, card: dict, agent_internal_id: str, now_str: s
     if not has_meaningful_data(models):
         return
     agent_id = ident.get("agent_id")
+    # Deterministic catalog id from model name (shared core.ai_models row across
+    # re-ingests and agents). Descriptive attributes go to the catalog; the
+    # junction holds only the link.
     select_rows = [f"""
-        SELECT NULL AS ai_model_id,
+        SELECT md5(lower(trim({_sq(m.get('name'))}))) AS ai_model_id,
                {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
                {_sq(m.get('name'))} AS model_name, {_sq(m.get('owner'))} AS owner,
                {_sq(m.get('department_executive'))} AS department_executive,
                {_sq(m.get('description'))} AS description,
+               {_sq(m.get('model_provider') or m.get('provider'))} AS provider,
+               {_sq(m.get('model_version') or m.get('version'))} AS version_number,
+               {_sq(m.get('model_type') or m.get('type'))} AS model_type,
                TIMESTAMP '{now_str}' AS now_ts
+        WHERE NULLIF(trim({_sq(m.get('name'))}), '') IS NOT NULL
     """.strip() for m in models]
     union_all = "\nUNION ALL\n".join(select_rows)
+    # 1) Catalog upsert.
+    _exec(conn, f"""
+        INSERT INTO {CORE}.ai_models (
+            ai_model_id, model_name, owner, department_executive, description,
+            provider, version_number, model_type, no_of_associated_agents, created_ts, updated_ts
+        )
+        SELECT ai_model_id, model_name, owner, department_executive, description,
+               provider, version_number, model_type, 0, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (ai_model_id) DO UPDATE SET
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), {CORE}.ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, {CORE}.ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, {CORE}.ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, {CORE}.ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, {CORE}.ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, {CORE}.ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, {CORE}.ai_models.model_type),
+            updated_ts           = EXCLUDED.updated_ts
+    """, f"ai_models catalog upsert ({len(models)})")
+    # 2) Junction link upsert.
     _exec(conn, f"""
         INSERT INTO {CORE}.agent_ai_models (
-            ai_model_id, agent_internal_id, agent_id,
-            model_name, owner, department_executive, description, created_ts, updated_ts
+            ai_model_id, model_name, agent_id, agent_internal_id, created_ts, updated_ts
         )
-        SELECT ai_model_id, agent_internal_id, agent_id,
-               model_name, owner, department_executive, description, now_ts, now_ts
+        SELECT ai_model_id, model_name, agent_id, agent_internal_id, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, model_name)
+        ON CONFLICT (agent_internal_id, ai_model_id)
         DO UPDATE SET
-            agent_id = EXCLUDED.agent_id, owner = EXCLUDED.owner,
-            department_executive = EXCLUDED.department_executive,
-            description = EXCLUDED.description, updated_ts = EXCLUDED.updated_ts
-    """, f"agent_ai_models upsert ({len(models)})")
+            model_name = EXCLUDED.model_name, agent_id = EXCLUDED.agent_id,
+            updated_ts = EXCLUDED.updated_ts
+    """, f"agent_ai_models link upsert ({len(models)})")
 
 
 # ---------------------------------------------------------------------------
@@ -1321,6 +1455,7 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
                 (" 6/20 - agent_knowledge_sources",         _upsert_agent_knowledge_source),
                 (" 7/20 - agent_llm_models",                _upsert_agent_llm_models),
                 (" 8/20 - agent_ai_use_cases",              _upsert_agent_ai_use_cases),
+                (" 8b/20 - agent_skills",                   _upsert_agent_skills),
                 (" 9/20 - business_processes",              _upsert_business_processes),
                 ("10/20 - business_applications",           _upsert_business_applications),
                 ("11/20 - agent_business_processes",        _upsert_agent_business_processes),

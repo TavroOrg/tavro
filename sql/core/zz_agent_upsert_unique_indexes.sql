@@ -53,7 +53,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_regulations_or_frameworks
 ON core.agent_regulations_or_frameworks (agent_internal_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_ai_models
-ON core.agent_ai_models (agent_internal_id, model_name);
+ON core.agent_ai_models (agent_internal_id, ai_model_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
+ON core.ai_models (ai_model_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
@@ -76,6 +79,9 @@ ON core.agent_tables (tenant_id, agent_id, table_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_table_columns
 ON core.table_columns (tenant_id, table_id, column_name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_skills
+ON core.skills (tenant_id, skill_id);
 
 DO $$
 BEGIN
@@ -294,6 +300,65 @@ BEGIN
           AND a.ctid < b.ctid;
     END IF;
 
+    IF to_regclass('core.agent_skills') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'skill_id'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN skill_id TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'skill_name'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN skill_name TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_skills' AND column_name = 'agent_name'
+        ) THEN
+            ALTER TABLE core.agent_skills ADD COLUMN agent_name TEXT;
+        END IF;
+
+        UPDATE core.agent_skills rel
+        SET agent_name = COALESCE(NULLIF(rel.agent_name, ''), ag.agent_name)
+        FROM core.agents ag
+        WHERE rel.agent_id = ag.agent_id
+          AND COALESCE(ag.is_current, true) = true;
+
+        DELETE FROM core.agent_skills a
+        USING core.agent_skills b
+        WHERE COALESCE(a.tenant_id, '') = COALESCE(b.tenant_id, '')
+          AND COALESCE(a.skill_id, '') = COALESCE(b.skill_id, '')
+          AND COALESCE(a.agent_id, '') = COALESCE(b.agent_id, '')
+          AND a.ctid < b.ctid;
+    END IF;
+
+    IF to_regclass('core.skills') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'tags'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN tags TEXT[];
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'input_modes'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN input_modes TEXT[];
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'skills' AND column_name = 'output_modes'
+        ) THEN
+            ALTER TABLE core.skills ADD COLUMN output_modes TEXT[];
+        END IF;
+    END IF;
+
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
         DELETE FROM core.agent_ai_use_cases a
         USING core.agent_ai_use_cases b
@@ -313,6 +378,12 @@ BEGIN
         DROP INDEX IF EXISTS core.ux_core_agent_ai_use_cases;
         CREATE UNIQUE INDEX ux_core_agent_ai_use_cases
         ON core.agent_ai_use_cases (tenant_id, ai_use_case_id, agent_id);
+    END IF;
+
+    IF to_regclass('core.agent_skills') IS NOT NULL THEN
+        DROP INDEX IF EXISTS core.ux_core_agent_skills;
+        CREATE UNIQUE INDEX ux_core_agent_skills
+        ON core.agent_skills (tenant_id, skill_id, agent_id);
     END IF;
 
     IF NOT EXISTS (
@@ -488,6 +559,48 @@ BEGIN
         ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS mcp_server_id;
     END IF;
 
+
+    IF to_regclass('core.ai_use_case_business_applications') IS NOT NULL THEN
+        EXECUTE '
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_applications
+            ON core.ai_use_case_business_applications (ai_use_case_id, business_application_id, tenant_id)
+        ';
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_ai_use_case_business_applications_business_application'
+        ) THEN
+            ALTER TABLE core.ai_use_case_business_applications
+            ADD CONSTRAINT fk_core_ai_use_case_business_applications_business_application
+            FOREIGN KEY (business_application_id)
+            REFERENCES core.business_applications (business_application_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- AI Models junction: ensure agent_name exists for display (additive).
+    IF to_regclass('core.agent_ai_models') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_ai_models'
+            AND column_name = 'agent_name'
+        ) THEN
+            ALTER TABLE core.agent_ai_models ADD COLUMN agent_name TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_agent_ai_models_ai_model'
+        ) THEN
+            ALTER TABLE core.agent_ai_models
+            ADD CONSTRAINT fk_core_agent_ai_models_ai_model
+            FOREIGN KEY (ai_model_id)
+            REFERENCES core.ai_models (ai_model_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
 
     -- Agent-to-agent (parent/child) self-reference on core.agents.
     -- Mirrors business_processes.parent_process_id. No FK is added because

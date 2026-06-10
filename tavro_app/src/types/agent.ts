@@ -156,9 +156,16 @@ export interface AgentControl {
 
 export interface AgentSkill {
   id?: string | null;
+  identifier?: string | null;
+  skill_id?: string | null;
   name?: string | null;
+  skill_name?: string | null;
   description?: string | null;
   tags?: string[] | null;
+  inputModes?: string[] | null;
+  outputModes?: string[] | null;
+  input_modes?: string[] | null;
+  output_modes?: string[] | null;
 }
 
 // ── Instruction Set ───────────────────────────────────────────────────────────

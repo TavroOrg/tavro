@@ -57,6 +57,23 @@ export interface AgentUpdatePayload {
     agent_name?: string;
     description?: string;
     instruction?: string;
+    skills?: Array<{
+        id?: string;
+        identifier?: string;
+        skill_id?: string;
+        name?: string;
+        skill_name?: string;
+        description?: string;
+        tags?: string[];
+        inputModes?: string[];
+        outputModes?: string[];
+        input_modes?: string[];
+        output_modes?: string[];
+        inputBounds?: string[];
+        outputBounds?: string[];
+        input_bounds?: string[];
+        output_bounds?: string[];
+    } | string>;
 }
 
 export interface AgentCatalogResponse {
