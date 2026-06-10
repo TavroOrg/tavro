@@ -1242,13 +1242,13 @@ def _upsert_agent_ai_models(conn, card: dict, agent_internal_id: str, now_str: s
                provider, version_number, model_type, 0, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (ai_model_id) DO UPDATE SET
-            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), {CORE}.ai_models.model_name),
-            owner                = COALESCE(EXCLUDED.owner, {CORE}.ai_models.owner),
-            department_executive = COALESCE(EXCLUDED.department_executive, {CORE}.ai_models.department_executive),
-            description          = COALESCE(EXCLUDED.description, {CORE}.ai_models.description),
-            provider             = COALESCE(EXCLUDED.provider, {CORE}.ai_models.provider),
-            version_number       = COALESCE(EXCLUDED.version_number, {CORE}.ai_models.version_number),
-            model_type           = COALESCE(EXCLUDED.model_type, {CORE}.ai_models.model_type),
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, ai_models.model_type),
             updated_ts           = EXCLUDED.updated_ts
     """, f"ai_models catalog upsert ({len(models)})")
     # 2) Junction link upsert.
