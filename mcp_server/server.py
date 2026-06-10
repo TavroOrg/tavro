@@ -1162,8 +1162,37 @@ async def generate_agent_artifacts(
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 
+_UNICODE_REPLACEMENTS = {
+    "—": "--",   # em-dash —
+    "–": "-",    # en-dash –
+    "‒": "-",    # figure dash ‒
+    "―": "--",   # horizontal bar ―
+    "‘": "'",    # left single quote '
+    "’": "'",    # right single quote '
+    "“": '"',    # left double quote "
+    "”": '"',    # right double quote "
+    "…": "...",  # ellipsis …
+    " ": " ",    # non-breaking space
+    "•": "-",    # bullet •
+    "‣": "-",    # triangular bullet ‣
+    "●": "-",    # black circle ●
+    "→": "->",   # right arrow →
+    "←": "<-",   # left arrow ←
+    "×": "x",    # multiplication ×
+    "®": "(R)",  # registered ®
+    "©": "(C)",  # copyright ©
+    "™": "(TM)", # trademark ™
+    "‐": "-",    # hyphen ‐
+    "‑": "-",    # non-breaking hyphen ‑
+}
+
+
 def _markdown_to_pdf(markdown_content: str) -> bytes:
     """Convert a markdown string to a PDF byte string using fpdf2."""
+    for char, replacement in _UNICODE_REPLACEMENTS.items():
+        markdown_content = markdown_content.replace(char, replacement)
+    markdown_content = markdown_content.encode("latin-1", errors="replace").decode("latin-1")
+
     from fpdf import FPDF
 
     class _PDF(FPDF):
@@ -1181,13 +1210,40 @@ def _markdown_to_pdf(markdown_content: str) -> bytes:
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=18)
 
+    def _to_latin1(text: str) -> str:
+        """Replace Unicode characters unsupported by Helvetica with ASCII equivalents."""
+        replacements = {
+            "—": "--",   # em-dash
+            "–": "-",    # en-dash
+            "‒": "-",    # figure dash
+            "―": "--",   # horizontal bar
+            "‘": "'",    # left single quote
+            "’": "'",    # right single quote
+            "“": '"',    # left double quote
+            "”": '"',    # right double quote
+            "…": "...",  # ellipsis
+            " ": " ",    # non-breaking space
+            "•": "-",    # bullet
+            "‣": "-",    # triangular bullet
+            "●": "-",    # black circle
+            "→": "->",   # right arrow
+            "←": "<-",   # left arrow
+            "×": "x",    # multiplication sign
+            "®": "(R)",  # registered
+            "©": "(C)",  # copyright
+            "™": "(TM)", # trademark
+        }
+        for char, replacement in replacements.items():
+            text = text.replace(char, replacement)
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
     def _strip_inline(text: str) -> str:
         import re
         text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
         text = re.sub(r"\*(.+?)\*", r"\1", text)
         text = re.sub(r"`(.+?)`", r"\1", text)
         text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-        return text.strip()
+        return _to_latin1(text.strip())
 
     def _is_table_sep(line: str) -> bool:
         s = line.strip()
@@ -1249,30 +1305,88 @@ def _markdown_to_pdf(markdown_content: str) -> bytes:
             pdf.multi_cell(0, 6, _strip_inline(stripped))
 
         elif stripped.startswith("|") and not _is_table_sep(stripped):
-            cols = [c.strip() for c in stripped.strip("|").split("|")]
-            col_w = (pdf.w - pdf.l_margin - pdf.r_margin) / max(len(cols), 1)
+            cols = [_strip_inline(c.strip()) for c in stripped.strip("|").split("|")]
+            n = max(len(cols), 1)
+            avail_w = pdf.w - pdf.l_margin - pdf.r_margin
             is_header = i + 1 < len(lines) and _is_table_sep(lines[i + 1])
+
+            if n == 1:
+                col_widths = [avail_w]
+            elif n == 2:
+                col_widths = [avail_w * 0.38, avail_w * 0.62]
+            elif n == 3:
+                col_widths = [avail_w * 0.30, avail_w * 0.17, avail_w * 0.53]
+            else:
+                col_widths = [avail_w / n] * n
+
+            line_h = 5
+
+            def _render_row(col_texts, widths, font_style, fill_color, text_color, do_fill):
+                pdf.set_font("Helvetica", font_style, 9)
+                space_w = pdf.get_string_width(" ")
+
+                # --- Step 1: calculate uniform row height via word-wrap simulation ---
+                max_lines = 1
+                for text, w in zip(col_texts, widths):
+                    inner = max(w - 2, 1)
+                    ln_count, cur_w = 1, 0.0
+                    for word in (text or "").split(" "):
+                        ww = pdf.get_string_width(word)
+                        if ww >= inner:
+                            # word wider than cell: fpdf2 splits mid-character
+                            extra = int(ww / inner)
+                            ln_count += extra
+                            cur_w = ww - extra * inner
+                        elif cur_w == 0:
+                            cur_w = ww
+                        elif cur_w + space_w + ww <= inner:
+                            cur_w += space_w + ww
+                        else:
+                            ln_count += 1
+                            cur_w = ww
+                    max_lines = max(max_lines, ln_count)
+
+                row_h = max_lines * line_h + 1  # +1 mm bottom breathing room
+
+                if pdf.will_page_break(row_h):
+                    pdf.add_page()
+
+                x0, y0 = pdf.l_margin, pdf.get_y()
+
+                # --- Step 2: draw uniform-height borders as rect() ---
+                # All cells get identical height rectangles — borders always align.
+                pdf.set_draw_color(100, 100, 100)
+                cur_x = x0
+                for w in widths:
+                    style = "FD" if do_fill else "D"
+                    if do_fill:
+                        pdf.set_fill_color(*fill_color)
+                    pdf.rect(cur_x, y0, w, row_h, style)
+                    cur_x += w
+
+                # --- Step 3: render text inside each cell, border=0 ---
+                padding = 1.0  # mm inset from the border
+                pdf.set_text_color(*text_color)
+                cur_x = x0
+                for text, w in zip(col_texts, widths):
+                    pdf.set_xy(cur_x + padding, y0 + padding)
+                    pdf.multi_cell(w - 2 * padding, line_h, text,
+                                   border=0, fill=False, align="L")
+                    cur_x += w
+
+                pdf.set_xy(x0, y0 + row_h)
+
             if is_header:
-                pdf.set_font("Helvetica", "B", 10)
-                pdf.set_text_color(40, 40, 40)
-                pdf.set_fill_color(230, 230, 230)
-                for col in cols:
-                    pdf.cell(col_w, 7, _strip_inline(col)[:35], border=1, fill=True)
-                pdf.ln()
+                _render_row(cols, col_widths, "B", (215, 215, 215), (30, 30, 30), True)
                 i += 2
                 continue
             else:
-                pdf.set_font("Helvetica", "", 10)
-                pdf.set_text_color(60, 60, 60)
-                pdf.set_fill_color(255, 255, 255)
-                for col in cols:
-                    pdf.cell(col_w, 6, _strip_inline(col)[:35], border=1)
-                pdf.ln()
+                _render_row(cols, col_widths, "", (255, 255, 255), (60, 60, 60), False)
 
         elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
             pdf.set_font("Helvetica", "B", 11)
             pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(0, 6, stripped[2:-2].strip())
+            pdf.multi_cell(0, 6, _to_latin1(stripped[2:-2].strip()))
 
         elif stripped in ("---", "***", "___"):
             pdf.ln(2)
