@@ -28,77 +28,6 @@ set_environment("databases")
 CORE = os.getenv("CORE_DB_NAME", "core")
 
 
-def _ensure_tools_tables(conn) -> None:
-    """Idempotent DDL migration: create core.tools master table and slim agent_tools if needed."""
-    _exec(conn, f"""
-        CREATE TABLE IF NOT EXISTS {CORE}.tools (
-            tenant_id TEXT,
-            tool_id TEXT,
-            tool_name TEXT,
-            tool_description TEXT,
-            delegation_possible boolean,
-            allowed_delegates TEXT,
-            input_schema_json_text TEXT,
-            output_schema_json_text TEXT,
-            default_config_json_text TEXT,
-            mcp_server_id TEXT,
-            created_ts timestamp,
-            updated_ts timestamp
-        )
-    """)
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT 1 FROM pg_indexes
-            WHERE schemaname = '{CORE}' AND indexname = 'ux_core_tools'
-        """)
-        if not cur.fetchone():
-            cur.execute(f"CREATE UNIQUE INDEX ux_core_tools ON {CORE}.tools (tool_id)")
-
-    # Migrate existing agent_tools master data to core.tools (once only)
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = '{CORE}' AND table_name = 'agent_tools'
-              AND column_name = 'tool_description'
-        """)
-        if cur.fetchone():
-            cur.execute(f"""
-                INSERT INTO {CORE}.tools (
-                    tenant_id, tool_id, tool_name, tool_description,
-                    delegation_possible, allowed_delegates,
-                    input_schema_json_text, output_schema_json_text,
-                    default_config_json_text, mcp_server_id,
-                    created_ts, updated_ts
-                )
-                SELECT DISTINCT ON (tool_id)
-                    tenant_id, tool_id, tool_name, tool_description,
-                    delegation_possible, allowed_delegates,
-                    input_schema_json_text, output_schema_json_text,
-                    default_config_json_text, mcp_server_id,
-                    COALESCE(created_ts, CURRENT_TIMESTAMP),
-                    COALESCE(updated_ts, CURRENT_TIMESTAMP)
-                FROM {CORE}.agent_tools
-                WHERE tool_id IS NOT NULL AND tool_id <> ''
-                ORDER BY tool_id, updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
-                ON CONFLICT (tool_id) DO UPDATE SET
-                    tool_name                = EXCLUDED.tool_name,
-                    tool_description         = EXCLUDED.tool_description,
-                    delegation_possible      = EXCLUDED.delegation_possible,
-                    allowed_delegates        = EXCLUDED.allowed_delegates,
-                    input_schema_json_text   = EXCLUDED.input_schema_json_text,
-                    output_schema_json_text  = EXCLUDED.output_schema_json_text,
-                    default_config_json_text = EXCLUDED.default_config_json_text,
-                    mcp_server_id            = EXCLUDED.mcp_server_id,
-                    updated_ts               = EXCLUDED.updated_ts
-            """)
-            for col in ("tool_description", "delegation_possible", "allowed_delegates",
-                        "input_schema_json_text", "output_schema_json_text",
-                        "default_config_json_text", "mcp_server_id"):
-                cur.execute(f"""
-                    ALTER TABLE {CORE}.agent_tools DROP COLUMN IF EXISTS {col}
-                """)
-
-
 def _exec(conn, sql: str, label: str = "") -> None:
     with conn.cursor() as cur:
         cur.execute(sql)
@@ -1374,9 +1303,6 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
         print(f"[WARN] source_hash check failed, continuing: {e}")
 
     try:
-        with _db() as conn:
-            _ensure_tools_tables(conn)
-
         with _db() as conn:
             print("[INFO] Step  1/20 - agents")
             agent_internal_id = _upsert_agent(conn, card_dict, now_str, incoming_source_hash, tenant_id)

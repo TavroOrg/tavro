@@ -1216,9 +1216,10 @@ class AgentMetadataExporter:
         )
         """)
 
-        # 3. tools (ONLY name + description)
+        # 3. tools — insert master data into core.tools, relation into core.agent_tools
         if tools:
-            values_list = []
+            tools_master_values = []
+            relation_values = []
             for tool in tools:
                 tool_id = str(uuid.uuid4())
                 tool_ids_for_card.append(tool_id)
@@ -1227,14 +1228,23 @@ class AgentMetadataExporter:
                 if name:
                     tool_name_to_id[str(tool.get("name")).strip().lower()] = tool_id
 
-                values_list.append(f"""
+                tools_master_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{tool_id}',
+                    '{name}',
+                    '{desc}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
+                relation_values.append(f"""
                 (
                     {tenant_id_value}
                     '{agent_internal_id}',
                     '{tool_id}',
                     '{agent_id}',
                     '{name}',
-                    '{desc}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
                 )
@@ -1256,21 +1266,39 @@ class AgentMetadataExporter:
                 )
                 """)
 
-            tools_query = f"""
-            INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.tools (
                 {tenant_id_column}
-                agent_internal_id,
                 tool_id,
-                agent_id,
                 tool_name,
                 tool_description,
                 created_ts,
                 updated_ts
             )
             VALUES
-            {",".join(values_list)}
-            """
-            queries.append(tools_query)
+            {",".join(tools_master_values)}
+            ON CONFLICT (tool_id) DO UPDATE SET
+                tool_name        = EXCLUDED.tool_name,
+                tool_description = EXCLUDED.tool_description,
+                updated_ts       = EXCLUDED.updated_ts
+            """)
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
+                {tenant_id_column}
+                agent_internal_id,
+                tool_id,
+                agent_id,
+                tool_name,
+                created_ts,
+                updated_ts
+            )
+            VALUES
+            {",".join(relation_values)}
+            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                agent_id   = EXCLUDED.agent_id,
+                tool_name  = EXCLUDED.tool_name,
+                updated_ts = EXCLUDED.updated_ts
+            """)
 
         for table_index, table in enumerate(tables_payload):
             tool_name_key = str(table.get("tool_name") or "").strip().lower()
@@ -2293,15 +2321,20 @@ class AgentMetadataExporter:
             cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
 
         if tools:
-            tool_rows = []
+            tool_master_rows = []
+            tool_relation_rows = []
             tool_ds_rows = []
             for t in tools:
                 tool_id = str(uuid.uuid4())
                 t_name = cls.sanitize(t.get("name", ""))
                 t_desc = cls.sanitize(t.get("description", ""))
-                tool_rows.append(
+                tool_master_rows.append(
+                    f"({tenant_val}'{tool_id}', '{t_name}', '{t_desc}', "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                )
+                tool_relation_rows.append(
                     f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
-                    f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                    f"'{t_name}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
                 )
                 tool_ds_rows.append(
                     f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
@@ -2311,9 +2344,20 @@ class AgentMetadataExporter:
                     f"'{tool_id}', NULL, '{t_name}', 'Tool')"
                 )
             cls.execute_dml(
+                f"INSERT INTO {cls.CORE_DB_NAME}.tools "
+                f"({tenant_col}tool_id, tool_name, tool_description, created_ts, updated_ts) "
+                f"VALUES {','.join(tool_master_rows)} "
+                f"ON CONFLICT (tool_id) DO UPDATE SET "
+                f"tool_name = EXCLUDED.tool_name, tool_description = EXCLUDED.tool_description, "
+                f"updated_ts = EXCLUDED.updated_ts"
+            )
+            cls.execute_dml(
                 f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
-                f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, tool_description, created_ts, updated_ts) "
-                f"VALUES {','.join(tool_rows)}"
+                f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, created_ts, updated_ts) "
+                f"VALUES {','.join(tool_relation_rows)} "
+                f"ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET "
+                f"agent_id = EXCLUDED.agent_id, tool_name = EXCLUDED.tool_name, "
+                f"updated_ts = EXCLUDED.updated_ts"
             )
             cls.execute_dml(
                 f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
