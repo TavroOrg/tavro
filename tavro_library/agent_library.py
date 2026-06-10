@@ -2546,7 +2546,7 @@ class AgentMetadataExporter:
                     )
                     tool_rows.append(
                         f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
-                        f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                        f"'{cls.sanitize(effective_agent_name)}', '{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                     tool_ds_rows.append(
                         f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
@@ -2565,7 +2565,7 @@ class AgentMetadataExporter:
                 )
                 cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
-                    f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, tool_description, created_ts, updated_ts) "
+                    f"({tenant_col}agent_internal_id, tool_id, agent_id, agent_name, tool_name, tool_description, created_ts, updated_ts) "
                     f"VALUES {','.join(tool_rows)}"
                 )
                 cls.execute_dml(

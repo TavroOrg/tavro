@@ -524,14 +524,14 @@ BEGIN
                 tenant_id, tool_id, tool_name, tool_description,
                 delegation_possible, allowed_delegates,
                 input_schema_json_text, output_schema_json_text,
-                default_config_json_text, mcp_server_id,
+                default_config_json_text,
                 created_ts, updated_ts
             )
             SELECT DISTINCT ON (tool_id)
                 tenant_id, tool_id, tool_name, tool_description,
                 delegation_possible, allowed_delegates,
                 input_schema_json_text, output_schema_json_text,
-                default_config_json_text, mcp_server_id,
+                default_config_json_text,
                 COALESCE(created_ts, CURRENT_TIMESTAMP),
                 COALESCE(updated_ts, CURRENT_TIMESTAMP)
             FROM core.agent_tools
@@ -546,7 +546,6 @@ BEGIN
                 input_schema_json_text   = EXCLUDED.input_schema_json_text,
                 output_schema_json_text  = EXCLUDED.output_schema_json_text,
                 default_config_json_text = EXCLUDED.default_config_json_text,
-                mcp_server_id            = EXCLUDED.mcp_server_id,
                 updated_ts               = EXCLUDED.updated_ts
         ';
 
@@ -556,7 +555,6 @@ BEGIN
         ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS input_schema_json_text;
         ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS output_schema_json_text;
         ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS default_config_json_text;
-        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS mcp_server_id;
     END IF;
 
 

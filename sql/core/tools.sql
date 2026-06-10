@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS core.tools (
 	input_schema_json_text TEXT,
 	output_schema_json_text TEXT,
 	default_config_json_text TEXT,
-	mcp_server_id TEXT,
 	created_ts timestamp,
 	updated_ts timestamp
 );
