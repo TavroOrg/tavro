@@ -134,6 +134,19 @@ class UseCaseApiService {
         });
     }
 
+    async linkApplication(useCaseId: string, applicationId: string): Promise<{ message: string; associated_count: number }> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/applications`, {
+            method: 'POST',
+            body: JSON.stringify({ application_id: applicationId }),
+        });
+    }
+
+    async unlinkApplication(useCaseId: string, applicationId: string): Promise<{ message: string; associated_count: number }> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/applications/${encodeURIComponent(applicationId)}`, {
+            method: 'DELETE',
+        });
+    }
+
     async linkProcess(useCaseId: string, processId: string): Promise<{ message: string; associated_count: number }> {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}/processes`, {
             method: 'POST',
