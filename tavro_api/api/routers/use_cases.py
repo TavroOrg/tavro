@@ -544,6 +544,12 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
             text(f"DELETE FROM {CORE}.agent_ai_use_cases WHERE ai_use_case_id = :uid"),
             {"uid": use_case_id},
         )
+        # Clean up AI Model <-> AI Use Case links (guarded: table may not exist yet).
+        if (await db.execute(text("SELECT to_regclass(:t)"), {"t": f"{CORE}.ai_model_ai_use_cases"})).scalar():
+            await db.execute(
+                text(f"DELETE FROM {CORE}.ai_model_ai_use_cases WHERE ai_use_case_id = :uid"),
+                {"uid": use_case_id},
+            )
         await db.execute(
             text(f"DELETE FROM {CORE}.ai_use_cases WHERE ai_use_case_id = :uid"),
             {"uid": use_case_id},

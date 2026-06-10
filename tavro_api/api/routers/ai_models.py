@@ -115,6 +115,10 @@ class LinkAgentRequest(BaseModel):
     agent_id: str
 
 
+class LinkUseCaseRequest(BaseModel):
+    ai_use_case_id: str
+
+
 class AiModelAttachmentCreate(BaseModel):
     filename: str
     mime_type: str
@@ -238,6 +242,30 @@ async def _ensure_ai_model_tables(db: AsyncSession) -> None:
             f"""
             CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_ai_models
             ON {CORE}.agent_ai_models (agent_internal_id, ai_model_id)
+            """
+        )
+    )
+    # Many-to-many junction: AI Model <-> AI Use Case.
+    await db.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {CORE}.ai_model_ai_use_cases (
+                tenant_id TEXT,
+                ai_model_id TEXT,
+                ai_model_name TEXT,
+                ai_use_case_id TEXT,
+                ai_use_case_name TEXT,
+                created_ts timestamp,
+                updated_ts timestamp
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_ai_use_cases
+            ON {CORE}.ai_model_ai_use_cases (ai_model_id, ai_use_case_id)
             """
         )
     )
@@ -468,8 +496,28 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
         """),
         {"mid": mid},
     )
+    use_case_rows = await db.execute(
+        text(f"""
+            SELECT
+                rel.ai_use_case_id,
+                COALESCE(uc.name, rel.ai_use_case_name, rel.ai_use_case_id) AS ai_use_case_name,
+                uc.description,
+                uc.owner,
+                uc.priority,
+                uc.status
+            FROM {CORE}.ai_model_ai_use_cases rel
+            LEFT JOIN {CORE}.ai_use_cases uc
+                ON LOWER(TRIM(uc.ai_use_case_id)) = LOWER(TRIM(rel.ai_use_case_id))
+            WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+              AND rel.ai_use_case_id IS NOT NULL AND rel.ai_use_case_id <> ''
+            ORDER BY LOWER(COALESCE(uc.name, rel.ai_use_case_name, rel.ai_use_case_id))
+        """),
+        {"mid": mid},
+    )
+
     result = dict(model)
     result["agents"] = [dict(r._mapping) for r in agent_rows]
+    result["ai_use_cases"] = [dict(r._mapping) for r in use_case_rows]
     return result
 
 
@@ -533,6 +581,10 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
         )
         await db.execute(
             text(f"DELETE FROM {CORE}.agent_ai_models WHERE ai_model_id = :mid"),
+            {"mid": mid},
+        )
+        await db.execute(
+            text(f"DELETE FROM {CORE}.ai_model_ai_use_cases WHERE ai_model_id = :mid"),
             {"mid": mid},
         )
         await db.execute(
@@ -630,6 +682,90 @@ async def unlink_agent(ai_model_id: str, agent_id: str, db: AsyncSession = Depen
         await _refresh_model_rollup(db, mid)
         await db.commit()
         return {"status": "unlinked", "ai_model_id": mid, "agent_id": agent_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST /{ai_model_id}/use-cases  — link AI use case (many-to-many)
+# ---------------------------------------------------------------------------
+
+@router.post("/{ai_model_id}/use-cases", summary="Link AI Use Case to AI Model")
+async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    await _ensure_ai_model_tables(db)
+    mid = _norm_id(ai_model_id)
+    uc_id = _norm_id(body.ai_use_case_id)
+    tenant_id = _tenant(request)
+    if not uc_id:
+        raise HTTPException(status_code=400, detail="ai_use_case_id is required.")
+    try:
+        model_row = await db.execute(
+            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            {"mid": mid},
+        )
+        model = model_row.mappings().first()
+        if not model:
+            raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
+
+        uc_row = await db.execute(
+            text(f"SELECT ai_use_case_id, name FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) LIMIT 1"),
+            {"uid": uc_id},
+        )
+        use_case = uc_row.mappings().first()
+        if not use_case:
+            raise HTTPException(status_code=404, detail=f"AI Use Case '{uc_id}' not found.")
+
+        await db.execute(
+            text(f"""
+                INSERT INTO {CORE}.ai_model_ai_use_cases
+                    (tenant_id, ai_model_id, ai_model_name, ai_use_case_id, ai_use_case_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :mid, :mname, :uid, :uname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (ai_model_id, ai_use_case_id)
+                DO UPDATE SET
+                    ai_model_name = EXCLUDED.ai_model_name,
+                    ai_use_case_name = EXCLUDED.ai_use_case_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "mid": mid,
+                "mname": str(model.get("model_name") or mid),
+                "uid": uc_id,
+                "uname": str(use_case.get("name") or uc_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "ai_model_id": mid, "ai_use_case_id": uc_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{ai_model_id}/use-cases/{use_case_id}  — unlink AI use case
+# ---------------------------------------------------------------------------
+
+@router.delete("/{ai_model_id}/use-cases/{use_case_id}", summary="Unlink AI Use Case from AI Model")
+async def unlink_use_case(ai_model_id: str, use_case_id: str, db: AsyncSession = Depends(get_db)):
+    await _ensure_ai_model_tables(db)
+    mid = _norm_id(ai_model_id)
+    uc_id = _norm_id(use_case_id)
+    try:
+        result = await db.execute(
+            text(f"""
+                DELETE FROM {CORE}.ai_model_ai_use_cases
+                WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
+                  AND LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+            """),
+            {"mid": mid, "uid": uc_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "ai_model_id": mid, "ai_use_case_id": uc_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

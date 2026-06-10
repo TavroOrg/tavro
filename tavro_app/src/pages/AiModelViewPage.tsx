@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Bot,
   Boxes,
+  ClipboardList,
   Download,
   Link2,
   Loader2,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
 import { useCatalog } from '../context/CatalogContext';
+import { useUseCases } from '../context/UseCaseContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 
 type Option = { label: string; value: string };
@@ -230,6 +232,8 @@ const AiModelViewPage: React.FC = () => {
   const [agentSearch, setAgentSearch] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [useCaseSearch, setUseCaseSearch] = useState('');
+  const [actingUseCase, setActingUseCase] = useState<string | null>(null);
   const [editing, setEditing] = useState(isCreateMode);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
@@ -237,6 +241,7 @@ const AiModelViewPage: React.FC = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const { agents: catalogAgents } = useCatalog();
+  const { useCases: allUseCases } = useUseCases();
   const setField = (k: string, v: string) => setForm(prev => ({ ...prev, [k]: v }));
   const editableActive = editing || isCreateMode;
 
@@ -432,6 +437,53 @@ const AiModelViewPage: React.FC = () => {
       setRelationError(err.message || 'Failed to remove agent.');
     } finally {
       setActingAgent(null);
+    }
+  };
+
+  const linkedUseCases = model?.ai_use_cases ?? [];
+  const linkedUseCaseIds = useMemo(
+    () => new Set(linkedUseCases.map(u => u.ai_use_case_id).filter(Boolean)),
+    [linkedUseCases],
+  );
+  const availableUseCases = useMemo(() => {
+    const q = useCaseSearch.trim().toLowerCase();
+    return allUseCases.filter(uc => {
+      const id = uc.identifier ?? '';
+      if (!id || linkedUseCaseIds.has(id)) return false;
+      if (!q) return true;
+      return (
+        id.toLowerCase().includes(q) ||
+        (uc.name ?? '').toLowerCase().includes(q) ||
+        (uc.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allUseCases, useCaseSearch, linkedUseCaseIds]);
+
+  const addUseCase = async (useCaseId: string) => {
+    if (!model) return;
+    setActingUseCase(`add:${useCaseId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.linkUseCase(model.ai_model_id, useCaseId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to attach AI use case.');
+    } finally {
+      setActingUseCase(null);
+    }
+  };
+
+  const removeUseCase = async (useCaseId: string) => {
+    if (!model) return;
+    setActingUseCase(`remove:${useCaseId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.unlinkUseCase(model.ai_model_id, useCaseId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to remove AI use case.');
+    } finally {
+      setActingUseCase(null);
     }
   };
 
@@ -843,6 +895,91 @@ const AiModelViewPage: React.FC = () => {
                     >
                       {actingAgent === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
                       Attach
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── AI Use Cases (many-to-many) ── */}
+          <div className="h-px bg-slate-100 w-full" />
+
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <ClipboardList size={15} /> Related AI Use Cases ({linkedUseCases.length})
+            </h3>
+            <p className="text-xs text-slate-500">Map the AI use cases this model supports.</p>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {linkedUseCases.map((uc, idx) => {
+              const ucId = uc.ai_use_case_id || `use-case-${idx}`;
+              const removeKey = `remove:${ucId}`;
+              return (
+                <div key={`${ucId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="min-w-0">
+                    <Link to={`/use-case/${encodeURIComponent(ucId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                      {uc.ai_use_case_name || ucId}
+                    </Link>
+                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{ucId}</span>
+                    {uc.description && (
+                      <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{uc.description}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => removeUseCase(ucId)}
+                    disabled={actingUseCase === removeKey}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {actingUseCase === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            {linkedUseCases.length === 0 && (
+              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                No AI use cases mapped to this model.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                <Link2 size={12} /> Map AI Use Case
+              </p>
+              <div className="relative w-full max-w-sm">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={useCaseSearch}
+                  onChange={(e) => setUseCaseSearch(e.target.value)}
+                  placeholder="Filter use cases..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-100">
+              {availableUseCases.length === 0 && (
+                <div className="p-3 text-xs text-slate-500">No available AI use cases to map.</div>
+              )}
+              {availableUseCases.map(uc => {
+                const id = uc.identifier ?? '';
+                const addKey = `add:${id}`;
+                return (
+                  <div key={id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{uc.name || id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{id}</p>
+                    </div>
+                    <button
+                      onClick={() => addUseCase(id)}
+                      disabled={actingUseCase === addKey}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {actingUseCase === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                      Map
                     </button>
                   </div>
                 );
