@@ -276,7 +276,13 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
     tools = card.get("tool", []) or []
     if not has_meaningful_data(tools):
         return
+    tenant_id = ident.get("tenant_id")
     agent_id = ident.get("agent_id")
+    # If tenant_id wasn't provided on the incoming card, try to read it from the agents table
+    if tenant_id is None:
+        rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
+        if rows and rows[0].get("tenant_id"):
+            tenant_id = rows[0].get("tenant_id")
     select_rows = []
     for tool in tools:
         delegation_possible = (
@@ -284,7 +290,7 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
             if tool.get("delegation_possible") is not None else None
         )
         select_rows.append(f"""
-            SELECT {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
+            SELECT {_sq(tenant_id)} AS tenant_id, {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
                    {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
                    {_sq(tool.get('description'))} AS tool_description,
                    {_bool(delegation_possible)}::boolean AS delegation_possible,
@@ -297,18 +303,19 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
     union_all = "\nUNION ALL\n".join(select_rows)
     _exec(conn, f"""
         INSERT INTO {CORE}.agent_tools (
-            agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+            tenant_id, agent_internal_id, agent_id, tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             created_ts, updated_ts
         )
-        SELECT agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+        SELECT tenant_id, agent_internal_id, agent_id, tool_id, tool_name, tool_description,
                delegation_possible, allowed_delegates,
                input_schema_json_text, output_schema_json_text, default_config_json_text,
                now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, tool_id)
         DO UPDATE SET
+            tenant_id                = EXCLUDED.tenant_id,
             agent_id                 = EXCLUDED.agent_id,
             tool_description         = EXCLUDED.tool_description,
             delegation_possible      = EXCLUDED.delegation_possible,
@@ -318,6 +325,184 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
     """, f"agent_tools upsert ({len(tools)} tools)")
+
+
+# ---------------------------------------------------------------------------
+# Step X — core.tables  (table catalog)
+# ---------------------------------------------------------------------------
+def _upsert_tables(conn, card: dict, agent_internal_id: str, now_str: str):
+    ident = card.get("identification", {})
+    tenant_id = ident.get("tenant_id")
+    agent_id = ident.get("agent_id")
+    data_sources = card.get("data_source", []) or []
+    if not has_meaningful_data(data_sources):
+        return
+    # If tenant_id wasn't provided on the incoming card, try to read it from the agents table
+    if tenant_id is None:
+        rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
+        if rows and rows[0].get("tenant_id"):
+            tenant_id = rows[0].get("tenant_id")
+
+    # Collect table records; tool_id is used only to populate tool_tables below.
+    tables = {}
+    # First pass: find explicit table nodes (as source or target)
+    # Also capture direct agent->table ownership when present.
+    for ds in data_sources:
+        src_type = ds.get("source_object_type")
+        tgt_type = ds.get("target_object_type")
+        # If source is Table, register it
+        if str(src_type).lower() == "table":
+            tid = ds.get("source_object_id")
+            name = ds.get("source_object_name")
+            if tid:
+                tables[tid] = tables.get(tid, {})
+                if name:
+                    tables[tid]["name"] = name
+        # If target is Table, register it
+        if str(tgt_type).lower() == "table":
+            tid = ds.get("target_object_id")
+            name = ds.get("target_object_name")
+            if tid:
+                tables[tid] = tables.get(tid, {})
+                if name:
+                    tables[tid]["name"] = name
+                # Direct agent -> table relationship should be stored on the table
+                if str(src_type).lower() == "agent":
+                    tables[tid]["agent_id"] = ds.get("source_object_id")
+
+    # Second pass: if a Tool -> Table relation exists, capture tool_id/tool_name and drop agent_id
+    for ds in data_sources:
+        src_type = ds.get("source_object_type")
+        tgt_type = ds.get("target_object_type")
+        if str(src_type).lower() == "tool" and str(tgt_type).lower() == "table":
+            tool_id = ds.get("source_object_id")
+            table_id = ds.get("target_object_id")
+            if table_id and tool_id and table_id in tables:
+                tables[table_id]["tool_id"] = tool_id
+                tables[table_id]["tool_name"] = ds.get("source_object_name") or ""
+                tables[table_id].pop("agent_id", None)
+
+    if not tables:
+        return
+
+    agent_name = card.get("name") or ""
+    select_rows = []
+    agent_table_rows = []
+    tool_table_rows = []
+    for tid, meta in tables.items():
+        name = meta.get("name")
+        tool_id = meta.get("tool_id")
+        tool_name = meta.get("tool_name") or ""
+        select_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(tid)} AS table_id, {_sq(name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
+        agent_table_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(agent_id)} AS agent_id, {_sq(agent_name)} AS agent_name, {_sq(agent_internal_id)} AS agent_internal_id, {_sq(tid)} AS table_id, {_sq(name)} AS table_name, TIMESTAMP '{now_str}' AS now_ts")
+        if tool_id:
+            tool_table_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name, {_sq(tid)} AS table_id, {_sq(name)} AS table_name, TIMESTAMP '{now_str}' AS now_ts")
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+    _exec(conn, f"""
+        INSERT INTO {CORE}.tables (
+            tenant_id, table_id, name, created_ts, updated_ts
+        )
+        SELECT tenant_id, table_id, name, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (table_id)
+        DO UPDATE SET
+            name = COALESCE(EXCLUDED.name, {CORE}.tables.name),
+            updated_ts = EXCLUDED.updated_ts
+    """, f"tables upsert ({len(select_rows)})")
+
+    if agent_table_rows:
+        ua = "\nUNION ALL\n".join(agent_table_rows)
+        _exec(conn, f"""
+            INSERT INTO {CORE}.agent_tables (
+                tenant_id, agent_id, agent_name, agent_internal_id,
+                table_id, table_name, created_ts, updated_ts
+            )
+            SELECT tenant_id, agent_id, agent_name, agent_internal_id,
+                   table_id, table_name, now_ts, now_ts
+            FROM ({ua}) AS s
+            WHERE agent_id IS NOT NULL AND agent_id <> ''
+            ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                agent_name = EXCLUDED.agent_name,
+                agent_internal_id = EXCLUDED.agent_internal_id,
+                table_name = COALESCE(EXCLUDED.table_name, {CORE}.agent_tables.table_name),
+                updated_ts = EXCLUDED.updated_ts
+        """, f"agent_tables upsert ({len(agent_table_rows)})")
+
+    if tool_table_rows:
+        ut = "\nUNION ALL\n".join(tool_table_rows)
+        _exec(conn, f"""
+            INSERT INTO {CORE}.tool_tables (
+                tenant_id, tool_id, tool_name, table_id, table_name,
+                created_ts, updated_ts
+            )
+            SELECT tenant_id, tool_id, tool_name, table_id, table_name,
+                   now_ts, now_ts
+            FROM ({ut}) AS s
+            WHERE tool_id IS NOT NULL AND tool_id <> ''
+            ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
+                tool_name = COALESCE(EXCLUDED.tool_name, {CORE}.tool_tables.tool_name),
+                table_name = COALESCE(EXCLUDED.table_name, {CORE}.tool_tables.table_name),
+                updated_ts = EXCLUDED.updated_ts
+        """, f"tool_tables upsert ({len(tool_table_rows)})")
+
+
+# ---------------------------------------------------------------------------
+# Step Y — core.columns  (tables -> columns)
+# ---------------------------------------------------------------------------
+def _upsert_columns(conn, card: dict, agent_internal_id: str, now_str: str):
+    ident = card.get("identification", {})
+    tenant_id = ident.get("tenant_id")
+    data_sources = card.get("data_source", []) or []
+    if not has_meaningful_data(data_sources):
+        return
+    # If tenant_id wasn't provided on the incoming card, try to read it from the agents table
+    if tenant_id is None:
+        rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
+        if rows and rows[0].get("tenant_id"):
+            tenant_id = rows[0].get("tenant_id")
+
+    # Columns are represented as relationships where source is Table and target is Column
+    select_rows = []
+    tc_rows = []
+    for ds in data_sources:
+        if str(ds.get("source_object_type")).lower() == "table" and str(ds.get("target_object_type")).lower() == "column":
+            table_id = ds.get("source_object_id")
+            table_name = ds.get("source_object_name") or ""
+            col_name = ds.get("target_object_name")
+            column_id = ds.get("target_object_id") or col_name
+            if table_id and col_name and column_id:
+                select_rows.append(f"SELECT {_sq(column_id)} AS column_id, {_sq(tenant_id)} AS tenant_id, {_sq(col_name)} AS name, TIMESTAMP '{now_str}' AS now_ts")
+                tc_rows.append(f"SELECT {_sq(tenant_id)} AS tenant_id, {_sq(table_id)} AS table_id, {_sq(table_name)} AS table_name, {_sq(col_name)} AS column_name, {_sq(column_id)} AS column_id, TIMESTAMP '{now_str}' AS now_ts")
+
+    if not select_rows:
+        return
+
+    union_all = "\nUNION ALL\n".join(select_rows)
+    _exec(conn, f"""
+        INSERT INTO {CORE}.columns (
+            column_id, tenant_id, name, created_ts, updated_ts
+        )
+        SELECT column_id, tenant_id, name, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (column_id)
+        DO UPDATE SET
+            updated_ts = EXCLUDED.updated_ts
+    """, f"columns upsert ({len(select_rows)})")
+
+    if tc_rows:
+        utc = "\nUNION ALL\n".join(tc_rows)
+        _exec(conn, f"""
+            INSERT INTO {CORE}.table_columns (
+                tenant_id, table_id, table_name, column_name, column_id, created_ts, updated_ts
+            )
+            SELECT tenant_id, table_id, table_name, column_name, column_id, now_ts, now_ts
+            FROM ({utc}) AS s
+            ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
+                table_name = COALESCE(EXCLUDED.table_name, {CORE}.table_columns.table_name),
+                column_id = COALESCE(EXCLUDED.column_id, {CORE}.table_columns.column_id),
+                updated_ts = EXCLUDED.updated_ts
+        """, f"table_columns upsert ({len(tc_rows)})")
 
 
 # ---------------------------------------------------------------------------
@@ -1231,6 +1416,7 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
         with _db() as conn:
             print("[INFO] Step  1/20 - agents")
             agent_internal_id = _upsert_agent(conn, card_dict, now_str, incoming_source_hash, tenant_id)
+            # Propagate tenant_id into the card's identification so downstream upserts can read it
             if tenant_id is not None:
                 ident = card_dict.setdefault("identification", {})
                 ident["tenant_id"] = tenant_id
@@ -1239,6 +1425,8 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
                 (" 2/20 - agent_configurations",            _upsert_agent_configuration),
                 (" 3/20 - agent_identifications",           _upsert_agent_identification),
                 (" 4/20 - agent_tools",                     _upsert_agent_tools),
+                (" 4.1/20 - tables",                        _upsert_tables),
+                (" 4.2/20 - columns",                       _upsert_columns),
                 (" 5/20 - agent_controls",                  _upsert_agent_controls),
                 (" 6/20 - agent_knowledge_sources",         _upsert_agent_knowledge_source),
                 (" 7/20 - agent_llm_models",                _upsert_agent_llm_models),
