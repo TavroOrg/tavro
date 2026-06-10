@@ -2462,7 +2462,29 @@ class AgentMetadataExporter:
 
         # None means "leave unchanged"; [] means "clear all tools"
         if tools is not None:
-            # Remove existing tool records and their Agent→Tool data-source entries
+            # Capture existing tools (ordered by created_ts) and their Tool→Table lineage
+            # before deleting, so we can re-link tables to renamed tools by position.
+            existing_tools_rows = cls.execute_select(
+                f"SELECT tool_id, tool_name FROM {cls.CORE_DB_NAME}.agent_tools "
+                f"WHERE agent_id = '{agent_id}' {tenant_where} ORDER BY created_ts"
+            )
+            # Map old_tool_id → list of Tool→Table data_source rows
+            tool_table_map: dict = {}
+            for et in existing_tools_rows:
+                et_id = cls.sanitize(str(et.get("tool_id") or ""))
+                if not et_id:
+                    continue
+                tt_rows = cls.execute_select(
+                    f"SELECT target_object_id, target_object_domain, target_object_name, target_object_type, "
+                    f"access_level, contains_pii, contains_phi, contains_pci "
+                    f"FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND source_object_id = '{et_id}' "
+                    f"AND LOWER(source_object_type) = 'tool'"
+                )
+                tool_table_map[et_id] = tt_rows
+
+            # Remove existing tool records, Agent→Tool entries, and Tool→Table entries
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools "
                 f"WHERE agent_id = '{agent_id}' {tenant_where}"
@@ -2472,13 +2494,20 @@ class AgentMetadataExporter:
                 f"WHERE agent_internal_id = '{agent_internal_id}' "
                 f"AND target_object_type = 'Tool'"
             )
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND LOWER(source_object_type) = 'tool'"
+            )
             if tools:
                 tool_rows: List[str] = []
                 tool_ds_rows: List[str] = []
+                new_tool_ids: List[tuple] = []  # (tool_id, tool_name)
                 for t in tools:
                     tool_id = str(uuid.uuid4())
                     t_name = cls.sanitize(t.get("name", ""))
                     t_desc = cls.sanitize(t.get("description", ""))
+                    new_tool_ids.append((tool_id, t_name))
                     tool_rows.append(
                         f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
                         f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
@@ -2504,6 +2533,36 @@ class AgentMetadataExporter:
                     f"target_object_id, target_object_domain, target_object_name, target_object_type) "
                     f"VALUES {','.join(tool_ds_rows)}"
                 )
+
+                # Re-link Tool→Table entries using positional matching (old[i] → new[i])
+                relink_ds_rows: List[str] = []
+                for i, (new_tool_id, new_tool_name) in enumerate(new_tool_ids):
+                    if i >= len(existing_tools_rows):
+                        break
+                    old_tool_id = cls.sanitize(str(existing_tools_rows[i].get("tool_id") or ""))
+                    for tt in tool_table_map.get(old_tool_id, []):
+                        tgt_id = cls.sanitize(str(tt.get("target_object_id") or ""))
+                        tgt_name = cls.sanitize(str(tt.get("target_object_name") or ""))
+                        tgt_type = cls.sanitize(str(tt.get("target_object_type") or ""))
+                        if not tgt_id:
+                            continue
+                        relink_ds_rows.append(
+                            f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                            f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
+                            f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
+                            f"'{new_tool_id}', NULL, '{new_tool_name}', 'Tool', "
+                            f"'{tgt_id}', NULL, '{tgt_name}', '{tgt_type}')"
+                        )
+                if relink_ds_rows:
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"access_level, contains_pii, contains_phi, contains_pci, "
+                        f"created_ts, updated_ts, "
+                        f"source_object_id, source_object_domain, source_object_name, source_object_type, "
+                        f"target_object_id, target_object_domain, target_object_name, target_object_type) "
+                        f"VALUES {','.join(relink_ds_rows)}"
+                    )
 
         if knowledge_source:
             cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
