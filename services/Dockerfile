@@ -23,7 +23,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY services /app/services
 COPY utils /app/utils
-COPY config.yaml.example /app/config.yaml.example
 
 EXPOSE 80
 EXPOSE 7233

@@ -18,7 +18,6 @@ from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
-_USE_CASE_ATTACHMENTS_READY = False
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
@@ -87,6 +86,10 @@ class LinkProcessRequest(BaseModel):
     process_id: str
 
 
+class LinkApplicationRequest(BaseModel):
+    application_id: str
+
+
 class UseCaseAttachmentCreate(BaseModel):
     filename: str
     mime_type: str
@@ -119,111 +122,6 @@ Format:
 }"""
 
 
-async def _ensure_use_case_process_relation_table(db: AsyncSession) -> None:
-    await db.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CORE}.ai_use_case_business_processes (
-                tenant_id TEXT,
-                ai_use_case_id TEXT,
-                business_process_id TEXT,
-                process_name TEXT,
-                created_ts TIMESTAMP,
-                updated_ts TIMESTAMP
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            f"""
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_processes
-            ON {CORE}.ai_use_case_business_processes (ai_use_case_id, business_process_id, tenant_id)
-            """
-        )
-    )
-
-
-async def _ensure_use_case_tables(db: AsyncSession) -> None:
-    await db.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CORE}.ai_use_cases (
-                tenant_id TEXT,
-                ai_use_case_id TEXT,
-                name TEXT,
-                description TEXT,
-                proposed_by TEXT,
-                owner TEXT,
-                function TEXT,
-                problem_statement TEXT,
-                expected_benefits TEXT,
-                priority TEXT,
-                status TEXT,
-                created_ts TIMESTAMP,
-                updated_ts TIMESTAMP,
-                agent_internal_id TEXT,
-                agent_risk_exposure_are DECIMAL(10, 2),
-                no_of_associated_agents INT,
-                inherent_risk_classification TEXT,
-                residual_risk_classification TEXT,
-                agent_risk_tier_art TEXT,
-                blended_risk_score DECIMAL(10, 2),
-                inherent_risk_classification_score DECIMAL(10, 2),
-                residual_risk_classification_score DECIMAL(10, 2),
-                solution_approach TEXT
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CORE}.agent_ai_use_cases (
-                tenant_id TEXT,
-                ai_use_case_id TEXT,
-                ai_use_case_name TEXT,
-                agent_id TEXT,
-                agent_name TEXT,
-                agent_internal_id TEXT,
-                created_ts TIMESTAMP,
-                updated_ts TIMESTAMP
-            )
-            """
-        )
-    )
-
-async def _ensure_use_case_attachments_table(db: AsyncSession) -> None:
-    global _USE_CASE_ATTACHMENTS_READY
-    if _USE_CASE_ATTACHMENTS_READY:
-        return
-
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.use_case_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                use_case_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS use_case_attachment_use_case_idx
-            ON public.use_case_attachment (use_case_id, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
-    _USE_CASE_ATTACHMENTS_READY = True
 
 @router.post("/suggest-description", response_model=SuggestUseCaseDescriptionResponse, summary="Suggest AI Use Case Description")
 async def suggest_use_case_description(body: SuggestUseCaseDescriptionRequest):
@@ -278,7 +176,6 @@ async def list_use_cases(
     record_range: str = "1-10",
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_use_case_tables(db)
     try:
         parts = record_range.split("-")
         start, end = int(parts[0]), int(parts[1])
@@ -299,7 +196,6 @@ async def list_use_cases(
         params["title"] = f"%{title}%"
     if process_id and process_id.strip():
         normalized_process_id = _norm_id(process_id)
-        await _ensure_use_case_process_relation_table(db)
         process_filter = [
             "LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))",
             "LOWER(TRIM(rel.business_process_id)) = LOWER(TRIM(:process_id))",
@@ -376,7 +272,6 @@ async def list_use_cases(
 
 @router.post("/", summary="Create AI Use Case", status_code=201)
 async def create_use_case(body: UseCaseCreateRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     use_case_id = str(uuid.uuid4())
     tenant_id = _tenant(request)
     try:
@@ -390,11 +285,11 @@ async def create_use_case(body: UseCaseCreateRequest, request: Request, db: Asyn
                 INSERT INTO {CORE}.ai_use_cases
                     (tenant_id, ai_use_case_id, name, description, owner,
                      problem_statement, expected_benefits, priority, status,
-                     solution_approach, created_ts, updated_ts, agent_internal_id)
+                     solution_approach, created_ts, updated_ts)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
                      :problem, :benefits, :priority, 'New',
-                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
+                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """),
             {
                 "tid": tenant_id, "uid": use_case_id,
@@ -419,7 +314,6 @@ async def create_use_case(body: UseCaseCreateRequest, request: Request, db: Asyn
 
 @router.get("/{use_case_id}", summary="Get AI Use Case")
 async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     use_case_tenant_filter = (
@@ -434,6 +328,11 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
     )
     process_tenant_filter = (
         "AND (relp.tenant_id = :tid OR relp.tenant_id IS NULL OR relp.tenant_id = '' OR relp.tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+    application_tenant_filter = (
+        "AND (rela.tenant_id = :tid OR rela.tenant_id IS NULL OR rela.tenant_id = '' OR rela.tenant_id = 'None')"
         if tenant_id
         else ""
     )
@@ -482,7 +381,6 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         )
         linked_agents = [dict(r) for r in agents_result.mappings().all()]
 
-        await _ensure_use_case_process_relation_table(db)
         processes_result = await db.execute(
             text(
                 f"""
@@ -516,9 +414,46 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
             for r in processes_result.mappings().all()
         ]
 
+        applications_result = await db.execute(
+            text(
+                f"""
+                SELECT DISTINCT
+                    rela.business_application_id,
+                    COALESCE(ba.application_name, rela.application_name, rela.business_application_id) AS application_name,
+                    ba.application_description AS description,
+                    ba.business_criticality,
+                    ba.emergency_tier,
+                    LOWER(COALESCE(ba.application_name, rela.application_name, rela.business_application_id)) AS application_sort_key
+                FROM {CORE}.ai_use_case_business_applications rela
+                LEFT JOIN {CORE}.business_applications ba
+                    ON ba.business_application_id = rela.business_application_id
+                WHERE LOWER(TRIM(rela.ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND rela.business_application_id IS NOT NULL
+                  AND rela.business_application_id <> ''
+                  {application_tenant_filter}
+                ORDER BY application_sort_key
+                """
+            ),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        linked_applications = [
+            {
+                "identifier": r["business_application_id"],
+                "business_application_id": r["business_application_id"],
+                "name": r["application_name"],
+                "application_name": r["application_name"],
+                "description": r["description"],
+                "business_criticality": r["business_criticality"],
+                "emergency_tier": r["emergency_tier"],
+            }
+            for r in applications_result.mappings().all()
+        ]
+
         data = {
             **dict(row),
             "of_associated_agents": linked_agents,
+            "of_associated_business_applications": linked_applications,
+            "applications": linked_applications,
             "of_associated_business_processes": linked_processes,
         }
         return {"start_record": 1, "end_record": 1, "record_count": 1, "total_records": 1, "data": [data]}
@@ -534,7 +469,6 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
 
 @router.put("/{use_case_id}", summary="Update AI Use Case")
 async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     try:
         exists = await db.execute(
             text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE ai_use_case_id = :uid LIMIT 1"),
@@ -587,7 +521,6 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
 
 @router.delete("/{use_case_id}", summary="Delete AI Use Case")
 async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     try:
         exists = await db.execute(
             text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE ai_use_case_id = :uid LIMIT 1"),
@@ -595,11 +528,12 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
         )
         if not exists.first():
             raise HTTPException(status_code=404, detail=f"AI Use Case '{use_case_id}' not found.")
-
-        await _ensure_use_case_process_relation_table(db)
-        await _ensure_use_case_attachments_table(db)
         await db.execute(
             text(f"DELETE FROM {CORE}.ai_use_case_business_processes WHERE ai_use_case_id = :uid"),
+            {"uid": use_case_id},
+        )
+        await db.execute(
+            text(f"DELETE FROM {CORE}.ai_use_case_business_applications WHERE ai_use_case_id = :uid"),
             {"uid": use_case_id},
         )
         await db.execute(
@@ -629,7 +563,6 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{use_case_id}/agents", summary="Link Agent to AI Use Case")
 async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     agent_id = body.agent_id
     normalized_use_case_id = _norm_id(use_case_id)
     tenant_id = _tenant(request)
@@ -763,7 +696,6 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
 
 @router.delete("/{use_case_id}/agents/{agent_id}", summary="Unlink Agent from AI Use Case")
 async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     relation_tenant_filter = (
@@ -846,12 +778,235 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
 
 
 # ---------------------------------------------------------------------------
+# POST /{use_case_id}/applications  — link business application
+# ---------------------------------------------------------------------------
+
+@router.post("/{use_case_id}/applications", summary="Link Application to AI Use Case")
+async def link_application(use_case_id: str, body: LinkApplicationRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    normalized_use_case_id = _norm_id(use_case_id)
+    requested_application_id = _norm_id(body.application_id)
+    if not normalized_use_case_id:
+        raise HTTPException(status_code=400, detail="AI Use Case ID is required.")
+    if not requested_application_id:
+        raise HTTPException(status_code=400, detail="Application ID is required.")
+
+    tenant_id = _tenant(request)
+    tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    try:
+
+        uc_exists = await db.execute(
+            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        if not uc_exists.first():
+            raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
+
+        application_row = await db.execute(
+            text(f"""
+                SELECT business_application_id, application_name
+                FROM {CORE}.business_applications
+                WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                {tenant_filter}
+                LIMIT 1
+            """),
+            {"aid": requested_application_id, "tid": tenant_id},
+        )
+        application = application_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{requested_application_id}' not found.")
+        canonical_application_id = _norm_id(str(application.get("business_application_id") or requested_application_id))
+
+        dup = await db.execute(
+            text(f"""
+                SELECT 1
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+                LIMIT 1
+            """),
+            {"uid": normalized_use_case_id, "aid": canonical_application_id, "tid": tenant_id},
+        )
+        if dup.first():
+            cnt = await db.execute(
+                text(f"""
+                    SELECT COUNT(DISTINCT business_application_id)
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                    {tenant_filter}
+                """),
+                {"uid": normalized_use_case_id, "tid": tenant_id},
+            )
+            return {"message": "Relationship already exists", "associated_count": int(cnt.scalar() or 0)}
+
+        await db.execute(
+            text(f"""
+                INSERT INTO {CORE}.ai_use_case_business_applications (
+                    tenant_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
+                )
+                VALUES (
+                    :tid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+            """),
+            {
+                "tid": tenant_id,
+                "uid": normalized_use_case_id,
+                "aid": canonical_application_id,
+                "aname": application.get("application_name") or canonical_application_id,
+            },
+        )
+
+        cnt = await db.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT business_application_id)
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        await db.commit()
+        return {"message": "Relationship synchronized", "associated_count": int(cnt.scalar() or 0)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{use_case_id}/applications/{application_id}  — unlink business application
+# ---------------------------------------------------------------------------
+
+@router.delete("/{use_case_id}/applications/{application_id}", summary="Unlink Application from AI Use Case")
+async def unlink_application(use_case_id: str, application_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    normalized_use_case_id = _norm_id(use_case_id)
+    normalized_application_id = _norm_id(application_id)
+    if not normalized_use_case_id:
+        raise HTTPException(status_code=400, detail="AI Use Case ID is required.")
+    if not normalized_application_id:
+        raise HTTPException(status_code=400, detail="Application ID is required.")
+
+    tenant_id = _tenant(request)
+    tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    try:
+        uc_exists = await db.execute(
+            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        if not uc_exists.first():
+            raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
+
+        exists = await db.execute(
+            text(f"""
+                SELECT 1
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+                LIMIT 1
+            """),
+            {"uid": normalized_use_case_id, "aid": normalized_application_id, "tid": tenant_id},
+        )
+        if not exists.first():
+            fallback_exists = await db.execute(
+                text(
+                    f"""
+                    SELECT 1
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                      AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                    LIMIT 1
+                    """
+                ),
+                {"uid": normalized_use_case_id, "aid": normalized_application_id},
+            )
+            if fallback_exists.first():
+                await db.execute(
+                    text(
+                        f"""
+                        DELETE FROM {CORE}.ai_use_case_business_applications
+                        WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                          AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                        """
+                    ),
+                    {"uid": normalized_use_case_id, "aid": normalized_application_id},
+                )
+                cnt = await db.execute(
+                    text(f"""
+                        SELECT COUNT(DISTINCT business_application_id)
+                        FROM {CORE}.ai_use_case_business_applications
+                        WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                        {tenant_filter}
+                    """),
+                    {"uid": normalized_use_case_id, "tid": tenant_id},
+                )
+                await db.commit()
+                return {
+                    "message": "Relationship removed",
+                    "associated_count": int(cnt.scalar() or 0),
+                    "rows_deleted": 1,
+                }
+
+            cnt = await db.execute(
+                text(f"""
+                    SELECT COUNT(DISTINCT business_application_id)
+                    FROM {CORE}.ai_use_case_business_applications
+                    WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                    {tenant_filter}
+                """),
+                {"uid": normalized_use_case_id, "tid": tenant_id},
+            )
+            return {"message": "Relationship not found", "associated_count": int(cnt.scalar() or 0)}
+
+        delete_result = await db.execute(
+            text(f"""
+                DELETE FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "aid": normalized_application_id, "tid": tenant_id},
+        )
+
+        cnt = await db.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT business_application_id)
+                FROM {CORE}.ai_use_case_business_applications
+                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+                {tenant_filter}
+            """),
+            {"uid": normalized_use_case_id, "tid": tenant_id},
+        )
+        await db.commit()
+        return {
+            "message": "Relationship removed",
+            "associated_count": int(cnt.scalar() or 0),
+            "rows_deleted": int(delete_result.rowcount or 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # POST /{use_case_id}/processes  — link business process
 # ---------------------------------------------------------------------------
 
 @router.post("/{use_case_id}/processes", summary="Link Process to AI Use Case")
 async def link_process(use_case_id: str, body: LinkProcessRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     normalized_use_case_id = _norm_id(use_case_id)
     requested_process_id = _norm_id(body.process_id)
     if not normalized_use_case_id:
@@ -867,8 +1022,6 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
     )
 
     try:
-        await _ensure_use_case_process_relation_table(db)
-
         uc_exists = await db.execute(
             text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
@@ -955,7 +1108,6 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
 
 @router.delete("/{use_case_id}/processes/{process_id}", summary="Unlink Process from AI Use Case")
 async def unlink_process(use_case_id: str, process_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_tables(db)
     normalized_use_case_id = _norm_id(use_case_id)
     normalized_process_id = _norm_id(process_id)
     if not normalized_use_case_id:
@@ -971,8 +1123,6 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
     )
 
     try:
-        await _ensure_use_case_process_relation_table(db)
-
         uc_exists = await db.execute(
             text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
@@ -1080,8 +1230,6 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
 
 @router.get("/{use_case_id}/attachments", summary="List AI Use Case Attachments")
 async def list_use_case_attachments(use_case_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_use_case_attachments_table(db)
-
     rows = await db.execute(
         text(
             """
@@ -1102,8 +1250,6 @@ async def create_use_case_attachment(
     body: UseCaseAttachmentCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_use_case_attachments_table(db)
-
     filename = (body.filename or "").strip()
     mime_type = (body.mime_type or "").strip() or "application/octet-stream"
     if not filename:
@@ -1147,8 +1293,6 @@ async def download_use_case_attachment(
     attachment_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_use_case_attachments_table(db)
-
     row = await db.execute(
         text(
             """
@@ -1180,8 +1324,6 @@ async def delete_use_case_attachment(
     attachment_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_use_case_attachments_table(db)
-
     result = await db.execute(
         text(
             """

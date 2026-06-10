@@ -548,6 +548,27 @@ def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
+    related_use_cases_raw = _json_list(row.get("related_use_cases"))
+    normalized_related_use_cases: list[dict[str, Any]] = []
+    seen_use_case_ids: set[str] = set()
+    for rel in related_use_cases_raw:
+        if not isinstance(rel, dict):
+            continue
+        use_case_id = _text_or_none(rel.get("identifier") or rel.get("ai_use_case_id"))
+        if not use_case_id or use_case_id in seen_use_case_ids:
+            continue
+        seen_use_case_ids.add(use_case_id)
+        normalized_related_use_cases.append(
+            {
+                "identifier": use_case_id,
+                "name": _text_or_none(rel.get("name")),
+                "description": _text_or_none(rel.get("description")),
+                "owner": _text_or_none(rel.get("owner")),
+                "priority": _text_or_none(rel.get("priority")),
+                "status": _text_or_none(rel.get("status")),
+            }
+        )
+    row["related_use_cases"] = normalized_related_use_cases
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 
@@ -736,6 +757,9 @@ async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     )
     select_agent_name = "agent_name" if "agent_name" in agent_cols else "NULL AS agent_name"
     select_tenant_id = "tenant_id" if "tenant_id" in agent_cols else "NULL AS tenant_id"
+    select_source_system = (
+        "source_system" if "source_system" in agent_cols else "NULL AS source_system"
+    )
 
     row = await db.execute(
         text(
@@ -744,7 +768,8 @@ async def _resolve_agent(db: AsyncSession, agent_id: str) -> dict[str, Any]:
                 agent_id,
                 {select_agent_internal_id},
                 {select_agent_name},
-                {select_tenant_id}
+                {select_tenant_id},
+                {select_source_system}
             FROM core.agents
             WHERE agent_id = :agent_id
             ORDER BY {", ".join(order_parts)}
@@ -943,6 +968,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "updated_ts"),
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
+        "uc_rel.related_use_cases",
     ]
 
     has_aba = await _table_exists(db, "core", "agent_business_applications")
@@ -986,6 +1012,93 @@ async def _fetch_applications(
             ) rel ON TRUE
         """
 
+    has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
+    has_auc = await _table_exists(db, "core", "ai_use_cases")
+    auc_order_sql = "ORDER BY 1"
+    if has_auc:
+        auc_cols = await _table_columns(db, "core", "ai_use_cases")
+        order_parts: list[str] = []
+        if "updated_ts" in auc_cols:
+            order_parts.append("auc.updated_ts DESC NULLS LAST")
+        if "created_ts" in auc_cols:
+            order_parts.append("auc.created_ts DESC NULLS LAST")
+        if "ai_use_case_id" in auc_cols:
+            order_parts.append("auc.ai_use_case_id")
+        if order_parts:
+            auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
+    if has_uc_app_rel and has_auc:
+        uc_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', related.name,
+                            'description', related.description,
+                            'owner', related.owner,
+                            'priority', related.priority,
+                            'status', related.status
+                        )
+                        ORDER BY LOWER(COALESCE(related.name, related.ai_use_case_id))
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT
+                        rel.ai_use_case_id,
+                        latest.name,
+                        latest.description,
+                        latest.owner,
+                        latest.priority,
+                        latest.status
+                    FROM core.ai_use_case_business_applications rel
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            auc.name,
+                            auc.description,
+                            auc.owner,
+                            auc.priority,
+                            auc.status
+                        FROM core.ai_use_cases auc
+                        WHERE auc.ai_use_case_id = rel.ai_use_case_id
+                        {auc_order_sql}
+                        LIMIT 1
+                    ) latest ON TRUE
+                    WHERE rel.business_application_id = ba.business_application_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    elif has_uc_app_rel:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'identifier', related.ai_use_case_id,
+                            'name', NULL,
+                            'description', NULL,
+                            'owner', NULL,
+                            'priority', NULL,
+                            'status', NULL
+                        )
+                        ORDER BY LOWER(related.ai_use_case_id)
+                    ) AS related_use_cases
+                FROM (
+                    SELECT DISTINCT rel.ai_use_case_id
+                    FROM core.ai_use_case_business_applications rel
+                    WHERE rel.business_application_id = ba.business_application_id
+                      AND rel.ai_use_case_id IS NOT NULL
+                      AND rel.ai_use_case_id <> ''
+                ) related
+            ) uc_rel ON TRUE
+        """
+    else:
+        uc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_use_cases
+            ) uc_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(ba.application_name, ba.business_application_id))"
@@ -1017,6 +1130,7 @@ async def _fetch_applications(
                 {", ".join(select_cols)}
             FROM core.business_applications ba
             {rel_join_sql}
+            {uc_rel_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1603,6 +1717,19 @@ async def delete_application(
                 text(
                     """
                     DELETE FROM core.agent_business_applications
+                    WHERE business_application_id = :business_application_id
+                    """
+                ),
+                {"business_application_id": application_id},
+            )
+
+    if await _table_exists(db, "core", "ai_use_case_business_applications"):
+        uc_app_cols = await _table_columns(db, "core", "ai_use_case_business_applications")
+        if "business_application_id" in uc_app_cols:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM core.ai_use_case_business_applications
                     WHERE business_application_id = :business_application_id
                     """
                 ),
@@ -2470,7 +2597,7 @@ async def get_agent_relations(
                           {tenant_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
-                        ORDER BY _sort_key
+                        ORDER BY name
                         """
                     ),
                     params,
@@ -2668,6 +2795,10 @@ async def get_agent_relations(
             "agent_name": agent.get("agent_name"),
             "tenant_id": agent.get("tenant_id"),
         },
+        # Top-level so the agent detail page can read it as the Provider
+        # (this endpoint serves GET /agents/{id}, which the frontend agent card
+        # fetch also hits). Value is core.agents.source_system.
+        "source_system": agent.get("source_system"),
         "applications": applications,
         "business_processes": business_processes,
         "ai_use_cases": ai_use_cases,

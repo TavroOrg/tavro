@@ -2,15 +2,11 @@ import os
 
 from crewai import LLM
 
-from utils.set_environment import set_environment
-
-
 DEFAULT_CREWAI_MODEL = "anthropic/claude-sonnet-4-6"
 DEFAULT_CREWAI_MAX_TOKENS = 4096
 
 
 def get_crewai_llm() -> LLM:
-    set_environment("secrets")
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:

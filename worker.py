@@ -569,7 +569,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
     use_case_sql = f"""
         INSERT INTO core.ai_use_cases (
             tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -577,7 +577,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
         )
         SELECT
             tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -594,7 +594,6 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             expected_benefits = EXCLUDED.expected_benefits,
             priority = EXCLUDED.priority,
             status = EXCLUDED.status,
-            agent_internal_id = EXCLUDED.agent_internal_id,
             agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
             no_of_associated_agents = EXCLUDED.no_of_associated_agents,
             inherent_risk_classification = EXCLUDED.inherent_risk_classification,
