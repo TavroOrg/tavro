@@ -54,6 +54,7 @@ export interface BusinessApplicationRecord {
   updated_ts: string | null;
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
+  related_use_cases: RelatedUseCaseReference[];
 }
 
 export interface BusinessProcessRecord {

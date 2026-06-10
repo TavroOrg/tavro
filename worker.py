@@ -569,7 +569,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
     use_case_sql = f"""
         INSERT INTO core.ai_use_cases (
             tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -577,7 +577,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
         )
         SELECT
             tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -594,7 +594,6 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             expected_benefits = EXCLUDED.expected_benefits,
             priority = EXCLUDED.priority,
             status = EXCLUDED.status,
-            agent_internal_id = EXCLUDED.agent_internal_id,
             agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
             no_of_associated_agents = EXCLUDED.no_of_associated_agents,
             inherent_risk_classification = EXCLUDED.inherent_risk_classification,
@@ -1167,13 +1166,13 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
             provider, version_number, model_type, 0, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (ai_model_id) DO UPDATE SET
-            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), core.ai_models.model_name),
-            owner                = COALESCE(EXCLUDED.owner, core.ai_models.owner),
-            department_executive = COALESCE(EXCLUDED.department_executive, core.ai_models.department_executive),
-            description          = COALESCE(EXCLUDED.description, core.ai_models.description),
-            provider             = COALESCE(EXCLUDED.provider, core.ai_models.provider),
-            version_number       = COALESCE(EXCLUDED.version_number, core.ai_models.version_number),
-            model_type           = COALESCE(EXCLUDED.model_type, core.ai_models.model_type),
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, ai_models.model_type),
             updated_ts           = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(models)} AI models into catalog …")

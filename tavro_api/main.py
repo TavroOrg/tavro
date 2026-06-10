@@ -2,7 +2,10 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv(override=False)
 from fastapi.middleware.cors import CORSMiddleware
 from temporalio.worker import Worker
 from temporalio.client import Client
@@ -26,6 +29,8 @@ from api.routers import drive_import
 from api.routers import spark
 from api.routers import docker_logs
 from api.routers.docker_logs import start_log_collector
+from api.migrations.init_tables import initialize_tables
+from api.database import get_db
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -73,6 +78,11 @@ async def _run_temporal_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables
+    async for db in get_db():
+        await initialize_tables(db)
+        break
+
     await seed_system_dim_types()
     await ensure_spark_table()
     await start_log_collector()
