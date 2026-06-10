@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Network,
   AlertCircle,
@@ -179,6 +179,8 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
 const IntegrationViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
   const { activeCompany } = useBlueprint();
   const { agents } = useCatalog();
   const isCreateMode = !id || id === 'new';
@@ -431,6 +433,15 @@ const IntegrationViewPage: React.FC = () => {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
+        if (linkAgentId) {
+          try {
+            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id);
+          } catch (linkErr) {
+            console.warn('Integration created but auto-link to agent failed.', linkErr);
+          }
+          navigate(`/agent/${encodeURIComponent(linkAgentId)}`, { replace: true });
+          return;
+        }
         navigate(`/integrations/${encodeURIComponent(created.integration_id)}`, { replace: true });
         return;
       }

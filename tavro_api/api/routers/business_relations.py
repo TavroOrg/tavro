@@ -2824,6 +2824,29 @@ async def get_agent_relations(
             )
             ai_models = [dict(r._mapping) for r in model_rows]
 
+    integrations: list[dict[str, Any]] = []
+    has_abi = await _table_exists(db, "core", "agent_business_integrations")
+    if has_abi:
+        int_rows = await db.execute(
+            text(
+                """
+                SELECT
+                    abi.integration_id,
+                    COALESCE(bi.integration_name, abi.integration_name) AS integration_name,
+                    bi.integration_description,
+                    bi.protocol,
+                    bi.availability_status
+                FROM core.agent_business_integrations abi
+                LEFT JOIN core.business_integrations bi
+                    ON bi.integration_id = abi.integration_id
+                WHERE abi.agent_internal_id = :agent_internal_id
+                ORDER BY LOWER(COALESCE(bi.integration_name, abi.integration_name, abi.integration_id))
+                """
+            ),
+            {"agent_internal_id": agent["agent_internal_id"]},
+        )
+        integrations = [dict(r._mapping) for r in int_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -2841,6 +2864,7 @@ async def get_agent_relations(
         "skills": skills,
         "child_agents": child_agents,
         "ai_models": ai_models,
+        "integrations": integrations,
     }
 
 
