@@ -20,10 +20,7 @@ from api.routers import agents
 from api.routers import agent_upload
 from api.routers import use_cases
 from api.routers import use_case_upload
-<<<<<<< HEAD
-=======
 from api.routers import insights
->>>>>>> origin/dev
 from api.routers import ai_models
 from api.routers import drive_import
 from api.routers import spark

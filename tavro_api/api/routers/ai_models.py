@@ -17,7 +17,6 @@ from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
-_AI_MODEL_ATTACHMENTS_READY = False
 
 # Catalog columns that may be supplied on create/update (everything except the
 # system-managed ones: tenant_id, ai_model_id, no_of_associated_agents,
@@ -150,133 +149,6 @@ Format:
 
 
 # ---------------------------------------------------------------------------
-# Table bootstrap
-# ---------------------------------------------------------------------------
-
-async def _ensure_ai_model_tables(db: AsyncSession) -> None:
-    await db.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CORE}.ai_models (
-                tenant_id TEXT,
-                ai_model_id TEXT,
-                model_name TEXT,
-                owner TEXT,
-                description TEXT,
-                department_executive TEXT,
-                business_functions TEXT,
-                vendor_or_inhouse TEXT,
-                provider TEXT,
-                status TEXT,
-                parent_model_id TEXT,
-                version_number TEXT,
-                use_case_value_drivers TEXT,
-                user_types TEXT,
-                decision_type TEXT,
-                automation_level TEXT,
-                regulatory_mapping TEXT,
-                consumer_impact TEXT,
-                risk_tier_materiality TEXT,
-                model_type TEXT,
-                technique_class TEXT,
-                learning_approach TEXT,
-                update_frequency TEXT,
-                input_variable_count TEXT,
-                data_join_method TEXT,
-                statistical_assumptions TEXT,
-                documented_constraints TEXT,
-                stability_window TEXT,
-                last_validation_date TEXT,
-                recert_use_case_same TEXT,
-                recert_use_case_changed TEXT,
-                recert_inputs_same TEXT,
-                recert_inputs_changed TEXT,
-                recert_outputs_same TEXT,
-                recert_outputs_changed TEXT,
-                recert_users_same TEXT,
-                recert_users_changed TEXT,
-                recert_processing_same TEXT,
-                recert_processing_changed TEXT,
-                recert_training_completed TEXT,
-                recert_risk_assessment_done TEXT,
-                no_of_associated_agents INTEGER,
-                agent_internal_id TEXT,
-                created_ts TIMESTAMP,
-                updated_ts TIMESTAMP
-            )
-            """
-        )
-    )
-    # Pure junction (mirrors core.agent_ai_use_cases); descriptive attributes
-    # live in core.ai_models.
-    await db.execute(
-        text(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CORE}.agent_ai_models (
-                tenant_id TEXT,
-                ai_model_id TEXT,
-                model_name TEXT,
-                agent_id TEXT,
-                agent_name TEXT,
-                agent_internal_id TEXT,
-                created_ts timestamp,
-                updated_ts timestamp
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            f"""
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
-            ON {CORE}.ai_models (ai_model_id)
-            """
-        )
-    )
-    await db.execute(
-        text(
-            f"""
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_ai_models
-            ON {CORE}.agent_ai_models (agent_internal_id, ai_model_id)
-            """
-        )
-    )
-
-
-async def _ensure_ai_model_attachments_table(db: AsyncSession) -> None:
-    global _AI_MODEL_ATTACHMENTS_READY
-    if _AI_MODEL_ATTACHMENTS_READY:
-        return
-    await db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS public.ai_model_attachment (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                ai_model_id TEXT NOT NULL,
-                category TEXT,
-                filename TEXT NOT NULL,
-                mime_type TEXT,
-                file_size_bytes INT NOT NULL,
-                file_data BYTEA NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-    )
-    await db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS ai_model_attachment_model_idx
-            ON public.ai_model_attachment (ai_model_id, category, created_at DESC)
-            """
-        )
-    )
-    await db.commit()
-    _AI_MODEL_ATTACHMENTS_READY = True
-
-
-# ---------------------------------------------------------------------------
 # POST /suggest-description
 # ---------------------------------------------------------------------------
 
@@ -330,7 +202,6 @@ async def list_ai_models(
     record_range: str = "1-500",
     db: AsyncSession = Depends(get_db),
 ):
-    await _ensure_ai_model_tables(db)
     try:
         parts = record_range.split("-")
         start, end = int(parts[0]), int(parts[1])
@@ -397,7 +268,6 @@ async def list_ai_models(
 
 @router.post("/", summary="Create AI Model", status_code=201)
 async def create_ai_model(body: AiModelCreate, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
     ai_model_id = str(uuid.uuid4())
     tenant_id = _tenant(request)
 
@@ -432,7 +302,6 @@ async def create_ai_model(body: AiModelCreate, request: Request, db: AsyncSessio
 
 @router.get("/{ai_model_id}", summary="Get AI Model")
 async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
     tenant_id = _tenant(request)
     mid = _norm_id(ai_model_id)
     tenant_filter = (
@@ -479,7 +348,6 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
 
 @router.put("/{ai_model_id}", summary="Update AI Model")
 async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
     mid = _norm_id(ai_model_id)
     try:
         exists = await db.execute(
@@ -516,8 +384,6 @@ async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSessio
 
 @router.delete("/{ai_model_id}", summary="Delete AI Model")
 async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
-    await _ensure_ai_model_attachments_table(db)
     mid = _norm_id(ai_model_id)
     try:
         exists = await db.execute(
@@ -554,7 +420,6 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{ai_model_id}/agents", summary="Link Agent to AI Model")
 async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
     mid = _norm_id(ai_model_id)
     agent_id = body.agent_id
     tenant_id = _tenant(request)
@@ -616,7 +481,6 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
 
 @router.delete("/{ai_model_id}/agents/{agent_id}", summary="Unlink Agent from AI Model")
 async def unlink_agent(ai_model_id: str, agent_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_tables(db)
     mid = _norm_id(ai_model_id)
     try:
         result = await db.execute(
@@ -658,7 +522,6 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
 
 @router.get("/{ai_model_id}/attachments", summary="List AI Model Attachments")
 async def list_model_attachments(ai_model_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_attachments_table(db)
     clauses = ["ai_model_id = :mid"]
     params: Dict[str, Any] = {"mid": ai_model_id}
     if category is not None:
@@ -678,7 +541,6 @@ async def list_model_attachments(ai_model_id: str, category: Optional[str] = Non
 
 @router.post("/{ai_model_id}/attachments", summary="Upload AI Model Attachment", status_code=201)
 async def create_model_attachment(ai_model_id: str, body: AiModelAttachmentCreate, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_attachments_table(db)
     filename = (body.filename or "").strip()
     mime_type = (body.mime_type or "").strip() or "application/octet-stream"
     if not filename:
@@ -717,7 +579,6 @@ async def create_model_attachment(ai_model_id: str, body: AiModelAttachmentCreat
 
 @router.get("/{ai_model_id}/attachments/{attachment_id}/download", summary="Download AI Model Attachment")
 async def download_model_attachment(ai_model_id: str, attachment_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_attachments_table(db)
     row = await db.execute(
         text(
             """
@@ -743,7 +604,6 @@ async def download_model_attachment(ai_model_id: str, attachment_id: str, db: As
 
 @router.delete("/{ai_model_id}/attachments/{attachment_id}", summary="Delete AI Model Attachment")
 async def delete_model_attachment(ai_model_id: str, attachment_id: str, db: AsyncSession = Depends(get_db)):
-    await _ensure_ai_model_attachments_table(db)
     result = await db.execute(
         text(
             """
