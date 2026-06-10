@@ -609,9 +609,11 @@ const BusinessProcessViewPage: React.FC = () => {
           } catch (linkErr) {
             console.warn('Process created but auto-link to AI use case failed.', linkErr);
           }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
           navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
           return;
         }
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/processes/${encodeURIComponent(created.business_process_id)}`, { replace: true });
         return;
       }
@@ -653,6 +655,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setActionError(null);
     try {
       await businessRelationsApi.deleteProcess(process.business_process_id);
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/processes');
     } catch (err: any) {
       setActionError(err.message || 'Failed to delete process');

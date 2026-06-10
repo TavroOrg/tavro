@@ -364,6 +364,7 @@ const IntegrationViewPage: React.FC = () => {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/integrations/${encodeURIComponent(created.integration_id)}`, { replace: true });
         return;
       }
@@ -399,6 +400,7 @@ const IntegrationViewPage: React.FC = () => {
     setActionError(null);
     try {
       await businessRelationsApi.deleteIntegration(integration.integration_id);
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/integrations');
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
