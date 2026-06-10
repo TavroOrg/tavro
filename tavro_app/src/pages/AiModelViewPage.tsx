@@ -894,7 +894,7 @@ const AiModelViewPage: React.FC = () => {
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                     >
                       {actingAgent === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                      Attach
+                      Link
                     </button>
                   </div>
                 );
@@ -979,7 +979,7 @@ const AiModelViewPage: React.FC = () => {
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                     >
                       {actingUseCase === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                      Map
+                      Link
                     </button>
                   </div>
                 );

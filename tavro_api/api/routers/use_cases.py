@@ -449,12 +449,61 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
             for r in applications_result.mappings().all()
         ]
 
+        # Linked AI models (many-to-many via core.ai_model_ai_use_cases).
+        # Guarded: the junction table may not exist before migration 004.
+        linked_ai_models: List[Dict[str, Any]] = []
+        model_junction = (
+            await db.execute(text("SELECT to_regclass(:t)"), {"t": f"{CORE}.ai_model_ai_use_cases"})
+        ).scalar()
+        if model_junction:
+            model_tenant_filter = (
+                "AND (relm.tenant_id = :tid OR relm.tenant_id IS NULL OR relm.tenant_id = '' OR relm.tenant_id = 'None')"
+                if tenant_id
+                else ""
+            )
+            models_result = await db.execute(
+                text(
+                    f"""
+                    SELECT DISTINCT
+                        relm.ai_model_id,
+                        COALESCE(m.model_name, relm.ai_model_name, relm.ai_model_id) AS model_name,
+                        m.description,
+                        m.provider,
+                        m.status,
+                        LOWER(COALESCE(m.model_name, relm.ai_model_name, relm.ai_model_id)) AS model_sort_key
+                    FROM {CORE}.ai_model_ai_use_cases relm
+                    LEFT JOIN {CORE}.ai_models m
+                        ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(relm.ai_model_id))
+                    WHERE LOWER(TRIM(relm.ai_use_case_id)) = LOWER(TRIM(:uid))
+                      AND relm.ai_model_id IS NOT NULL
+                      AND relm.ai_model_id <> ''
+                      {model_tenant_filter}
+                    ORDER BY model_sort_key
+                    """
+                ),
+                {"uid": normalized_use_case_id, "tid": tenant_id},
+            )
+            linked_ai_models = [
+                {
+                    "identifier": r["ai_model_id"],
+                    "ai_model_id": r["ai_model_id"],
+                    "name": r["model_name"],
+                    "model_name": r["model_name"],
+                    "description": r["description"],
+                    "provider": r["provider"],
+                    "status": r["status"],
+                }
+                for r in models_result.mappings().all()
+            ]
+
         data = {
             **dict(row),
             "of_associated_agents": linked_agents,
             "of_associated_business_applications": linked_applications,
             "applications": linked_applications,
             "of_associated_business_processes": linked_processes,
+            "of_associated_ai_models": linked_ai_models,
+            "ai_models": linked_ai_models,
         }
         return {"start_record": 1, "end_record": 1, "record_count": 1, "total_records": 1, "data": [data]}
     except HTTPException:

@@ -11,7 +11,9 @@ import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import { useCaseApi } from '../services/useCaseApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { aiModelApi } from '../services/aiModelApi';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
+import type { AiModelRecord } from '../types/aiModel';
 
 const USE_CASE_AGENT_COUNT_CACHE_KEY = 'tavro_use_case_agent_count_cache';
 
@@ -30,6 +32,29 @@ interface ApplicationRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
 }
+
+interface AiModelRelationsSectionProps {
+  useCase: UseCaseDetail;
+  onSilentRefetch: () => void;
+}
+
+const normalizeUseCaseAiModels = (
+  raw: any,
+): Array<{ identifier: string; name: string; description: string | null; provider: string | null; status: string | null }> => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m: any) => {
+      const identifier = m?.ai_model_id ?? m?.identifier ?? m?.id ?? '';
+      return {
+        identifier,
+        name: m?.model_name ?? m?.name ?? identifier,
+        description: m?.description ?? null,
+        provider: m?.provider ?? null,
+        status: m?.status ?? null,
+      };
+    })
+    .filter((m) => !!m.identifier);
+};
 
 const normalizeUseCaseApplications = (raw: any): Array<{
   identifier: string;
@@ -1016,6 +1041,183 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   );
 };
 
+const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+  const { refresh: refreshUC } = useUseCases();
+  const useCaseId = useCase.identifier ?? '';
+  const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [acting, setActing] = useState<string | null>(null);
+  const [relationError, setRelationError] = useState<string | null>(null);
+
+  const linkedModels = useMemo(
+    () => normalizeUseCaseAiModels((useCase as any).ai_models ?? (useCase as any).of_associated_ai_models ?? []),
+    [useCase],
+  );
+  const linkedModelIds = useMemo(
+    () => new Set(linkedModels.map((m) => m.identifier).filter(Boolean)),
+    [linkedModels],
+  );
+
+  const availableModels = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return allModels.filter((m) => {
+      if (linkedModelIds.has(m.ai_model_id)) return false;
+      if (!q) return true;
+      return (
+        m.ai_model_id.toLowerCase().includes(q) ||
+        (m.model_name ?? '').toLowerCase().includes(q) ||
+        (m.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allModels, linkedModelIds, searchTerm]);
+
+  const loadModelCatalog = async () => {
+    setLoadingCatalog(true);
+    try {
+      setAllModels(await aiModelApi.listModels());
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to load AI model catalog.');
+    } finally {
+      setLoadingCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    loadModelCatalog();
+  }, []);
+
+  const handleLinkModel = async (modelId: string) => {
+    if (!useCaseId || !modelId || linkedModelIds.has(modelId)) return;
+    setActing(`add:${modelId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.linkUseCase(modelId, useCaseId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to link AI model.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleUnlinkModel = async (modelId: string) => {
+    if (!useCaseId || !modelId) return;
+    setActing(`remove:${modelId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.unlinkUseCase(modelId, useCaseId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to unlink AI model.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {relationError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {relationError}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100">
+          <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({linkedModels.length})</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {linkedModels.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No AI models linked.</div>
+          )}
+          {linkedModels.map((model) => {
+            const modelId = model.identifier;
+            const removeKey = `remove:${modelId}`;
+            return (
+              <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <Link to={`/ai-models/${encodeURIComponent(modelId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                    {model.name}
+                  </Link>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                </div>
+                <button
+                  onClick={() => handleUnlinkModel(modelId)}
+                  disabled={acting === removeKey}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+            <Link
+              to="/ai-models/new"
+              className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+            >
+              <PlusCircle size={12} />
+              Create Model
+            </Link>
+            <div className="relative w-full sm:w-[320px] max-w-full">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter AI models..."
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+          {loadingCatalog && (
+            <div className="p-5 text-sm text-slate-500 inline-flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Loading AI models...
+            </div>
+          )}
+          {!loadingCatalog && availableModels.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No available AI models to link.</div>
+          )}
+          {!loadingCatalog && availableModels.map((model) => {
+            const modelId = model.ai_model_id;
+            const addKey = `add:${modelId}`;
+            const busy = acting === addKey;
+            return (
+              <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-700 truncate">{model.model_name || modelId}</p>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                </div>
+                <button
+                  onClick={() => handleLinkModel(modelId)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                  Link
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UseCaseViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1384,6 +1586,7 @@ const UseCaseViewPage: React.FC = () => {
             <div className="flex flex-col gap-6">
               <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
               <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
             </div>
           }
           isEditing={isEditing}
