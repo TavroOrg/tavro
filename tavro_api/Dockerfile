@@ -27,7 +27,6 @@ COPY tavro_api/ /app/
 COPY services     /app/services
 COPY tavro_library /app/tavro_library
 COPY utils        /app/utils
-COPY config.yaml.example /app/config.yaml.example
 
 ENV PYTHONPATH=/app
 

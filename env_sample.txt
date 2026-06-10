@@ -17,17 +17,85 @@ CREWAI_LLM_MODEL=anthropic/claude-sonnet-4-6
 CREWAI_MAX_TOKENS=4096
 CREWAI_TXT_SEARCH_EMBEDDER=onnx
 
-AZURE_AI_FOUNDRY_ENDPOINT=https://tavro-portal-development.services.ai.azure.com/api/projects/proj-default
+# ── CrewAI Telemetry ─────────────────────────────────────────────────────────
+OTEL_SDK_DISABLED=true
+CREWAI_DISABLE_TELEMETRY=true
+CREWAI_TRACING_ENABLED=false
+
+# ── OAuth / JWT ──────────────────────────────────────────────────────────────
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+JWT_SIGNING_KEY=change_this_to_a_long_random_string
+
+# ── Database Schemas ─────────────────────────────────────────────────────────
+CORE_DB_NAME=core
+CURATED_DB_NAME=curated
+RISK_MANAGEMENT_DB_NAME=risk_management
+
+# ── FastAPI ──────────────────────────────────────────────────────────────────
+fast_api_host=localhost
+fast_api_port=80
+
+# ── MCP ──────────────────────────────────────────────────────────────────────
+mcp_host=localhost
+mcp_port=9000
+mcp_root_url=https://your-ngrok-or-public-url
+
+# ── Azure AI Foundry ─────────────────────────────────────────────────────────
+AZURE_AI_FOUNDRY_ENDPOINT=https://your-project.services.ai.azure.com/api/projects/proj-default
 AZURE_AI_FOUNDRY_KEY=
 AZURE_AI_FOUNDRY_API_VERSION=2024-02-15-preview
 AZURE_AI_FOUNDRY_AGENT_API_VERSION=v1
 # Optional. If omitted, the selected playground model is used as the Azure deployment name.
-AZURE_AI_FOUNDRY_DEPLOYMENT=gpt-5.4-mini
+AZURE_AI_FOUNDRY_DEPLOYMENT=
+
+# ── Catalog Connector - Azure / Copilot ──────────────────────────────────────
 # Required when running the API in Docker locally. In Azure, use managed identity instead.
 AZURE_CLIENT_ID=
 AZURE_TENANT_ID=
 AZURE_CLIENT_SECRET=
+AZURE_SCOPE=https://your-org.crm.dynamics.com/.default
+AZURE_ORG_URL=https://your-org.crm.dynamics.com
 
+# ── Catalog Connector - AWS Bedrock ──────────────────────────────────────────
+BEDROCK_ACCESS_KEY=
+BEDROCK_SECRET_KEY=
+BEDROCK_REGION=us-east-2
+
+# ── Catalog Connector - ServiceNow ───────────────────────────────────────────
+SERVICENOW_INSTANCE_URL=https://your-instance.service-now.com
+SERVICENOW_USERNAME=
+SERVICENOW_PASSWORD=
+
+# ── Catalog Connector - Salesforce ───────────────────────────────────────────
+SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
+SALESFORCE_API_VERSION=v59.0
+SALESFORCE_ACCESS_TOKEN=
+
+# ── Catalog Connector - Databricks ───────────────────────────────────────────
+DATABRICKS_WORKSPACE_URL=https://your-workspace.azuredatabricks.net
+DATABRICKS_TOKEN=
+
+# ── Catalog Connector - Snowflake ────────────────────────────────────────────
+SNOWFLAKE_ACCOUNT=https://your-account.snowflakecomputing.com
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+SNOWFLAKE_TOKEN=
+
+# ── Catalog Connector - Gemini ───────────────────────────────────────────────
+GEMINI_CLIENT_ID=
+GEMINI_CLIENT_SECRET=
+GEMINI_PROJECT_ID=
+GEMINI_COLLECTION_ID=
+GEMINI_ENGINE_ID=
+GEMINI_AUTH_URI=https://accounts.google.com/o/oauth2/auth
+GEMINI_TOKEN_URI=https://oauth2.googleapis.com/token
+
+# ── Catalog Connector - GitHub MCP ───────────────────────────────────────────
+GITHUB_MCP_BASE_URL=https://api.github.com
+GITHUB_MCP_TOKEN=
+
+# ── Zitadel / Auth ───────────────────────────────────────────────────────────
 TAVRO_PUBLIC_ORIGIN=http://localhost:9000
 VITE_ZITADEL_ISSUER=http://localhost:8080
 VITE_ZITADEL_CLIENT_ID=
@@ -41,19 +109,16 @@ ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS=http://localhost:9000,http://localhost:900
 
 # ⚠️  INSECURE DEFAULTS — for local development only.
 # Before exposing this stack to a network, change ZITADEL_MASTERKEY,
-# POSTGRES_ADMIN_PASSWORD, and POSTGRES_ZITADEL_PASSWORD.
+# POSTGRES_PASSWORD, and JWT_SIGNING_KEY.
 # See: https://zitadel.com/docs/self-hosting/deploy/compose#homelab
 
 # -----------------------------
 # Domain and external URL
 # -----------------------------
 ZITADEL_DOMAIN=localhost
-# Used by the base (non-TLS) compose; TLS overlays also publish 80/443 and may still expose
-# this port unless their ports are adjusted.
 PROXY_HTTP_PUBLISHED_PORT=8080
 ZITADEL_EXTERNALPORT=8080
 ZITADEL_EXTERNALSECURE=false
-# Overridden by TLS overlays (they hardcode X-Forwarded-Proto: https).
 ZITADEL_PUBLIC_SCHEME=http
 
 # -----------------------------
@@ -82,23 +147,10 @@ OTEL_COLLECTOR_IMAGE=otel/opentelemetry-collector-contrib:0.114.0
 TRAEFIK_DASHBOARD_ENABLED=false
 TRAEFIK_LOG_LEVEL=INFO
 TRAEFIK_ACCESSLOG_ENABLED=true
-# Trusted proxy IPs for X-Forwarded-* headers (external-tls mode).
-# Comma-separated CIDR ranges of your upstream load balancer / reverse proxy.
 TRAEFIK_TRUSTED_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 
 # Let's Encrypt mode
 LETSENCRYPT_EMAIL=ops@example.com
-
-# -----------------------------
-# Postgres settings
-# -----------------------------
-# DSN used by ZITADEL to connect to PostgreSQL.
-# The start-from-init command uses this DSN to create the database schema and for
-# normal operation. When a DSN is configured, ZITADEL does not create or switch
-# to a separate unprivileged database user; the user in this DSN is used directly
-# and must already exist. For production, configure this DSN to use a non-superuser
-# role with only the permissions ZITADEL needs.
-# See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 
 # -----------------------------
 # Access logs
@@ -107,12 +159,9 @@ ZITADEL_ACCESS_LOG_STDOUT_ENABLED=true
 
 # -----------------------------
 # Optional Redis cache settings
-# Default is disabled.
-# Enable with --profile cache and switch connectors to redis.
+# Default is disabled. Enable with --profile cache.
 # -----------------------------
 ZITADEL_CACHES_CONNECTORS_REDIS_ENABLED=false
-# DSN used by ZITADEL to connect to Redis.
-# See https://redis.io/docs/latest/develop/tools/cli/#host-port-password-and-database
 ZITADEL_CACHES_CONNECTORS_REDIS_URL=redis://redis:6379/0
 ZITADEL_CACHES_INSTANCE_CONNECTOR=
 ZITADEL_CACHES_MILESTONES_CONNECTOR=
@@ -121,11 +170,6 @@ ZITADEL_CACHES_ORGANIZATION_CONNECTOR=
 # -----------------------------
 # Optional API tracing (OTEL)
 # Default is disabled. Enable with --profile observability.
-# The collector receives traces from ZITADEL on port 4317 (gRPC) and 4318 (HTTP)
-# and logs them to stdout by default.
-# To forward traces to your own backend (Grafana Tempo, Jaeger, OpenObserve, etc.),
-# uncomment the otlp exporter in otel-collector-config.yaml and set:
-# OTEL_BACKEND_ENDPOINT=http://your-backend:4317
 # -----------------------------
 ZITADEL_INSTRUMENTATION_SERVICENAME=zitadel-api
 ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_TYPE=none
@@ -134,10 +178,7 @@ ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_INSECURE=true
 
 # -----------------------------
 # Future Login OTEL placeholders
-# Current login image may ignore these.
 # -----------------------------
 LOGIN_OTEL_SERVICE_NAME=zitadel-login
 LOGIN_OTEL_EXPORTER_OTLP_ENDPOINT=
 LOGIN_OTEL_EXPORTER_OTLP_PROTOCOL=grpc
-# Note: the risk stack shares the same PostgreSQL instance (tavro-postgres).
-# No separate risk database credentials are needed.
