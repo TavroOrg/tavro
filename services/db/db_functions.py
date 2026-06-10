@@ -8,9 +8,6 @@ import psycopg2
 from psycopg2 import sql
 from cvss import CVSS4
 from utils.db import db_connection as _db_connection
-from utils.set_environment import set_environment
-
-set_environment("databases")
 
 CORE_SCHEMA             = os.getenv("CORE_DB_NAME",            "core")
 RISK_MANAGEMENT_SCHEMA  = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
