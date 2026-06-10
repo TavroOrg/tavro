@@ -166,7 +166,7 @@ Key engineering decisions, known risks, and mitigation strategies, including:
 
 ### Deployment and Operations
 
-- **Target environment**: where the agent will be deployed (cloud region, container, platform)
+- **Target environment**: where the agent will be deployed (cloud region, container, platform) and the process of      deployment including CI/CD pipeline considerations, runtime environment and other recommendations to this deployment environment whenever possible.
 - **Rollout strategy**: phased, canary, or full deployment
 - **Monitoring**: key metrics to observe (latency, error rate, token usage, accuracy)
 - **Alerting thresholds**: conditions that trigger on-call or escalation
