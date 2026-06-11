@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import {
   AppWindow,
+  Bot,
+  Boxes,
   BriefcaseBusiness,
   CheckCircle2,
   Link2,
@@ -16,18 +18,22 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { aiModelApi } from '../services/aiModelApi';
 import { useUseCases } from '../context/UseCaseContext';
+import { useCatalog } from '../context/CatalogContext';
 import type {
   AgentRelationsPayload,
   BusinessApplicationRecord,
   BusinessProcessRecord,
+  ChildAgentReference,
 } from '../types/businessRelations';
 import type { UseCaseSummary } from '../types/useCase';
+import type { AiModelRecord } from '../types/aiModel';
 
 interface AgentRelatedTabProps {
   agent: AgentData;
-  mode?: 'applications' | 'processes' | 'use_cases' | 'all';
-  onCountsChange?: (counts: { applications: number; processes: number; useCases?: number }) => void;
+  mode?: 'applications' | 'processes' | 'use_cases' | 'child_agents' | 'ai_models' | 'all';
+  onCountsChange?: (counts: { applications: number; processes: number; useCases?: number; childAgents?: number; aiModels?: number }) => void;
   onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
   embedded?: boolean;
 }
@@ -36,6 +42,7 @@ export interface AgentBusinessImpactSnapshot {
   applications: AgentData['application'];
   processes: AgentData['business_process'];
   useCases: NonNullable<AgentData['ai_use_cases']>;
+  childAgents?: ChildAgentReference[];
 }
 
 const hasNonBlankText = (value: unknown): boolean =>
@@ -185,21 +192,29 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   embedded = false,
 }) => {
   const agentId = agent.identification?.agent_id;
-  const showApplications = mode !== 'processes' && mode !== 'use_cases';
-  const showProcesses = mode !== 'applications' && mode !== 'use_cases';
-  const showUseCases = mode !== 'applications' && mode !== 'processes';
+  const showApplications = mode === 'all' || mode === 'applications';
+  const showProcesses = mode === 'all' || mode === 'processes';
+  const showUseCases = mode === 'all' || mode === 'use_cases';
+  const showChildAgents = mode === 'all' || mode === 'child_agents';
+  const showAiModels = mode === 'all' || mode === 'ai_models';
   const title =
     mode === 'applications'
       ? 'Applications'
       : mode === 'processes'
         ? 'Processes'
-        : 'Related Assets';
+        : mode === 'child_agents'
+          ? 'Agent to Agent'
+          : mode === 'ai_models'
+            ? 'AI Models'
+            : 'Related Assets';
   const subtitle =
     mode === 'applications'
       ? 'Manage application links'
       : mode === 'processes'
         ? 'Manage process links'
-        : 'Manage application, process, and AI use case links';
+        : mode === 'child_agents'
+          ? 'Manage agent to agent links'
+          : 'Manage application, process, AI use case, and agent to agent links';
   const [relations, setRelations] = useState<AgentRelationsPayload | null>(null);
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
@@ -212,8 +227,12 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [linkedUseCases, setLinkedUseCases] = useState<UseCaseSummary[]>(
     () => normalizeLinkedUseCasesFromAgent(agent),
   );
+  const [childAgentSearch, setChildAgentSearch] = useState('');
+  const [allAiModels, setAllAiModels] = useState<AiModelRecord[]>([]);
+  const [aiModelSearch, setAiModelSearch] = useState('');
   const lastBusinessImpactSignatureRef = useRef<string>('');
   const { useCases: allUseCases } = useUseCases();
+  const { agents: catalogAgents } = useCatalog();
   const fallbackApplicationCount = useMemo(
     () => (agent.application ?? []).filter(isLinkedApplicationLike).length,
     [agent.application],
@@ -248,14 +267,16 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     }
     setLoadingRelations(true);
     try {
-      const [agentRelations, appCatalog, processCatalog] = await Promise.all([
+      const [agentRelations, appCatalog, processCatalog, modelCatalog] = await Promise.all([
         businessRelationsApi.getAgentRelations(agentId),
         showApplications ? businessRelationsApi.listApplications() : Promise.resolve([] as BusinessApplicationRecord[]),
         showProcesses ? businessRelationsApi.listProcesses() : Promise.resolve([] as BusinessProcessRecord[]),
+        showAiModels ? aiModelApi.listModels() : Promise.resolve([] as AiModelRecord[]),
       ]);
       setRelations(agentRelations);
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
+      setAllAiModels(modelCatalog);
 
       const relationUseCases = normalizeLinkedUseCasesFromRelations(agentRelations);
       if (Array.isArray(agentRelations.ai_use_cases)) {
@@ -271,6 +292,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         applications: agentRelations.applications.filter(isLinkedApplicationLike).length,
         processes: agentRelations.business_processes.filter(isLinkedProcessLike).length,
         useCases: useCaseCount,
+        childAgents: (agentRelations.child_agents ?? []).length,
+        aiModels: (agentRelations.ai_models ?? []).length,
       });
     } catch {
       onCountsChange?.({
@@ -285,10 +308,12 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   useEffect(() => {
     refreshRelations();
-  }, [agentId, showApplications, showProcesses]);
+  }, [agentId, showApplications, showProcesses, showAiModels]);
 
   const liveApplications = relations?.applications ?? [];
   const liveProcesses = relations?.business_processes ?? [];
+  const liveChildAgents = relations?.child_agents ?? [];
+  const liveAiModels = relations?.ai_models ?? [];
   const showingLiveData = !!relations;
 
   const displayedApplications = useMemo(
@@ -325,12 +350,13 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       applications: displayedApplications.map(toApplicationImpact),
       processes: displayedProcesses.map(toProcessImpact),
       useCases: linkedUseCases.map(toUseCaseImpact),
+      childAgents: liveChildAgents,
     };
     const signature = JSON.stringify(snapshot);
     if (signature === lastBusinessImpactSignatureRef.current) return;
     lastBusinessImpactSignatureRef.current = signature;
     onBusinessImpactChange(snapshot);
-  }, [displayedApplications, displayedProcesses, linkedUseCases, onBusinessImpactChange]);
+  }, [displayedApplications, displayedProcesses, linkedUseCases, liveChildAgents, onBusinessImpactChange]);
 
   const linkedApplicationIds = useMemo(() => {
     return new Set(
@@ -373,6 +399,47 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       );
     });
   }, [allProcesses, processSearch, linkedProcessIds]);
+
+  const linkedChildAgentIds = useMemo(() => {
+    return new Set(
+      liveChildAgents
+        .map(ca => ca.agent_id ?? ca.agent_internal_id)
+        .filter((v): v is string => !!v),
+    );
+  }, [liveChildAgents]);
+
+  const availableChildAgents = useMemo(() => {
+    const q = childAgentSearch.trim().toLowerCase();
+    const selfId = agentId ?? '';
+    return catalogAgents.filter(a => {
+      const id = a.identification?.agent_id ?? '';
+      if (!id || id === selfId) return false;
+      if (linkedChildAgentIds.has(id)) return false;
+      if (!q) return true;
+      return (
+        id.toLowerCase().includes(q) ||
+        (a.name ?? '').toLowerCase().includes(q) ||
+        (a.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [catalogAgents, childAgentSearch, linkedChildAgentIds, agentId]);
+
+  const linkedAiModelIds = useMemo(() => {
+    return new Set(liveAiModels.map(m => m.ai_model_id).filter(Boolean));
+  }, [liveAiModels]);
+
+  const availableAiModels = useMemo(() => {
+    const q = aiModelSearch.trim().toLowerCase();
+    return allAiModels.filter(m => {
+      if (linkedAiModelIds.has(m.ai_model_id)) return false;
+      if (!q) return true;
+      return (
+        m.ai_model_id.toLowerCase().includes(q) ||
+        (m.model_name ?? '').toLowerCase().includes(q) ||
+        (m.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allAiModels, aiModelSearch, linkedAiModelIds]);
 
   const linkedUseCaseIds = useMemo(() => {
     return new Set(linkedUseCases.map(uc => uc.identifier).filter(Boolean));
@@ -447,6 +514,66 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await refreshRelations();
     } catch (err: any) {
       setActionError(err.message || 'Failed to unlink process.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleAddChildAgent = async (childId: string) => {
+    if (!agentId) return;
+    const key = `add-child:${childId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await businessRelationsApi.linkAgentToChildAgent(agentId, childId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to link child agent.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleRemoveChildAgent = async (childId: string) => {
+    if (!agentId) return;
+    const key = `remove-child:${childId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await businessRelationsApi.unlinkAgentFromChildAgent(agentId, childId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to unlink child agent.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleAddAiModel = async (modelId: string) => {
+    if (!agentId) return;
+    const key = `add-model:${modelId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await aiModelApi.linkAgent(modelId, agentId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to link AI model.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleRemoveAiModel = async (modelId: string) => {
+    if (!agentId) return;
+    const key = `remove-model:${modelId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await aiModelApi.unlinkAgent(modelId, agentId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to unlink AI model.');
     } finally {
       setActingKey(null);
     }
@@ -611,7 +738,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
           </div>
         )}
 
-        {showApplications && showProcesses && <div className="h-px bg-slate-100 w-full" />}
+        {showApplications && (showProcesses || showChildAgents) && <div className="h-px bg-slate-100 w-full" />}
 
         {showProcesses && (
           <div className="flex flex-col gap-3">
@@ -739,6 +866,225 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
             )}
           </div>
         )}
+
+        {showProcesses && showChildAgents && <div className="h-px bg-slate-100 w-full" />}
+
+        {showChildAgents && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Bot size={13} /> Agent to Agent ({liveChildAgents.length})
+              </h3>
+            </div>
+            <div className="flex flex-col gap-3">
+              {liveChildAgents.map((ca, idx) => {
+                const childId = ca.agent_id ?? ca.agent_internal_id ?? `child-${idx}`;
+                const removeKey = `remove-child:${childId}`;
+                return (
+                  <div key={`${childId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Link
+                          to={`/agent/${encodeURIComponent(childId)}`}
+                          className="font-bold text-sm text-blue-700 hover:underline"
+                        >
+                          {ca.agent_name || childId}
+                        </Link>
+                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">
+                          {childId}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {ca.direction && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {ca.direction === 'PARENT' ? 'Parent' : 'Child'}
+                          </span>
+                        )}
+                        {showingLiveData && (
+                          <button
+                            onClick={() => handleRemoveChildAgent(childId)}
+                            disabled={actingKey === removeKey}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {ca.agent_description && (
+                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">
+                        {ca.agent_description}
+                      </span>
+                    )}
+                    {ca.relationship_label && (
+                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 w-fit">
+                        {ca.relationship_label}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {liveChildAgents.length === 0 && (
+                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  No linked agents.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                  <Link2 size={12} /> Add Agent to Agent Relation
+                </p>
+                <div className="relative w-full max-w-sm">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={childAgentSearch}
+                    onChange={(e) => setChildAgentSearch(e.target.value)}
+                    placeholder="Filter agents..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
+                {availableChildAgents.length === 0 && (
+                  <div className="p-3 text-xs text-slate-500">No available agents to link.</div>
+                )}
+                {availableChildAgents.map(a => {
+                  const id = a.identification?.agent_id ?? '';
+                  const addKey = `add-child:${id}`;
+                  return (
+                    <div key={id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-700 truncate">{a.name || id}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{id}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAddChildAgent(id)}
+                        disabled={actingKey === addKey}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                        Link
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(showProcesses || showChildAgents) && showAiModels && <div className="h-px bg-slate-100 w-full" />}
+
+        {showAiModels && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Boxes size={13} /> AI Models ({liveAiModels.length})
+              </h3>
+              {agentId && (
+                <Link
+                  to={`/ai-models/new?linkAgentId=${encodeURIComponent(agentId)}`}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Plus size={11} />
+                  New Model
+                </Link>
+              )}
+            </div>
+            <div className="flex flex-col gap-3">
+              {liveAiModels.map((m, idx) => {
+                const modelId = m.ai_model_id || `model-${idx}`;
+                const removeKey = `remove-model:${modelId}`;
+                return (
+                  <div key={`${modelId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Link
+                          to={`/ai-models/${encodeURIComponent(modelId)}`}
+                          className="font-bold text-sm text-blue-700 hover:underline"
+                        >
+                          {m.model_name || modelId}
+                        </Link>
+                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{modelId}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {m.status && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {m.status}
+                          </span>
+                        )}
+                        {showingLiveData && (
+                          <button
+                            onClick={() => handleRemoveAiModel(modelId)}
+                            disabled={actingKey === removeKey}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {m.description && (
+                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">{m.description}</span>
+                    )}
+                  </div>
+                );
+              })}
+              {liveAiModels.length === 0 && (
+                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  No linked AI models.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                  <Link2 size={12} /> Add AI Model Relation
+                </p>
+                <div className="relative w-full max-w-sm">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={aiModelSearch}
+                    onChange={(e) => setAiModelSearch(e.target.value)}
+                    placeholder="Filter models..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
+                {availableAiModels.length === 0 && (
+                  <div className="p-3 text-xs text-slate-500">No available AI models to link.</div>
+                )}
+                {availableAiModels.map(m => {
+                  const addKey = `add-model:${m.ai_model_id}`;
+                  return (
+                    <div key={m.ai_model_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-700 truncate">{m.model_name || m.ai_model_id}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{m.ai_model_id}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAddAiModel(m.ai_model_id)}
+                        disabled={actingKey === addKey}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                        Link
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(showProcesses || showChildAgents || showAiModels) && showUseCases && <div className="h-px bg-slate-100 w-full" />}
 
         {showUseCases && (
           <div className={`flex flex-col gap-3 ${mode === 'all' ? 'order-first' : ''}`}>

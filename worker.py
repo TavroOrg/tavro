@@ -569,7 +569,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
     use_case_sql = f"""
         INSERT INTO core.ai_use_cases (
             tenant_id, ai_use_case_id, name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -577,7 +577,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
         )
         SELECT
             tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
-            problem_statement, expected_benefits, priority, status, agent_internal_id,
+            problem_statement, expected_benefits, priority, status,
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
@@ -594,7 +594,6 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             expected_benefits = EXCLUDED.expected_benefits,
             priority = EXCLUDED.priority,
             status = EXCLUDED.status,
-            agent_internal_id = EXCLUDED.agent_internal_id,
             agent_risk_exposure_are = EXCLUDED.agent_risk_exposure_are,
             no_of_associated_agents = EXCLUDED.no_of_associated_agents,
             inherent_risk_classification = EXCLUDED.inherent_risk_classification,
@@ -1135,41 +1134,64 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
     select_rows = []
 
     for model in models:
+        # Deterministic catalog id derived from the model name so re-ingests and
+        # multiple agents declaring the same model share one core.ai_models row.
         select_rows.append(f"""
             SELECT
-                NULL                                     AS ai_model_id,
-                {_sq(agent_internal_id)}                 AS agent_internal_id,
-                {_sq(agent_id)}                          AS agent_id,
-                {_sq(model.get('name'))}                 AS model_name,
-                {_sq(model.get('owner'))}                AS owner,
-                {_sq(model.get('department_executive'))} AS department_executive,
-                {_sq(model.get('description'))}          AS description,
-                TIMESTAMP '{now_str}'                    AS now_ts
+                md5(lower(trim({_sq(model.get('name'))})))   AS ai_model_id,
+                {_sq(agent_internal_id)}                      AS agent_internal_id,
+                {_sq(agent_id)}                               AS agent_id,
+                {_sq(model.get('name'))}                      AS model_name,
+                {_sq(model.get('owner'))}                     AS owner,
+                {_sq(model.get('department_executive'))}      AS department_executive,
+                {_sq(model.get('description'))}               AS description,
+                {_sq(model.get('model_provider') or model.get('provider'))} AS provider,
+                {_sq(model.get('model_version') or model.get('version'))}   AS version_number,
+                {_sq(model.get('model_type') or model.get('type'))}         AS model_type,
+                TIMESTAMP '{now_str}'                         AS now_ts
+            WHERE NULLIF(trim({_sq(model.get('name'))}), '') IS NOT NULL
         """.strip())
 
     union_all = "\nUNION ALL\n".join(select_rows)
 
-    sql = f"""
-        INSERT INTO core.agent_ai_models (
-            ai_model_id, agent_internal_id, agent_id,
-            model_name, owner, department_executive, description,
+    # 1) Upsert the catalog (core.ai_models) with descriptive attributes.
+    catalog_sql = f"""
+        INSERT INTO core.ai_models (
+            ai_model_id, model_name, owner, department_executive, description,
+            provider, version_number, model_type, no_of_associated_agents,
             created_ts, updated_ts
         )
         SELECT
-            ai_model_id, agent_internal_id, agent_id,
-            model_name, owner, department_executive, description,
-            now_ts, now_ts
+            ai_model_id, model_name, owner, department_executive, description,
+            provider, version_number, model_type, 0, now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, model_name)
-        DO UPDATE SET
-            agent_id             = EXCLUDED.agent_id,
-            owner                = EXCLUDED.owner,
-            department_executive = EXCLUDED.department_executive,
-            description          = EXCLUDED.description,
+        ON CONFLICT (ai_model_id) DO UPDATE SET
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), core.ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, core.ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, core.ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, core.ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, core.ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, core.ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, core.ai_models.model_type),
             updated_ts           = EXCLUDED.updated_ts
     """
-    print(f"  Upserting {len(models)} AI models …")
-    execute_dml(sql, label="agent_ai_models BULK INSERT ON CONFLICT")
+    print(f"  Upserting {len(models)} AI models into catalog …")
+    execute_dml(catalog_sql, label="ai_models catalog upsert")
+
+    # 2) Upsert the agent<->model link (pure junction).
+    link_sql = f"""
+        INSERT INTO core.agent_ai_models (
+            ai_model_id, model_name, agent_id, agent_internal_id, created_ts, updated_ts
+        )
+        SELECT ai_model_id, model_name, agent_id, agent_internal_id, now_ts, now_ts
+        FROM ({union_all}) AS s
+        ON CONFLICT (agent_internal_id, ai_model_id)
+        DO UPDATE SET
+            model_name = EXCLUDED.model_name,
+            agent_id   = EXCLUDED.agent_id,
+            updated_ts = EXCLUDED.updated_ts
+    """
+    execute_dml(link_sql, label="agent_ai_models link upsert")
 
 
 def upsert_agent_data_sources(card: dict, agent_internal_id: str, now_str: str):

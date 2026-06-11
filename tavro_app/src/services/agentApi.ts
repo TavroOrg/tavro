@@ -47,7 +47,9 @@ export interface AgentCreatePayload {
     role?: string;
     environment?: string;
     owner?: string;
-    tools?: Array<{ name: string; description: string }>;
+    tools?: Array<{ name: string; description: string; table?: any; tables?: any[]; columns?: any[] }>;
+    tables?: Array<{ table_id?: string; name?: string; table_name?: string; columns?: any[]; tool_name?: string; tool_id?: string }>;
+    data_source?: Array<Record<string, any>>;
     knowledge_source?: { name: string; description: string };
     issues?: AgentIssuePayload[];
 }
@@ -57,6 +59,23 @@ export interface AgentUpdatePayload {
     description?: string;
     instruction?: string;
     issues?: AgentIssuePayload[];
+    skills?: Array<{
+        id?: string;
+        identifier?: string;
+        skill_id?: string;
+        name?: string;
+        skill_name?: string;
+        description?: string;
+        tags?: string[];
+        inputModes?: string[];
+        outputModes?: string[];
+        input_modes?: string[];
+        output_modes?: string[];
+        inputBounds?: string[];
+        outputBounds?: string[];
+        input_bounds?: string[];
+        output_bounds?: string[];
+    } | string>;
 }
 
 export interface AgentIssuePayload {

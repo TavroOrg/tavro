@@ -54,6 +54,7 @@ export interface BusinessApplicationRecord {
   updated_ts: string | null;
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
+  related_use_cases: RelatedUseCaseReference[];
 }
 
 export interface BusinessProcessRecord {
@@ -89,6 +90,17 @@ export interface BusinessProcessRecord {
   related_agent_count: number;
   related_processes: RelatedProcessReference[];
   related_use_cases: RelatedUseCaseReference[];
+}
+
+export interface ChildAgentReference {
+  agent_id: string | null;
+  agent_internal_id: string | null;
+  agent_name: string | null;
+  agent_description: string | null;
+  relationship_label: string | null;
+  // 'CHILD' = the referenced agent is a child of the agent being viewed.
+  // 'PARENT' = the referenced agent is a parent of the agent being viewed.
+  direction?: 'CHILD' | 'PARENT' | null;
 }
 
 export interface AgentRelationsPayload {
@@ -132,6 +144,29 @@ export interface AgentRelationsPayload {
     related_processes: RelatedProcessReference[];
   }>;
   ai_use_cases?: RelatedUseCaseReference[];
+  skills?: Array<{
+    identifier: string;
+    id?: string | null;
+    skill_id?: string | null;
+    name: string | null;
+    skill_name?: string | null;
+    description: string | null;
+    tags: string[] | null;
+    inputModes?: string[] | null;
+    outputModes?: string[] | null;
+    input_modes?: string[] | null;
+    output_modes?: string[] | null;
+  }>;
+  child_agents?: ChildAgentReference[];
+  ai_models?: AgentAiModelReference[];
+}
+
+export interface AgentAiModelReference {
+  ai_model_id: string;
+  model_name: string | null;
+  description: string | null;
+  provider: string | null;
+  status: string | null;
 }
 
 export interface BusinessApplicationUpsertPayload {

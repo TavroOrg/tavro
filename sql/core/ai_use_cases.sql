@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   status TEXT,
   created_ts timestamp,
   updated_ts timestamp,
-  agent_internal_id TEXT,
   agent_risk_exposure_are decimal(10, 2),
   no_of_associated_agents int,
   inherent_risk_classification TEXT,

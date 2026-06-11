@@ -12,10 +12,25 @@ import AgentContextGraph from './AgentContextGraphRF';
 import AgentIssuesTab from './AgentIssuesTab';
 import type { AgentIssue } from '../types/agent';
 
+type AgentInlineField = 'name' | 'description' | 'instruction';
+
 interface AgentViewProps {
     agent: AgentData;
     onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
     onIssuesChange?: (issues: AgentIssue[]) => void;
+    isEditing?: boolean;
+    editName?: string;
+    onEditNameChange?: (v: string) => void;
+    editDescription?: string;
+    onEditDescriptionChange?: (v: string) => void;
+    editInstruction?: string;
+    onEditInstructionChange?: (v: string) => void;
+    inlineEdit?: { field: AgentInlineField; value: string } | null;
+    inlineSaving?: AgentInlineField | null;
+    onStartInlineEdit?: (field: AgentInlineField) => void;
+    onInlineValueChange?: (value: string) => void;
+    onSaveInlineEdit?: () => void;
+    onCancelInlineEdit?: () => void;
 }
 
 type TabType =
@@ -37,7 +52,14 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'CONTEXT', label: 'Context Graph' },
 ];
 
-const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange, onIssuesChange }) => {
+const AgentView: React.FC<AgentViewProps> = ({
+    agent, onBusinessImpactChange,onIssuesChange,
+    isEditing, editName, onEditNameChange,
+    editDescription, onEditDescriptionChange,
+    editInstruction, onEditInstructionChange,
+    inlineEdit, inlineSaving, onStartInlineEdit,
+    onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+}) => {
     const [activeTab, setActiveTab] = useState<TabType>('IDENTIFICATION');
     const agentId = agent.identification?.agent_id;
 
@@ -51,7 +73,18 @@ const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange, on
 
             {/* Header (always visible) */}
             <div className="-mt-6">
-                <AgentHeader agent={agent} />
+                <AgentHeader
+                    agent={agent}
+                    isEditing={isEditing}
+                    editName={editName}
+                    onEditNameChange={onEditNameChange}
+                    inlineEdit={inlineEdit}
+                    inlineSaving={inlineSaving}
+                    onStartInlineEdit={onStartInlineEdit}
+                    onInlineValueChange={onInlineValueChange}
+                    onSaveInlineEdit={onSaveInlineEdit}
+                    onCancelInlineEdit={onCancelInlineEdit}
+                />
             </div>
 
             {/* Tab Navigation */}
@@ -72,7 +105,22 @@ const AgentView: React.FC<AgentViewProps> = ({ agent, onBusinessImpactChange, on
 
             {/* Tab Content */}
             <div>
-                {activeTab === 'IDENTIFICATION' && <AgentIdentificationTab agent={agent} />}
+                {activeTab === 'IDENTIFICATION' && (
+                    <AgentIdentificationTab
+                        agent={agent}
+                        isEditing={isEditing}
+                        editDescription={editDescription}
+                        onEditDescriptionChange={onEditDescriptionChange}
+                        editInstruction={editInstruction}
+                        onEditInstructionChange={onEditInstructionChange}
+                        inlineEdit={inlineEdit}
+                        inlineSaving={inlineSaving}
+                        onStartInlineEdit={onStartInlineEdit}
+                        onInlineValueChange={onInlineValueChange}
+                        onSaveInlineEdit={onSaveInlineEdit}
+                        onCancelInlineEdit={onCancelInlineEdit}
+                    />
+                )}
 
                 {activeTab === 'CONFIG' && <AgentTechConfigTab agent={agent} />}
 

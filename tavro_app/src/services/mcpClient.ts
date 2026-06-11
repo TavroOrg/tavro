@@ -1189,7 +1189,12 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             description,
             instruction,
             ...(args?.tools ? { tools: args.tools } : {}),
+            ...(args?.tables ? { tables: args.tables } : {}),
+            ...(args?.columns ? { columns: args.columns } : {}),
+            ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.skills ? { skills: args.skills } : {}),
+            ...(args?.issues ? { issues: args.issues } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
         };
         const data = await this.callTool('create_agent', payload);
