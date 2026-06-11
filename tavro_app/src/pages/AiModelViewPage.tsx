@@ -983,7 +983,7 @@ const AiModelViewPage: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                <Link2 size={12} /> Attach Agent Relation
+                <Link2 size={12} /> Add Agent Relation
               </p>
               <div className="relative w-full max-w-sm">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
