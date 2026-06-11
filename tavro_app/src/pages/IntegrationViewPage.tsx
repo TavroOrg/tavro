@@ -72,6 +72,22 @@ interface IntegrationFormState {
   parent_application_id: string;
 }
 
+type IntegrationInlineField =
+  | 'integration_name'
+  | 'owner'
+  | 'integration_description'
+  | 'capabilities'
+  | 'protocol'
+  | 'authentication_method'
+  | 'endpoint_url'
+  | 'documentation_url'
+  | 'version'
+  | 'rate_limit'
+  | 'data_sensitivity'
+  | 'availability_status'
+  | 'sla'
+  | 'parent_application_id';
+
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
 const textAreaCls = `${inputCls} resize-y min-h-[84px]`;
@@ -172,6 +188,8 @@ const IntegrationViewPage: React.FC = () => {
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [inlineEdit, setInlineEdit] = useState<{ field: IntegrationInlineField; value: string } | null>(null);
+  const [inlineSaving, setInlineSaving] = useState<IntegrationInlineField | null>(null);
 
   const load = async () => {
     if (!id || isCreateMode) return;
@@ -214,6 +232,124 @@ const IntegrationViewPage: React.FC = () => {
   };
 
   const isNameMissing = !form.integration_name.trim();
+
+  // ── Inline edit handlers ───────────────────────────────────────────────────
+
+  const startInlineEdit = (field: IntegrationInlineField) => {
+    if (editing || isCreateMode || saving || inlineSaving) return;
+    setActionError(null);
+    setInlineEdit({ field, value: form[field] });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEdit(null);
+    setActionError(null);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!integration || !inlineEdit) return;
+    const nextForm = { ...form, [inlineEdit.field]: inlineEdit.value };
+    if (!nextForm.integration_name.trim()) {
+      setActionError('Integration Name is required.');
+      return;
+    }
+    setInlineSaving(inlineEdit.field);
+    setActionError(null);
+    try {
+      const updated = await businessRelationsApi.updateIntegration(
+        integration.integration_id,
+        buildIntegrationPayload(nextForm),
+        activeCompany?.id,
+      );
+      setIntegration(updated);
+      setForm(formFromIntegration(updated));
+      setInlineEdit(null);
+      setAttemptedSave(false);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to save integration field');
+    } finally {
+      setInlineSaving(null);
+    }
+  };
+
+  const renderInlineEditable = (
+    field: IntegrationInlineField,
+    displayValue: string,
+    config: { kind?: 'text' | 'textarea' | 'select'; options?: Option[]; className?: string } = {},
+  ) => {
+    const isActive = inlineEdit?.field === field;
+    const kind = config.kind ?? 'text';
+    const valueClass = config.className ?? 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5';
+    const isSavingField = inlineSaving === field;
+    const saveDisabled = isSavingField || (field === 'integration_name' && !inlineEdit?.value.trim());
+
+    if (!editing && !isCreateMode && isActive) {
+      return (
+        <div className="flex items-start gap-2">
+          {kind === 'textarea' ? (
+            <textarea
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              rows={3}
+              className={textAreaCls}
+              autoFocus
+            />
+          ) : kind === 'select' ? (
+            <select
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            >
+              <option value="">Select...</option>
+              {(config.options ?? []).map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            />
+          )}
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={saveInlineEdit}
+              disabled={saveDisabled}
+              title={field === 'integration_name' && !inlineEdit.value.trim() ? 'Integration Name is required' : 'Save'}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            >
+              {isSavingField ? <Loader2 size={12} className="animate-spin" /> : '✓'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelInlineEdit}
+              disabled={isSavingField}
+              title="Cancel"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <p
+        onDoubleClick={() => startInlineEdit(field)}
+        title={!editing && !isCreateMode ? 'Double-click to edit' : undefined}
+        className={`${valueClass} ${!editing && !isCreateMode ? 'cursor-text hover:border-blue-200 hover:bg-blue-50/40 transition-colors' : ''}`}
+      >
+        {displayValue}
+      </p>
+    );
+  };
+
+  // ── Bulk save / cancel ─────────────────────────────────────────────────────
 
   const handleSave = async () => {
     setAttemptedSave(true);
@@ -320,15 +456,15 @@ const IntegrationViewPage: React.FC = () => {
                 disabled={saving}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               >
-                <XCircle size={15} /> Cancel
+                <XCircle size={15} /> {isCreateMode ? 'Cancel' : 'Discard'}
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || isNameMissing}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                {isCreateMode ? 'Create Integration' : 'Save Changes'}
+                {isCreateMode ? 'Create Integration' : 'Save'}
               </button>
             </>
           ) : (
@@ -337,6 +473,7 @@ const IntegrationViewPage: React.FC = () => {
                 onClick={() => {
                   setTab('overview');
                   setAttemptedSave(false);
+                  setInlineEdit(null);
                   setEditing(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -446,9 +583,7 @@ const IntegrationViewPage: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.integration_name || 'N/A'}
-                  </p>
+                  renderInlineEditable('integration_name', form.integration_name || 'N/A')
                 )}
               </div>
 
@@ -462,9 +597,7 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="Owner name or team"
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.owner || 'N/A'}
-                  </p>
+                  renderInlineEditable('owner', form.owner || 'N/A')
                 )}
               </div>
 
@@ -478,9 +611,10 @@ const IntegrationViewPage: React.FC = () => {
                     className={textAreaCls}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap">
-                    {form.integration_description || 'N/A'}
-                  </p>
+                  renderInlineEditable('integration_description', form.integration_description || 'N/A', {
+                    kind: 'textarea',
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap',
+                  })
                 )}
               </div>
             </div>
@@ -501,9 +635,10 @@ const IntegrationViewPage: React.FC = () => {
                   placeholder={`e.g.\n1. Read real-time machine sensor data (OPC-UA)\n2. Push quality alerts to ERP work orders\n3. Subscribe to production schedule changes`}
                 />
               ) : (
-                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap">
-                  {form.capabilities || 'No capabilities defined.'}
-                </p>
+                renderInlineEditable('capabilities', form.capabilities || 'No capabilities defined.', {
+                  kind: 'textarea',
+                  className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap',
+                })
               )}
             </div>
           </Section>
@@ -524,9 +659,10 @@ const IntegrationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.protocol || 'N/A'}
-                  </p>
+                  renderInlineEditable('protocol', form.protocol || 'N/A', {
+                    kind: 'select',
+                    options: PROTOCOL_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -544,9 +680,10 @@ const IntegrationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.authentication_method || 'N/A'}
-                  </p>
+                  renderInlineEditable('authentication_method', form.authentication_method || 'N/A', {
+                    kind: 'select',
+                    options: AUTH_METHOD_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -560,9 +697,9 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="https://..."
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
-                    {form.endpoint_url || 'N/A'}
-                  </p>
+                  renderInlineEditable('endpoint_url', form.endpoint_url || 'N/A', {
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all',
+                  })
                 )}
               </div>
 
@@ -576,9 +713,9 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="https://..."
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
-                    {form.documentation_url || 'N/A'}
-                  </p>
+                  renderInlineEditable('documentation_url', form.documentation_url || 'N/A', {
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all',
+                  })
                 )}
               </div>
 
@@ -592,9 +729,7 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="e.g. v1.2.0"
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.version || 'N/A'}
-                  </p>
+                  renderInlineEditable('version', form.version || 'N/A')
                 )}
               </div>
 
@@ -608,9 +743,7 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="e.g. 1000 req/min"
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.rate_limit || 'N/A'}
-                  </p>
+                  renderInlineEditable('rate_limit', form.rate_limit || 'N/A')
                 )}
               </div>
             </div>
@@ -632,9 +765,10 @@ const IntegrationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.data_sensitivity || 'N/A'}
-                  </p>
+                  renderInlineEditable('data_sensitivity', form.data_sensitivity || 'N/A', {
+                    kind: 'select',
+                    options: DATA_SENSITIVITY_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -652,9 +786,10 @@ const IntegrationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.availability_status || 'N/A'}
-                  </p>
+                  renderInlineEditable('availability_status', form.availability_status || 'N/A', {
+                    kind: 'select',
+                    options: AVAILABILITY_STATUS_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -668,9 +803,7 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="e.g. 99.9% uptime"
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.sla || 'N/A'}
-                  </p>
+                  renderInlineEditable('sla', form.sla || 'N/A')
                 )}
               </div>
 
@@ -684,13 +817,15 @@ const IntegrationViewPage: React.FC = () => {
                     placeholder="Application UUID"
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
-                    {form.parent_application_id
+                  renderInlineEditable(
+                    'parent_application_id',
+                    form.parent_application_id
                       ? form.parent_application_id
                       : integration?.parent_application_name
                         ? `${integration.parent_application_name}`
-                        : 'N/A'}
-                  </p>
+                        : 'N/A',
+                    { className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all' },
+                  )
                 )}
               </div>
             </div>

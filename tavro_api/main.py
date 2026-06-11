@@ -2,7 +2,10 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv(override=False)
 from fastapi.middleware.cors import CORSMiddleware
 from temporalio.worker import Worker
 from temporalio.client import Client
@@ -20,10 +23,14 @@ from api.routers import agents
 from api.routers import agent_upload
 from api.routers import use_cases
 from api.routers import use_case_upload
+from api.routers import insights
+from api.routers import ai_models
 from api.routers import drive_import
 from api.routers import spark
 from api.routers import docker_logs
 from api.routers.docker_logs import start_log_collector
+from api.migrations.init_tables import initialize_tables
+from api.database import get_db
 
 from services.workflow.workflow import RiskManagerWorkflow
 from services.activity.activities import (
@@ -71,6 +78,11 @@ async def _run_temporal_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables
+    async for db in get_db():
+        await initialize_tables(db)
+        break
+
     await seed_system_dim_types()
     await ensure_spark_table()
     await start_log_collector()
@@ -115,6 +127,8 @@ app.include_router(agents.router,    prefix="/api/v1/agents",     tags=["Agents"
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
+app.include_router(insights.router,         prefix="/api/v1/insights",   tags=["Insights"])
+app.include_router(ai_models.router,         prefix="/api/v1/ai-models",  tags=["AI Models"])
 app.include_router(drive_import.router,     prefix="/api/v1/drive",      tags=["Drive Import"])
 app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["Spark"])
 app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=["Docker Logs"])
