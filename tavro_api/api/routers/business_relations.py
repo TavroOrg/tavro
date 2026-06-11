@@ -546,6 +546,28 @@ def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _normalize_related_ai_models(row: dict[str, Any]) -> None:
+    raw = _json_list(row.get("related_ai_models"))
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rel in raw:
+        if not isinstance(rel, dict):
+            continue
+        model_id = _text_or_none(rel.get("ai_model_id") or rel.get("identifier"))
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        normalized.append(
+            {
+                "ai_model_id": model_id,
+                "model_name": _text_or_none(rel.get("model_name") or rel.get("name")),
+                "description": _text_or_none(rel.get("description")),
+                "status": _text_or_none(rel.get("status")),
+            }
+        )
+    row["related_ai_models"] = normalized
+
+
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     related_use_cases_raw = _json_list(row.get("related_use_cases"))
@@ -569,6 +591,7 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
             }
         )
     row["related_use_cases"] = normalized_related_use_cases
+    _normalize_related_ai_models(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 
@@ -626,6 +649,7 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
             }
         )
     row["related_use_cases"] = normalized_related_use_cases
+    _normalize_related_ai_models(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     return row
 
@@ -969,6 +993,7 @@ async def _fetch_applications(
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "uc_rel.related_use_cases",
+        "mdl_rel.related_ai_models",
     ]
 
     has_aba = await _table_exists(db, "core", "agent_business_applications")
@@ -1099,6 +1124,49 @@ async def _fetch_applications(
             ) uc_rel ON TRUE
         """
 
+    has_mdl_app_rel = await _table_exists(db, "core", "ai_model_business_applications")
+    has_models = await _table_exists(db, "core", "ai_models")
+    if has_mdl_app_rel:
+        mdl_name_expr = "m.model_name" if has_models else "NULL::text"
+        mdl_desc_expr = "m.description" if has_models else "NULL::text"
+        mdl_status_expr = "m.status" if has_models else "NULL::text"
+        mdl_join = (
+            "LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id))"
+            if has_models else ""
+        )
+        mdl_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'ai_model_id', related.ai_model_id,
+                            'model_name', related.model_name,
+                            'description', related.description,
+                            'status', related.status
+                        )
+                        ORDER BY LOWER(COALESCE(related.model_name, related.ai_model_id))
+                    ) AS related_ai_models
+                FROM (
+                    SELECT DISTINCT
+                        rmdl.ai_model_id,
+                        COALESCE({mdl_name_expr}, rmdl.ai_model_name, rmdl.ai_model_id) AS model_name,
+                        {mdl_desc_expr} AS description,
+                        {mdl_status_expr} AS status
+                    FROM core.ai_model_business_applications rmdl
+                    {mdl_join}
+                    WHERE rmdl.business_application_id = ba.business_application_id
+                      AND rmdl.ai_model_id IS NOT NULL
+                      AND rmdl.ai_model_id <> ''
+                ) related
+            ) mdl_rel ON TRUE
+        """
+    else:
+        mdl_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_ai_models
+            ) mdl_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(ba.application_name, ba.business_application_id))"
@@ -1131,6 +1199,7 @@ async def _fetch_applications(
             FROM core.business_applications ba
             {rel_join_sql}
             {uc_rel_sql}
+            {mdl_rel_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1186,6 +1255,7 @@ async def _fetch_processes(
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "proc_rel.related_processes",
         "uc_rel.related_use_cases",
+        "mdl_rel.related_ai_models",
     ]
 
     has_abp = await _table_exists(db, "core", "agent_business_processes")
@@ -1342,6 +1412,49 @@ async def _fetch_processes(
             ) uc_rel ON TRUE
         """
 
+    has_mdl_proc_rel = await _table_exists(db, "core", "ai_model_business_processes")
+    has_models = await _table_exists(db, "core", "ai_models")
+    if has_mdl_proc_rel:
+        mdl_name_expr = "m.model_name" if has_models else "NULL::text"
+        mdl_desc_expr = "m.description" if has_models else "NULL::text"
+        mdl_status_expr = "m.status" if has_models else "NULL::text"
+        mdl_join = (
+            "LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id))"
+            if has_models else ""
+        )
+        mdl_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'ai_model_id', related.ai_model_id,
+                            'model_name', related.model_name,
+                            'description', related.description,
+                            'status', related.status
+                        )
+                        ORDER BY LOWER(COALESCE(related.model_name, related.ai_model_id))
+                    ) AS related_ai_models
+                FROM (
+                    SELECT DISTINCT
+                        rmdl.ai_model_id,
+                        COALESCE({mdl_name_expr}, rmdl.ai_model_name, rmdl.ai_model_id) AS model_name,
+                        {mdl_desc_expr} AS description,
+                        {mdl_status_expr} AS status
+                    FROM core.ai_model_business_processes rmdl
+                    {mdl_join}
+                    WHERE rmdl.business_process_id = bp.business_process_id
+                      AND rmdl.ai_model_id IS NOT NULL
+                      AND rmdl.ai_model_id <> ''
+                ) related
+            ) mdl_rel ON TRUE
+        """
+    else:
+        mdl_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_ai_models
+            ) mdl_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(bp.process_name, bp.business_process_id))"
@@ -1377,6 +1490,7 @@ async def _fetch_processes(
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
+            {mdl_rel_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1736,6 +1850,17 @@ async def delete_application(
                 {"business_application_id": application_id},
             )
 
+    if await _table_exists(db, "core", "ai_model_business_applications"):
+        await db.execute(
+            text(
+                """
+                DELETE FROM core.ai_model_business_applications
+                WHERE business_application_id = :business_application_id
+                """
+            ),
+            {"business_application_id": application_id},
+        )
+
     await _ensure_application_attachments_table(db)
     await db.execute(
         text("DELETE FROM public.application_attachment WHERE application_id = :application_id"),
@@ -1971,6 +2096,17 @@ async def delete_process(
                 ),
                 {"business_process_id": process_id},
             )
+
+    if await _table_exists(db, "core", "ai_model_business_processes"):
+        await db.execute(
+            text(
+                """
+                DELETE FROM core.ai_model_business_processes
+                WHERE business_process_id = :business_process_id
+                """
+            ),
+            {"business_process_id": process_id},
+        )
 
     await _ensure_process_attachments_table(db)
     await db.execute(
