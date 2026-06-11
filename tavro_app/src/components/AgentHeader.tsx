@@ -55,6 +55,8 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     const riskScore = agent.latest_risk_score
         ?? agent.risk_assessment?.blended_risk_score
         ?? agent.risk_assessment?.regulatory_risk_score;
+    const isPendingAssessment =
+        (agent.identification?.governance_status ?? agent.latest_event_status) === 'Risk Assessment is running';
     const riskCardClass =
         riskLevel === 'prohibited' || riskLevel === 'high'
             ? 'bg-red-50 border-red-200'
@@ -153,26 +155,34 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                 </div>
 
                 <div className="flex flex-col items-center md:items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
-                    <div className="flex items-stretch justify-center md:justify-end gap-3 w-full">
-                        <div className={`px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center min-w-[170px] ${riskCardClass}`}>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                                Blended Score
-                            </span>
+                    <div className="flex items-start justify-center md:justify-end gap-3 w-full">
+                        <div className="flex flex-col items-center gap-1.5 min-w-[170px]">
+                            <div className={`w-full px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center ${riskCardClass}`}>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                                    Blended Score
+                                </span>
 
-                            {riskScore != null ? (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                    {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
-                                    {riskScore}
-                                </span>
-                            ) : (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                    {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
-                                    N/A
-                                </span>
+                                {riskScore != null ? (
+                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                        {riskLevel === 'low'
+                                            ? <CheckCircle2 size={14} />
+                                            : <ShieldAlert size={14} />}
+                                        {riskScore}
+                                    </span>
+                                ) : (
+                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                        {riskLevel === 'low'
+                                            ? <CheckCircle2 size={14} />
+                                            : <ShieldAlert size={14} />}
+                                        N/A
+                                    </span>
+                                )}
+                            </div>
+                            {isPendingAssessment && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap">
+                                    <Loader2 size={10} className="animate-spin" />
+                                    Running Risk Assessment
+                                </div>
                             )}
                         </div>
                         <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center min-w-[140px]">
