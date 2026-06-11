@@ -1,3 +1,4 @@
+#############################################################################
 # ── ~/Documents/tavro/.env ───────────────────────────────────────────────────
 # Secrets for docker-compose. Never commit this file to git.
 # Add .env to your .gitignore if not already there.
@@ -12,6 +13,9 @@ DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 # ── AI Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+GITHUB_COPILOT_TOKEN=
+AZURE_AI_FOUNDRY_ENDPOINT=
+AZURE_AI_FOUNDRY_KEY=
 
 CREWAI_LLM_MODEL=anthropic/claude-sonnet-4-6
 CREWAI_MAX_TOKENS=4096
@@ -107,8 +111,8 @@ VITE_ZITADEL_SCOPE=openid profile email urn:zitadel:iam:user:resourceowner
 VITE_MCP_URL=http://localhost:9001/zitadel/mcp
 ZITADEL_PROJECT_NAME=tavro-mcp
 ZITADEL_APP_NAME=tavro-mcp
-ZITADEL_APP_REDIRECT_URIS=http://localhost:9000/auth/callback,http://localhost:9001/auth/callback
-ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS=http://localhost:9000,http://localhost:9000/login,http://localhost:9001,http://localhost:9001/login
+ZITADEL_APP_REDIRECT_URIS=http://localhost:9000/auth/callback,http://localhost:9001/auth/callback,http://localhost:7000/auth/callback
+ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS=http://localhost:9000,http://localhost:9000/login,http://localhost:9001,http://localhost:9001/login,http://localhost:7000,http://localhost:7000/login
 
 # ⚠️  INSECURE DEFAULTS — for local development only.
 # Before exposing this stack to a network, change ZITADEL_MASTERKEY,

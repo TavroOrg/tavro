@@ -337,10 +337,10 @@ const filteredCompanies = useMemo(() => {
         <div className={`flex flex-1 overflow-hidden transition-all ${selectedNode ? 'gap-0' : ''}`}>
 
           {/* Left: graph / grid / list */}
-          <div className={`flex-1 overflow-y-auto p-6 transition-all ${selectedNode && viewMode !== 'graph' ? 'max-w-[calc(100%-380px)]' : ''}`}>
+          <div className={`flex-1 transition-all ${viewMode === 'graph' ? 'px-0 pt-6 pb-0 overflow-hidden flex' : 'p-6 overflow-y-auto'} ${selectedNode && viewMode !== 'graph' ? 'max-w-[calc(100%-380px)]' : ''}`}>
 
             {!activeCompany ? (
-              <div className="flex flex-col items-center justify-center py-24 gap-4 text-slate-400 dark:text-slate-500">
+              <div className="flex flex-1 w-full flex-col items-center justify-center gap-4 text-slate-400 dark:text-slate-500">
                 <Building2 size={40} className="text-slate-300 dark:text-slate-600" />
                 <p className="font-semibold text-slate-500 dark:text-slate-400">No company selected</p>
                 <button onClick={() => navigate('/blueprint/setup')}
@@ -349,52 +349,18 @@ const filteredCompanies = useMemo(() => {
                 </button>
               </div>
             ) : viewMode === 'graph' ? (
-              <div className="flex flex-col gap-4">
-                {/* Company summary strip */}
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 px-5 py-4 flex items-center gap-6 flex-wrap transition-colors">
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Company</p>
-                    <p className="font-bold text-slate-800 dark:text-slate-100">{activeCompany.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Industry</p>
-                    <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.industry}</p>
-                  </div>
-                  {activeCompany.region && (
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Region</p>
-                      <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.region}</p>
-                    </div>
-                  )}
-                  {activeCompany.legal_entity && (
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Legal entity</p>
-                      <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">{activeCompany.legal_entity}</p>
-                    </div>
-                  )}
-                  <div className="ml-auto flex items-center gap-3">
-                    {Object.entries(categoryCounts).map(([cat, count]) => {
-                      const p = CATEGORY_PALETTE[cat as DimCategory] ?? CATEGORY_PALETTE.custom;
-                      return (
-                        <span key={cat} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border"
-                          style={{ background: p.bg, color: p.text, borderColor: p.badge }}>
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: p.stroke }} />
-                          {count}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
+              <div className="flex flex-col w-full h-full min-h-0">
                 {/* Graph */}
                 {graphLoading ? (
-                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 h-64 flex items-center justify-center text-slate-400 gap-2">
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 h-full flex items-center justify-center text-slate-400 gap-2">
                     <RefreshCw size={14} className="animate-spin" /> Loading graph…
                   </div>
                 ) : graph ? (
                   <BlueprintGraph
                     graph={graph}
                     companyName={activeCompany.name}
+                    industry={activeCompany.industry}
+                    legalEntity={activeCompany.legal_entity}
                     onNodeClick={handleGraphNodeClick}
                   />
                 ) : null}

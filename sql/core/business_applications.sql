@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     latest_released_version TEXT,
     latest_release_date TEXT,
     latest_release_documentation_link TEXT,
+    company_id TEXT,
+    company_name TEXT,
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );

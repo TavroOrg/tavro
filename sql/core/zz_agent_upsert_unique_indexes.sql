@@ -13,6 +13,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_identifications_current
 ON core.agent_identifications (agent_internal_id)
 WHERE is_current = true;
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tools
+ON core.tools (tool_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_tools
 ON core.agent_tools (agent_internal_id, tool_id);
 
@@ -30,6 +33,9 @@ ON core.agent_business_processes (agent_internal_id, business_process_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_applications
 ON core.agent_business_applications (agent_internal_id, business_application_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_integrations
+ON core.agent_business_integrations (agent_internal_id, integration_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_guardrails
 ON core.agent_guardrails (agent_internal_id, name);
@@ -444,6 +450,20 @@ BEGIN
         ON DELETE CASCADE;
     END IF;
 
+    IF to_regclass('core.agent_business_integrations') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_agent_business_integrations_integration'
+        ) THEN
+            ALTER TABLE core.agent_business_integrations
+            ADD CONSTRAINT fk_core_agent_business_integrations_integration
+            FOREIGN KEY (integration_id)
+            REFERENCES core.business_integrations (integration_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -511,6 +531,52 @@ BEGIN
             ALTER TABLE core.tables DROP COLUMN agent_internal_id;
         END IF;
     END IF;
+    -- Migrate agent_tools master data into core.tools (idempotent: guarded by presence of tool_description column)
+    IF to_regclass('core.tools') IS NOT NULL
+       AND to_regclass('core.agent_tools') IS NOT NULL
+       AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_tools' AND column_name = 'tool_description'
+       )
+    THEN
+        EXECUTE '
+            INSERT INTO core.tools (
+                tenant_id, tool_id, tool_name, tool_description,
+                delegation_possible, allowed_delegates,
+                input_schema_json_text, output_schema_json_text,
+                default_config_json_text,
+                created_ts, updated_ts
+            )
+            SELECT DISTINCT ON (tool_id)
+                tenant_id, tool_id, tool_name, tool_description,
+                delegation_possible, allowed_delegates,
+                input_schema_json_text, output_schema_json_text,
+                default_config_json_text,
+                COALESCE(created_ts, CURRENT_TIMESTAMP),
+                COALESCE(updated_ts, CURRENT_TIMESTAMP)
+            FROM core.agent_tools
+            WHERE tool_id IS NOT NULL AND tool_id <> ''''
+            ORDER BY tool_id, updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
+            ON CONFLICT (tool_id)
+            DO UPDATE SET
+                tool_name                = EXCLUDED.tool_name,
+                tool_description         = EXCLUDED.tool_description,
+                delegation_possible      = EXCLUDED.delegation_possible,
+                allowed_delegates        = EXCLUDED.allowed_delegates,
+                input_schema_json_text   = EXCLUDED.input_schema_json_text,
+                output_schema_json_text  = EXCLUDED.output_schema_json_text,
+                default_config_json_text = EXCLUDED.default_config_json_text,
+                updated_ts               = EXCLUDED.updated_ts
+        ';
+
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS tool_description;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS delegation_possible;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS allowed_delegates;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS input_schema_json_text;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS output_schema_json_text;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS default_config_json_text;
+    END IF;
+
 
     IF to_regclass('core.ai_use_case_business_applications') IS NOT NULL THEN
         EXECUTE '

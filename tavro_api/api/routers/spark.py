@@ -1280,7 +1280,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
         "- business_problem_statement: the specific business problem or gap being addressed\n"
-        "- expected_benefits: concrete outcomes (efficiency %, cost reduction, risk reduction, etc.)\n"
+        "- expected_benefits: plain text paragraph describing concrete outcomes (efficiency %, cost reduction, risk reduction, etc.). Must be a plain string — no JSON objects, no curly braces.\n"
         "- solution_approach: brief technical approach (model type, data sources, integration points)\n"
         f"- priority: exactly one of '1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning' (suggest '{priority}' based on impact)\n\n"
         "Return ONLY the JSON object. No prose, no markdown fencing."
@@ -1311,7 +1311,13 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             return ", ".join(str(i) for i in v)
         return str(v) if v is not None else ""
 
-    safe_fields = {k: _to_str(v) for k, v in fields.items()}
+    def _strip_curly_braces(s: str) -> str:
+        s = s.strip()
+        while s.startswith("{") and s.endswith("}"):
+            s = s[1:-1].strip()
+        return s
+
+    safe_fields = {k: _strip_curly_braces(_to_str(v)) for k, v in fields.items()}
 
     # Second Claude call: design the agent that implements this use case
     agent_rec: dict[str, Any] | None = None

@@ -787,6 +787,10 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                     window.dispatchEvent(new CustomEvent('tavro:agent-created', {
                         detail: { result, args: toolArgs },
                     }));
+                } else if (name === 'generate_agent_artifacts') {
+                    window.dispatchEvent(new CustomEvent('tavro:agent-artifacts-generated', {
+                        detail: { result, args: toolArgs },
+                    }));
                 }
             }
             return result;
