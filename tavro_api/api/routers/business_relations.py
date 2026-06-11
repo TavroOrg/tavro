@@ -20,6 +20,7 @@ _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
 _APPLICATION_ATTACHMENTS_READY = False
 _PROCESS_ATTACHMENTS_READY = False
+_INTEGRATION_AGENT_READY = False
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -636,6 +637,17 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
     _INTEGRATIONS_READY = True
 
 
+def _ensure_integration_agent_relation_table() -> None:
+    global _INTEGRATION_AGENT_READY
+    if _INTEGRATION_AGENT_READY:
+        return
+    # Table is defined in sql/core/agent_business_integrations.sql and
+    # indexes/FK in sql/core/zz_agent_upsert_unique_indexes.sql.
+    # We only warm the exists-cache here so _fetch_integrations uses the real join.
+    _TABLE_EXISTS_CACHE[("core", "agent_business_integrations")] = True
+    _INTEGRATION_AGENT_READY = True
+
+
 async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
     global _AGENT_ATTACHMENTS_READY
     if _AGENT_ATTACHMENTS_READY:
@@ -1120,8 +1132,8 @@ async def _fetch_integrations(
         "pa.application_name AS parent_application_name",
         _col_expr("bi", int_cols, "created_ts"),
         _col_expr("bi", int_cols, "updated_ts"),
-        "NULL::json AS related_agents",
-        "0::int AS related_agent_count",
+        "rel.related_agents",
+        "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
     ]
 
     where_parts: list[str] = []
@@ -1165,6 +1177,47 @@ async def _fetch_integrations(
         else ""
     )
 
+    has_abi = await _table_exists(db, "core", "agent_business_integrations")
+    if has_abi:
+        abi_cols = await _table_columns(db, "core", "agent_business_integrations")
+        abi_agent_id_expr = "abi.agent_id" if "agent_id" in abi_cols else "NULL::text"
+        abi_agent_internal_id_expr = (
+            "abi.agent_internal_id" if "agent_internal_id" in abi_cols else "NULL::text"
+        )
+        abi_filter = (
+            "abi.integration_id = bi.integration_id"
+            if "integration_id" in abi_cols
+            else "FALSE"
+        )
+        rel_join_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'agent_id', refs.agent_id,
+                            'agent_internal_id', refs.agent_internal_id,
+                            'agent_name', refs.agent_name
+                        )
+                        ORDER BY LOWER(COALESCE(refs.agent_name, refs.agent_id, refs.agent_internal_id))
+                    ) AS related_agents,
+                    COUNT(*)::int AS related_agent_count
+                FROM (
+                    SELECT DISTINCT
+                        {abi_agent_id_expr} AS agent_id,
+                        {abi_agent_internal_id_expr} AS agent_internal_id,
+                        NULL::text AS agent_name
+                    FROM core.agent_business_integrations abi
+                    WHERE {abi_filter}
+                ) refs
+            ) rel ON TRUE
+        """
+    else:
+        rel_join_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_agents, 0::int AS related_agent_count
+            ) rel ON TRUE
+        """
+
     rows = await db.execute(
         text(
             f"""
@@ -1172,6 +1225,7 @@ async def _fetch_integrations(
                 {", ".join(select_cols)}
             FROM core.business_integrations bi
             {ba_join_sql}
+            {rel_join_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1827,6 +1881,111 @@ async def delete_integration(
         )
     await db.commit()
     return {"status": "deleted", "integration_id": integration_id}
+
+
+@router.put(
+    "/agents/{agent_id}/integrations/{integration_id}",
+    tags=["Integrations"],
+    summary="Link Agent to Integration",
+)
+async def add_agent_integration_relation(
+    agent_id: str,
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_integration_agent_relation_table()
+    agent = await _resolve_agent(db, agent_id)
+
+    int_row = await db.execute(
+        text(
+            """
+            SELECT integration_id, integration_name
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    integration = int_row.mappings().first()
+    if not integration:
+        raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO core.agent_business_integrations (
+                tenant_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
+                created_ts, updated_ts
+            )
+            VALUES (
+                :tenant_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (agent_internal_id, integration_id)
+            DO UPDATE SET
+                agent_id = EXCLUDED.agent_id,
+                agent_name = EXCLUDED.agent_name,
+                integration_name = EXCLUDED.integration_name,
+                updated_ts = EXCLUDED.updated_ts
+            """
+        ),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "integration_id": integration_id,
+            "agent_id": agent.get("agent_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_name": agent.get("agent_name"),
+            "integration_name": integration.get("integration_name") or integration_id,
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "linked",
+        "agent_id": agent_id,
+        "integration_id": integration_id,
+    }
+
+
+@router.delete(
+    "/agents/{agent_id}/integrations/{integration_id}",
+    tags=["Integrations"],
+    summary="Unlink Agent from Integration",
+)
+async def remove_agent_integration_relation(
+    agent_id: str,
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_integration_agent_relation_table()
+    agent = await _resolve_agent(db, agent_id)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.agent_business_integrations
+            WHERE integration_id = :integration_id
+              AND (
+                    agent_internal_id = :agent_internal_id
+                    OR agent_id = :agent_id
+                  )
+            """
+        ),
+        {
+            "integration_id": integration_id,
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_id": agent.get("agent_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "integration_id": integration_id,
+        "rows_deleted": result.rowcount or 0,
+    }
 
 
 @router.get("/applications", tags=["Applications"], summary="List Applications")
@@ -3084,6 +3243,29 @@ async def get_agent_relations(
             )
             ai_models = [dict(r._mapping) for r in model_rows]
 
+    integrations: list[dict[str, Any]] = []
+    has_abi = await _table_exists(db, "core", "agent_business_integrations")
+    if has_abi:
+        int_rows = await db.execute(
+            text(
+                """
+                SELECT
+                    abi.integration_id,
+                    COALESCE(bi.integration_name, abi.integration_name) AS integration_name,
+                    bi.integration_description,
+                    bi.protocol,
+                    bi.availability_status
+                FROM core.agent_business_integrations abi
+                LEFT JOIN core.business_integrations bi
+                    ON bi.integration_id = abi.integration_id
+                WHERE abi.agent_internal_id = :agent_internal_id
+                ORDER BY LOWER(COALESCE(bi.integration_name, abi.integration_name, abi.integration_id))
+                """
+            ),
+            {"agent_internal_id": agent["agent_internal_id"]},
+        )
+        integrations = [dict(r._mapping) for r in int_rows]
+
     return {
         "agent": {
             "agent_id": agent.get("agent_id"),
@@ -3101,6 +3283,7 @@ async def get_agent_relations(
         "skills": skills,
         "child_agents": child_agents,
         "ai_models": ai_models,
+        "integrations": integrations,
     }
 
 

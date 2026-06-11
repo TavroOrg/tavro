@@ -277,6 +277,18 @@ class BusinessRelationsApi {
     });
   }
 
+  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async linkAgentToChildAgent(parentAgentId: string, childAgentId: string): Promise<void> {
     await req(`/agents/${encodeURIComponent(parentAgentId)}/child-agents/${encodeURIComponent(childAgentId)}`, {
       method: 'PUT',

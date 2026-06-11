@@ -26,14 +26,15 @@ import type {
   BusinessApplicationRecord,
   BusinessProcessRecord,
   ChildAgentReference,
+  IntegrationRecord,
 } from '../types/businessRelations';
 import type { UseCaseSummary } from '../types/useCase';
 import type { AiModelRecord } from '../types/aiModel';
 
 interface AgentRelatedTabProps {
   agent: AgentData;
-  mode?: 'applications' | 'processes' | 'use_cases' | 'child_agents' | 'ai_models' | 'all';
-  onCountsChange?: (counts: { applications: number; processes: number; useCases?: number; childAgents?: number; aiModels?: number }) => void;
+  mode?: 'applications' | 'processes' | 'use_cases' | 'child_agents' | 'ai_models' | 'integrations' | 'all';
+  onCountsChange?: (counts: { applications: number; processes: number; useCases?: number; childAgents?: number; aiModels?: number; integrations?: number }) => void;
   onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
   embedded?: boolean;
 }
@@ -197,6 +198,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const showUseCases = mode === 'all' || mode === 'use_cases';
   const showChildAgents = mode === 'all' || mode === 'child_agents';
   const showAiModels = mode === 'all' || mode === 'ai_models';
+  const showIntegrations = mode === 'all' || mode === 'integrations';
   const title =
     mode === 'applications'
       ? 'Applications'
@@ -230,6 +232,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [childAgentSearch, setChildAgentSearch] = useState('');
   const [allAiModels, setAllAiModels] = useState<AiModelRecord[]>([]);
   const [aiModelSearch, setAiModelSearch] = useState('');
+  const [allIntegrations, setAllIntegrations] = useState<IntegrationRecord[]>([]);
+  const [integrationSearch, setIntegrationSearch] = useState('');
   const lastBusinessImpactSignatureRef = useRef<string>('');
   const { useCases: allUseCases } = useUseCases();
   const { agents: catalogAgents } = useCatalog();
@@ -250,6 +254,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const createUseCaseHref = agentId
     ? `/use-cases/new?linkAgentId=${encodeURIComponent(agentId)}`
     : '/use-cases/new';
+  const createIntegrationHref = agentId
+    ? `/integrations/new?linkAgentId=${encodeURIComponent(agentId)}`
+    : '/integrations/new';
 
   useEffect(() => {
     setLinkedUseCases(normalizeLinkedUseCasesFromAgent(agent));
@@ -267,16 +274,18 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     }
     setLoadingRelations(true);
     try {
-      const [agentRelations, appCatalog, processCatalog, modelCatalog] = await Promise.all([
+      const [agentRelations, appCatalog, processCatalog, modelCatalog, integrationCatalog] = await Promise.all([
         businessRelationsApi.getAgentRelations(agentId),
         showApplications ? businessRelationsApi.listApplications() : Promise.resolve([] as BusinessApplicationRecord[]),
         showProcesses ? businessRelationsApi.listProcesses() : Promise.resolve([] as BusinessProcessRecord[]),
         showAiModels ? aiModelApi.listModels() : Promise.resolve([] as AiModelRecord[]),
+        showIntegrations ? businessRelationsApi.listIntegrations() : Promise.resolve([] as IntegrationRecord[]),
       ]);
       setRelations(agentRelations);
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
       setAllAiModels(modelCatalog);
+      setAllIntegrations(integrationCatalog);
 
       const relationUseCases = normalizeLinkedUseCasesFromRelations(agentRelations);
       if (Array.isArray(agentRelations.ai_use_cases)) {
@@ -294,6 +303,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         useCases: useCaseCount,
         childAgents: (agentRelations.child_agents ?? []).length,
         aiModels: (agentRelations.ai_models ?? []).length,
+        integrations: (agentRelations.integrations ?? []).length,
       });
     } catch {
       onCountsChange?.({
@@ -308,12 +318,13 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   useEffect(() => {
     refreshRelations();
-  }, [agentId, showApplications, showProcesses, showAiModels]);
+  }, [agentId, showApplications, showProcesses, showAiModels, showIntegrations]);
 
   const liveApplications = relations?.applications ?? [];
   const liveProcesses = relations?.business_processes ?? [];
   const liveChildAgents = relations?.child_agents ?? [];
   const liveAiModels = relations?.ai_models ?? [];
+  const liveIntegrations = relations?.integrations ?? [];
   const showingLiveData = !!relations;
 
   const displayedApplications = useMemo(
@@ -440,6 +451,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       );
     });
   }, [allAiModels, aiModelSearch, linkedAiModelIds]);
+
+  const linkedIntegrationIds = useMemo(() => {
+    return new Set(liveIntegrations.map(i => i.integration_id).filter(Boolean));
+  }, [liveIntegrations]);
+
+  const availableIntegrations = useMemo(() => {
+    const q = integrationSearch.trim().toLowerCase();
+    return allIntegrations.filter(i => {
+      if (linkedIntegrationIds.has(i.integration_id)) return false;
+      if (!q) return true;
+      return (
+        i.integration_id.toLowerCase().includes(q) ||
+        (i.integration_name ?? '').toLowerCase().includes(q) ||
+        (i.integration_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allIntegrations, integrationSearch, linkedIntegrationIds]);
 
   const linkedUseCaseIds = useMemo(() => {
     return new Set(linkedUseCases.map(uc => uc.identifier).filter(Boolean));
@@ -574,6 +602,36 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await refreshRelations();
     } catch (err: any) {
       setActionError(err.message || 'Failed to unlink AI model.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleAddIntegration = async (integrationId: string) => {
+    if (!agentId) return;
+    const key = `add-integration:${integrationId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await businessRelationsApi.linkAgentToIntegration(agentId, integrationId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to link integration.');
+    } finally {
+      setActingKey(null);
+    }
+  };
+
+  const handleRemoveIntegration = async (integrationId: string) => {
+    if (!agentId) return;
+    const key = `remove-integration:${integrationId}`;
+    setActingKey(key);
+    setActionError(null);
+    try {
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integrationId);
+      await refreshRelations();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to unlink integration.');
     } finally {
       setActingKey(null);
     }
@@ -1173,6 +1231,113 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                       </div>
                       <button
                         onClick={() => handleLinkUseCase(uc.identifier)}
+                        disabled={actingKey === addKey}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                        Link
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showIntegrations && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Link2 size={13} /> Integrations ({liveIntegrations.length})
+              </h3>
+              {agentId && (
+                <Link
+                  to={createIntegrationHref}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Plus size={11} />
+                  New Integration
+                </Link>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {liveIntegrations.map((integration, idx) => {
+                const integrationId = integration.integration_id || `integration-${idx}`;
+                const removeKey = `remove-integration:${integrationId}`;
+                return (
+                  <div key={`${integrationId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Link
+                          to={`/integrations/${encodeURIComponent(integrationId)}`}
+                          className="font-bold text-sm text-blue-700 hover:underline"
+                        >
+                          {integration.integration_name || integrationId}
+                        </Link>
+                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{integrationId}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {integration.availability_status && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {integration.availability_status}
+                          </span>
+                        )}
+                        {showingLiveData && (
+                          <button
+                            onClick={() => handleRemoveIntegration(integrationId)}
+                            disabled={actingKey === removeKey}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {integration.integration_description && (
+                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">{integration.integration_description}</span>
+                    )}
+                  </div>
+                );
+              })}
+              {liveIntegrations.length === 0 && (
+                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  No linked integrations.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                  <Link2 size={12} /> Add Integration Relation
+                </p>
+                <div className="relative w-full max-w-sm">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={integrationSearch}
+                    onChange={(e) => setIntegrationSearch(e.target.value)}
+                    placeholder="Filter integrations..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
+                {availableIntegrations.length === 0 && (
+                  <div className="p-3 text-xs text-slate-500">No available integrations to link.</div>
+                )}
+                {availableIntegrations.map(i => {
+                  const addKey = `add-integration:${i.integration_id}`;
+                  return (
+                    <div key={i.integration_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-700 truncate">{i.integration_name || i.integration_id}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{i.integration_id}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAddIntegration(i.integration_id)}
                         disabled={actingKey === addKey}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
