@@ -199,6 +199,9 @@ const IdeaCard: React.FC<{
 
 const LIST_GRID = 'grid-cols-[32px_1fr_160px_180px_100px_80px_32px]';
 const PAGE_SIZE = 10;
+const DEFAULT_IDEA_COUNT = 5;
+const MIN_IDEA_COUNT = 1;
+const MAX_IDEA_COUNT = 16;
 
 const IdeaListRow: React.FC<{
   idea: SparkIdea;
@@ -559,6 +562,7 @@ const SparkPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [hasLibrary, setHasLibrary] = useState(false);
   const [direction, setDirection] = useState('');
+  const [ideaCount, setIdeaCount] = useState(DEFAULT_IDEA_COUNT);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectMode, setSelectMode] = useState(false);
   const [page, setPage] = useState(1);
@@ -619,7 +623,7 @@ const SparkPage: React.FC = () => {
     setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
-      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined)) {
+      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined, ideaCount)) {
         setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
         setHasLibrary(true);
       }
@@ -628,7 +632,7 @@ const SparkPage: React.FC = () => {
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction]);
+  }, [companyId, activeDimensions, direction, ideaCount]);
 
   const enterSelectMode = () => {
     setSelectMode(true);
@@ -724,65 +728,12 @@ const SparkPage: React.FC = () => {
               <Zap size={20} className="text-violet-600 dark:text-violet-400" />
             </div>
             <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Spark</h1>
-          </div>
-          <p className="text-sm text-slate-500">
-            {isSearching
-              ? `${filteredIdeas.length} result${filteredIdeas.length === 1 ? '' : 's'} for "${search}"`
-              : `Page ${page} of ${totalPages} · ${visibleIdeas.length} idea${visibleIdeas.length === 1 ? '' : 's'} of ${filteredIdeas.length} total`
-            }
-          </p>
+          </div>         
           <p className="text-sm text-slate-500 dark:text-slate-400">
             AI ideation hub — AI Use Case candidates that fits your business vision and your enteprise portfolio of assets
           </p>
         </div>
-
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {hasLibrary && !selectMode && (
-            <button
-              onClick={enterSelectMode}
-              disabled={generating}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <CheckSquare size={15} />
-              Select
-            </button>
-          )}
-
-          <button
-            onClick={inspire}
-            disabled={generating || !companyId || selectMode}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {generating
-              ? <RefreshCw size={16} className="animate-spin" />
-              : <Zap size={16} />}
-            {generating ? 'Generating…' : 'Inspire Me'}
-          </button>
-
-          {!loading && !generating && !isSearching && totalPages > 1 && (
-            <div className="hidden md:flex items-center gap-1 flex-shrink-0">
-              <button
-                onClick={handlePrev}
-                disabled={page === 1 || deleting}
-                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                <ChevronLeft size={14} />
-                Prev
-              </button>
-              <span className="px-2.5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg min-w-[2.5rem] text-center">
-                {page}
-              </span>
-              <button
-                onClick={handleNext}
-                disabled={!hasMore || deleting}
-                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                Next
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
-        </div>
+        
       </div>
 
       {/* ── Selection toolbar ── */}
@@ -825,22 +776,51 @@ const SparkPage: React.FC = () => {
       )}
 
       {/* ── Direction input ── */}
-      <div className="relative">
-        <Target size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-violet-400 pointer-events-none" />
-        <input
-          type="text"
-          value={direction}
-          onChange={e => setDirection(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !generating && companyId && !selectMode) inspire(); }}
-          placeholder='Focus direction — e.g. "Quality management", "Predictive maintenance", "Supplier risk"  (optional)'
-          disabled={generating || selectMode}
-          className="w-full pl-9 pr-8 py-2.5 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400 transition-all disabled:opacity-50"
-        />
-        {direction && (
-          <button onClick={() => setDirection('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-            <X size={14} />
-          </button>
-        )}
+      <div className="flex flex-col sm:flex-row items-stretch gap-2">
+        <div className="relative flex-1">
+          <Target size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-violet-400 pointer-events-none" />
+          <input
+            type="text"
+            value={direction}
+            onChange={e => setDirection(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !generating && companyId && !selectMode) inspire(); }}
+            placeholder='Focus direction — e.g. "Quality management", "Predictive maintenance", "Supplier risk"  (optional)'
+            disabled={generating || selectMode}
+            className="w-full pl-9 pr-8 py-2.5 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400 transition-all disabled:opacity-50"
+          />
+          {direction && (
+            <button onClick={() => setDirection('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <label className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-600 dark:text-slate-300 sm:flex-shrink-0">
+          <span className="font-semibold whitespace-nowrap"># Ideas</span>
+          <input
+            type="number"
+            min={MIN_IDEA_COUNT}
+            max={MAX_IDEA_COUNT}
+            step={1}
+            value={ideaCount}
+            onChange={e => {
+              const next = Number(e.target.value);
+              if (!Number.isFinite(next)) return;
+              setIdeaCount(Math.min(MAX_IDEA_COUNT, Math.max(MIN_IDEA_COUNT, Math.trunc(next))));
+            }}
+            disabled={generating || selectMode}
+            className="w-14 bg-transparent text-center font-bold text-slate-800 dark:text-slate-100 focus:outline-none disabled:opacity-50"
+          />
+        </label>
+        <button
+          onClick={inspire}
+          disabled={generating || !companyId || selectMode}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed sm:flex-shrink-0"
+        >
+          {generating
+            ? <RefreshCw size={16} className="animate-spin" />
+            : <Zap size={16} />}
+          {generating ? 'Generating…' : 'Inspire Me'}
+        </button>
       </div>
 
       {/* ── Search + Filters + Refresh + Grid/List toolbar ── */}
@@ -863,6 +843,48 @@ const SparkPage: React.FC = () => {
         </div>
 
         {/* Filters toggle */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+          {hasLibrary && !selectMode && (
+            <button
+              onClick={enterSelectMode}
+              disabled={generating}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <CheckSquare size={15} />
+              Select
+            </button>
+          )}         
+
+          {!loading && !generating && !isSearching && totalPages > 1 && (
+            <div className="hidden md:flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={handlePrev}
+                disabled={page === 1 || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronLeft size={14} />
+                Prev
+              </button>
+              <span className="px-2.5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg min-w-[2.5rem] text-center">
+                {page}
+              </span>
+              <button
+                onClick={handleNext}
+                disabled={!hasMore || deleting}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Next
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+         <p className="text-sm text-slate-500">
+            {isSearching
+              ? `${filteredIdeas.length} result${filteredIdeas.length === 1 ? '' : 's'} for "${search}"`
+              : `Page ${page} of ${totalPages} · ${visibleIdeas.length} idea${visibleIdeas.length === 1 ? '' : 's'} of ${filteredIdeas.length} total`
+            }
+          </p>
         <button
           onClick={() => setContextOpen(o => !o)}
           className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all flex-shrink-0 ${contextOpen || activeDimensions.size > 0

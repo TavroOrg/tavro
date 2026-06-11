@@ -5,15 +5,16 @@ import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
-import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck, Pencil, Trash2, CheckCircle2 } from 'lucide-react';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
-import EditAgentModal from '../components/EditAgentModal';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+
+type AgentInlineField = 'name' | 'description' | 'instruction';
 
 const EMPTY_APPLICATION_CARD = {
     identifier: null,
@@ -48,6 +49,50 @@ const normalizeUseCasesForCard = (agent: AgentData): any[] => {
     const fallback = (agent as any).ai_use_case;
     if (Array.isArray(fallback) && fallback.length) return fallback;
     return fallback ? [fallback] : [];
+};
+
+const normalizeSkillsFromPayload = (payload: any): NonNullable<AgentData['skills']> => {
+    const rawSkills = Array.isArray(payload?.skills) ? payload.skills : [];
+    return rawSkills
+        .map((skill: any) => {
+            if (typeof skill === 'string') {
+                return {
+                    identifier: skill,
+                    name: skill,
+                    description: null,
+                    tags: [],
+                    inputModes: [],
+                    outputModes: [],
+                };
+            }
+
+            const identifier = skill?.identifier ?? skill?.id ?? skill?.skill_id ?? skill?.name ?? null;
+            const name = skill?.name ?? skill?.skill_name ?? skill?.identifier ?? skill?.id ?? skill?.skill_id ?? null;
+            const inputModes = Array.isArray(skill?.inputModes)
+                ? skill.inputModes
+                : (Array.isArray(skill?.input_modes) ? skill.input_modes : []);
+            const outputModes = Array.isArray(skill?.outputModes)
+                ? skill.outputModes
+                : (Array.isArray(skill?.output_modes) ? skill.output_modes : []);
+
+            return {
+                identifier,
+                name,
+                description: skill?.description ?? null,
+                tags: Array.isArray(skill?.tags) ? skill.tags : [],
+                inputModes,
+                outputModes,
+            };
+        })
+        .filter((skill: any) => hasNonBlankText(skill.identifier ?? skill.name));
+};
+
+const firstNonEmptySkills = (...payloads: any[]): NonNullable<AgentData['skills']> => {
+    for (const payload of payloads) {
+        const skills = normalizeSkillsFromPayload(payload);
+        if (skills.length) return skills;
+    }
+    return [];
 };
 
 const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
@@ -95,6 +140,7 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
         business_process: normalizedProcesses,
         ai_use_case: normalizedUseCases,
         ai_use_cases: normalizedUseCases,
+        skills: normalizeSkillsFromPayload(agent),
     };
 };
 
@@ -104,7 +150,14 @@ const AgentViewPage: React.FC = () => {
     const [agent, setAgent] = useState<AgentData | null>(null);
     const [loading, setLoading] = useState(true);
     const [assessing, setAssessing] = useState(false);
-    const [editOpen, setEditOpen] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState('');
+    const [editDescription, setEditDescription] = useState('');
+    const [editInstruction, setEditInstruction] = useState('');
+    const [editSaving, setEditSaving] = useState(false);
+    const [editError, setEditError] = useState<string | null>(null);
+    const [inlineEdit, setInlineEdit] = useState<{ field: AgentInlineField; value: string } | null>(null);
+    const [inlineSaving, setInlineSaving] = useState<AgentInlineField | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [jsonOpen, setJsonOpen] = useState(false);
@@ -166,6 +219,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            skills: [],
             application: [],
             business_process: [],
             risk_assessment: null,
@@ -223,6 +277,10 @@ const AgentViewPage: React.FC = () => {
                 // Overlay fresh DB values onto the richer MCP card structure
                 resolved = {
                     ...mcpData,
+                    provider: {
+                        url: mcpData.provider?.url ?? '',
+                        organization: apiData?.source_system ?? mcpData.provider?.organization ?? '',
+                    },
                     name: apiData?.agent_name ?? mcpData.name,
                     description: apiData?.agent_description ?? mcpData.description,
                     identification: {
@@ -232,6 +290,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
                 // Preserve governance/risk snapshot from existing catalog entry if REST API returns null
@@ -254,6 +313,7 @@ const AgentViewPage: React.FC = () => {
                     configuration: { autonomy_level: null },
                     tool: apiCatalog?.tool ?? [],
                     data_source: apiCatalog?.data_source ?? [],
+                    skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
@@ -275,7 +335,6 @@ const AgentViewPage: React.FC = () => {
             if (resolved) {
                 const overlaid = applyRecentEditOverlay(resolved);
                 setAgent(overlaid);
-                upsertAgent(overlaid);
             }
         } catch (error) {
             console.error("Error fetching agent details", error);
@@ -331,7 +390,18 @@ const AgentViewPage: React.FC = () => {
         if (!agent || !id) return;
         setDeleting(true);
         try {
-            await agentApi.deleteAgent(agent.identification?.agent_id ?? id);
+            const agentId = agent.identification?.agent_id ?? id;
+            await agentApi.deleteAgent(agentId);
+            // Clear pending assessment state so the poller doesn't re-create a phantom
+            // agent tile from the still-running Temporal workflow after deletion.
+            try {
+                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+                localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(pending.filter(pid => pid !== agentId)));
+                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                const meta = metaRaw ? JSON.parse(metaRaw) as Array<{ agent_id: string }> : [];
+                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(meta.filter(item => item.agent_id !== agentId)));
+            } catch { /* localStorage writes are best-effort */ }
             refreshCatalog();
             navigate('/catalog');
         } catch (err: any) {
@@ -354,6 +424,97 @@ const AgentViewPage: React.FC = () => {
             alert("Failed to request risk assessment.");
         } finally {
             setAssessing(false);
+        }
+    };
+
+    const handleStartEdit = () => {
+        if (!agent) return;
+        setEditName(agent.name ?? '');
+        setEditDescription(agent.description ?? '');
+        setEditInstruction(agent.identification?.instruction ?? '');
+        setEditError(null);
+        setInlineEdit(null);
+        setIsEditing(true);
+    };
+
+    const handleCancelEdit = () => {
+        setIsEditing(false);
+        setEditError(null);
+        setInlineEdit(null);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!agent) return;
+        setEditSaving(true);
+        setEditError(null);
+        try {
+            const agentId = agent.identification?.agent_id ?? agent.name;
+            await agentApi.updateAgent(agentId, {
+                agent_name: editName.trim() || undefined,
+                description: editDescription.trim() || undefined,
+                instruction: editInstruction.trim() || undefined,
+            });
+            handleAgentSaved({
+                name: editName.trim(),
+                description: editDescription.trim(),
+                instruction: editInstruction.trim(),
+            });
+            setInlineEdit(null);
+            setIsEditing(false);
+        } catch (err: any) {
+            setEditError(err.message || 'Failed to update agent. Please try again.');
+        } finally {
+            setEditSaving(false);
+        }
+    };
+
+    const handleStartInlineEdit = (field: AgentInlineField) => {
+        if (!agent || isEditing || editSaving || inlineSaving) return;
+        const value =
+            field === 'name'
+                ? agent.name ?? ''
+                : field === 'description'
+                    ? agent.description ?? ''
+                    : agent.identification?.instruction ?? '';
+        setEditError(null);
+        setInlineEdit({ field, value });
+    };
+
+    const handleCancelInlineEdit = () => {
+        setInlineEdit(null);
+        setEditError(null);
+    };
+
+    const handleSaveInlineEdit = async () => {
+        if (!agent || !inlineEdit) return;
+        const nextName = inlineEdit.field === 'name' ? inlineEdit.value.trim() : agent.name ?? '';
+        const nextDescription = inlineEdit.field === 'description' ? inlineEdit.value.trim() : agent.description ?? '';
+        const nextInstruction = inlineEdit.field === 'instruction' ? inlineEdit.value.trim() : agent.identification?.instruction ?? '';
+
+        if (!nextName.trim()) {
+            setEditError('Agent Name is required.');
+            return;
+        }
+
+        setInlineSaving(inlineEdit.field);
+        setEditError(null);
+        try {
+            const agentId = agent.identification?.agent_id ?? agent.name;
+            await agentApi.updateAgent(agentId, {
+                agent_name: nextName || undefined,
+                description: nextDescription || undefined,
+                instruction: nextInstruction || undefined,
+            });
+            handleAgentSaved({
+                name: nextName,
+                description: nextDescription,
+                instruction: nextInstruction,
+            });
+            setInlineEdit(null);
+        } catch (err: any) {
+            setEditError(err.message || 'Failed to update agent field. Please try again.');
+        } finally {
+            setInlineSaving(null);
         }
     };
 
@@ -402,9 +563,9 @@ const AgentViewPage: React.FC = () => {
     const prettyJson = JSON.stringify(buildAgentCardPayload(agent), null, 2);
 
     return (
-        <div className="flex-col gap-6 w-full animate-fade-in relative">
+        <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-12">
             {/* Top bar */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 w-full max-w-[1400px] mx-auto">
                 <button
                     onClick={() => {
                         if (window.history.length > 2) {
@@ -419,49 +580,71 @@ const AgentViewPage: React.FC = () => {
                 </button>
 
                 <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => navigate(
-                            `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}`
-                        )}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
-                    >
-                        <FlaskConical size={15} /> Playground
-                    </button>
-                    <button
-                        onClick={() => setAuditModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
-                    >
-                        <ShieldCheck size={15} /> Audit
-                    </button>
-                    <button
-                        onClick={handleRequestRiskAssessment}
-                        disabled={assessing}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {assessing ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />}
-                        {assessing ? 'Assessing...' : 'Risk Assessment'}
-                    </button>
-
-                    <button
-                        onClick={() => setJsonOpen(true)}
-                        title="Agent Card"
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
-                    >
-                        <Code2 size={14} />
-                        Agent Card
-                    </button>
-                    <button
-                        onClick={() => setEditOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
-                    >
-                        <Pencil size={15} /> Edit
-                    </button>
-                    <button
-                        onClick={() => setDeleteConfirm(true)}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-all shadow-sm"
-                    >
-                        <Trash2 size={15} /> Delete
-                    </button>
+                    {isEditing ? (
+                        <>
+                            {editError && <span className="text-xs text-red-500 font-medium">{editError}</span>}
+                            <button
+                                onClick={handleCancelEdit}
+                                disabled={editSaving}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50"
+                            >
+                                Discard
+                            </button>
+                            <button
+                                onClick={handleSaveEdit}
+                                disabled={editSaving || !editName.trim() || !editDescription.trim() || !editInstruction.trim()}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {editSaving
+                                    ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                                    : 'Save'}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <button
+                                onClick={() => navigate(
+                                    `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}`
+                                )}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
+                            >
+                                <FlaskConical size={15} /> Playground
+                            </button>
+                            <button
+                                onClick={() => setAuditModalOpen(true)}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
+                            >
+                                <ShieldCheck size={15} /> Audit
+                            </button>
+                            <button
+                                onClick={handleRequestRiskAssessment}
+                                disabled={assessing}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {assessing ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />}
+                                {assessing ? 'Assessing...' : 'Risk Assessment'}
+                            </button>
+                            <button
+                                onClick={() => setJsonOpen(true)}
+                                title="Agent Card"
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
+                            >
+                                <Code2 size={14} /> Agent Card
+                            </button>
+                            <button
+                                onClick={handleStartEdit}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+                            >
+                                <Pencil size={15} /> Edit
+                            </button>
+                            <button
+                                onClick={() => setDeleteConfirm(true)}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-all shadow-sm"
+                            >
+                                <Trash2 size={15} /> Delete
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -472,7 +655,27 @@ const AgentViewPage: React.FC = () => {
                 </div>
             )}
 
-            <AgentView agent={agent} onBusinessImpactChange={handleBusinessImpactChange} />
+            {editError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">{editError}</div>
+            )}
+
+            <AgentView
+                agent={agent}
+                onBusinessImpactChange={handleBusinessImpactChange}
+                isEditing={isEditing}
+                editName={editName}
+                onEditNameChange={setEditName}
+                editDescription={editDescription}
+                onEditDescriptionChange={setEditDescription}
+                editInstruction={editInstruction}
+                onEditInstructionChange={setEditInstruction}
+                inlineEdit={inlineEdit}
+                inlineSaving={inlineSaving}
+                onStartInlineEdit={handleStartInlineEdit}
+                onInlineValueChange={(value) => setInlineEdit(prev => prev ? { ...prev, value } : prev)}
+                onSaveInlineEdit={handleSaveInlineEdit}
+                onCancelInlineEdit={handleCancelInlineEdit}
+            />
 
             {/* JSON Inspector Modal */}
             {jsonOpen && createPortal(
@@ -562,14 +765,6 @@ const AgentViewPage: React.FC = () => {
                     </div>
                 </div>
             )}
-
-            {/* Edit modal */}
-            <EditAgentModal
-                agent={agent}
-                open={editOpen}
-                onClose={() => setEditOpen(false)}
-                onSaved={handleAgentSaved}
-            />
 
             {/* Audit modal */}
             <AuditInitModal

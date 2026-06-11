@@ -19,13 +19,15 @@ import {
   XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
 import type {
   BusinessApplicationRecord,
   BusinessApplicationUpsertPayload,
 } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useUseCases } from '../context/UseCaseContext';
 
-type Tab = 'overview' | 'related';
+type Tab = 'overview' | 'related' | 'related_use_cases';
 type Option = { label: string; value: string };
 
 const EMERGENCY_TIER_OPTIONS: Option[] = [
@@ -89,6 +91,26 @@ interface ApplicationFormState {
   latest_release_date: string;
   latest_release_documentation_link: string;
 }
+
+type ApplicationInlineField =
+  | 'application_name'
+  | 'emergency_tier'
+  | 'business_owner'
+  | 'application_portfolio_manager'
+  | 'vendor_name'
+  | 'business_criticality'
+  | 'it_application_owner'
+  | 'application_description'
+  | 'embedded_ai'
+  | 'opt_out_option'
+  | 'privacy_policy_url'
+  | 'data_excluded_from_ai_training'
+  | 'vendor_description'
+  | 'current_installed_version'
+  | 'is_current_version_supported'
+  | 'latest_released_version'
+  | 'latest_release_date'
+  | 'latest_release_documentation_link';
 
 const HINTS: Record<string, string> = {
   emergency_tier:
@@ -267,8 +289,10 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
+  const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
+  const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
 
   const [application, setApplication] = useState<BusinessApplicationRecord | null>(null);
   const [form, setForm] = useState<ApplicationFormState>(emptyForm);
@@ -279,12 +303,17 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('overview');
   const [editing, setEditing] = useState(isCreateMode);
   const [saving, setSaving] = useState(false);
+  const [inlineEdit, setInlineEdit] = useState<{ field: ApplicationInlineField; value: string } | null>(null);
+  const [inlineSaving, setInlineSaving] = useState<ApplicationInlineField | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const [searchAgents, setSearchAgents] = useState('');
+  const [searchUseCases, setSearchUseCases] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
+  const [actingUseCase, setActingUseCase] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [useCaseRelationError, setUseCaseRelationError] = useState<string | null>(null);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -299,6 +328,8 @@ const BusinessApplicationViewPage: React.FC = () => {
     if (!id || isCreateMode) return;
     setLoading(true);
     setError(null);
+    setRelationError(null);
+    setUseCaseRelationError(null);
     try {
       const data = await businessRelationsApi.getApplication(id);
       setApplication(data);
@@ -316,6 +347,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(null);
       setForm(emptyForm());
       setEditing(true);
+      setInlineEdit(null);
       setAttemptedSave(false);
       setLoading(false);
       setTab('overview');
@@ -323,6 +355,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       return;
     }
     setEditing(false);
+    setInlineEdit(null);
     load();
   }, [id, isCreateMode]);
 
@@ -348,8 +381,148 @@ const BusinessApplicationViewPage: React.FC = () => {
     });
   }, [agents, linkedAgentIds, searchAgents]);
 
+  const relatedUseCases = useMemo(() => {
+    return application?.related_use_cases ?? [];
+  }, [application]);
+
+  const linkedUseCaseIds = useMemo(() => {
+    const ids = new Set<string>();
+    relatedUseCases.forEach((useCase) => {
+      if (useCase.identifier) ids.add(useCase.identifier);
+    });
+    return ids;
+  }, [relatedUseCases]);
+
+  const availableUseCases = useMemo(() => {
+    const q = searchUseCases.trim().toLowerCase();
+    return allUseCases.filter((useCase) => {
+      const useCaseId = useCase.identifier || '';
+      if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
+      if (!q) return true;
+      return (
+        useCaseId.toLowerCase().includes(q) ||
+        (useCase.name ?? '').toLowerCase().includes(q) ||
+        (useCase.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allUseCases, linkedUseCaseIds, searchUseCases]);
+
   const setField = (key: keyof ApplicationFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const startInlineEdit = (field: ApplicationInlineField) => {
+    if (editing || isCreateMode || saving || inlineSaving) return;
+    setActionError(null);
+    setInlineEdit({ field, value: form[field] });
+  };
+
+  const cancelInlineEdit = () => {
+    setInlineEdit(null);
+    setActionError(null);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!application || !inlineEdit) return;
+    const nextForm = { ...form, [inlineEdit.field]: inlineEdit.value };
+    if (!nextForm.application_name.trim()) {
+      setActionError('Application Name is required.');
+      return;
+    }
+
+    setInlineSaving(inlineEdit.field);
+    setActionError(null);
+    try {
+      const updated = await businessRelationsApi.updateApplication(
+        application.business_application_id,
+        buildApplicationPayload(nextForm),
+      );
+      setApplication(updated);
+      setForm(formFromApplication(updated));
+      setInlineEdit(null);
+      setAttemptedSave(false);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to save application field');
+    } finally {
+      setInlineSaving(null);
+    }
+  };
+
+  const renderInlineEditable = (
+    field: ApplicationInlineField,
+    displayValue: string,
+    config: { kind?: 'text' | 'textarea' | 'select'; options?: Option[]; className?: string } = {},
+  ) => {
+    const isActive = inlineEdit?.field === field;
+    const kind = config.kind ?? 'text';
+    const valueClass = config.className ?? 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5';
+    const isSavingField = inlineSaving === field;
+    const saveDisabled = isSavingField || (field === 'application_name' && !inlineEdit?.value.trim());
+
+    if (!editing && !isCreateMode && isActive) {
+      return (
+        <div className="flex items-start gap-2">
+          {kind === 'textarea' ? (
+            <textarea
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              rows={3}
+              className={textAreaCls}
+              autoFocus
+            />
+          ) : kind === 'select' ? (
+            <select
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            >
+              <option value="">Select...</option>
+              {(config.options ?? []).map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            />
+          )}
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={saveInlineEdit}
+              disabled={saveDisabled}
+              title={field === 'application_name' && !inlineEdit.value.trim() ? 'Application Name is required' : 'Save'}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            >
+              {isSavingField ? <Loader2 size={14} className="animate-spin" /> : '✓'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelInlineEdit}
+              disabled={isSavingField}
+              title="Cancel"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <p
+        onDoubleClick={() => startInlineEdit(field)}
+        title="Double-click to edit"
+        className={`${valueClass} ${!editing && !isCreateMode ? 'cursor-text hover:border-blue-200 hover:bg-blue-50/40 transition-colors' : ''}`}
+      >
+        {displayValue}
+      </p>
+    );
   };
 
   const handleSuggestDescription = async () => {
@@ -394,6 +567,15 @@ const BusinessApplicationViewPage: React.FC = () => {
             console.warn('Application created but auto-link to agent failed.', linkErr);
           }
         }
+        if (linkUseCaseId) {
+          try {
+            await useCaseApi.linkApplication(linkUseCaseId, created.business_application_id);
+          } catch (linkErr) {
+            console.warn('Application created but auto-link to AI use case failed.', linkErr);
+          }
+          navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
+          return;
+        }
         navigate(`/applications/${encodeURIComponent(created.business_application_id)}`, { replace: true });
         return;
       }
@@ -402,6 +584,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(updated);
       setForm(formFromApplication(updated));
       setAttemptedSave(false);
+      setInlineEdit(null);
       setEditing(false);
     } catch (err: any) {
       setActionError(err.message || 'Failed to save application');
@@ -412,8 +595,13 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const handleCancelEdit = () => {
     setActionError(null);
+    setInlineEdit(null);
     setAttemptedSave(false);
     if (isCreateMode) {
+      if (linkUseCaseId) {
+        navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+        return;
+      }
       navigate('/applications');
       return;
     }
@@ -464,6 +652,36 @@ const BusinessApplicationViewPage: React.FC = () => {
     }
   };
 
+  const addUseCase = async (useCaseId: string) => {
+    if (!application) return;
+    setActingUseCase(useCaseId);
+    setUseCaseRelationError(null);
+    try {
+      await useCaseApi.linkApplication(useCaseId, application.business_application_id);
+      await load();
+      refreshUseCases();
+    } catch (err: any) {
+      setUseCaseRelationError(err.message || 'Failed to add AI use case relation');
+    } finally {
+      setActingUseCase(null);
+    }
+  };
+
+  const removeUseCase = async (useCaseId: string) => {
+    if (!application) return;
+    setActingUseCase(useCaseId);
+    setUseCaseRelationError(null);
+    try {
+      await useCaseApi.unlinkApplication(useCaseId, application.business_application_id);
+      await load();
+      refreshUseCases();
+    } catch (err: any) {
+      setUseCaseRelationError(err.message || 'Failed to remove AI use case relation');
+    } finally {
+      setActingUseCase(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-slate-500">
@@ -477,10 +695,16 @@ const BusinessApplicationViewPage: React.FC = () => {
     return (
       <div className="flex flex-col gap-4">
         <button
-          onClick={() => navigate('/applications')}
+          onClick={() => {
+            if (isCreateMode && linkUseCaseId) {
+              navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+              return;
+            }
+            navigate('/applications');
+          }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> Back to Applications
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Applications'}
         </button>
         <div className="flex items-start gap-3 text-red-500 bg-red-50 border border-red-200 rounded-xl px-6 py-4">
           <AlertCircle size={20} className="mt-0.5 shrink-0" />
@@ -496,6 +720,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const appTitle = form.application_name || application?.application_name || 'New Application';
   const appId = application?.business_application_id || 'Will be generated on create';
   const relatedAgentCount = application?.related_agents?.length ?? 0;
+  const relatedUseCaseCount = relatedUseCases.length;
   const criticalityMeta = getCriticalityMeta(form.business_criticality);
   const emergencyTierMeta = getEmergencyTierMeta(form.emergency_tier);
 
@@ -503,10 +728,16 @@ const BusinessApplicationViewPage: React.FC = () => {
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
-          onClick={() => navigate('/applications')}
+          onClick={() => {
+            if (isCreateMode && linkUseCaseId) {
+              navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+              return;
+            }
+            navigate('/applications');
+          }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> Back to Applications
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Applications'}
         </button>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -517,15 +748,15 @@ const BusinessApplicationViewPage: React.FC = () => {
                 disabled={saving}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               >
-                <XCircle size={15} /> Cancel
+                <XCircle size={15} /> {isCreateMode ? 'Cancel' : 'Discard'}
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || isApplicationNameMissing}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                {isCreateMode ? 'Create Application' : 'Save Changes'}
+                {isCreateMode ? 'Create Application' : 'Save'}
               </button>
             </>
           ) : (
@@ -534,6 +765,7 @@ const BusinessApplicationViewPage: React.FC = () => {
                 onClick={() => {
                   setTab('overview');
                   setAttemptedSave(false);
+                  setInlineEdit(null);
                   setEditing(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -613,16 +845,28 @@ const BusinessApplicationViewPage: React.FC = () => {
           Details
         </button>
         {!isCreateMode && !editing && (
-          <button
-            onClick={() => setTab('related')}
-            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
-              tab === 'related'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Related Agents({relatedAgentCount})
-          </button>
+          <>
+            <button
+              onClick={() => setTab('related')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Agents({relatedAgentCount})
+            </button>
+            <button
+              onClick={() => setTab('related_use_cases')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_use_cases'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related AI Use Cases({relatedUseCaseCount})
+            </button>
+          </>
         )}
       </div>
 
@@ -650,9 +894,7 @@ const BusinessApplicationViewPage: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {form.application_name || 'N/A'}
-                  </p>
+                  renderInlineEditable('application_name', form.application_name || 'N/A')
                 )}
               </div>
 
@@ -670,9 +912,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.emergency_tier, EMERGENCY_TIER_OPTIONS)}
-                  </p>
+                  renderInlineEditable('emergency_tier', labelFromOptions(form.emergency_tier, EMERGENCY_TIER_OPTIONS), {
+                    kind: 'select',
+                    options: EMERGENCY_TIER_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -691,9 +934,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                       className={inputCls}
                     />
                   ) : (
-                    <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                      {form[field as keyof ApplicationFormState] || 'N/A'}
-                    </p>
+                    renderInlineEditable(
+                      field as ApplicationInlineField,
+                      form[field as keyof ApplicationFormState] || 'N/A',
+                    )
                   )}
                 </div>
               ))}
@@ -712,9 +956,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS)}
-                  </p>
+                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS), {
+                    kind: 'select',
+                    options: BUSINESS_CRITICALITY_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -751,9 +996,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     disabled={generatingDescription}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]">
-                    {form.application_description || 'N/A'}
-                  </p>
+                  renderInlineEditable('application_description', form.application_description || 'N/A', {
+                    kind: 'textarea',
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]',
+                  })
                 )}
               </div>
             </div>
@@ -782,9 +1028,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     {YES_NO_NONE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.embedded_ai, YES_NO_NONE_OPTIONS)}
-                  </p>
+                  renderInlineEditable('embedded_ai', labelFromOptions(form.embedded_ai, YES_NO_NONE_OPTIONS), {
+                    kind: 'select',
+                    options: YES_NO_NONE_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -796,9 +1043,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     {YES_NO_NONE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.opt_out_option, YES_NO_NONE_OPTIONS)}
-                  </p>
+                  renderInlineEditable('opt_out_option', labelFromOptions(form.opt_out_option, YES_NO_NONE_OPTIONS), {
+                    kind: 'select',
+                    options: YES_NO_NONE_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -812,9 +1060,9 @@ const BusinessApplicationViewPage: React.FC = () => {
                     placeholder="https://..."
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
-                    {form.privacy_policy_url || 'N/A'}
-                  </p>
+                  renderInlineEditable('privacy_policy_url', form.privacy_policy_url || 'N/A', {
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all',
+                  })
                 )}
               </div>
 
@@ -830,9 +1078,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     {YES_NO_NONE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.data_excluded_from_ai_training, YES_NO_NONE_OPTIONS)}
-                  </p>
+                  renderInlineEditable('data_excluded_from_ai_training', labelFromOptions(form.data_excluded_from_ai_training, YES_NO_NONE_OPTIONS), {
+                    kind: 'select',
+                    options: YES_NO_NONE_OPTIONS,
+                  })
                 )}
               </div>
 
@@ -846,9 +1095,10 @@ const BusinessApplicationViewPage: React.FC = () => {
                     className={textAreaCls}
                   />
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]">
-                    {form.vendor_description || 'N/A'}
-                  </p>
+                  renderInlineEditable('vendor_description', form.vendor_description || 'N/A', {
+                    kind: 'textarea',
+                    className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]',
+                  })
                 )}
               </div>
             </div>
@@ -871,9 +1121,11 @@ const BusinessApplicationViewPage: React.FC = () => {
                       className={inputCls}
                     />
                   ) : (
-                    <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all">
-                      {form[field as keyof ApplicationFormState] || 'N/A'}
-                    </p>
+                    renderInlineEditable(
+                      field as ApplicationInlineField,
+                      form[field as keyof ApplicationFormState] || 'N/A',
+                      { className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all' },
+                    )
                   )}
                 </div>
               ))}
@@ -890,13 +1142,112 @@ const BusinessApplicationViewPage: React.FC = () => {
                     {YES_NO_NONE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 ) : (
-                  <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
-                    {labelFromOptions(form.is_current_version_supported, YES_NO_NONE_OPTIONS)}
-                  </p>
+                  renderInlineEditable('is_current_version_supported', labelFromOptions(form.is_current_version_supported, YES_NO_NONE_OPTIONS), {
+                    kind: 'select',
+                    options: YES_NO_NONE_OPTIONS,
+                  })
                 )}
               </div>
             </div>
           </Section>
+        </div>
+      )}
+
+      {tab === 'related_use_cases' && application && (
+        <div className="flex flex-col gap-4">
+          {useCaseRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {useCaseRelationError}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Currently Related AI Use Cases ({relatedUseCaseCount})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {relatedUseCases.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No AI use cases linked.</div>
+              )}
+              {relatedUseCases.map((rel, idx) => {
+                const useCaseId = rel.identifier || `missing-${idx}`;
+                const catalogMatch = allUseCases.find((uc) => uc.identifier === useCaseId);
+                const displayName = rel.name || catalogMatch?.name || useCaseId;
+                const busy = actingUseCase === useCaseId;
+                return (
+                  <div key={`${useCaseId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/use-case/${encodeURIComponent(useCaseId)}`}
+                        className="text-sm font-semibold text-blue-600 hover:underline"
+                      >
+                        {displayName}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
+                    </div>
+                    <button
+                      onClick={() => removeUseCase(useCaseId)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add AI Use Case Relation</p>
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+                <Link
+                  to={`/use-cases/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <PlusCircle size={12} />
+                  Create AI Use Case
+                </Link>
+                <div className="relative w-full sm:w-[320px] max-w-full">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={searchUseCases}
+                    onChange={(e) => setSearchUseCases(e.target.value)}
+                    placeholder="Filter AI use cases..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableUseCases.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available AI use cases to link.</div>
+              )}
+              {availableUseCases.map((useCase) => {
+                const useCaseId = useCase.identifier || '';
+                const busy = actingUseCase === useCaseId;
+                return (
+                  <div key={useCaseId} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{useCase.name || useCaseId}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
+                    </div>
+                    <button
+                      onClick={() => addUseCase(useCaseId)}
+                      disabled={!useCaseId || busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 

@@ -52,6 +52,9 @@ AZURE_AI_FOUNDRY_API_VERSION=2024-02-15-preview
 AZURE_AI_FOUNDRY_AGENT_API_VERSION=v1
 # Optional. If omitted, the selected playground model is used as the Azure deployment name.
 AZURE_AI_FOUNDRY_DEPLOYMENT=
+AZURE_AI_FOUNDRY_CLIENT_ID=
+AZURE_AI_FOUNDRY_TENANT_ID=
+AZURE_AI_FOUNDRY_CLIENT_SECRET=
 
 # ── Catalog Connector - Azure / Copilot ──────────────────────────────────────
 # Required when running the API in Docker locally. In Azure, use managed identity instead.

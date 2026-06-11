@@ -1,9 +1,22 @@
 ﻿import React from 'react';
 import { AgentData } from '../types/agent';
-import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
 
-interface AgentHeaderProps { agent: AgentData; }
+type AgentInlineField = 'name' | 'description' | 'instruction';
+
+interface AgentHeaderProps {
+    agent: AgentData;
+    isEditing?: boolean;
+    editName?: string;
+    onEditNameChange?: (v: string) => void;
+    inlineEdit?: { field: AgentInlineField; value: string } | null;
+    inlineSaving?: AgentInlineField | null;
+    onStartInlineEdit?: (field: AgentInlineField) => void;
+    onInlineValueChange?: (value: string) => void;
+    onSaveInlineEdit?: () => void;
+    onCancelInlineEdit?: () => void;
+}
 
 const Badge: React.FC<{ text: string; color?: 'blue' | 'emerald' | 'amber' | 'rose' | 'slate' }> = ({ text, color = 'slate' }) => {
     const cls = {
@@ -16,7 +29,18 @@ const Badge: React.FC<{ text: string; color?: 'blue' | 'emerald' | 'amber' | 'ro
     return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wide ${cls}`}>{text}</span>;
 };
 
-const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
+const AgentHeader: React.FC<AgentHeaderProps> = ({
+    agent,
+    isEditing,
+    editName,
+    onEditNameChange,
+    inlineEdit,
+    inlineSaving,
+    onStartInlineEdit,
+    onInlineValueChange,
+    onSaveInlineEdit,
+    onCancelInlineEdit,
+}) => {
     const id = agent.identification;
     const caps = agent.capabilities;
 
@@ -28,7 +52,6 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
     });
 
     const riskLevel: 'prohibited' | 'high' | 'medium' | 'low' = getAgentRiskLevel(agent);
-    const isWorkflowRunning = (id?.governance_status ?? (agent as any).latest_event_status) === 'Risk Assessment is running';
     const riskScore = agent.latest_risk_score
         ?? agent.risk_assessment?.blended_risk_score
         ?? agent.risk_assessment?.regulatory_risk_score;
@@ -44,6 +67,9 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
             : riskLevel === 'medium'
                 ? 'text-amber-600'
                 : 'text-emerald-600';
+    const isInlineName = inlineEdit?.field === 'name';
+    const isSavingName = inlineSaving === 'name';
+    const nameSaveDisabled = isSavingName || !inlineEdit?.value.trim();
     return (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col">
             <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
@@ -51,8 +77,51 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
                     <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
                         <Bot size={28} />
                     </div>
-                    <div className="flex flex-col gap-1.5 min-w-0">
-                        <h2 className="text-2xl font-bold text-slate-800 tracking-tight break-words">{agent.name}</h2>
+                    <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                        {isEditing ? (
+                            <input
+                                type="text"
+                                value={editName ?? agent.name}
+                                onChange={e => onEditNameChange?.(e.target.value)}
+                                className="text-2xl font-bold text-slate-800 tracking-tight w-full border-b-2 border-blue-400 bg-transparent outline-none pb-0.5"
+                            />
+                        ) : isInlineName && inlineEdit ? (
+                            <div className="flex items-center gap-2 w-full">
+                                <input
+                                    type="text"
+                                    value={inlineEdit.value}
+                                    onChange={e => onInlineValueChange?.(e.target.value)}
+                                    className="text-2xl font-bold text-slate-800 tracking-tight flex-1 border-b-2 border-blue-400 bg-transparent outline-none pb-0.5"
+                                    autoFocus
+                                />
+                                <button
+                                    type="button"
+                                    onClick={onSaveInlineEdit}
+                                    disabled={nameSaveDisabled}
+                                    title={!inlineEdit.value.trim() ? 'Agent Name is required' : 'Save'}
+                                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                >
+                                    {isSavingName ? <Loader2 size={14} className="animate-spin" /> : '✓'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onCancelInlineEdit}
+                                    disabled={isSavingName}
+                                    title="Cancel"
+                                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        ) : (
+                            <h2
+                                onDoubleClick={() => onStartInlineEdit?.('name')}
+                                title="Double-click to edit"
+                                className="text-2xl font-bold text-slate-800 tracking-tight break-words cursor-text rounded-lg hover:bg-blue-50/50 transition-colors"
+                            >
+                                {agent.name}
+                            </h2>
+                        )}
                         <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600 break-all">
                                 {id?.agent_id || 'N/A'}
@@ -85,17 +154,27 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({ agent }) => {
 
                 <div className="flex flex-col items-center md:items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
                     <div className="flex items-stretch justify-center md:justify-end gap-3 w-full">
-                        {!isWorkflowRunning && (
-                            <div className={`px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center min-w-[170px] ${riskCardClass}`}>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Blended Score</span>
+                        <div className={`px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center min-w-[170px] ${riskCardClass}`}>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                                Blended Score
+                            </span>
+
+                            {riskScore != null ? (
                                 <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
                                     {riskLevel === 'low'
                                         ? <CheckCircle2 size={14} />
                                         : <ShieldAlert size={14} />}
-                                    {riskScore ?? 'N/A'}
+                                    {riskScore}
                                 </span>
-                            </div>
-                        )}
+                            ) : (
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} />
+                                        : <ShieldAlert size={14} />}
+                                    N/A
+                                </span>
+                            )}
+                        </div>
                         <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center min-w-[140px]">
                             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>
                             {agent.provider?.url
