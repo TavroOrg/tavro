@@ -53,12 +53,22 @@ export interface AiModelRecord {
   updated_ts: string | null;
   // Present on GET /{id}
   agents?: AiModelAgentReference[];
+  ai_use_cases?: AiModelUseCaseReference[];
 }
 
 export interface AiModelAgentReference {
   agent_id: string | null;
   agent_internal_id: string | null;
   agent_name: string | null;
+}
+
+export interface AiModelUseCaseReference {
+  ai_use_case_id: string;
+  ai_use_case_name: string | null;
+  description: string | null;
+  owner: string | null;
+  priority: string | null;
+  status: string | null;
 }
 
 export type AiModelUpsertPayload = Partial<
@@ -72,6 +82,7 @@ export type AiModelUpsertPayload = Partial<
     | 'created_ts'
     | 'updated_ts'
     | 'agents'
+    | 'ai_use_cases'
   >
 >;
 

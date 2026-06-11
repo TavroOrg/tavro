@@ -21,9 +21,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from api.database import get_db
+from api.database import get_db, engine as _shared_engine
 
 router = APIRouter()
+_background_tasks: set = set()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL   = "claude-sonnet-4-6"
@@ -267,18 +268,16 @@ Return ONLY the JSON assessment object."""
 async def _run_orchestrator(
     audit_run_id: str,
     request:      AuditInitRequest,
-    db_url:       str,
 ) -> None:
     """
     Background task: runs all assessment agents for an audit run.
     Updates audit_run and audit_finding rows as it goes.
-    Uses a fresh DB connection (not the request-scoped one).
+    Uses a fresh session from the shared engine pool.
     """
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as AS
+    from sqlalchemy.ext.asyncio import AsyncSession as AS
     from sqlalchemy.orm import sessionmaker
 
-    engine  = create_async_engine(db_url, echo=False)
-    Session = sessionmaker(engine, class_=AS, expire_on_commit=False)
+    Session = sessionmaker(_shared_engine, class_=AS, expire_on_commit=False)
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
 
@@ -436,7 +435,6 @@ async def _run_orchestrator(
             """), {"id": audit_run_id, "err": str(e)[:500]})
             await db.commit()
 
-    await engine.dispose()
 
 
 # =============================================================
@@ -497,8 +495,9 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
     await db.close()
 
     # Launch background task — row is now committed and visible
-    db_url = os.getenv("DATABASE_URL", "")
-    asyncio.create_task(_run_orchestrator(run_id, body, db_url))
+    task = asyncio.create_task(_run_orchestrator(run_id, body))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return AuditRunResponse(
         audit_run_id=run_id,
@@ -558,6 +557,7 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
                 yield f"data: {json.dumps({'type':'done','status':run['status'],'overall_risk':run['overall_risk'],'summary':run['summary_text']})}\n\n"
                 return
 
+            await db.commit()  # end transaction so next poll sees fresh committed data
             await asyncio.sleep(1.5)
 
         yield f"data: {json.dumps({'type':'timeout'})}\n\n"

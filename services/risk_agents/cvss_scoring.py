@@ -6,7 +6,6 @@ from crewai_tools import TXTSearchTool
 from services.db.db_functions import calculate_cvss_score, generate_cvss_vector
 from services.risk_agents.llm_config import get_crewai_llm
 from pydantic import BaseModel
-from utils.set_environment import set_environment
 
 DEFAULT_TXT_SEARCH_EMBEDDER = "onnx"
 
@@ -140,7 +139,6 @@ def score_cvss(agent_name: str, agent_description: str, agent_instructions: str,
         }
     """
 
-    set_environment("secrets")
     base_path = Path(__file__).resolve().parent.parent / "skills"
 
     owasp_file = base_path / "OWASP Risks Scenarios.txt"
