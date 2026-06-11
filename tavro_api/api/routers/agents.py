@@ -1,4 +1,5 @@
 from __future__ import annotations
+import base64
 import json
 import os
 import uuid
@@ -6,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +99,9 @@ class AgentCreateRequest(BaseModel):
     role: Optional[str] = None
     environment: Optional[str] = None
     owner: Optional[str] = None
-    tools: Optional[List[Dict[str, str]]] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    tables: Optional[List[Dict[str, Any]]] = None
+    data_source: Optional[List[Dict[str, Any]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
     skills: Optional[List[Dict[str, Any]]] = None
 
@@ -108,6 +111,48 @@ class AgentUpdateRequest(BaseModel):
     description: Optional[str] = None
     instruction: Optional[str] = None
     skills: Optional[List[Any]] = None
+
+
+class AgentAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
+_AGENT_ATTACHMENTS_READY = False
+
+
+async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
+    global _AGENT_ATTACHMENTS_READY
+    if _AGENT_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.agent_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                agent_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
+            ON public.agent_attachment (agent_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _AGENT_ATTACHMENTS_READY = True
 
 class SuggestAgentDescriptionRequest(BaseModel):
     agent_name: str
@@ -184,6 +229,189 @@ async def get_agent_catalog(
 
 def _agent_card_dir() -> Path:
     return Path(os.getenv("LOCAL_AGENT_CARD_DIR", "./agent_cards"))
+
+
+def _clean_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _column_names(raw_columns: Any) -> List[str]:
+    if not raw_columns:
+        return []
+    if isinstance(raw_columns, str):
+        raw_columns = [raw_columns]
+    if not isinstance(raw_columns, list):
+        return []
+
+    names: List[str] = []
+    seen: set[str] = set()
+    for col in raw_columns:
+        if isinstance(col, dict):
+            name = _clean_text(col.get("name") or col.get("column_name") or col.get("identifier"))
+        else:
+            name = _clean_text(col)
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append(name)
+    return names
+
+
+def _table_items(raw_tables: Any) -> List[Dict[str, Any]]:
+    if not raw_tables:
+        return []
+    if isinstance(raw_tables, dict):
+        raw_tables = [raw_tables]
+    elif isinstance(raw_tables, str):
+        raw_tables = [{"name": raw_tables}]
+    if not isinstance(raw_tables, list):
+        return []
+
+    tables: List[Dict[str, Any]] = []
+    for raw in raw_tables:
+        if isinstance(raw, str):
+            raw = {"name": raw}
+        if not isinstance(raw, dict):
+            continue
+        tables.append({
+            "table_id": _clean_text(raw.get("table_id") or raw.get("id") or raw.get("identifier")),
+            "name": _clean_text(raw.get("name") or raw.get("table_name")),
+            "columns": _column_names(raw.get("columns") or raw.get("column")),
+            "tool_name": _clean_text(raw.get("tool_name") or raw.get("tool")),
+            "tool_id": _clean_text(raw.get("tool_id")),
+        })
+    return tables
+
+
+def _tables_from_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    tables: List[Dict[str, Any]] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        tool_name = _clean_text(tool.get("name"))
+        tool_tables = _table_items(tool.get("tables") or tool.get("table"))
+
+        # Also support the compact shape:
+        # { "name": "create_incident", "columns": ["id", "status"] }
+        if not tool_tables and tool.get("columns"):
+            tool_tables = [{
+                "table_id": None,
+                "name": _clean_text(tool.get("table_name")) or (f"{tool_name} table" if tool_name else None),
+                "columns": _column_names(tool.get("columns")),
+                "tool_name": tool_name,
+                "tool_id": None,
+            }]
+
+        for table in tool_tables:
+            table["tool_name"] = table.get("tool_name") or tool_name
+            tables.append(table)
+    return tables
+
+
+def _tables_from_data_sources(data_sources: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    table_map: Dict[str, Dict[str, Any]] = {}
+    for entry in data_sources or []:
+        if not isinstance(entry, dict):
+            continue
+        src_type = str(entry.get("source_object_type") or "").lower()
+        tgt_type = str(entry.get("target_object_type") or "").lower()
+        if src_type == "table" and tgt_type == "column":
+            table_id = _clean_text(entry.get("source_object_id"))
+            if not table_id:
+                continue
+            item = table_map.setdefault(
+                table_id,
+                {
+                    "table_id": table_id,
+                    "name": _clean_text(entry.get("source_object_name")),
+                    "columns": [],
+                    "tool_name": None,
+                    "tool_id": None,
+                },
+            )
+            column_name = _clean_text(entry.get("target_object_name") or entry.get("target_object_id"))
+            if column_name and column_name not in item["columns"]:
+                item["columns"].append(column_name)
+        elif src_type == "agent" and tgt_type == "table":
+            table_id = _clean_text(entry.get("target_object_id"))
+            if not table_id:
+                continue
+            item = table_map.setdefault(
+                table_id,
+                {
+                    "table_id": table_id,
+                    "name": _clean_text(entry.get("target_object_name")),
+                    "columns": [],
+                    "tool_name": None,
+                    "tool_id": None,
+                },
+            )
+            item["name"] = item.get("name") or _clean_text(entry.get("target_object_name"))
+        elif src_type == "tool" and tgt_type == "table":
+            table_id = _clean_text(entry.get("target_object_id"))
+            if not table_id:
+                continue
+            item = table_map.setdefault(
+                table_id,
+                {
+                    "table_id": table_id,
+                    "name": _clean_text(entry.get("target_object_name")),
+                    "columns": [],
+                    "tool_name": None,
+                    "tool_id": None,
+                },
+            )
+            item["tool_id"] = _clean_text(entry.get("source_object_id"))
+            item["tool_name"] = _clean_text(entry.get("source_object_name"))
+            item["name"] = item.get("name") or _clean_text(entry.get("target_object_name"))
+    return list(table_map.values())
+
+
+def _normalize_tables_payload(
+    tables: Any,
+    tools: Optional[List[Dict[str, Any]]],
+    data_sources: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for table in [
+        *_table_items(tables),
+        *_tables_from_tools(tools),
+        *_tables_from_data_sources(data_sources),
+    ]:
+        raw_table_id = table.get("table_id")
+        table_name = table.get("name")
+        if raw_table_id:
+            key = f"id:{raw_table_id}"
+        elif table_name:
+            key = f"name:{str(table_name).strip().lower()}"
+        else:
+            key = f"anonymous:{len(normalized)}"
+        item = normalized.setdefault(
+            key,
+            {
+                "table_id": raw_table_id,
+                "name": table_name,
+                "columns": [],
+                "tool_name": table.get("tool_name"),
+                "tool_id": table.get("tool_id"),
+            },
+        )
+        item["table_id"] = item.get("table_id") or raw_table_id
+        item["name"] = table_name or item.get("name")
+        item["tool_name"] = table.get("tool_name") or item.get("tool_name")
+        item["tool_id"] = table.get("tool_id") or item.get("tool_id")
+        existing_columns = {str(col).strip().lower() for col in item["columns"]}
+        for column_name in table.get("columns") or []:
+            column_key = str(column_name).strip().lower()
+            if column_key and column_key not in existing_columns:
+                item["columns"].append(column_name)
+                existing_columns.add(column_key)
+
+    for item in normalized.values():
+        item["table_id"] = item.get("table_id") or str(uuid.uuid4())
+    return list(normalized.values())
 
 
 def _list_text_values(value: Any) -> List[str]:
@@ -348,8 +576,9 @@ def _write_agent_card(
     agent_name: str,
     description: str,
     instruction: str,
-    tools: Optional[List[Dict[str, str]]] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
+    tables: Optional[List[Dict[str, Any]]] = None,
     skills: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
@@ -361,7 +590,7 @@ def _write_agent_card(
         data_source_entries = []
         if tools:
             for tool in tools:
-                tool_id = str(uuid.uuid4())
+                tool_id = tool.get("identifier") or str(uuid.uuid4())
                 tool_entries.append({
                     "identifier": tool_id,
                     "name": tool.get("name"),
@@ -385,6 +614,46 @@ def _write_agent_card(
                     "target_object_domain": None,
                     "target_object_name": tool.get("name"),
                     "target_object_type": "Tool",
+                    "access_level": None,
+                    "uses_pii": None,
+                    "uses_phi": None,
+                    "uses_pci": None,
+                })
+
+        for table in tables or []:
+            table_id = table.get("table_id")
+            table_name = table.get("name")
+            if not table_id:
+                continue
+            data_source_entries.append({
+                "relationship_id": None,
+                "parent_relationship_id": None,
+                "source_object_id": table.get("tool_id") or agent_id,
+                "source_object_domain": None,
+                "source_object_name": table.get("tool_name") or agent_name,
+                "source_object_type": "Tool" if table.get("tool_id") else "Agent",
+                "target_object_id": table_id,
+                "target_object_domain": None,
+                "target_object_name": table_name,
+                "target_object_type": "Table",
+                "access_level": None,
+                "uses_pii": None,
+                "uses_phi": None,
+                "uses_pci": None,
+            })
+            for column_name in table.get("columns") or []:
+                col_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{column_name}"))
+                data_source_entries.append({
+                    "relationship_id": None,
+                    "parent_relationship_id": None,
+                    "source_object_id": table_id,
+                    "source_object_domain": None,
+                    "source_object_name": table_name,
+                    "source_object_type": "Table",
+                    "target_object_id": col_id,
+                    "target_object_domain": None,
+                    "target_object_name": column_name,
+                    "target_object_type": "Column",
                     "access_level": None,
                     "uses_pii": None,
                     "uses_phi": None,
@@ -526,20 +795,231 @@ async def create_agent(
              "environment": body.environment or None},
         )
 
+        tool_name_to_id: Dict[str, str] = {}
+        tools_for_card: List[Dict[str, Any]] = []
         for tool in (body.tools or []):
             tool_id = str(uuid.uuid4())
+            tool_name = tool.get("name", "")
+            tool_name_key = str(tool_name).strip().lower()
+            if tool_name_key:
+                tool_name_to_id[tool_name_key] = tool_id
+            tools_for_card.append({**tool, "identifier": tool_id})
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.tools
+                        (tenant_id, tool_id, tool_name, tool_description,
+                         created_ts, updated_ts)
+                    VALUES
+                        (:tid, :tool_id, :tname, :tdesc,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tool_id) DO UPDATE SET
+                        tool_name        = EXCLUDED.tool_name,
+                        tool_description = EXCLUDED.tool_description,
+                        updated_ts       = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "tool_id": tool_id,
+                 "tname": tool_name, "tdesc": tool.get("description", "")},
+            )
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_tools
                         (tenant_id, agent_internal_id, tool_id, agent_id,
-                         tool_name, tool_description, created_ts, updated_ts)
+                         tool_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :iid, :tool_id, :aid,
-                         :tname, :tdesc, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                        agent_id   = EXCLUDED.agent_id,
+                        tool_name  = EXCLUDED.tool_name,
+                        updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
-                 "aid": agent_id, "tname": tool.get("name", ""), "tdesc": tool.get("description", "")},
+                 "aid": agent_id, "tname": tool_name},
             )
+
+        tables_payload = _normalize_tables_payload(body.tables, body.tools, body.data_source)
+        for table in tables_payload:
+            tool_name_key = str(table.get("tool_name") or "").strip().lower()
+            if tool_name_key and not table.get("tool_id"):
+                table["tool_id"] = tool_name_to_id.get(tool_name_key)
+
+            table_id = table.get("table_id") or str(uuid.uuid4())
+            table["table_id"] = table_id
+            table_name = table.get("name")
+            table_tool_id = table.get("tool_id")
+
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.tables
+                        (tenant_id, table_id, name, created_ts, updated_ts)
+                    VALUES
+                        (:tid, :table_id, :name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (table_id)
+                    DO UPDATE SET
+                        name = COALESCE(EXCLUDED.name, {CORE}.tables.name),
+                        updated_ts = EXCLUDED.updated_ts
+                """),
+                {
+                    "tid": tenant_id,
+                    "table_id": table_id,
+                    "name": table_name,
+                },
+            )
+
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_tables
+                        (tenant_id, agent_id, agent_name, agent_internal_id,
+                         table_id, table_name, created_ts, updated_ts)
+                    VALUES
+                        (:tid, :aid, :aname, :iid, :table_id, :table_name,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                        agent_name = EXCLUDED.agent_name,
+                        agent_internal_id = EXCLUDED.agent_internal_id,
+                        table_name = COALESCE(EXCLUDED.table_name, {CORE}.agent_tables.table_name),
+                        updated_ts = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "aid": agent_id, "aname": body.agent_name,
+                 "iid": agent_internal_id, "table_id": table_id, "table_name": table_name},
+            )
+
+            if table_tool_id:
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_data_sources (
+                            tenant_id, agent_internal_id, agent_id,
+                            created_ts, updated_ts,
+                            source_object_id, source_object_name, source_object_type,
+                            target_object_id, target_object_name, target_object_type
+                        )
+                        VALUES (
+                            :tid, :iid, :aid,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                            :tool_id, :tool_name, 'Tool',
+                            :table_id, :table_name, 'Table'
+                        )
+                        ON CONFLICT (agent_internal_id, source_object_id, target_object_id)
+                        DO UPDATE SET
+                            updated_ts = EXCLUDED.updated_ts,
+                            source_object_name = EXCLUDED.source_object_name,
+                            target_object_name = EXCLUDED.target_object_name
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "iid": agent_internal_id,
+                        "aid": agent_id,
+                        "tool_id": table_tool_id,
+                        "tool_name": table.get("tool_name"),
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    },
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.tool_tables
+                            (tenant_id, tool_id, tool_name, table_id, table_name,
+                             created_ts, updated_ts)
+                        VALUES
+                            (:tid, :tool_id, :tool_name, :table_id, :table_name,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
+                            tool_name = COALESCE(EXCLUDED.tool_name, {CORE}.tool_tables.tool_name),
+                            table_name = COALESCE(EXCLUDED.table_name, {CORE}.tool_tables.table_name),
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "tool_id": table_tool_id,
+                        "tool_name": table.get("tool_name"),
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    },
+                )
+            else:
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_data_sources (
+                            tenant_id, agent_internal_id, agent_id,
+                            created_ts, updated_ts,
+                            source_object_id, source_object_name, source_object_type,
+                            target_object_id, target_object_name, target_object_type
+                        )
+                        VALUES (
+                            :tid, :iid, :aid,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                            :aid, :agent_name, 'Agent',
+                            :table_id, :table_name, 'Table'
+                        )
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "iid": agent_internal_id,
+                        "aid": agent_id,
+                        "agent_name": body.agent_name,
+                        "table_id": table_id,
+                        "table_name": table_name,
+                    },
+                )
+
+            for column_name in table.get("columns") or []:
+                column_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{table_id}:{column_name}"))
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.columns (column_id, tenant_id, name, created_ts, updated_ts)
+                        VALUES (:col_id, :tid, :col_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (column_id)
+                        DO UPDATE SET
+                            tenant_id = EXCLUDED.tenant_id,
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {"col_id": column_id, "tid": tenant_id, "col_name": column_name},
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.table_columns
+                            (tenant_id, table_id, table_name, column_name, column_id, created_ts, updated_ts)
+                        VALUES
+                            (:tid, :table_id, :table_name, :column_name, :col_id,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
+                            table_name = COALESCE(EXCLUDED.table_name, {CORE}.table_columns.table_name),
+                            column_id = COALESCE(EXCLUDED.column_id, {CORE}.table_columns.column_id),
+                            updated_ts = EXCLUDED.updated_ts
+                    """),
+                    {"tid": tenant_id, "table_id": table_id,
+                     "table_name": table_name, "column_name": column_name, "col_id": column_id},
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_data_sources (
+                            tenant_id, agent_internal_id, agent_id,
+                            created_ts, updated_ts,
+                            source_object_id, source_object_name, source_object_type,
+                            target_object_id, target_object_name, target_object_type
+                        )
+                        VALUES (
+                            :tid, :iid, :aid,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                            :table_id, :table_name, 'Table',
+                            :col_id, :column_name, 'Column'
+                        )
+                        ON CONFLICT (agent_internal_id, source_object_id, target_object_id)
+                        DO UPDATE SET
+                            updated_ts = EXCLUDED.updated_ts,
+                            source_object_name = EXCLUDED.source_object_name,
+                            target_object_name = EXCLUDED.target_object_name
+                    """),
+                    {
+                        "tid": tenant_id,
+                        "iid": agent_internal_id,
+                        "aid": agent_id,
+                        "table_id": table_id,
+                        "table_name": table_name,
+                        "col_id": column_id,
+                        "column_name": column_name,
+                    },
+                )
 
         if body.knowledge_source:
             await db.execute(
@@ -624,8 +1104,9 @@ async def create_agent(
         agent_name=body.agent_name,
         description=body.description,
         instruction=body.instruction,
-        tools=body.tools,
+        tools=tools_for_card,
         knowledge_source=body.knowledge_source,
+        tables=tables_payload,
         skills=body.skills,
     )
 
@@ -1023,3 +1504,127 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+@router.get("/{agent_id}/attachments", summary="List Agent Attachments")
+async def list_agent_attachments(agent_id: str, db: AsyncSession = Depends(get_db)):
+    await _ensure_agent_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.agent_attachment
+            WHERE agent_id = :agent_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"agent_id": agent_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post("/{agent_id}/attachments", summary="Upload Agent Attachment", status_code=201)
+async def create_agent_attachment(
+    agent_id: str,
+    body: AgentAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    filename = (body.filename or "").strip()
+    mime_type = (body.mime_type or "").strip() or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.agent_attachment
+                (agent_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "agent_id": agent_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get("/{agent_id}/attachments/{attachment_id}/download", summary="Download Agent Attachment")
+async def download_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/{agent_id}/attachments/{attachment_id}", summary="Delete Agent Attachment")
+async def delete_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}

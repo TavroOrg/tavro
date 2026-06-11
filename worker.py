@@ -74,8 +74,6 @@ def execute_dml(sql: str, label: str = ""):
         print(f"  ✓ {label} succeeded")
 
 
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SQL value helpers  (unchanged from Lambda)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -348,7 +346,8 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
         return
 
     agent_id = ident.get("agent_id")
-    select_rows = []
+    tools_master_rows = []
+    relation_rows = []
 
     for tool in tools:
         tool_id = tool.get("identifier")
@@ -356,10 +355,8 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             str(tool.get("delegation_possible")).lower() == "true"
             if tool.get("delegation_possible") is not None else None
         )
-        select_rows.append(f"""
+        tools_master_rows.append(f"""
             SELECT
-                {_sq(agent_internal_id)}             AS agent_internal_id,
-                {_sq(agent_id)}                      AS agent_id,
                 {_sq(tool_id)}                       AS tool_id,
                 {_sq(tool.get('name'))}              AS tool_name,
                 {_sq(tool.get('description'))}       AS tool_description,
@@ -370,25 +367,32 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(tool.get('default_value'))}     AS default_config_json_text,
                 TIMESTAMP '{now_str}'                AS now_ts
         """.strip())
+        relation_rows.append(f"""
+            SELECT
+                {_sq(agent_internal_id)}             AS agent_internal_id,
+                {_sq(agent_id)}                      AS agent_id,
+                {_sq(tool_id)}                       AS tool_id,
+                {_sq(tool.get('name'))}              AS tool_name,
+                TIMESTAMP '{now_str}'                AS now_ts
+        """.strip())
 
-    union_all = "\nUNION ALL\n".join(select_rows)
-
-    sql = f"""
-        INSERT INTO core.agent_tools (
-            agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+    tools_union = "\nUNION ALL\n".join(tools_master_rows)
+    execute_dml(f"""
+        INSERT INTO core.tools (
+            tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             created_ts, updated_ts
         )
         SELECT
-            agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+            tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             now_ts, now_ts
-        FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, tool_id)
+        FROM ({tools_union}) AS s
+        ON CONFLICT (tool_id)
         DO UPDATE SET
-            agent_id                 = EXCLUDED.agent_id,
+            tool_name                = EXCLUDED.tool_name,
             tool_description         = EXCLUDED.tool_description,
             delegation_possible      = EXCLUDED.delegation_possible,
             allowed_delegates        = EXCLUDED.allowed_delegates,
@@ -396,9 +400,26 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
-    """
+    """, label="tools BULK INSERT ON CONFLICT")
+
+    relation_union = "\nUNION ALL\n".join(relation_rows)
+    execute_dml(f"""
+        INSERT INTO core.agent_tools (
+            agent_internal_id, agent_id, tool_id, tool_name,
+            created_ts, updated_ts
+        )
+        SELECT
+            agent_internal_id, agent_id, tool_id, tool_name,
+            now_ts, now_ts
+        FROM ({relation_union}) AS s
+        ON CONFLICT (agent_internal_id, tool_id)
+        DO UPDATE SET
+            agent_id   = EXCLUDED.agent_id,
+            tool_name  = EXCLUDED.tool_name,
+            updated_ts = EXCLUDED.updated_ts
+    """, label="agent_tools BULK INSERT ON CONFLICT")
+
     print(f"  Upserting {len(tools)} tools …")
-    execute_dml(sql, label="agent_tools BULK INSERT ON CONFLICT")
 
 
 def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):
@@ -1166,13 +1187,13 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
             provider, version_number, model_type, 0, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (ai_model_id) DO UPDATE SET
-            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), core.ai_models.model_name),
-            owner                = COALESCE(EXCLUDED.owner, core.ai_models.owner),
-            department_executive = COALESCE(EXCLUDED.department_executive, core.ai_models.department_executive),
-            description          = COALESCE(EXCLUDED.description, core.ai_models.description),
-            provider             = COALESCE(EXCLUDED.provider, core.ai_models.provider),
-            version_number       = COALESCE(EXCLUDED.version_number, core.ai_models.version_number),
-            model_type           = COALESCE(EXCLUDED.model_type, core.ai_models.model_type),
+            model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), ai_models.model_name),
+            owner                = COALESCE(EXCLUDED.owner, ai_models.owner),
+            department_executive = COALESCE(EXCLUDED.department_executive, ai_models.department_executive),
+            description          = COALESCE(EXCLUDED.description, ai_models.description),
+            provider             = COALESCE(EXCLUDED.provider, ai_models.provider),
+            version_number       = COALESCE(EXCLUDED.version_number, ai_models.version_number),
+            model_type           = COALESCE(EXCLUDED.model_type, ai_models.model_type),
             updated_ts           = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(models)} AI models into catalog …")

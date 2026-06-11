@@ -16,6 +16,7 @@ import {
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const PAGE_SIZE = 10;
 
@@ -80,6 +81,7 @@ const getCriticalityMeta = (value: string | null | undefined) => {
 const BusinessProcessesPage: React.FC = () => {
   const navigate = useNavigate();
   const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
+  const { activeCompany } = useBlueprint();
   const [processes, setProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +110,7 @@ const BusinessProcessesPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await businessRelationsApi.listProcesses();
+        const data = await businessRelationsApi.listProcesses(undefined, activeCompany?.id);
         setProcesses(data);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load processes');
@@ -117,7 +119,7 @@ const BusinessProcessesPage: React.FC = () => {
       }
     };
     load();
-  }, [catalogLoading, catalogError, lastFetched]);
+  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

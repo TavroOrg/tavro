@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import math
 import uuid
 import requests
 import threading
@@ -10,10 +11,11 @@ from rapidfuzz import process, fuzz
 from typing import Dict, Any, List, Optional
 from contextlib import contextmanager
 from utils.db import DATABASE_URL, SyncSessionLocal
-from utils.set_environment import set_environment
 from services.db.db_functions import refresh_curated_agent_360, create_local_agent_card
+from dotenv import load_dotenv
 
-set_environment('databases')
+load_dotenv(override=False)
+
 COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
@@ -449,6 +451,78 @@ class AgentMetadataExporter:
                 except Exception as ra_overlay_err:
                     print(f"[get_agent_card] Risk assessment overlay failed (returning card as-is): {ra_overlay_err}")
 
+                # Overlay data_source from DB so renames and new relationships are
+                # immediately visible in the UI lineage without regenerating the card file.
+                try:
+                    ds_rows = cls.execute_select(
+                        f"""
+                        SELECT relationship_id, parent_relationship_id,
+                               source_object_id, source_object_domain, source_object_name, source_object_type,
+                               target_object_id, target_object_domain, target_object_name, target_object_type,
+                               access_level, contains_pii, contains_phi, contains_pci
+                        FROM {cls.CORE_DB_NAME}.agent_data_sources
+                        WHERE agent_id = %s
+                        ORDER BY created_ts NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if ds_rows:
+                        local_card["data_source"] = [
+                            {
+                                "relationship_id": r.get("relationship_id"),
+                                "parent_relationship_id": r.get("parent_relationship_id"),
+                                "source_object_id": r.get("source_object_id"),
+                                "source_object_domain": r.get("source_object_domain"),
+                                "source_object_name": r.get("source_object_name"),
+                                "source_object_type": r.get("source_object_type"),
+                                "target_object_id": r.get("target_object_id"),
+                                "target_object_domain": r.get("target_object_domain"),
+                                "target_object_name": r.get("target_object_name"),
+                                "target_object_type": r.get("target_object_type"),
+                                "access_level": r.get("access_level"),
+                                "uses_pii": r.get("contains_pii"),
+                                "uses_phi": r.get("contains_phi"),
+                                "uses_pci": r.get("contains_pci"),
+                            }
+                            for r in ds_rows
+                        ]
+                except Exception as ds_overlay_err:
+                    print(f"[get_agent_card] Data source overlay failed (returning card as-is): {ds_overlay_err}")
+
+                # Overlay tool list from DB so tools added via update_agent are visible.
+                try:
+                    tool_rows = cls.execute_select(
+                        f"""
+                        SELECT at.tool_id, t.tool_name, t.tool_description,
+                               t.delegation_possible, t.allowed_delegates,
+                               t.input_schema_json_text, t.output_schema_json_text,
+                               t.default_config_json_text
+                        FROM {cls.CORE_DB_NAME}.agent_tools at
+                        JOIN {cls.CORE_DB_NAME}.tools t ON t.tool_id = at.tool_id
+                        WHERE at.agent_id = %s
+                        ORDER BY at.created_ts NULLS LAST
+                        """,
+                        (agent_id_clean,),
+                    )
+                    if tool_rows:
+                        local_card["tool"] = [
+                            {
+                                "identifier": r.get("tool_id"),
+                                "name": r.get("tool_name"),
+                                "description": r.get("tool_description"),
+                                "delegation_possible": r.get("delegation_possible"),
+                                "allowed_delegates": r.get("allowed_delegates"),
+                                "parameter_name": None,
+                                "parameter_type": None,
+                                "default_value": r.get("default_config_json_text"),
+                                "input_schema": r.get("input_schema_json_text"),
+                                "output_schema": r.get("output_schema_json_text"),
+                            }
+                            for r in tool_rows
+                        ]
+                except Exception as tool_overlay_err:
+                    print(f"[get_agent_card] Tool overlay failed (returning card as-is): {tool_overlay_err}")
+
                 return local_card
 
             # ---------- 7. Not found ----------
@@ -580,6 +654,249 @@ class AgentMetadataExporter:
     @staticmethod
     def sanitize(val: str) -> str:
         return val.replace("'", "''") if val else val
+
+    @staticmethod
+    def _clean_text(value: Optional[Any]) -> Optional[str]:
+        if value is None:
+            return None
+        text_value = str(value).strip()
+        return text_value or None
+
+    @classmethod
+    def _column_names(cls, raw_columns: Any) -> List[str]:
+        if not raw_columns:
+            return []
+        if isinstance(raw_columns, str):
+            raw_columns = [raw_columns]
+        if not isinstance(raw_columns, list):
+            return []
+
+        names: List[str] = []
+        seen = set()
+        for col in raw_columns:
+            if isinstance(col, dict):
+                name = cls._clean_text(col.get("name") or col.get("column_name") or col.get("identifier"))
+            else:
+                name = cls._clean_text(col)
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
+                names.append(name)
+        return names
+
+    @classmethod
+    def _table_items(cls, raw_tables: Any) -> List[Dict[str, Any]]:
+        if not raw_tables:
+            return []
+        if isinstance(raw_tables, dict):
+            raw_tables = [raw_tables]
+        elif isinstance(raw_tables, str):
+            raw_tables = [{"name": raw_tables}]
+        if not isinstance(raw_tables, list):
+            return []
+
+        tables: List[Dict[str, Any]] = []
+        for raw in raw_tables:
+            if isinstance(raw, str):
+                raw = {"name": raw}
+            if not isinstance(raw, dict):
+                continue
+            tables.append({
+                "table_id": cls._clean_text(raw.get("table_id") or raw.get("id") or raw.get("identifier")),
+                "name": cls._clean_text(raw.get("name") or raw.get("table_name")),
+                "tool_name": cls._clean_text(raw.get("tool_name") or raw.get("tool")),
+                "tool_id": cls._clean_text(raw.get("tool_id")),
+            })
+        return tables
+
+    @classmethod
+    def _column_items(cls, raw_columns: Any) -> List[Dict[str, Any]]:
+        if not raw_columns:
+            return []
+        if isinstance(raw_columns, dict):
+            raw_columns = [raw_columns]
+        elif isinstance(raw_columns, str):
+            raw_columns = [{"name": raw_columns}]
+        if not isinstance(raw_columns, list):
+            return []
+
+        columns: List[Dict[str, Any]] = []
+        seen = set()
+        for raw in raw_columns:
+            if isinstance(raw, str):
+                raw = {"name": raw}
+            if not isinstance(raw, dict):
+                continue
+            name = cls._clean_text(raw.get("name") or raw.get("column_name") or raw.get("identifier"))
+            if not name:
+                continue
+            table_id = cls._clean_text(raw.get("table_id"))
+            table_name = cls._clean_text(raw.get("table_name") or raw.get("table"))
+            key = (name.lower(), (table_id or "").lower(), (table_name or "").lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            columns.append({
+                "name": name,
+                "table_id": table_id,
+                "table_name": table_name,
+            })
+        return columns
+
+    @classmethod
+    def _tables_from_tools(cls, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        tables: List[Dict[str, Any]] = []
+        for tool in tools or []:
+            if not isinstance(tool, dict):
+                continue
+            tool_name = cls._clean_text(tool.get("name"))
+            tool_tables = cls._table_items(tool.get("tables") or tool.get("table"))
+
+            for table in tool_tables:
+                table["tool_name"] = table.get("tool_name") or tool_name
+                tables.append(table)
+        return tables
+
+    @classmethod
+    def _tables_from_data_sources(cls, data_sources: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        table_map: Dict[str, Dict[str, Any]] = {}
+        for entry in data_sources or []:
+            if not isinstance(entry, dict):
+                continue
+            src_type = str(entry.get("source_object_type") or "").lower()
+            tgt_type = str(entry.get("target_object_type") or "").lower()
+            if src_type == "table" and tgt_type == "column":
+                table_id = cls._clean_text(entry.get("source_object_id"))
+                if not table_id:
+                    continue
+                item = table_map.setdefault(
+                    table_id,
+                    {"table_id": table_id, "name": cls._clean_text(entry.get("source_object_name")), "tool_name": None, "tool_id": None},
+                )
+            elif src_type == "agent" and tgt_type == "table":
+                table_id = cls._clean_text(entry.get("target_object_id"))
+                if not table_id:
+                    continue
+                item = table_map.setdefault(
+                    table_id,
+                    {"table_id": table_id, "name": cls._clean_text(entry.get("target_object_name")), "tool_name": None, "tool_id": None},
+                )
+                item["name"] = item.get("name") or cls._clean_text(entry.get("target_object_name"))
+            elif src_type == "tool" and tgt_type == "table":
+                table_id = cls._clean_text(entry.get("target_object_id"))
+                if not table_id:
+                    continue
+                item = table_map.setdefault(
+                    table_id,
+                    {"table_id": table_id, "name": cls._clean_text(entry.get("target_object_name")), "tool_name": None, "tool_id": None},
+                )
+                item["tool_id"] = cls._clean_text(entry.get("source_object_id"))
+                item["tool_name"] = cls._clean_text(entry.get("source_object_name"))
+                item["name"] = item.get("name") or cls._clean_text(entry.get("target_object_name"))
+        return list(table_map.values())
+
+    @classmethod
+    def _columns_from_data_sources(cls, data_sources: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        columns: List[Dict[str, Any]] = []
+        for entry in data_sources or []:
+            if not isinstance(entry, dict):
+                continue
+            src_type = str(entry.get("source_object_type") or "").lower()
+            tgt_type = str(entry.get("target_object_type") or "").lower()
+            if src_type != "table" or tgt_type != "column":
+                continue
+            column_name = cls._clean_text(entry.get("target_object_name") or entry.get("target_object_id"))
+            if not column_name:
+                continue
+            columns.append({
+                "name": column_name,
+                "table_id": cls._clean_text(entry.get("source_object_id")),
+                "table_name": cls._clean_text(entry.get("source_object_name")),
+            })
+        return columns
+
+    @classmethod
+    def _normalize_tables_payload(
+        cls,
+        tables: Any,
+        tools: Optional[List[Dict[str, Any]]],
+        data_sources: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for table in [
+            *cls._table_items(tables),
+            *cls._tables_from_tools(tools),
+            *cls._tables_from_data_sources(data_sources),
+        ]:
+            raw_table_id = table.get("table_id")
+            table_name = table.get("name")
+            if raw_table_id:
+                key = f"id:{raw_table_id}"
+            elif table_name:
+                key = f"name:{str(table_name).strip().lower()}"
+            else:
+                key = f"anonymous:{len(normalized)}"
+            item = normalized.setdefault(
+                key,
+                {
+                    "table_id": raw_table_id,
+                    "source_table_id": raw_table_id,
+                    "name": table_name,
+                    "tool_name": table.get("tool_name"),
+                    "tool_id": table.get("tool_id"),
+                },
+            )
+            item["table_id"] = item.get("table_id") or raw_table_id
+            item["source_table_id"] = item.get("source_table_id") or raw_table_id
+            item["name"] = table_name or item.get("name")
+            item["tool_name"] = table.get("tool_name") or item.get("tool_name")
+            item["tool_id"] = table.get("tool_id") or item.get("tool_id")
+
+        for item in normalized.values():
+            item["table_id"] = str(uuid.uuid4())
+        return list(normalized.values())
+
+    @classmethod
+    def _columns_by_table(
+        cls,
+        tables_payload: List[Dict[str, Any]],
+        columns: Any,
+        data_sources: Optional[List[Dict[str, Any]]],
+    ) -> Dict[int, List[str]]:
+        column_entries = [
+            *cls._column_items(columns),
+            *cls._columns_from_data_sources(data_sources),
+        ]
+        columns_by_table: Dict[int, List[str]] = {}
+
+        for col_entry in column_entries:
+            col_name = cls._clean_text(col_entry.get("name"))
+            if not col_name:
+                continue
+            match_id = str(col_entry.get("table_id") or "").strip()
+            match_name = str(col_entry.get("table_name") or "").strip().lower()
+
+            matched_index: Optional[int] = None
+            for index, tbl in enumerate(tables_payload):
+                table_ids = {
+                    str(tbl.get("table_id") or "").strip(),
+                    str(tbl.get("source_table_id") or "").strip(),
+                }
+                table_name = str(tbl.get("name") or "").strip().lower()
+                if (match_id and match_id in table_ids) or (match_name and table_name == match_name):
+                    matched_index = index
+                    break
+
+            if matched_index is None and len(tables_payload) == 1 and not match_id and not match_name:
+                matched_index = 0
+            if matched_index is None:
+                continue
+
+            existing = {name.strip().lower() for name in columns_by_table.get(matched_index, [])}
+            col_key = col_name.strip().lower()
+            if col_key not in existing:
+                columns_by_table.setdefault(matched_index, []).append(col_name)
+
+        return columns_by_table
     
     @staticmethod
     def _normalize_tenant_id(value: Optional[Any]) -> Optional[str]:
@@ -587,123 +904,6 @@ class AgentMetadataExporter:
             return None
         cleaned = str(value).strip()
         return cleaned or None
-
-    @staticmethod
-    def _to_bool_ds(val) -> str:
-        """Convert a pii/phi/pci value to a SQL boolean literal."""
-        if val is None:
-            return "NULL"
-        if isinstance(val, bool):
-            return "TRUE" if val else "FALSE"
-        return "TRUE" if str(val).strip().lower() in ("yes", "true", "1") else "FALSE"
-
-    @classmethod
-    def _build_data_source_entries(
-        cls,
-        agent_id: str,
-        agent_name: str,
-        data_sources: List[Dict],
-    ) -> List[Dict]:
-        """
-        Convert a user-provided list of table/column definitions into flat
-        data-source relationship entries covering Agent→Table and Table→Column.
-
-        Each entry in data_sources must have at minimum a ``table_name``.
-        Optional per-table fields: ``table_domain``, ``access_level``.
-        Optional per-column fields: ``column_domain``.
-
-        ``table_id`` and ``column_id`` are always auto-generated (UUID4).
-        ``uses_pii``, ``uses_phi``, ``uses_pci`` are always stored as NULL.
-        """
-        entries: List[Dict] = []
-        for ds in data_sources:
-            table_name = str(ds.get("table_name") or "").strip()
-            if not table_name:
-                continue
-            table_id = str(uuid.uuid4())
-            table_domain = ds.get("table_domain") or None
-
-            # Agent → Table
-            entries.append({
-                "relationship_id":        None,
-                "parent_relationship_id": None,
-                "source_object_id":       agent_id,
-                "source_object_domain":   None,
-                "source_object_name":     agent_name,
-                "source_object_type":     "Agent",
-                "target_object_id":       table_id,
-                "target_object_domain":   table_domain,
-                "target_object_name":     table_name,
-                "target_object_type":     "Table",
-                "access_level":           ds.get("access_level"),
-                "uses_pii":               None,
-                "uses_phi":               None,
-                "uses_pci":               None,
-            })
-
-            # Table → Column
-            for col in (ds.get("columns") or []):
-                column_name = str(col.get("column_name") or "").strip()
-                if not column_name:
-                    continue
-                entries.append({
-                    "relationship_id":        None,
-                    "parent_relationship_id": None,
-                    "source_object_id":       table_id,
-                    "source_object_domain":   table_domain,
-                    "source_object_name":     table_name,
-                    "source_object_type":     "Table",
-                    "target_object_id":       str(uuid.uuid4()),
-                    "target_object_domain":   col.get("column_domain") or None,
-                    "target_object_name":     column_name,
-                    "target_object_type":     "Column",
-                    "access_level":           None,
-                    "uses_pii":               None,
-                    "uses_phi":               None,
-                    "uses_pci":               None,
-                })
-        return entries
-
-    @classmethod
-    def _build_ds_sql_values(
-        cls,
-        entries: List[Dict],
-        agent_internal_id: str,
-        agent_id: str,
-        now: str,
-        tenant_id_column: str,
-        tenant_id_value: str,
-    ) -> List[str]:
-        """Convert data-source entry dicts to SQL VALUES tuples.
-
-        The column order must match the INSERT statement in callers:
-            {tenant_id_column} agent_internal_id, agent_id,
-            access_level, contains_pii, contains_phi, contains_pci,
-            created_ts, updated_ts,
-            source_object_id, source_object_domain, source_object_name, source_object_type,
-            target_object_id, target_object_domain, target_object_name, target_object_type
-        """
-        def _sq(v) -> str:
-            if v is None:
-                return "NULL"
-            return "'" + str(v).replace("'", "''") + "'"
-
-        values = []
-        for e in entries:
-            values.append(
-                f"({tenant_id_value}"
-                f"{_sq(agent_internal_id)},{_sq(agent_id)},"
-                f"{_sq(e.get('access_level'))},"
-                f"{cls._to_bool_ds(e.get('uses_pii'))}::boolean,"
-                f"{cls._to_bool_ds(e.get('uses_phi'))}::boolean,"
-                f"{cls._to_bool_ds(e.get('uses_pci'))}::boolean,"
-                f"TIMESTAMP '{now}',TIMESTAMP '{now}',"
-                f"{_sq(e.get('source_object_id'))},{_sq(e.get('source_object_domain'))},"
-                f"{_sq(e.get('source_object_name'))},{_sq(e.get('source_object_type'))},"
-                f"{_sq(e.get('target_object_id'))},{_sq(e.get('target_object_domain'))},"
-                f"{_sq(e.get('target_object_name'))},{_sq(e.get('target_object_type'))})"
-            )
-        return values
 
     @staticmethod
     def _build_risk_payload(
@@ -827,11 +1027,12 @@ class AgentMetadataExporter:
         agent_name: str,
         description: str,
         instruction: str,
-        tools: Optional[List[Dict[str, str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
+        tables: Optional[List[Dict[str, Any]]] = None,
+        columns_by_table: Optional[Dict[int, List[str]]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
-        data_sources: Optional[List[Dict]] = None,
     ) -> None:
         """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
         try:
@@ -854,27 +1055,62 @@ class AgentMetadataExporter:
                         "input_schema": None,
                         "output_schema": None,
                     })
-                    # Agent → Tool data-source entry
                     data_source_entries.append({
-                        "relationship_id":        None,
+                        "relationship_id": None,
                         "parent_relationship_id": None,
-                        "source_object_id":       agent_id,
-                        "source_object_domain":   None,
-                        "source_object_name":     agent_name,
-                        "source_object_type":     "Agent",
-                        "target_object_id":       tool_id,
-                        "target_object_domain":   None,
-                        "target_object_name":     tool.get("name"),
-                        "target_object_type":     "Tool",
-                        "access_level":           None,
-                        "uses_pii":               None,
-                        "uses_phi":               None,
-                        "uses_pci":               None,
+                        "source_object_id": agent_id,
+                        "source_object_domain": None,
+                        "source_object_name": agent_name,
+                        "source_object_type": "Agent",
+                        "target_object_id": tool_id,
+                        "target_object_domain": None,
+                        "target_object_name": tool.get("name"),
+                        "target_object_type": "Tool",
+                        "access_level": None,
+                        "uses_pii": None,
+                        "uses_phi": None,
+                        "uses_pci": None,
                     })
 
-            # Agent → Table → Column entries (appended alongside tool entries)
-            if data_sources:
-                data_source_entries += cls._build_data_source_entries(agent_id, agent_name, data_sources)
+            for table_index, table in enumerate(tables or []):
+                table_id = table.get("table_id")
+                table_name = table.get("name")
+                if not table_id:
+                    continue
+                data_source_entries.append({
+                    "relationship_id": None,
+                    "parent_relationship_id": None,
+                    "source_object_id": table.get("tool_id") or agent_id,
+                    "source_object_domain": None,
+                    "source_object_name": table.get("tool_name") or agent_name,
+                    "source_object_type": "Tool" if table.get("tool_id") else "Agent",
+                    "target_object_id": table_id,
+                    "target_object_domain": None,
+                    "target_object_name": table_name,
+                    "target_object_type": "Table",
+                    "access_level": None,
+                    "uses_pii": None,
+                    "uses_phi": None,
+                    "uses_pci": None,
+                })
+                for column_name in (columns_by_table or {}).get(table_index, []):
+                    col_id = str(uuid.uuid4())
+                    data_source_entries.append({
+                        "relationship_id": None,
+                        "parent_relationship_id": None,
+                        "source_object_id": table_id,
+                        "source_object_domain": None,
+                        "source_object_name": table_name,
+                        "source_object_type": "Table",
+                        "target_object_id": col_id,
+                        "target_object_domain": None,
+                        "target_object_name": column_name,
+                        "target_object_type": "Column",
+                        "access_level": None,
+                        "uses_pii": None,
+                        "uses_phi": None,
+                        "uses_pci": None,
+                    })
 
             ks_entry = None
             if knowledge_source:
@@ -971,26 +1207,28 @@ class AgentMetadataExporter:
         agent_name: str,
         description: str,
         instruction: str,
-        tools: Optional[List[Dict[str, str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tables: Optional[List[Dict[str, Any]]] = None,
+        columns: Optional[List[Dict[str, Any]]] = None,
+        data_source: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None,
-        data_sources: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """
         Create a new agent.
 
-        ``data_sources`` accepts a list of table/column definitions that describe
-        the Agent → Table → Column data-source hierarchy.  Each entry supports:
+        ``data_source`` accepts a list of table/column definitions that describe
+        the Agent -> Table -> Column data-source hierarchy. Each entry supports:
 
             {
-              "table_name":   str,            # required
-              "table_domain": str | None,     # optional
-              "access_level": str | None,     # optional
+              "table_name": str,
+              "table_domain": str | None,
+              "access_level": str | None,
               "columns": [
                   {
-                    "column_name":   str,            # required
-                    "column_domain": str | None,     # optional
+                    "column_name": str,
+                    "column_domain": str | None,
                   }, ...
               ]
             }
@@ -1014,12 +1252,20 @@ class AgentMetadataExporter:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         queries = []
+        data_source_values = []
+        table_values = []
+        column_values = []
+        agent_table_values = []
+        tool_table_values = []
+        table_column_values = []
         tool_ids_for_card: List[str] = []
-
-        tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
-        tenant_id_column = "tenant_id," if tenant_id else ""
+        tool_name_to_id: Dict[str, str] = {}
+        tables_payload = cls._normalize_tables_payload(tables, tools, data_source)
+        columns_by_table = cls._columns_by_table(tables_payload, columns, data_source)
 
         # 1. agents table
+        tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
+        tenant_id_column = "tenant_id," if tenant_id else ""
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
@@ -1065,37 +1311,72 @@ class AgentMetadataExporter:
         )
         """)
 
-        # 3. tools (ONLY name + description) + Agent→Tool data-source entries
-        tool_ds_values: List[str] = []
+        # 3. tools — insert master data into core.tools, relation into core.agent_tools
         if tools:
-            values_list = []
+            tools_master_values = []
+            relation_values = []
             for tool in tools:
                 tool_id = str(uuid.uuid4())
                 tool_ids_for_card.append(tool_id)
                 name = cls.sanitize(tool.get("name"))
                 desc = cls.sanitize(tool.get("description"))
-                values_list.append(f"""
+                if name:
+                    tool_name_to_id[str(tool.get("name")).strip().lower()] = tool_id
+
+                tools_master_values.append(f"""
                 (
                     {tenant_id_value}
-                    '{agent_internal_id}',
                     '{tool_id}',
-                    '{agent_id}',
                     '{name}',
                     '{desc}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
                 )
                 """)
-                # Always create Agent → Tool data-source entry
-                tool_ds_values.append(
-                    f"({tenant_id_value}"
-                    f"'{agent_internal_id}','{agent_id}',"
-                    f"NULL,NULL::boolean,NULL::boolean,NULL::boolean,"
-                    f"TIMESTAMP '{now}',TIMESTAMP '{now}',"
-                    f"'{agent_id}',NULL,'{cls.sanitize(agent_name)}','Agent',"
-                    f"'{cls.sanitize(tool_id)}',NULL,'{name}','Tool')"
+                relation_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{tool_id}',
+                    '{agent_id}',
+                    '{name}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
                 )
+                """)
+                # --- agent_data_sources insert ---
+                data_source_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{agent_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}',
+                    '{agent_id}',
+                    '{cls.sanitize(agent_name)}',
+                    'Agent',
+                    '{tool_id}',
+                    '{name}',
+                    'Tool'
+                )
+                """)
 
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.tools (
+                {tenant_id_column}
+                tool_id,
+                tool_name,
+                tool_description,
+                created_ts,
+                updated_ts
+            )
+            VALUES
+            {",".join(tools_master_values)}
+            ON CONFLICT (tool_id) DO UPDATE SET
+                tool_name        = EXCLUDED.tool_name,
+                tool_description = EXCLUDED.tool_description,
+                updated_ts       = EXCLUDED.updated_ts
+            """)
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_tools (
                 {tenant_id_column}
@@ -1103,17 +1384,199 @@ class AgentMetadataExporter:
                 tool_id,
                 agent_id,
                 tool_name,
-                tool_description,
                 created_ts,
                 updated_ts
             )
             VALUES
-            {",".join(values_list)}
+            {",".join(relation_values)}
+            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                agent_id   = EXCLUDED.agent_id,
+                tool_name  = EXCLUDED.tool_name,
+                updated_ts = EXCLUDED.updated_ts
             """)
 
-        # 4. knowledge sources
+        for table_index, table in enumerate(tables_payload):
+            tool_name_key = str(table.get("tool_name") or "").strip().lower()
+            if tool_name_key and not table.get("tool_id"):
+                table["tool_id"] = tool_name_to_id.get(tool_name_key)
+
+            table_id = str(uuid.uuid4())
+            table["table_id"] = table_id
+            table_name = cls.sanitize(table.get("name") or "")
+            table_tool_id = cls.sanitize(table.get("tool_id") or "")
+            table_tool_name = cls.sanitize(table.get("tool_name") or "")
+
+            table_values.append(f"""
+            (
+                {tenant_id_value}
+                '{table_id}',
+                '{table_name}',
+                TIMESTAMP '{now}',
+                TIMESTAMP '{now}'
+            )
+            """)
+
+            # agent_tables relationship
+            agent_table_values.append(f"""
+            (
+                {tenant_id_value}
+                '{agent_id}',
+                '{agent_name}',
+                '{agent_internal_id}',
+                '{table_id}',
+                '{table_name}',
+                TIMESTAMP '{now}',
+                TIMESTAMP '{now}'
+            )
+            """)
+
+            if table_tool_id:
+                data_source_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{agent_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}',
+                    '{table_tool_id}',
+                    '{table_tool_name}',
+                    'Tool',
+                    '{table_id}',
+                    '{table_name}',
+                    'Table'
+                )
+                """)
+                # tool_tables relationship
+                tool_table_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{table_tool_id}',
+                    '{table_tool_name}',
+                    '{table_id}',
+                    '{table_name}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
+            else:
+                data_source_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{agent_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}',
+                    '{agent_id}',
+                    '{agent_name}',
+                    'Agent',
+                    '{table_id}',
+                    '{table_name}',
+                    'Table'
+                )
+                """)
+
+            for column_name in columns_by_table.get(table_index, []):
+                clean_column = cls.sanitize(column_name)
+                if not clean_column:
+                    continue
+                column_id = str(uuid.uuid4())
+                column_values.append(f"""
+                (
+                    '{column_id}',
+                    {tenant_id_value}
+                    '{clean_column}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
+                # table_columns relationship
+                table_column_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{table_id}',
+                    '{table_name}',
+                    '{clean_column}',
+                    '{column_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}'
+                )
+                """)
+                data_source_values.append(f"""
+                (
+                    {tenant_id_value}
+                    '{agent_internal_id}',
+                    '{agent_id}',
+                    TIMESTAMP '{now}',
+                    TIMESTAMP '{now}',
+                    '{table_id}',
+                    '{table_name}',
+                    'Table',
+                    '{column_id}',
+                    '{clean_column}',
+                    'Column'
+                )
+                """)
+
+        if table_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.tables (
+                {tenant_id_column}
+                table_id,
+                name,
+                created_ts,
+                updated_ts
+            )
+            VALUES
+            {",".join(table_values)}
+            """)
+
+        if column_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.columns (
+                column_id,
+                {tenant_id_column}
+                name,
+                created_ts,
+                updated_ts
+            )
+            VALUES
+            {",".join(column_values)}
+            """)
+
+        if agent_table_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.agent_tables (
+                {tenant_id_column}
+                agent_id, agent_name, agent_internal_id,
+                table_id, table_name, created_ts, updated_ts
+            )
+            VALUES
+            {",".join(agent_table_values)}
+            """)
+
+        if tool_table_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.tool_tables (
+                {tenant_id_column}
+                tool_id, tool_name, table_id, table_name,
+                created_ts, updated_ts
+            )
+            VALUES
+            {",".join(tool_table_values)}
+            """)
+
+        if table_column_values:
+            queries.append(f"""
+            INSERT INTO {cls.CORE_DB_NAME}.table_columns (
+                {tenant_id_column}
+                table_id, table_name, column_name, column_id, created_ts, updated_ts
+            )
+            VALUES
+            {",".join(table_column_values)}
+            """)
+
+        # 4. knowledge sources (ONLY name + description)
         if knowledge_source:
-            ks_id   = str(uuid.uuid4())
             ks_name = cls.sanitize(knowledge_source.get("name"))
             ks_desc = cls.sanitize(knowledge_source.get("description"))
             queries.append(f"""
@@ -1121,7 +1584,6 @@ class AgentMetadataExporter:
                 {tenant_id_column}
                 agent_internal_id,
                 agent_id,
-                identifier,
                 name,
                 description,
                 created_ts,
@@ -1131,40 +1593,31 @@ class AgentMetadataExporter:
                 {tenant_id_value}
                 '{agent_internal_id}',
                 '{agent_id}',
-                '{ks_id}',
                 '{ks_name}',
                 '{ks_desc}',
                 TIMESTAMP '{now}',
                 TIMESTAMP '{now}'
             )
             """)
-
-        # 5. agent_data_sources
-        ds_insert_columns = f"""
-            {tenant_id_column}
-            agent_internal_id, agent_id,
-            access_level, contains_pii, contains_phi, contains_pci,
-            created_ts, updated_ts,
-            source_object_id, source_object_domain, source_object_name, source_object_type,
-            target_object_id, target_object_domain, target_object_name, target_object_type
-        """
-
-        # Merge Agent→Tool entries (always) with Agent→Table→Column entries (if provided)
-        all_ds_values: List[str] = list(tool_ds_values)
-        if data_sources:
-            ds_entries = cls._build_data_source_entries(agent_id, raw_agent_name, data_sources)
-            if ds_entries:
-                all_ds_values += cls._build_ds_sql_values(
-                    ds_entries, agent_internal_id, agent_id, now,
-                    tenant_id_column, tenant_id_value,
-                )
-
-        if all_ds_values:
+        
+        # 5. data source insert
+        if data_source_values:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
-                {ds_insert_columns}
+                {tenant_id_column}
+                agent_internal_id,
+                agent_id,
+                created_ts,
+                updated_ts,
+                source_object_id,
+                source_object_name,
+                source_object_type,
+                target_object_id,
+                target_object_name,
+                target_object_type
             )
-            VALUES {','.join(all_ds_values)}
+            VALUES
+            {",".join(data_source_values)}
             """)
 
         # 6. skills — persist to core.skills and core.agent_skills
@@ -1255,8 +1708,9 @@ class AgentMetadataExporter:
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
+            tables=tables_payload,
+            columns_by_table=columns_by_table,
             skills=skills,
-            data_sources=data_sources,
         )
 
         payload = {
@@ -1288,7 +1742,7 @@ class AgentMetadataExporter:
         return {
             "agent_id": agent_id,
             "agent_name": raw_agent_name,
-            "message": "Agent created successfully and Risk Assessment is also triggered."
+            "message": "Agent created successfully and risk assessment triggered."
         }
     
     @staticmethod
@@ -1985,122 +2439,115 @@ class AgentMetadataExporter:
         agent_name: Optional[str] = None,
         description: Optional[str] = None,
         instruction: Optional[str] = None,
-        tools: Optional[List[Dict[str, str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
+        tables: Optional[List[Dict[str, Any]]] = None,
+        columns: Optional[List[Dict[str, Any]]] = None,
+        data_source: Optional[List[Dict[str, Any]]] = None,
         skills: Optional[List[Any]] = None,
         tenant_id: Optional[str] = None,
-        data_sources: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """
-        Update an existing agent.  Only provided fields are changed.
-
-        ``tools`` — when provided (including an empty list), replaces all existing
-        tool records and their Agent→Tool data-source entries.  Omit to leave
-        existing tools unchanged.
-
-        ``data_sources`` — when provided (including an empty list), replaces all
-        existing Agent→Table and Table→Column data-source entries.  Agent→Tool
-        entries are NEVER touched by this parameter.  Omit to leave existing
-        data sources unchanged.
-
-        All IDs (tool_id, table_id, column_id) are auto-generated.
-        uses_pii / uses_phi / uses_pci are always stored as NULL.
+        Update existing agent with minimal query overhead.
+        Only provided fields are updated.
         """
-        # tenant_id is mandatory for all updates
-        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
-            raise ValueError("tenant_id is required to update an agent.")
-
         if not agent_id and not agent_name:
             raise ValueError("Either agent_id or agent_name is required.")
 
-        # Tenant context - always present after validation above
-        tenant_clean = cls.sanitize(str(tenant_id).strip())
-        tenant_where = f"AND tenant_id = '{tenant_clean}'"
-        tenant_col = "tenant_id,"
-        tenant_val = f"'{tenant_clean}',"
-        tenant_lit = f"'{tenant_clean}'"
-        is_tenant = True
-        # Resolve agent ID
+        # Setup tenant context
+        is_tenant = tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
+        tenant_clean = cls.sanitize(tenant_id) if is_tenant else None
+        tenant_where = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
+        tenant_col = "tenant_id," if is_tenant else ""
+        tenant_val = f"'{tenant_clean}'," if is_tenant else ""
+        tenant_lit = f"'{tenant_clean}'" if is_tenant else "NULL"
+
+        # Resolve agent ID (1 query)
         if not agent_id:
             agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
             if not agent_id:
                 raise ValueError(f"Agent '{agent_name}' not found.")
         agent_id = cls.sanitize(str(agent_id).strip())
 
-        # Fetch current agent record
-        rows = cls.execute_select(
-            f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents "
-            f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1"
-        )
+        # Fetch agent info (1 query)
+        rows = cls.execute_select(f"SELECT agent_internal_id, agent_name FROM {cls.CORE_DB_NAME}.agents WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where} LIMIT 1")
         if not rows:
             raise ValueError(f"Agent '{agent_id}' not found.")
 
         agent_internal_id = rows[0].get("agent_internal_id")
-        current_agent_name = rows[0].get("agent_name") or ""
+        current_agent_name = cls.sanitize(str(rows[0].get("agent_name") or "").strip())
+        effective_agent_name = current_agent_name
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Effective name used for data-source source labels
-        effective_agent_name = (
-            str(agent_name).strip()
-            if (agent_name is not None and str(agent_name).strip())
-            else current_agent_name
-        )
-
-        # Update agent_name
+        # Batch updates into single transaction
         if agent_name is not None and str(agent_name).strip():
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agents "
-                f"SET agent_name = '{cls.sanitize(agent_name)}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
-            )
+            effective_agent_name = cls.sanitize(agent_name)
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_name = '{effective_agent_name}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
-        # Update description
         if description is not None and str(description).strip():
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agents "
-                f"SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
-            )
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agents SET agent_description = '{cls.sanitize(description)}', updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
 
-        # Update instruction (version the old row, insert a new current one)
         if instruction:
             instr = cls.sanitize(instruction)
-            cls.execute_dml(
-                f"UPDATE {cls.CORE_DB_NAME}.agent_identifications "
-                f"SET is_current = false, updated_ts = TIMESTAMP '{now}' "
-                f"WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}"
-            )
-            cls.execute_dml(
-                f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications "
-                f"({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) "
-                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', "
-                f"TIMESTAMP '{now}', TIMESTAMP '{now}', true)"
-            )
+            cls.execute_dml(f"UPDATE {cls.CORE_DB_NAME}.agent_identifications SET is_current = false, updated_ts = TIMESTAMP '{now}' WHERE agent_id = '{agent_id}' AND is_current = true {tenant_where}")
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_identifications ({tenant_col}agent_internal_id, agent_id, instruction, created_ts, updated_ts, is_current) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{instr}', TIMESTAMP '{now}', TIMESTAMP '{now}', true)")
 
-        # Update tools — None means "leave unchanged"; [] means "clear all tools"
-        # Agent→Tool data-source entries are kept in sync with agent_tools.
+        # None means "leave unchanged"; [] means "clear all tools"
         if tools is not None:
-            # Remove existing tool records
+            # Capture existing tools (ordered by created_ts) and their Tool→Table lineage
+            # before deleting, so we can re-link tables to renamed tools by position.
+            existing_tools_rows = cls.execute_select(
+                f"SELECT tool_id, tool_name FROM {cls.CORE_DB_NAME}.agent_tools "
+                f"WHERE agent_id = '{agent_id}' {tenant_where} ORDER BY created_ts"
+            )
+            # Map old_tool_id → list of Tool→Table data_source rows
+            tool_table_map: dict = {}
+            for et in existing_tools_rows:
+                et_id = cls.sanitize(str(et.get("tool_id") or ""))
+                if not et_id:
+                    continue
+                tt_rows = cls.execute_select(
+                    f"SELECT target_object_id, target_object_domain, target_object_name, target_object_type, "
+                    f"access_level, contains_pii, contains_phi, contains_pci "
+                    f"FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND source_object_id = '{et_id}' "
+                    f"AND LOWER(source_object_type) = 'tool'"
+                )
+                tool_table_map[et_id] = tt_rows
+
+            # Remove existing tool records, Agent→Tool entries, and Tool→Table entries
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_tools "
                 f"WHERE agent_id = '{agent_id}' {tenant_where}"
             )
-            # Remove existing Agent→Tool data-source entries only (Table/Column entries untouched)
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
                 f"WHERE agent_internal_id = '{agent_internal_id}' "
                 f"AND target_object_type = 'Tool'"
             )
+            cls.execute_dml(
+                f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND LOWER(source_object_type) = 'tool'"
+            )
             if tools:
                 tool_rows: List[str] = []
+                tool_master_rows: List[str] = []
                 tool_ds_rows: List[str] = []
+                new_tool_ids: List[tuple] = []  # (tool_id, tool_name)
                 for t in tools:
                     tool_id = str(uuid.uuid4())
                     t_name = cls.sanitize(t.get("name", ""))
                     t_desc = cls.sanitize(t.get("description", ""))
+                    new_tool_ids.append((tool_id, t_name))
+                    tool_master_rows.append(
+                        f"({tenant_val}'{tool_id}', '{t_name}', '{t_desc}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                    )
                     tool_rows.append(
                         f"({tenant_val}'{agent_internal_id}', '{tool_id}', '{agent_id}', "
-                        f"'{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                        f"'{cls.sanitize(effective_agent_name)}', '{t_name}', '{t_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                     tool_ds_rows.append(
                         f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
@@ -2110,8 +2557,16 @@ class AgentMetadataExporter:
                         f"'{tool_id}', NULL, '{t_name}', 'Tool')"
                     )
                 cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.tools "
+                    f"({tenant_col}tool_id, tool_name, tool_description, created_ts, updated_ts) "
+                    f"VALUES {','.join(tool_master_rows)} "
+                    f"ON CONFLICT (tool_id) DO UPDATE SET "
+                    f"tool_name = EXCLUDED.tool_name, tool_description = EXCLUDED.tool_description, "
+                    f"updated_ts = EXCLUDED.updated_ts"
+                )
+                cls.execute_dml(
                     f"INSERT INTO {cls.CORE_DB_NAME}.agent_tools "
-                    f"({tenant_col}agent_internal_id, tool_id, agent_id, tool_name, tool_description, created_ts, updated_ts) "
+                    f"({tenant_col}agent_internal_id, tool_id, agent_id, agent_name, tool_name, tool_description, created_ts, updated_ts) "
                     f"VALUES {','.join(tool_rows)}"
                 )
                 cls.execute_dml(
@@ -2124,48 +2579,201 @@ class AgentMetadataExporter:
                     f"VALUES {','.join(tool_ds_rows)}"
                 )
 
-        # Update knowledge source — when provided, replace existing
+                # Re-link Tool→Table entries using positional matching (old[i] → new[i])
+                relink_ds_rows: List[str] = []
+                for i, (new_tool_id, new_tool_name) in enumerate(new_tool_ids):
+                    if i >= len(existing_tools_rows):
+                        break
+                    old_tool_id = cls.sanitize(str(existing_tools_rows[i].get("tool_id") or ""))
+                    for tt in tool_table_map.get(old_tool_id, []):
+                        tgt_id = cls.sanitize(str(tt.get("target_object_id") or ""))
+                        tgt_name = cls.sanitize(str(tt.get("target_object_name") or ""))
+                        tgt_type = cls.sanitize(str(tt.get("target_object_type") or ""))
+                        if not tgt_id:
+                            continue
+                        relink_ds_rows.append(
+                            f"({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                            f"NULL, NULL::boolean, NULL::boolean, NULL::boolean, "
+                            f"TIMESTAMP '{now}', TIMESTAMP '{now}', "
+                            f"'{new_tool_id}', NULL, '{new_tool_name}', 'Tool', "
+                            f"'{tgt_id}', NULL, '{tgt_name}', '{tgt_type}')"
+                        )
+                if relink_ds_rows:
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"access_level, contains_pii, contains_phi, contains_pci, "
+                        f"created_ts, updated_ts, "
+                        f"source_object_id, source_object_domain, source_object_name, source_object_type, "
+                        f"target_object_id, target_object_domain, target_object_name, target_object_type) "
+                        f"VALUES {','.join(relink_ds_rows)}"
+                    )
+
         if knowledge_source:
-            cls.execute_dml(
-                f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources "
-                f"WHERE agent_id = '{agent_id}' {tenant_where}"
-            )
-            ks_id = str(uuid.uuid4())
+            cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
             ks_desc = cls.sanitize(knowledge_source.get("description", ""))
-            cls.execute_dml(
-                f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources "
-                f"({tenant_col}agent_internal_id, agent_id, identifier, name, description, created_ts, updated_ts) "
-                f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_id}', "
-                f"'{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')"
-            )
+            cls.execute_dml(f"INSERT INTO {cls.CORE_DB_NAME}.agent_knowledge_sources ({tenant_col}agent_internal_id, agent_id, name, description, created_ts, updated_ts) VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', '{ks_name}', '{ks_desc}', TIMESTAMP '{now}', TIMESTAMP '{now}')")
 
-        # Update data sources — None means "leave unchanged"; [] means "clear Table/Column entries"
-        # Agent→Tool entries are NEVER touched here; they are managed by the tools block above.
-        if data_sources is not None:
-            cls.execute_dml(
-                f"DELETE FROM {cls.CORE_DB_NAME}.agent_data_sources "
-                f"WHERE agent_internal_id = '{agent_internal_id}' "
-                f"AND target_object_type IN ('Table', 'Column')"
-            )
-            if data_sources:
-                ds_entries = cls._build_data_source_entries(agent_id, effective_agent_name, data_sources)
-                if ds_entries:
-                    ds_sql_values = cls._build_ds_sql_values(
-                        ds_entries, agent_internal_id, agent_id, now,
-                        tenant_col, tenant_val,
+        # Merge data_source entries into tables so both paths produce the same result
+        if data_source:
+            extra = cls._normalize_tables_payload(None, None, data_source)
+            tables = list(tables or []) + extra
+        tables_for_update = [table for table in (tables or []) if isinstance(table, dict)]
+        columns_for_new_tables = [
+            col for col in (columns or [])
+            if isinstance(col, dict) and not col.get("old_name")
+        ]
+        columns_by_table = cls._columns_by_table(tables_for_update, columns_for_new_tables, data_source)
+
+        tables_updated = 0
+        for table_index, table in enumerate(tables_for_update):
+            new_name = cls.sanitize(str(table.get("name") or "").strip())
+            if not new_name:
+                continue
+
+            old_name = cls.sanitize(str(table.get("old_name") or "").strip())
+
+            if old_name:
+                # ── RENAME path ──────────────────────────────────────────────
+                table_id = cls.sanitize(str(table.get("table_id") or "").strip())
+                if not table_id:
+                    found = cls.execute_select(
+                        f"SELECT table_id FROM {cls.CORE_DB_NAME}.tables "
+                        f"WHERE LOWER(name) = LOWER('{old_name}') {tenant_where} LIMIT 1"
                     )
-                    cls.execute_dml(f"""
-                        INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources (
-                            {tenant_col}
-                            agent_internal_id, agent_id,
-                            access_level, contains_pii, contains_phi, contains_pci,
-                            created_ts, updated_ts,
-                            source_object_id, source_object_domain, source_object_name, source_object_type,
-                            target_object_id, target_object_domain, target_object_name, target_object_type
-                        )
-                        VALUES {','.join(ds_sql_values)}
-                    """)
+                    if found:
+                        table_id = cls.sanitize(str(found[0].get("table_id") or "").strip())
+                if not table_id:
+                    continue
+
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.tables SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}' AND agent_id = '{agent_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.tool_tables SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.table_columns SET table_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE table_id = '{table_id}'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND target_object_id = '{table_id}' "
+                    f"AND LOWER(target_object_type) = 'table'"
+                )
+                cls.execute_dml(
+                    f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"SET source_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                    f"WHERE agent_internal_id = '{agent_internal_id}' "
+                    f"AND source_object_id = '{table_id}' "
+                    f"AND LOWER(source_object_type) = 'table'"
+                )
+
+            else:
+                # ── INSERT path (new table) ───────────────────────────────────
+                table_id = str(uuid.uuid4())
+
+                tbl_tool_name = cls.sanitize(str(table.get("tool_name") or "").strip())
+                tbl_tool_id = cls.sanitize(str(table.get("tool_id") or "").strip())
+                if tbl_tool_name and not tbl_tool_id:
+                    tool_rows = cls.execute_select(
+                        f"SELECT tool_id FROM {cls.CORE_DB_NAME}.agent_tools "
+                        f"WHERE agent_id = '{agent_id}' AND LOWER(tool_name) = LOWER('{tbl_tool_name}') {tenant_where} LIMIT 1"
+                    )
+                    if tool_rows:
+                        tbl_tool_id = cls.sanitize(str(tool_rows[0].get("tool_id") or "").strip())
+
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.tables ({tenant_col}table_id, name, created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{table_id}', '{new_name}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (table_id) DO UPDATE SET "
+                    f"name = COALESCE(EXCLUDED.name, {cls.CORE_DB_NAME}.tables.name), updated_ts = EXCLUDED.updated_ts"
+                )
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_tables "
+                    f"({tenant_col}agent_id, agent_name, agent_internal_id, table_id, table_name, created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{agent_id}', '{current_agent_name}', '{agent_internal_id}', "
+                    f"'{table_id}', '{new_name}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET "
+                    f"table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.agent_tables.table_name), "
+                    f"updated_ts = EXCLUDED.updated_ts"
+                )
+
+                src_id = tbl_tool_id or agent_id
+                src_name = tbl_tool_name or current_agent_name
+                src_type = 'Tool' if tbl_tool_id else 'Agent'
+
+                if tbl_tool_id:
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.tool_tables "
+                        f"({tenant_col}tool_id, tool_name, table_id, table_name, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{tbl_tool_id}', '{tbl_tool_name}', '{table_id}', '{new_name}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET "
+                        f"table_name = COALESCE(EXCLUDED.table_name, {cls.CORE_DB_NAME}.tool_tables.table_name), "
+                        f"updated_ts = EXCLUDED.updated_ts"
+                    )
+
+                cls.execute_dml(
+                    f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                    f"({tenant_col}agent_internal_id, agent_id, "
+                    f"source_object_id, source_object_name, source_object_type, "
+                    f"target_object_id, target_object_name, target_object_type, "
+                    f"created_ts, updated_ts) "
+                    f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                    f"'{src_id}', '{src_name}', '{src_type}', "
+                    f"'{table_id}', '{new_name}', 'Table', "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                    f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                    f"source_object_name = EXCLUDED.source_object_name, "
+                    f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
+                )
+
+                for column_name in columns_by_table.get(table_index, []):
+                    clean_col = cls.sanitize(str(column_name).strip())
+                    if not clean_col:
+                        continue
+                    col_id = str(uuid.uuid4())
+
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.columns ({tenant_col}column_id, name, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{col_id}', '{clean_col}', TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (column_id) DO UPDATE SET updated_ts = EXCLUDED.updated_ts"
+                    )
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.table_columns "
+                        f"({tenant_col}table_id, table_name, column_name, column_id, created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{table_id}', '{new_name}', '{clean_col}', '{col_id}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET "
+                        f"column_id = COALESCE(EXCLUDED.column_id, {cls.CORE_DB_NAME}.table_columns.column_id), "
+                        f"updated_ts = EXCLUDED.updated_ts"
+                    )
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.agent_data_sources "
+                        f"({tenant_col}agent_internal_id, agent_id, "
+                        f"source_object_id, source_object_name, source_object_type, "
+                        f"target_object_id, target_object_name, target_object_type, "
+                        f"created_ts, updated_ts) "
+                        f"VALUES ({tenant_val}'{agent_internal_id}', '{agent_id}', "
+                        f"'{table_id}', '{new_name}', 'Table', "
+                        f"'{col_id}', '{clean_col}', 'Column', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}') "
+                        f"ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET "
+                        f"source_object_name = EXCLUDED.source_object_name, "
+                        f"target_object_name = EXCLUDED.target_object_name, updated_ts = EXCLUDED.updated_ts"
+                    )
+
+            tables_updated += 1
 
         if skills is not None:
             def _pg_array(lst):
@@ -2348,8 +2956,50 @@ class AgentMetadataExporter:
                         updated_ts = EXCLUDED.updated_ts
                 """)
 
+        columns_updated = 0
+        for col in (columns or []):
+            if not isinstance(col, dict):
+                continue
+            new_name = cls.sanitize(str(col.get("name") or "").strip())
+            old_name = cls.sanitize(str(col.get("old_name") or "").strip())
+            if not new_name or not old_name:
+                continue
+
+            scoped_table_id = cls.sanitize(str(col.get("table_id") or "").strip())
+            table_filter = f"AND table_id = '{scoped_table_id}'" if scoped_table_id else ""
+            tenant_filter = f"AND tenant_id = '{tenant_clean}'" if is_tenant else ""
+
+            found = cls.execute_select(
+                f"SELECT column_id FROM {cls.CORE_DB_NAME}.table_columns "
+                f"WHERE LOWER(column_name) = LOWER('{old_name}') {table_filter} {tenant_filter} LIMIT 1"
+            )
+            if not found:
+                continue
+            column_id = cls.sanitize(str(found[0].get("column_id") or "").strip())
+            if not column_id:
+                continue
+
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.columns SET name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE column_id = '{column_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.table_columns SET column_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE column_id = '{column_id}'"
+            )
+            cls.execute_dml(
+                f"UPDATE {cls.CORE_DB_NAME}.agent_data_sources "
+                f"SET target_object_name = '{new_name}', updated_ts = TIMESTAMP '{now}' "
+                f"WHERE agent_internal_id = '{agent_internal_id}' "
+                f"AND LOWER(target_object_type) = 'column' "
+                f"AND LOWER(target_object_name) = LOWER('{old_name}')"
+            )
+            columns_updated += 1
+
         # Refresh curated snapshot and local card so downstream reads reflect changes immediately
         try:
+            from services.db.db_functions import refresh_curated_agent_360, create_local_agent_card
+
             refresh_curated_agent_360(agent_internal_id, agent_id, tenant_id)
             create_local_agent_card(agent_internal_id)
             print(f"[update_agent] Refreshed agent_360 and local card for agent_id={agent_id}")
@@ -2357,7 +3007,12 @@ class AgentMetadataExporter:
             # Non-fatal: the update is committed; only the cached views are stale.
             print(f"[update_agent] Warning: post-update refresh failed (changes are saved): {refresh_err}")
 
-        return {"message": "Agent updated successfully.", "agent_id": agent_id}
+        msg = "Agent updated successfully."
+        if tables_updated:
+            msg += f" {tables_updated} table(s) renamed."
+        if columns_updated:
+            msg += f" {columns_updated} column(s) renamed."
+        return {"message": msg, "agent_id": agent_id}
 
     @classmethod
     def delete_agent(
@@ -2868,3 +3523,236 @@ class AgentMetadataExporter:
         except requests.RequestException as e:
             raise ValueError(f"Company API request failed: {str(e)}")
 
+    # =========================================================
+    # PDF GENERATION
+    # =========================================================
+
+    _UNICODE_REPLACEMENTS: Dict[str, str] = {
+        "—": "--",
+        "–": "-",
+        "‒": "-",
+        "―": "--",
+        "'": "'",
+        "'": "'",
+        "“": '"',
+        "”": '"',
+        "…": "...",
+        " ": " ",
+        "•": "-",
+        "‣": "-",
+        "●": "-",
+        "→": "->",
+        "←": "<-",
+        "×": "x",
+        "®": "(R)",
+        "©": "(C)",
+        "™": "(TM)",
+        "‐": "-",
+        "‑": "-",
+    }
+
+    @staticmethod
+    def _markdown_to_pdf(markdown_content: str) -> bytes:
+        """Convert a markdown string to a PDF byte string using fpdf2."""
+        for char, replacement in AgentMetadataExporter._UNICODE_REPLACEMENTS.items():
+            markdown_content = markdown_content.replace(char, replacement)
+        markdown_content = markdown_content.encode("latin-1", errors="replace").decode("latin-1")
+
+        from fpdf import FPDF
+
+        class _PDF(FPDF):
+            def header(self):
+                pass
+
+            def footer(self):
+                self.set_y(-12)
+                self.set_font("Helvetica", "I", 8)
+                self.set_text_color(150, 150, 150)
+                self.cell(0, 8, f"Page {self.page_no()}", align="C")
+
+        pdf = _PDF()
+        pdf.set_margins(20, 20, 20)
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=18)
+
+        def _to_latin1(text: str) -> str:
+            for char, replacement in AgentMetadataExporter._UNICODE_REPLACEMENTS.items():
+                text = text.replace(char, replacement)
+            return text.encode("latin-1", errors="replace").decode("latin-1")
+
+        def _strip_inline(text: str) -> str:
+            text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+            text = re.sub(r"\*(.+?)\*", r"\1", text)
+            text = re.sub(r"`(.+?)`", r"\1", text)
+            text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+            return _to_latin1(text.strip())
+
+        def _is_table_sep(line: str) -> bool:
+            s = line.strip()
+            return bool(s) and all(c in "|:- " for c in s)
+
+        lines = markdown_content.split("\n")
+        i = 0
+        while i < len(lines):
+            raw = lines[i]
+            stripped = raw.strip()
+
+            if stripped.startswith("# "):
+                pdf.set_font("Helvetica", "B", 18)
+                pdf.set_text_color(30, 30, 30)
+                pdf.multi_cell(0, 10, _strip_inline(stripped[2:]))
+                pdf.ln(3)
+
+            elif stripped.startswith("## "):
+                pdf.set_font("Helvetica", "B", 14)
+                pdf.set_text_color(40, 40, 40)
+                pdf.ln(3)
+                pdf.multi_cell(0, 8, _strip_inline(stripped[3:]))
+                pdf.ln(1)
+
+            elif stripped.startswith("### "):
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_text_color(50, 50, 50)
+                pdf.ln(2)
+                pdf.multi_cell(0, 7, _strip_inline(stripped[4:]))
+                pdf.ln(1)
+
+            elif stripped.startswith("#### "):
+                pdf.set_font("Helvetica", "BI", 11)
+                pdf.set_text_color(60, 60, 60)
+                pdf.multi_cell(0, 6, _strip_inline(stripped[5:]))
+
+            elif stripped.startswith("- [ ] ") or stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
+                checked = stripped[3] in ("x", "X")
+                text = ("[x] " if checked else "[ ] ") + _strip_inline(stripped[6:])
+                pdf.set_font("Helvetica", "", 11)
+                pdf.set_text_color(60, 60, 60)
+                pdf.set_x(26)
+                pdf.multi_cell(0, 6, text)
+
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                indent = len(raw) - len(raw.lstrip())
+                bullet_text = _strip_inline(stripped[2:])
+                pdf.set_font("Helvetica", "", 11)
+                pdf.set_text_color(60, 60, 60)
+                left_margin = 20 + min(indent // 2, 3) * 4
+                pdf.set_x(left_margin)
+                pdf.cell(5, 6, chr(149))
+                pdf.multi_cell(0, 6, bullet_text)
+
+            elif stripped and stripped[0].isdigit() and ". " in stripped[:5]:
+                pdf.set_font("Helvetica", "", 11)
+                pdf.set_text_color(60, 60, 60)
+                pdf.set_x(24)
+                pdf.multi_cell(0, 6, _strip_inline(stripped))
+
+            elif stripped.startswith("|") and not _is_table_sep(stripped):
+                cols = [_strip_inline(c.strip()) for c in stripped.strip("|").split("|")]
+                n = max(len(cols), 1)
+                avail_w = pdf.w - pdf.l_margin - pdf.r_margin
+                is_header = i + 1 < len(lines) and _is_table_sep(lines[i + 1])
+
+                if n == 1:
+                    col_widths = [avail_w]
+                elif n == 2:
+                    col_widths = [avail_w * 0.38, avail_w * 0.62]
+                elif n == 3:
+                    col_widths = [avail_w * 0.30, avail_w * 0.17, avail_w * 0.53]
+                else:
+                    col_widths = [avail_w / n] * n
+
+                line_h = 5
+                padding = 1.0
+
+                def _render_row(col_texts, widths, font_style, fill_color, text_color, do_fill):
+                    pdf.set_font("Helvetica", font_style, 9)
+                    space_w = pdf.get_string_width(" ")
+
+                    # Simulate word-wrap to determine the required row height
+                    max_lines = 1
+                    for text, w in zip(col_texts, widths):
+                        inner = max(w - 2 * padding, 1)
+                        if not text:
+                            continue
+                        ln_count = 1
+                        cur_w = 0.0
+                        for word in (text or "").split(" "):
+                            if not word:
+                                continue
+                            ww = pdf.get_string_width(word)
+                            if ww > inner:
+                                # Word wider than cell: fpdf2 breaks at char boundary.
+                                # If there's already content on the current line, leave it first.
+                                if cur_w > 0:
+                                    ln_count += 1
+                                    cur_w = 0.0
+                                extra = math.ceil(ww / inner) - 1
+                                ln_count += extra
+                                cur_w = ww - extra * inner
+                            elif cur_w == 0:
+                                cur_w = ww
+                            elif cur_w + space_w + ww <= inner:
+                                cur_w += space_w + ww
+                            else:
+                                ln_count += 1
+                                cur_w = ww
+                        max_lines = max(max_lines, ln_count)
+
+                    # Include top + bottom padding so text never overflows the border rect
+                    row_h = max_lines * line_h + 2 * padding + 1
+
+                    if pdf.will_page_break(row_h):
+                        pdf.add_page()
+
+                    x0, y0 = pdf.l_margin, pdf.get_y()
+
+                    # Draw uniform-height cell borders
+                    pdf.set_draw_color(100, 100, 100)
+                    cur_x = x0
+                    for w in widths:
+                        style = "FD" if do_fill else "D"
+                        if do_fill:
+                            pdf.set_fill_color(*fill_color)
+                        pdf.rect(cur_x, y0, w, row_h, style)
+                        cur_x += w
+
+                    # Render text inside each cell
+                    pdf.set_text_color(*text_color)
+                    cur_x = x0
+                    for text, w in zip(col_texts, widths):
+                        pdf.set_xy(cur_x + padding, y0 + padding)
+                        pdf.multi_cell(w - 2 * padding, line_h, text,
+                                       border=0, fill=False, align="L")
+                        cur_x += w
+
+                    pdf.set_xy(x0, y0 + row_h)
+
+                if is_header:
+                    _render_row(cols, col_widths, "B", (215, 215, 215), (30, 30, 30), True)
+                    i += 2
+                    continue
+                else:
+                    _render_row(cols, col_widths, "", (255, 255, 255), (60, 60, 60), False)
+
+            elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.set_text_color(40, 40, 40)
+                pdf.multi_cell(0, 6, _to_latin1(stripped[2:-2].strip()))
+
+            elif stripped in ("---", "***", "___"):
+                pdf.ln(2)
+                pdf.set_draw_color(200, 200, 200)
+                pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+                pdf.ln(2)
+
+            elif stripped == "":
+                pdf.ln(2)
+
+            else:
+                pdf.set_font("Helvetica", "", 11)
+                pdf.set_text_color(60, 60, 60)
+                pdf.multi_cell(0, 6, _strip_inline(stripped))
+
+            i += 1
+
+        return bytes(pdf.output())

@@ -2,6 +2,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
 ON core.agents (agent_id, agent_name)
 WHERE is_current = true;
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_internal_id
+ON core.agents (agent_internal_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_configurations_current
 ON core.agent_configurations (agent_internal_id)
 WHERE is_current = true;
@@ -9,6 +12,9 @@ WHERE is_current = true;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_identifications_current
 ON core.agent_identifications (agent_internal_id)
 WHERE is_current = true;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tools
+ON core.tools (tool_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_tools
 ON core.agent_tools (agent_internal_id, tool_id);
@@ -27,6 +33,9 @@ ON core.agent_business_processes (agent_internal_id, business_process_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_applications
 ON core.agent_business_applications (agent_internal_id, business_application_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_integrations
+ON core.agent_business_integrations (agent_internal_id, integration_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_guardrails
 ON core.agent_guardrails (agent_internal_id, name);
@@ -52,6 +61,9 @@ ON core.agent_ai_models (agent_internal_id, ai_model_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
 ON core.ai_models (ai_model_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_ai_use_cases
+ON core.ai_model_ai_use_cases (ai_model_id, ai_use_case_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
@@ -61,11 +73,124 @@ ON core.business_applications (business_application_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
 ON core.business_processes (business_process_id);
 
+-- ux_core_columns removed: column_id is now the PRIMARY KEY
+
+-- ux_core_tables removed: table_id is already the PRIMARY KEY
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_tool_tables
+ON core.tool_tables (tenant_id, tool_id, table_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_tables
+ON core.agent_tables (tenant_id, agent_id, table_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_table_columns
+ON core.table_columns (tenant_id, table_id, column_name);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_skills
 ON core.skills (tenant_id, skill_id);
 
 DO $$
 BEGIN
+    IF to_regclass('core.tables') IS NOT NULL THEN
+        ALTER TABLE core.tables DROP CONSTRAINT IF EXISTS fk_core_tables_agent_tool;
+        DROP INDEX IF EXISTS core.ix_core_tables_agent_tool;
+
+        IF to_regclass('core.agent_tables') IS NOT NULL
+           AND EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'agent_id'
+           )
+        THEN
+            EXECUTE '
+                INSERT INTO core.agent_tables (
+                    tenant_id, agent_id, agent_name, agent_internal_id,
+                    table_id, table_name, created_ts, updated_ts
+                )
+                SELECT
+                    t.tenant_id,
+                    t.agent_id,
+                    ag.agent_name,
+                    t.agent_internal_id,
+                    t.table_id,
+                    t.name,
+                    COALESCE(t.created_ts, CURRENT_TIMESTAMP),
+                    CURRENT_TIMESTAMP
+                FROM core.tables t
+                LEFT JOIN core.agents ag
+                  ON ag.agent_id = t.agent_id
+                 AND ag.agent_internal_id = t.agent_internal_id
+                WHERE t.agent_id IS NOT NULL
+                  AND t.agent_id <> ''''
+                ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                    agent_name = COALESCE(EXCLUDED.agent_name, core.agent_tables.agent_name),
+                    agent_internal_id = EXCLUDED.agent_internal_id,
+                    table_name = COALESCE(EXCLUDED.table_name, core.agent_tables.table_name),
+                    updated_ts = EXCLUDED.updated_ts
+            ';
+        END IF;
+
+        IF to_regclass('core.tool_tables') IS NOT NULL
+           AND EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'tool_id'
+           )
+        THEN
+            EXECUTE '
+                INSERT INTO core.tool_tables (
+                    tenant_id, tool_id, tool_name, table_id, table_name,
+                    created_ts, updated_ts
+                )
+                SELECT
+                    t.tenant_id,
+                    t.tool_id,
+                    at.tool_name,
+                    t.table_id,
+                    t.name,
+                    COALESCE(t.created_ts, CURRENT_TIMESTAMP),
+                    CURRENT_TIMESTAMP
+                FROM core.tables t
+                LEFT JOIN core.agent_tools at
+                  ON at.tool_id = t.tool_id
+                 AND at.agent_internal_id = t.agent_internal_id
+                WHERE t.tool_id IS NOT NULL
+                  AND t.tool_id <> ''''
+                ON CONFLICT (tenant_id, tool_id, table_id) DO UPDATE SET
+                    tool_name = COALESCE(EXCLUDED.tool_name, core.tool_tables.tool_name),
+                    table_name = COALESCE(EXCLUDED.table_name, core.tool_tables.table_name),
+                    updated_ts = EXCLUDED.updated_ts
+            ';
+        END IF;
+
+        IF to_regclass('core.tool_tables') IS NOT NULL THEN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tool_tables' AND column_name = 'agent_id'
+            ) THEN
+                ALTER TABLE core.tool_tables DROP COLUMN agent_id;
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'tool_tables' AND column_name = 'agent_internal_id'
+            ) THEN
+                ALTER TABLE core.tool_tables DROP COLUMN agent_internal_id;
+            END IF;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'agent_id'
+        ) THEN
+            ALTER TABLE core.tables DROP COLUMN agent_id;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'tool_id'
+        ) THEN
+            ALTER TABLE core.tables DROP COLUMN tool_id;
+        END IF;
+    END IF;
+
     IF to_regclass('core.agent_ai_use_cases') IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
@@ -279,6 +404,40 @@ BEGIN
         ON DELETE CASCADE;
     END IF;
 
+    -- Create helper function + triggers to populate tenant_id on insert when missing
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        EXECUTE $ddl$
+        CREATE OR REPLACE FUNCTION core.populate_tenant_from_agent() RETURNS trigger AS $func$
+        BEGIN
+            -- For rows that include agent_internal_id, prefer that lookup
+            IF NEW.tenant_id IS NULL OR NEW.tenant_id = '' THEN
+                IF TG_TABLE_NAME = 'agent_tools' THEN
+                    IF NEW.agent_internal_id IS NOT NULL THEN
+                        SELECT tenant_id INTO NEW.tenant_id FROM core.agents WHERE agent_internal_id = NEW.agent_internal_id LIMIT 1;
+                    END IF;
+                END IF;
+            END IF;
+            RETURN NEW;
+        END;
+        $func$ LANGUAGE plpgsql;
+        $ddl$;
+
+        -- Attach triggers to relevant tables
+        IF to_regclass('core.agent_tools') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_agent_tools ON core.agent_tools';
+            EXECUTE 'CREATE TRIGGER trg_populate_tenant_agent_tools BEFORE INSERT OR UPDATE ON core.agent_tools FOR EACH ROW EXECUTE FUNCTION core.populate_tenant_from_agent()';
+        END IF;
+
+        IF to_regclass('core.tables') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_tables ON core.tables';
+            EXECUTE 'CREATE TRIGGER trg_populate_tenant_tables BEFORE INSERT OR UPDATE ON core.tables FOR EACH ROW EXECUTE FUNCTION core.populate_tenant_from_agent()';
+        END IF;
+
+        IF to_regclass('core.columns') IS NOT NULL THEN
+            EXECUTE 'DROP TRIGGER IF EXISTS trg_populate_tenant_columns ON core.columns';
+        END IF;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -289,6 +448,20 @@ BEGIN
         FOREIGN KEY (business_process_id)
         REFERENCES core.business_processes (business_process_id)
         ON DELETE CASCADE;
+    END IF;
+
+    IF to_regclass('core.agent_business_integrations') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_agent_business_integrations_integration'
+        ) THEN
+            ALTER TABLE core.agent_business_integrations
+            ADD CONSTRAINT fk_core_agent_business_integrations_integration
+            FOREIGN KEY (integration_id)
+            REFERENCES core.business_integrations (integration_id)
+            ON DELETE CASCADE;
+        END IF;
     END IF;
 
     IF NOT EXISTS (
@@ -321,6 +494,89 @@ BEGIN
             ON DELETE CASCADE;
         END IF;
     END IF;
+
+    IF to_regclass('core.table_columns') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'table_columns' AND column_name = 'column_id'
+       )
+    THEN
+        ALTER TABLE core.table_columns ADD COLUMN column_id TEXT;
+    END IF;
+
+    IF to_regclass('core.columns') IS NOT NULL THEN
+        ALTER TABLE core.columns DROP CONSTRAINT IF EXISTS fk_core_columns_table;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'columns' AND column_name = 'column_id'
+        ) THEN
+            ALTER TABLE core.columns ADD COLUMN column_id TEXT;
+            UPDATE core.columns SET column_id = gen_random_uuid()::text WHERE column_id IS NULL;
+            ALTER TABLE core.columns ADD PRIMARY KEY (column_id);
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'columns' AND column_name = 'table_id'
+        ) THEN
+            ALTER TABLE core.columns DROP COLUMN table_id;
+        END IF;
+    END IF;
+
+    IF to_regclass('core.tables') IS NOT NULL THEN
+        ALTER TABLE core.tables DROP CONSTRAINT IF EXISTS fk_core_tables_agent;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'tables' AND column_name = 'agent_internal_id'
+        ) THEN
+            ALTER TABLE core.tables DROP COLUMN agent_internal_id;
+        END IF;
+    END IF;
+    -- Migrate agent_tools master data into core.tools (idempotent: guarded by presence of tool_description column)
+    IF to_regclass('core.tools') IS NOT NULL
+       AND to_regclass('core.agent_tools') IS NOT NULL
+       AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agent_tools' AND column_name = 'tool_description'
+       )
+    THEN
+        EXECUTE '
+            INSERT INTO core.tools (
+                tenant_id, tool_id, tool_name, tool_description,
+                delegation_possible, allowed_delegates,
+                input_schema_json_text, output_schema_json_text,
+                default_config_json_text,
+                created_ts, updated_ts
+            )
+            SELECT DISTINCT ON (tool_id)
+                tenant_id, tool_id, tool_name, tool_description,
+                delegation_possible, allowed_delegates,
+                input_schema_json_text, output_schema_json_text,
+                default_config_json_text,
+                COALESCE(created_ts, CURRENT_TIMESTAMP),
+                COALESCE(updated_ts, CURRENT_TIMESTAMP)
+            FROM core.agent_tools
+            WHERE tool_id IS NOT NULL AND tool_id <> ''''
+            ORDER BY tool_id, updated_ts DESC NULLS LAST, created_ts DESC NULLS LAST
+            ON CONFLICT (tool_id)
+            DO UPDATE SET
+                tool_name                = EXCLUDED.tool_name,
+                tool_description         = EXCLUDED.tool_description,
+                delegation_possible      = EXCLUDED.delegation_possible,
+                allowed_delegates        = EXCLUDED.allowed_delegates,
+                input_schema_json_text   = EXCLUDED.input_schema_json_text,
+                output_schema_json_text  = EXCLUDED.output_schema_json_text,
+                default_config_json_text = EXCLUDED.default_config_json_text,
+                updated_ts               = EXCLUDED.updated_ts
+        ';
+
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS tool_description;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS delegation_possible;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS allowed_delegates;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS input_schema_json_text;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS output_schema_json_text;
+        ALTER TABLE core.agent_tools DROP COLUMN IF EXISTS default_config_json_text;
+    END IF;
+
 
     IF to_regclass('core.ai_use_case_business_applications') IS NOT NULL THEN
         EXECUTE '
@@ -358,6 +614,22 @@ BEGIN
         ) THEN
             ALTER TABLE core.agent_ai_models
             ADD CONSTRAINT fk_core_agent_ai_models_ai_model
+            FOREIGN KEY (ai_model_id)
+            REFERENCES core.ai_models (ai_model_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- AI Model <-> AI Use Case junction: ai_model_id FK to the catalog.
+    IF to_regclass('core.ai_model_ai_use_cases') IS NOT NULL
+       AND to_regclass('core.ai_models') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_ai_model_ai_use_cases_ai_model'
+        ) THEN
+            ALTER TABLE core.ai_model_ai_use_cases
+            ADD CONSTRAINT fk_core_ai_model_ai_use_cases_ai_model
             FOREIGN KEY (ai_model_id)
             REFERENCES core.ai_models (ai_model_id)
             ON DELETE CASCADE;

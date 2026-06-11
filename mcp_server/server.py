@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import time
 from pathlib import Path
@@ -22,15 +22,6 @@ from contextlib import asynccontextmanager
 
 from tavro_library.agent_library import AgentMetadataExporter
 from tavro_library.users import get_approved_user
-
-from utils.set_environment import set_environment
-
-
-
-set_environment("mcp")
-set_environment("oAuth")
-set_environment("secrets")
-set_environment("fastapi")
 
 TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
 
@@ -349,10 +340,12 @@ async def create_agent(
     agent_name: str,
     description: str,
     instruction: str,
-    tools: Optional[List[Dict[str, str]]] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tables: Optional[List[Dict[str, Any]]] = None,
+    columns: Optional[List[Dict[str, Any]]] = None,
+    data_source: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     skills: Optional[List[Dict[str, Any]]] = None,
-    data_sources: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
@@ -384,8 +377,8 @@ async def create_agent(
     The snake_case keys "input_modes" and "output_modes" are also accepted.
     Skills are registered as part of the agent metadata.
 
-    - `data_sources`: Defines the Agent -> Table -> Column data-lineage hierarchy.
-      Each entry represents one table and its columns:
+    - `data_source`: Defines data-source relationships or the Agent -> Table -> Column
+      data-lineage hierarchy. Each entry can represent one table and its columns:
         {
             "table_name": str,
             "table_domain": str | null,
@@ -395,6 +388,50 @@ async def create_agent(
                 ...
             ]
         }
+      A tool may optionally include table metadata it uses:
+        {
+            "name": str,
+            "description": str,
+            "table": {"name": str}
+        }
+      Column metadata must be passed through the top-level `columns` parameter,
+      not nested inside tool table metadata.
+
+    - `tables`: Optional explicit table metadata for the agent or tools:
+        [
+            {
+                "name": str,
+                "tool_name": str
+            }
+        ]
+      Use `tool_name` when the table belongs to a specific tool.
+      Omit `tool_name` for direct agent-owned tables. Direct tables are represented
+      as Agent -> Table -> Column; tool-owned tables are represented as
+      Agent -> Tool -> Table -> Column.
+
+    - `columns`: Optional explicit column metadata for tables:
+        [
+            {
+                "name": str,
+                "table_name": str,
+                "table_id": str
+            }
+        ]
+      Use `table_name` or `table_id` to link each column to its table.
+
+    - `data_source`: Optional relationship-style metadata using Agent/Tool/Table/Column
+    source and target object fields.
+
+    - `knowledge_source`: A reference to an external knowledge source that the agent can
+    use for contextual understanding. If provided, it must follow:
+        {
+            "name": str,
+            "description": str
+        }
+
+    All inputs are validated before agent creation. On success, the function returns a
+    standardized response containing the agent’s metadata. In case of validation or
+    runtime errors, an appropriate error response is returned.
 
     Args:
         original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
@@ -407,11 +444,13 @@ async def create_agent(
                            "Revenue Agent") unless the user has explicitly named them or they are confirmed to
                            exist in the catalog context. If the agent coordinates with upstream agents, describe
                            their roles generically (e.g. "upstream analytical agents") rather than fabricating names.
-        tools (Optional[List[Dict[str, str]]]): Optional list of tool definitions.
+        tools (Optional[List[Dict[str, Any]]]): Optional list of tool definitions.
+        tables (Optional[List[Dict[str, Any]]]): Optional table definitions.
+        columns (Optional[List[Dict[str, Any]]]): Optional column definitions.
+        data_source (Optional[List[Dict[str, Any]]]): Optional data-source relationships.
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
         skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
             Each skill can include name, description, tags, inputModes/input_modes, and outputModes/output_modes.
-        data_sources (Optional[List[Dict]]): Optional data source table/column definitions.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
@@ -429,9 +468,11 @@ async def create_agent(
                 "description": description,
                 "instruction": instruction,
                 "tools": tools,
+                "tables": tables,
+                "columns": columns,
+                "data_source": data_source,
                 "knowledge_source": knowledge_source,
                 "skills": skills,
-                "data_sources": data_sources,
             },
             tenant_id,
         )
@@ -441,10 +482,12 @@ async def create_agent(
             description=description,
             instruction=instruction,
             tools=tools,
+            tables=tables,
+            columns=columns,
+            data_source=data_source,
             knowledge_source=knowledge_source,
             skills=skills,
             tenant_id=tenant_id,
-            data_sources=data_sources,
         )
         return result
 
@@ -755,17 +798,19 @@ async def update_agent(
     agent_name: Optional[str] = None,
     description: Optional[str] = None,
     instruction: Optional[str] = None,
-    tools: Optional[List[Dict[str, str]]] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
+    tables: Optional[List[Dict[str, Any]]] = None,
+    columns: Optional[List[Dict[str, Any]]] = None,
+    data_source: Optional[List[Dict[str, Any]]] = None,
     skills: Optional[List[Any]] = None,
-    data_sources: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     """
     Update an existing AI agent's configuration.
 
     Only provided fields are changed. Omitting a field leaves it unchanged.
-    Allows modification of agent metadata such as name, description,
-    behavior instructions, tools, knowledge sources, skills, and data sources.
+    Allows modification of agent metadata such as name, description, behavior
+    instructions, tools, knowledge sources, tables, columns, data source, and skills.
 
     - `skills`: When provided, updates the skill list for this agent. Each skill can be
       a string name or a dictionary with:
@@ -778,18 +823,6 @@ async def update_agent(
         }
       The keys "identifier"/"skill_id", "input_modes", and "output_modes" are also accepted.
 
-    - `data_sources`: When provided, replaces all existing data-source relationships for
-      this agent. Pass an empty list [] to clear them all. Format per entry:
-        {
-            "table_name": str,
-            "table_domain": str | null,
-            "access_level": str | null,
-            "columns": [
-                {"column_name": str, "column_domain": str | null},
-                ...
-            ]
-        }
-
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
         agent_id (Optional[str]): Unique identifier of the agent to update.
@@ -800,9 +833,26 @@ async def update_agent(
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
         tools (Optional[List[Dict[str, str]]]): Updated tool list.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
+        tables (Optional[List[Dict[str, Any]]]): Tables to rename or update. Each entry must include
+                           the new name and a way to identify the existing table:
+                               {
+                                   "name": str,       # new table name to set
+                                   "old_name": str,   # current table name (use when table_id is unknown)
+                                   "table_id": str    # table identifier (preferred when available)
+                               }
+                           Use "old_name" when the user refers to the current name (e.g. "rename
+                           SNOW_incident to Incidents"). Use "table_id" when you already know it.
+        columns (Optional[List[Dict[str, Any]]]): Columns to rename. Each entry must include
+                           the new name and a way to identify the existing column:
+                               {
+                                   "name": str,       # new column name to set
+                                   "old_name": str,   # current column name (required)
+                                   "table_id": str    # table the column belongs to (preferred for precision)
+                               }
+                           Use "old_name" for the current column name (e.g. "rename col_id to incident_id").
+                           Provide "table_id" when the same column name exists in multiple tables.
+        data_source (Optional[List[Dict[str, Any]]]): Data-source relationships or table/column definitions.
         skills (Optional[List[Any]]): Updated skill list for this agent.
-        data_sources (Optional[List[Dict]]): Replacement data source table/column definitions.
-                                             Omit to leave existing data sources unchanged.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -823,8 +873,10 @@ async def update_agent(
                 "instruction": instruction,
                 "tools": tools,
                 "knowledge_source": knowledge_source,
+                "tables": tables,
+                "columns": columns,
+                "data_source": data_source,
                 "skills": skills,
-                "data_sources": data_sources,
             },
             tenant_id,
         )
@@ -836,9 +888,11 @@ async def update_agent(
             instruction=instruction,
             tools=tools,
             knowledge_source=knowledge_source,
+            tables=tables,
+            columns=columns,
+            data_source=data_source,
             skills=skills,
             tenant_id=str(tenant_id),
-            data_sources=data_sources,
         )
 
         return result
@@ -1078,6 +1132,90 @@ async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="generate_agent_artifacts")
+async def generate_agent_artifacts(
+    original_prompt: str,
+    *,
+    agent_id: str,
+    agent_name: str,
+    requirements_markdown: str,
+    technical_markdown: str,
+) -> Dict[str, Any]:
+    """
+    Convert the Requirements and Technical Design markdown documents to PDF files
+    and attach them to the specified agent record.
+
+    Call this tool immediately after generating both documents for a newly created agent.
+    It produces two PDFs:
+      - "{agent_name} Requirement.pdf"
+      - "{agent_name} Technical.pdf"
+    Both are uploaded as attachments to the agent and visible in the Attachments tab.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        agent_id (str): The agent_id returned by create_agent.
+        agent_name (str): The exact name of the agent (used to name the PDF files).
+        requirements_markdown (str): The full markdown content of the Requirements document.
+        technical_markdown (str): The full markdown content of the Technical Design document.
+
+    Returns:
+        Dict[str, Any]: Attachment metadata for both uploaded PDFs, or error details.
+    """
+    print(f"generate_agent_artifacts requested for agent_id={agent_id}")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "generate_agent_artifacts",
+            original_prompt,
+            {"agent_id": agent_id, "agent_name": agent_name},
+            tenant_id,
+        )
+
+        import base64 as _base64
+        req_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(requirements_markdown)
+        tech_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(technical_markdown)
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        results = []
+        for pdf_bytes, doc_type in (
+            (req_pdf_bytes, "Requirement"),
+            (tech_pdf_bytes, "Technical"),
+        ):
+            filename = f"{agent_name} {doc_type}.pdf"
+            payload = {
+                "filename": filename,
+                "mime_type": "application/pdf",
+                "content_base64": _base64.b64encode(pdf_bytes).decode("utf-8"),
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{TAVRO_API_URL}/api/v1/agents/{agent_id}/attachments",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                results.append(resp.json())
+
+        return {
+            "message": f"Artifacts generated and attached to agent '{agent_name}'.",
+            "attachments": results,
+        }
+
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error in generate_agent_artifacts: %s", e)
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 
 @core.tool(name="update_company")
 async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:

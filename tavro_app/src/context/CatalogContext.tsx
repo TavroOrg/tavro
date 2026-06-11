@@ -300,11 +300,24 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     const key = identityKey(a);
                     if (!key && !a.name) return false;
                     if (key && mergedMap.has(key)) return false;
-                    return isPendingAssessment(a);
+                    if (!isPendingAssessment(a)) return false;
+                    // Don't carry over deleted agents: once their ID is removed from
+                    // locallyPendingIds (which handleDelete does before refreshCatalog),
+                    // they must not survive the next fetchAgents pass.
+                    const agentId = norm(a.identification?.agent_id || '');
+                    return !agentId || locallyPendingIds.has(agentId);
                 });
 
                 const temporalPending = runningRecords
                     .filter(record => {
+                        // Only create phantom tiles for workflows initiated by this
+                        // session. Without this guard, a workflow for a deleted agent
+                        // (whose DB record is gone but Temporal is still running)
+                        // would match no entry in `merged` and produce a ghost tile.
+                        const isLocallyOwned =
+                            locallyPendingIds.has(norm(record.agent_id || '')) ||
+                            locallyPendingIds.has(norm(record.agent_internal_id || ''));
+                        if (!isLocallyOwned) return false;
                         // Use workflowMatchesAgent (flexible cross-field ID/name matching)
                         // rather than sameLogicalAgent, which is now strict ID-only when
                         // both sides carry an ID. The workflow's agent_internal_id can
@@ -577,8 +590,23 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             fetchAgents(false);
         };
 
+        const handleAgentArtifactsGenerated = (event: Event) => {
+            const { args } = (event as CustomEvent).detail ?? {};
+            const agentName: string = args?.agent_name || 'Agent';
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: {
+                    key: 'tavro_artifacts_notice',
+                    message: `Artifacts generated for ${agentName}. Please refer to the Attachments tab.`,
+                },
+            }));
+        };
+
         window.addEventListener('tavro:agent-created', handleAgentCreated);
-        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+        window.addEventListener('tavro:agent-artifacts-generated', handleAgentArtifactsGenerated);
+        return () => {
+            window.removeEventListener('tavro:agent-created', handleAgentCreated);
+            window.removeEventListener('tavro:agent-artifacts-generated', handleAgentArtifactsGenerated);
+        };
     }, [upsertAgent, fetchAgents]);
 
     return (

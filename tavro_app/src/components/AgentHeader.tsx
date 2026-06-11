@@ -55,6 +55,8 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     const riskScore = agent.latest_risk_score
         ?? agent.risk_assessment?.blended_risk_score
         ?? agent.risk_assessment?.regulatory_risk_score;
+    const isPendingAssessment =
+        (agent.identification?.governance_status ?? agent.latest_event_status) === 'Risk Assessment is running';
     const riskCardClass =
         riskLevel === 'prohibited' || riskLevel === 'high'
             ? 'bg-red-50 border-red-200'
@@ -171,20 +173,27 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                 Blended Score
                             </span>
 
-                            {riskScore != null ? (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                    {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
-                                    {riskScore}
-                                </span>
-                            ) : (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                    {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
-                                    N/A
-                                </span>
+                                {riskScore != null ? (
+                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                        {riskLevel === 'low'
+                                            ? <CheckCircle2 size={14} />
+                                            : <ShieldAlert size={14} />}
+                                        {riskScore}
+                                    </span>
+                                ) : (
+                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                        {riskLevel === 'low'
+                                            ? <CheckCircle2 size={14} />
+                                            : <ShieldAlert size={14} />}
+                                        N/A
+                                    </span>
+                                )}
+                            </div>
+                            {isPendingAssessment && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap">
+                                    <Loader2 size={10} className="animate-spin" />
+                                    Running Risk Assessment
+                                </div>
                             )}
                         </div>
                         <div className={`w-[170px] px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskClassCardClass}`}>

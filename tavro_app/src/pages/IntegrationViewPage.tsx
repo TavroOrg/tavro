@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Network,
   AlertCircle,
@@ -7,12 +7,16 @@ import {
   Info,
   Loader2,
   Pencil,
+  PlusCircle,
   Save,
+  Search,
   Trash2,
+  Unlink2,
   XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useCatalog } from '../context/CatalogContext';
 import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
@@ -175,7 +179,10 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
 const IntegrationViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
   const { activeCompany } = useBlueprint();
+  const { agents } = useCatalog();
   const isCreateMode = !id || id === 'new';
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
@@ -190,6 +197,10 @@ const IntegrationViewPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [inlineEdit, setInlineEdit] = useState<{ field: IntegrationInlineField; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<IntegrationInlineField | null>(null);
+
+  const [searchAgents, setSearchAgents] = useState('');
+  const [actingAgent, setActingAgent] = useState<string | null>(null);
+  const [relationError, setRelationError] = useState<string | null>(null);
 
   const load = async () => {
     if (!id || isCreateMode) return;
@@ -226,6 +237,64 @@ const IntegrationViewPage: React.FC = () => {
     () => integration?.related_agents?.length ?? 0,
     [integration],
   );
+
+  const agentNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of agents) {
+      const aid = a.identification?.agent_id;
+      if (aid) map.set(aid, a.name);
+    }
+    return map;
+  }, [agents]);
+
+  const linkedAgentIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const rel of integration?.related_agents ?? []) {
+      if (rel.agent_id) set.add(rel.agent_id);
+    }
+    return set;
+  }, [integration]);
+
+  const availableAgents = useMemo(() => {
+    const q = searchAgents.trim().toLowerCase();
+    return agents.filter(agent => {
+      const agentId = agent.identification?.agent_id || '';
+      if (!agentId || linkedAgentIds.has(agentId)) return false;
+      if (!q) return true;
+      return (
+        agentId.toLowerCase().includes(q) ||
+        agent.name.toLowerCase().includes(q)
+      );
+    });
+  }, [agents, linkedAgentIds, searchAgents]);
+
+  const addAgent = async (agentId: string) => {
+    if (!integration) return;
+    setActingAgent(agentId);
+    setRelationError(null);
+    try {
+      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
+      await load();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to add relation');
+    } finally {
+      setActingAgent(null);
+    }
+  };
+
+  const removeAgent = async (agentId: string) => {
+    if (!integration) return;
+    setActingAgent(agentId);
+    setRelationError(null);
+    try {
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
+      await load();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to remove relation');
+    } finally {
+      setActingAgent(null);
+    }
+  };
 
   const setField = (key: keyof IntegrationFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -365,6 +434,15 @@ const IntegrationViewPage: React.FC = () => {
       if (isCreateMode) {
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+        if (linkAgentId) {
+          try {
+            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id);
+          } catch (linkErr) {
+            console.warn('Integration created but auto-link to agent failed.', linkErr);
+          }
+          navigate(`/agent/${encodeURIComponent(linkAgentId)}`, { replace: true });
+          return;
+        }
         navigate(`/integrations/${encodeURIComponent(created.integration_id)}`, { replace: true });
         return;
       }
@@ -837,9 +915,16 @@ const IntegrationViewPage: React.FC = () => {
 
       {tab === 'related' && integration && (
         <div className="flex flex-col gap-4">
+          {relationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {relationError}
+            </div>
+          )}
+
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-700">Related Agents ({relatedAgentCount})</p>
+              <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
             </div>
             <div className="divide-y divide-slate-100">
               {integration.related_agents.length === 0 && (
@@ -848,10 +933,10 @@ const IntegrationViewPage: React.FC = () => {
               {integration.related_agents.map((rel, idx) => {
                 const relId = rel.agent_id || `missing-${idx}`;
                 const displayName = rel.agent_id
-                  ? (rel.agent_name || rel.agent_id)
+                  ? (agentNameById.get(rel.agent_id) || rel.agent_name || rel.agent_id)
                   : (rel.agent_name || 'Unknown Agent');
                 return (
-                  <div key={`${relId}-${idx}`} className="px-5 py-3 flex items-center gap-3">
+                  <div key={`${relId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       {rel.agent_id ? (
                         <Link
@@ -864,6 +949,54 @@ const IntegrationViewPage: React.FC = () => {
                         <p className="text-sm font-semibold text-slate-700">{displayName}</p>
                       )}
                     </div>
+                    <button
+                      onClick={() => rel.agent_id && removeAgent(rel.agent_id)}
+                      disabled={!rel.agent_id || actingAgent === rel.agent_id}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {actingAgent === rel.agent_id ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add Agent Relation</p>
+              <div className="relative w-full max-w-sm">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={searchAgents}
+                  onChange={(e) => setSearchAgents(e.target.value)}
+                  placeholder="Filter agents..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableAgents.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available agents to link.</div>
+              )}
+              {availableAgents.map(agent => {
+                const agentId = agent.identification?.agent_id || '';
+                const busy = actingAgent === agentId;
+                return (
+                  <div key={agentId} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{agent.name}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{agentId}</p>
+                    </div>
+                    <button
+                      onClick={() => addAgent(agentId)}
+                      disabled={!agentId || busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
+                    </button>
                   </div>
                 );
               })}
