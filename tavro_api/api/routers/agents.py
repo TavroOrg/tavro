@@ -806,15 +806,35 @@ async def create_agent(
             tools_for_card.append({**tool, "identifier": tool_id})
             await db.execute(
                 text(f"""
+                    INSERT INTO {CORE}.tools
+                        (tenant_id, tool_id, tool_name, tool_description,
+                         created_ts, updated_ts)
+                    VALUES
+                        (:tid, :tool_id, :tname, :tdesc,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tool_id) DO UPDATE SET
+                        tool_name        = EXCLUDED.tool_name,
+                        tool_description = EXCLUDED.tool_description,
+                        updated_ts       = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "tool_id": tool_id,
+                 "tname": tool_name, "tdesc": tool.get("description", "")},
+            )
+            await db.execute(
+                text(f"""
                     INSERT INTO {CORE}.agent_tools
                         (tenant_id, agent_internal_id, tool_id, agent_id,
-                         tool_name, tool_description, created_ts, updated_ts)
+                         tool_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :iid, :tool_id, :aid,
-                         :tname, :tdesc, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                        agent_id   = EXCLUDED.agent_id,
+                        tool_name  = EXCLUDED.tool_name,
+                        updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
-                 "aid": agent_id, "tname": tool_name, "tdesc": tool.get("description", "")},
+                 "aid": agent_id, "tname": tool_name},
             )
 
         tables_payload = _normalize_tables_payload(body.tables, body.tools, body.data_source)
