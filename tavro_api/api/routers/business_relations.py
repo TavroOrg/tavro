@@ -297,8 +297,63 @@ Format:
 _INTEGRATIONS_READY = False
 
 
+async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
+    """Look up company name from twin.company."""
+    try:
+        row = await db.execute(
+            text("SELECT name FROM twin.company WHERE id = :company_id LIMIT 1"),
+            {"company_id": company_id},
+        )
+        result = row.mappings().first()
+        return result["name"] if result else None
+    except Exception:
+        return None
+
+
+async def _upsert_dim_node_for_entity(
+    db: AsyncSession,
+    company_id: str,
+    category: str,
+    label: str,
+    summary: Optional[str],
+) -> None:
+    """Find the system dim_type for the given category and upsert a dim_node."""
+    result = await db.execute(
+        text("SELECT id FROM twin.dim_type WHERE category = :category LIMIT 1"),
+        {"category": category},
+    )
+    row = result.mappings().first()
+    if not row:
+        return
+    dim_type_id = str(row["id"])
+
+    existing = await db.execute(
+        text("""
+            SELECT id FROM twin.dim_node
+            WHERE company_id = :company_id AND dim_type_id = :dim_type_id
+              AND LOWER(label) = LOWER(:label) AND valid_to IS NULL
+            LIMIT 1
+        """),
+        {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
+    )
+    existing_row = existing.mappings().first()
+    if existing_row:
+        await db.execute(
+            text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
+            {"summary": summary, "id": str(existing_row["id"])},
+        )
+    else:
+        await db.execute(
+            text("""
+                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary)
+                VALUES (:company_id, :dim_type_id, :label, :summary)
+            """),
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary},
+        )
+
+
 async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integration: dict) -> None:
-    """Sync a saved integration into twin.dim_node so Spark can use it as context."""
+    """Sync a saved integration into twin.dim_node and populate company fields on the record."""
     try:
         name = (integration.get("integration_name") or "").strip()
         if not name:
@@ -307,54 +362,244 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
         caps = integration.get("capabilities") or ""
         summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
 
-        # Find or create the dim_type for "integration" category for this company
-        result = await db.execute(
-            text("""
-                SELECT id FROM twin.dim_type
-                WHERE company_id = :company_id AND category = 'integration'
-                LIMIT 1
-            """),
-            {"company_id": company_id},
-        )
-        row = result.mappings().first()
-        if not row:
-            await db.execute(
-                text("""
-                    INSERT INTO twin.dim_type (company_id, category, label)
-                    VALUES (:company_id, 'integration', 'Integrations')
-                    ON CONFLICT DO NOTHING
-                """),
-                {"company_id": company_id},
-            )
-            await db.commit()
-            result = await db.execute(
-                text("""
-                    SELECT id FROM twin.dim_type
-                    WHERE company_id = :company_id AND category = 'integration'
-                    LIMIT 1
-                """),
-                {"company_id": company_id},
-            )
-            row = result.mappings().first()
-        if not row:
-            return
+        company_name = await _get_company_name(db, company_id)
 
-        dim_type_id = row["id"]
-        await db.execute(
-            text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary)
-                VALUES (:company_id, :dim_type_id, :label, :summary)
-                ON CONFLICT (company_id, dim_type_id, label)
-                DO UPDATE SET summary = EXCLUDED.summary, updated_at = NOW()
-            """),
-            {"company_id": company_id, "dim_type_id": dim_type_id, "label": name, "summary": summary},
-        )
+        integration_id = integration.get("integration_id")
+        if integration_id:
+            int_cols = await _table_columns(db, "core", "business_integrations")
+            if "company_id" in int_cols:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_integrations
+                        SET company_id = :company_id, company_name = :company_name
+                        WHERE integration_id = :integration_id
+                    """),
+                    {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
+                )
+
+        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary)
         await db.commit()
     except Exception:
         pass  # Non-fatal — don't break the integration save
 
 
+async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, application: dict) -> None:
+    """Sync a saved application into twin.dim_node and populate company fields on the record."""
+    try:
+        name = (application.get("application_name") or "").strip()
+        if not name:
+            return
+        summary = (application.get("application_description") or "")[:800] or None
+        company_name = await _get_company_name(db, company_id)
+
+        application_id = application.get("business_application_id")
+        if application_id:
+            app_cols = await _table_columns(db, "core", "business_applications")
+            if "company_id" in app_cols:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_applications
+                        SET company_id = :company_id, company_name = :company_name
+                        WHERE business_application_id = :application_id
+                    """),
+                    {"company_id": company_id, "company_name": company_name, "application_id": application_id},
+                )
+
+        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary)
+        await db.commit()
+    except Exception:
+        pass  # Non-fatal
+
+
+async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_record: dict) -> None:
+    """Sync a saved process into twin.dim_node and populate company fields on the record."""
+    try:
+        name = (process_record.get("process_name") or "").strip()
+        if not name:
+            return
+        summary = (process_record.get("process_description") or "")[:800] or None
+        company_name = await _get_company_name(db, company_id)
+
+        process_id = process_record.get("business_process_id")
+        if process_id:
+            proc_cols = await _table_columns(db, "core", "business_processes")
+            if "company_id" in proc_cols:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_processes
+                        SET company_id = :company_id, company_name = :company_name
+                        WHERE business_process_id = :process_id
+                    """),
+                    {"company_id": company_id, "company_name": company_name, "process_id": process_id},
+                )
+
+        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary)
+        await db.commit()
+    except Exception:
+        pass  # Non-fatal
+
+
+async def sync_dim_node_to_business_entity(
+    db: AsyncSession,
+    company_id: str,
+    company_name: Optional[str],
+    category: str,
+    label: str,
+    summary: Optional[str],
+) -> None:
+    """
+    Called from dim_nodes.py when a dim_node is created under application/process/integration.
+    Creates the corresponding business entity record if it doesn't already exist for this company.
+    """
+    try:
+        label = (label or "").strip()
+        if not label:
+            return
+
+        if category == "application":
+            app_cols = await _table_columns(db, "core", "business_applications")
+            if "company_id" in app_cols:
+                existing = await db.execute(
+                    text("""
+                        SELECT business_application_id FROM core.business_applications
+                        WHERE LOWER(application_name) = LOWER(:name) AND company_id = :cid
+                        LIMIT 1
+                    """),
+                    {"name": label, "cid": company_id},
+                )
+                if existing.mappings().first():
+                    return
+
+            app_id = uuid4().hex
+            insert_cols: list[str] = ["business_application_id", "application_name"]
+            params: dict[str, Any] = {"app_id": app_id, "app_name": label}
+            placeholders: list[str] = [":app_id", ":app_name"]
+
+            if "application_description" in app_cols:
+                insert_cols.append("application_description")
+                placeholders.append(":app_desc")
+                params["app_desc"] = summary
+            if "company_id" in app_cols:
+                insert_cols.append("company_id")
+                placeholders.append(":cid")
+                params["cid"] = company_id
+            if "company_name" in app_cols:
+                insert_cols.append("company_name")
+                placeholders.append(":cname")
+                params["cname"] = company_name
+            for ts_col in ("created_ts", "updated_ts"):
+                if ts_col in app_cols:
+                    insert_cols.append(ts_col)
+                    placeholders.append("CURRENT_TIMESTAMP")
+            for num_col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
+                if num_col in app_cols:
+                    insert_cols.append(num_col)
+                    placeholders.append(f":def_{num_col}")
+                    params[f"def_{num_col}"] = default_val
+
+            await db.execute(
+                text(f"INSERT INTO core.business_applications ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                params,
+            )
+            await db.commit()
+
+        elif category == "process":
+            proc_cols = await _table_columns(db, "core", "business_processes")
+            if "company_id" in proc_cols:
+                existing = await db.execute(
+                    text("""
+                        SELECT business_process_id FROM core.business_processes
+                        WHERE LOWER(process_name) = LOWER(:name) AND company_id = :cid
+                        LIMIT 1
+                    """),
+                    {"name": label, "cid": company_id},
+                )
+                if existing.mappings().first():
+                    return
+
+            proc_id = uuid4().hex
+            insert_cols = ["business_process_id", "process_name"]
+            params = {"proc_id": proc_id, "proc_name": label}
+            placeholders = [":proc_id", ":proc_name"]
+
+            if "process_description" in proc_cols:
+                insert_cols.append("process_description")
+                placeholders.append(":proc_desc")
+                params["proc_desc"] = summary
+            if "company_id" in proc_cols:
+                insert_cols.append("company_id")
+                placeholders.append(":cid")
+                params["cid"] = company_id
+            if "company_name" in proc_cols:
+                insert_cols.append("company_name")
+                placeholders.append(":cname")
+                params["cname"] = company_name
+            for ts_col in ("created_ts", "updated_ts"):
+                if ts_col in proc_cols:
+                    insert_cols.append(ts_col)
+                    placeholders.append("CURRENT_TIMESTAMP")
+            for num_col, default_val in _PROCESS_READONLY_DEFAULTS.items():
+                if num_col in proc_cols:
+                    insert_cols.append(num_col)
+                    placeholders.append(f":def_{num_col}")
+                    params[f"def_{num_col}"] = default_val
+
+            await db.execute(
+                text(f"INSERT INTO core.business_processes ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                params,
+            )
+            await db.commit()
+
+        elif category == "integration":
+            await _ensure_integrations_table(db)
+            int_cols = await _table_columns(db, "core", "business_integrations")
+            if "company_id" in int_cols:
+                existing = await db.execute(
+                    text("""
+                        SELECT integration_id FROM core.business_integrations
+                        WHERE LOWER(integration_name) = LOWER(:name) AND company_id = :cid
+                        LIMIT 1
+                    """),
+                    {"name": label, "cid": company_id},
+                )
+                if existing.mappings().first():
+                    return
+
+            int_id = uuid4().hex
+            insert_cols = ["integration_id", "integration_name"]
+            params = {"int_id": int_id, "int_name": label}
+            placeholders = [":int_id", ":int_name"]
+
+            if "integration_description" in int_cols:
+                insert_cols.append("integration_description")
+                placeholders.append(":int_desc")
+                params["int_desc"] = summary
+            if "company_id" in int_cols:
+                insert_cols.append("company_id")
+                placeholders.append(":cid")
+                params["cid"] = company_id
+            if "company_name" in int_cols:
+                insert_cols.append("company_name")
+                placeholders.append(":cname")
+                params["cname"] = company_name
+            for ts_col in ("created_ts", "updated_ts"):
+                if ts_col in int_cols:
+                    insert_cols.append(ts_col)
+                    placeholders.append("CURRENT_TIMESTAMP")
+
+            await db.execute(
+                text(f"INSERT INTO core.business_integrations ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                params,
+            )
+            await db.commit()
+
+    except Exception:
+        pass  # Non-fatal — don't break dim_node creation
+
+
 async def _ensure_integrations_table(db: AsyncSession) -> None:
+    """Fallback table creation for deployments that have not run the DDL scripts.
+    Schema is kept in sync with sql/core/business_integrations.sql."""
     global _INTEGRATIONS_READY
     if _INTEGRATIONS_READY:
         return
@@ -379,14 +624,13 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 sla TEXT,
                 version TEXT,
                 parent_application_id TEXT,
+                company_id TEXT,
+                company_name TEXT,
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
-    )
-    await db.execute(
-        text("ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS capabilities TEXT")
     )
     await db.commit()
     _INTEGRATIONS_READY = True
@@ -540,9 +784,14 @@ def _json_list(value: Any) -> list[Any]:
     return []
 
 
+_COMPANY_HIDDEN_FIELDS = {"company_id", "company_name"}
+
+
 def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    for field in _COMPANY_HIDDEN_FIELDS:
+        row.pop(field, None)
     return row
 
 
@@ -570,6 +819,8 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    for field in _COMPANY_HIDDEN_FIELDS:
+        row.pop(field, None)
     return row
 
 
@@ -627,6 +878,8 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    for field in _COMPANY_HIDDEN_FIELDS:
+        row.pop(field, None)
     return row
 
 
@@ -836,6 +1089,7 @@ async def _fetch_integrations(
     *,
     integration_id: Optional[str] = None,
     search: Optional[str] = None,
+    company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     await _ensure_integrations_table(db)
 
@@ -875,6 +1129,13 @@ async def _fetch_integrations(
     if integration_id is not None:
         where_parts.append("bi.integration_id = :integration_id")
         query_params["integration_id"] = integration_id
+
+    if company_id is not None:
+        if "company_id" in int_cols:
+            where_parts.append("bi.company_id = :filter_company_id")
+            query_params["filter_company_id"] = company_id
+        else:
+            return []
 
     search_clean = _clean(search)
     if search_clean:
@@ -925,6 +1186,7 @@ async def _fetch_applications(
     *,
     application_id: Optional[str] = None,
     search: Optional[str] = None,
+    company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     app_cols = await _table_columns(db, "core", "business_applications")
     if "business_application_id" not in app_cols:
@@ -1112,6 +1374,13 @@ async def _fetch_applications(
         where_parts.append("ba.business_application_id = :application_id")
         query_params["application_id"] = application_id
 
+    if company_id is not None:
+        if "company_id" in app_cols:
+            where_parts.append("ba.company_id = :filter_company_id")
+            query_params["filter_company_id"] = company_id
+        else:
+            return []
+
     if search_clean:
         search_clauses = ["ba.business_application_id ILIKE :search_like"]
         if "application_name" in app_cols:
@@ -1145,6 +1414,7 @@ async def _fetch_processes(
     *,
     process_id: Optional[str] = None,
     search: Optional[str] = None,
+    company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     process_cols = await _table_columns(db, "core", "business_processes")
     if "business_process_id" not in process_cols:
@@ -1355,6 +1625,13 @@ async def _fetch_processes(
         where_parts.append("bp.business_process_id = :process_id")
         query_params["process_id"] = process_id
 
+    if company_id is not None:
+        if "company_id" in process_cols:
+            where_parts.append("bp.company_id = :filter_company_id")
+            query_params["filter_company_id"] = company_id
+        else:
+            return []
+
     if search_clean:
         search_clauses = ["bp.business_process_id ILIKE :search_like"]
         if "process_name" in process_cols:
@@ -1389,12 +1666,13 @@ async def _fetch_processes(
 @router.get("/integrations", tags=["Integrations"], summary="List Integrations")
 async def list_integrations(
     q: Optional[str] = Query(default=None),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_integrations(db, search=q)
+        all_items = await _fetch_integrations(db, search=q, company_id=company_id)
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -1554,12 +1832,13 @@ async def delete_integration(
 @router.get("/applications", tags=["Applications"], summary="List Applications")
 async def list_applications(
     q: Optional[str] = Query(default=None),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_applications(db, search=q)
+        all_items = await _fetch_applications(db, search=q, company_id=company_id)
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -1608,6 +1887,7 @@ async def suggest_application_description(body: SuggestApplicationDescriptionReq
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
 async def create_application(
     body: ApplicationCreate = Body(default_factory=ApplicationCreate),
+    company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs application to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
@@ -1634,6 +1914,11 @@ async def create_application(
         if col in app_cols:
             insert_values[col] = default_value
 
+    if company_id and "company_id" in app_cols:
+        insert_values["company_id"] = company_id
+    if company_id and "company_name" in app_cols:
+        insert_values["company_name"] = await _get_company_name(db, company_id)
+
     if "created_ts" in app_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in app_cols:
@@ -1659,6 +1944,8 @@ async def create_application(
     )
     await db.commit()
     rows = await _fetch_applications(db, application_id=app_id)
+    if company_id and rows:
+        await _sync_application_to_dim_node(db, company_id, rows[0])
     return rows[0]
 
 
@@ -1763,12 +2050,13 @@ async def delete_application(
 @router.get("/processes", tags=["Processes"], summary="List Processes")
 async def list_processes(
     q: Optional[str] = Query(default=None),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_processes(db, search=q)
+        all_items = await _fetch_processes(db, search=q, company_id=company_id)
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -1817,6 +2105,7 @@ async def suggest_process_description(body: SuggestProcessDescriptionRequest):
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
 async def create_process(
     body: ProcessCreate = Body(default_factory=ProcessCreate),
+    company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs process to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
 ):
     process_cols = await _table_columns(db, "core", "business_processes")
@@ -1856,6 +2145,11 @@ async def create_process(
         if col in process_cols:
             insert_values[col] = default_value
 
+    if company_id and "company_id" in process_cols:
+        insert_values["company_id"] = company_id
+    if company_id and "company_name" in process_cols:
+        insert_values["company_name"] = await _get_company_name(db, company_id)
+
     if "created_ts" in process_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in process_cols:
@@ -1881,6 +2175,8 @@ async def create_process(
     )
     await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
+    if company_id and rows:
+        await _sync_process_to_dim_node(db, company_id, rows[0])
     return rows[0]
 
 
