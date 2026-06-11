@@ -570,6 +570,9 @@ const SparkPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const companyId = activeCompany?.id ?? null;
+  const companyName = activeCompany?.name;
+  const industry = activeCompany?.industry;
+  const region = activeCompany?.region;
 
   const toggleDimension = (key: string) => {
     setActiveDimensions(prev => {
@@ -623,7 +626,15 @@ const SparkPage: React.FC = () => {
     setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
-      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined, ideaCount)) {
+      for await (const idea of sparkApi.generateIdeasStream(
+        companyId,
+        dims,
+        direction.trim() || undefined,
+        ideaCount,
+        companyName,
+        industry,
+        region,
+      )) {
         setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
         setHasLibrary(true);
       }
@@ -632,7 +643,7 @@ const SparkPage: React.FC = () => {
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction, ideaCount]);
+  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region]);
 
   const enterSelectMode = () => {
     setSelectMode(true);
