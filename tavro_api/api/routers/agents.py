@@ -1,4 +1,5 @@
 from __future__ import annotations
+import base64
 import json
 import os
 import uuid
@@ -7,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,6 +126,48 @@ class AgentUpdateRequest(BaseModel):
     instruction: Optional[str] = None
     issues: Optional[List[Dict[str, Any]]] = None
     skills: Optional[List[Any]] = None
+
+
+class AgentAttachmentCreate(BaseModel):
+    filename: str
+    mime_type: str
+    content_base64: str
+
+
+_AGENT_ATTACHMENTS_READY = False
+
+
+async def _ensure_agent_attachments_table(db: AsyncSession) -> None:
+    global _AGENT_ATTACHMENTS_READY
+    if _AGENT_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.agent_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                agent_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx
+            ON public.agent_attachment (agent_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _AGENT_ATTACHMENTS_READY = True
 
 class SuggestAgentDescriptionRequest(BaseModel):
     agent_name: str
@@ -817,15 +860,35 @@ async def create_agent(
             tools_for_card.append({**tool, "identifier": tool_id})
             await db.execute(
                 text(f"""
+                    INSERT INTO {CORE}.tools
+                        (tenant_id, tool_id, tool_name, tool_description,
+                         created_ts, updated_ts)
+                    VALUES
+                        (:tid, :tool_id, :tname, :tdesc,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tool_id) DO UPDATE SET
+                        tool_name        = EXCLUDED.tool_name,
+                        tool_description = EXCLUDED.tool_description,
+                        updated_ts       = EXCLUDED.updated_ts
+                """),
+                {"tid": tenant_id, "tool_id": tool_id,
+                 "tname": tool_name, "tdesc": tool.get("description", "")},
+            )
+            await db.execute(
+                text(f"""
                     INSERT INTO {CORE}.agent_tools
                         (tenant_id, agent_internal_id, tool_id, agent_id,
-                         tool_name, tool_description, created_ts, updated_ts)
+                         tool_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :iid, :tool_id, :aid,
-                         :tname, :tdesc, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                        agent_id   = EXCLUDED.agent_id,
+                        tool_name  = EXCLUDED.tool_name,
+                        updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
-                 "aid": agent_id, "tname": tool_name, "tdesc": tool.get("description", "")},
+                 "aid": agent_id, "tname": tool_name},
             )
 
         tables_payload = _normalize_tables_payload(body.tables, body.tools, body.data_source)
@@ -1715,3 +1778,127 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+@router.get("/{agent_id}/attachments", summary="List Agent Attachments")
+async def list_agent_attachments(agent_id: str, db: AsyncSession = Depends(get_db)):
+    await _ensure_agent_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.agent_attachment
+            WHERE agent_id = :agent_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"agent_id": agent_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post("/{agent_id}/attachments", summary="Upload Agent Attachment", status_code=201)
+async def create_agent_attachment(
+    agent_id: str,
+    body: AgentAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    filename = (body.filename or "").strip()
+    mime_type = (body.mime_type or "").strip() or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.agent_attachment
+                (agent_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:agent_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, agent_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "agent_id": agent_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    return dict(row.mappings().first())
+
+
+@router.get("/{agent_id}/attachments/{attachment_id}/download", summary="Download Agent Attachment")
+async def download_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/{agent_id}/attachments/{attachment_id}", summary="Delete Agent Attachment")
+async def delete_agent_attachment(
+    agent_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_agent_attachments_table(db)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.agent_attachment
+            WHERE id = :attachment_id
+              AND agent_id = :agent_id
+            """
+        ),
+        {"attachment_id": attachment_id, "agent_id": agent_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+    return {"status": "deleted", "attachment_id": attachment_id}

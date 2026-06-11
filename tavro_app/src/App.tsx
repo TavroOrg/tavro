@@ -42,9 +42,7 @@ import IntegrationsPage from './pages/IntegrationsPage';
 import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
-import ContainerLogsPage from './pages/ContainerLogsPage';
 import IssueViewPage from './pages/IssueViewPage';
-
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -153,7 +151,6 @@ function App() {
                 <Route path="insights" element={<InsightsPage />} />
                 <Route path="agent/:id" element={<AgentViewPage />} />
                 <Route path="settings" element={<Settings />} />
-                <Route path="settings/logs" element={<ContainerLogsPage />} />
 
                 {/* ── Blueprint routes (ADD THESE) ── */}
                 <Route path="blueprint" element={<BlueprintPage />} />

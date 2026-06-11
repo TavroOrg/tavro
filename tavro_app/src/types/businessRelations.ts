@@ -159,6 +159,13 @@ export interface AgentRelationsPayload {
   }>;
   child_agents?: ChildAgentReference[];
   ai_models?: AgentAiModelReference[];
+  integrations?: Array<{
+    integration_id: string;
+    integration_name: string | null;
+    integration_description: string | null;
+    protocol: string | null;
+    availability_status: string | null;
+  }>;
 }
 
 export interface AgentAiModelReference {

@@ -144,6 +144,108 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     };
 };
 
+const PENDING_ASSESSMENT_IDS_KEY = 'tavro_pending_assessment_agents';
+const PENDING_ASSESSMENT_META_KEY = 'tavro_pending_assessment_agent_meta';
+
+const normalizePendingKey = (value: string | null | undefined): string =>
+    String(value ?? '').trim().toLowerCase();
+
+const markAssessmentRunning = (agent: AgentData): AgentData => ({
+    ...agent,
+    latest_event_status: 'Risk Assessment is running',
+    identification: {
+        ...agent.identification,
+        governance_status: 'Risk Assessment is running',
+    },
+});
+
+const isLocallyPendingAssessment = (agent: AgentData, routeId?: string): boolean => {
+    try {
+        const idsRaw = localStorage.getItem(PENDING_ASSESSMENT_IDS_KEY);
+        const ids = idsRaw ? JSON.parse(idsRaw) as string[] : [];
+        const idKeys = new Set(ids.map(normalizePendingKey).filter(Boolean));
+        const candidates = [
+            routeId,
+            agent.identification?.agent_id,
+            agent.name,
+        ].map(normalizePendingKey).filter(Boolean);
+
+        if (candidates.some(candidate => idKeys.has(candidate))) return true;
+
+        const metaRaw = localStorage.getItem(PENDING_ASSESSMENT_META_KEY);
+        const meta = metaRaw
+            ? JSON.parse(metaRaw) as Array<{ agent_id?: string; name?: string }>
+            : [];
+        return meta.some(item => {
+            const metaKeys = [item.agent_id, item.name].map(normalizePendingKey).filter(Boolean);
+            return candidates.some(candidate => metaKeys.includes(candidate));
+        });
+    } catch {
+        return false;
+    }
+};
+
+const registerPendingAssessment = (agent: AgentData, routeId?: string): void => {
+    try {
+        const agentId = agent.identification?.agent_id ?? routeId ?? agent.name;
+        const idsToTrack = [agentId, routeId, agent.name].filter(Boolean) as string[];
+        const pendingRaw = localStorage.getItem(PENDING_ASSESSMENT_IDS_KEY);
+        const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+        localStorage.setItem(
+            PENDING_ASSESSMENT_IDS_KEY,
+            JSON.stringify(Array.from(new Set([...pending, ...idsToTrack]))),
+        );
+
+        const metaRaw = localStorage.getItem(PENDING_ASSESSMENT_META_KEY);
+        const meta = metaRaw
+            ? JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>
+            : [];
+        const trackedKeys = idsToTrack.map(normalizePendingKey);
+        const filtered = meta.filter(item =>
+            !trackedKeys.includes(normalizePendingKey(item.agent_id)) &&
+            !trackedKeys.includes(normalizePendingKey(item.name))
+        );
+        filtered.unshift({
+            agent_id: agentId,
+            name: agent.name,
+            description: agent.description ?? agent.name,
+            created_at: new Date().toISOString(),
+        });
+        localStorage.setItem(PENDING_ASSESSMENT_META_KEY, JSON.stringify(filtered));
+    } catch {
+        // localStorage writes are best-effort
+    }
+};
+
+const unregisterPendingAssessment = (agent: AgentData, routeId?: string): void => {
+    try {
+        const keys = [routeId, agent.identification?.agent_id, agent.name]
+            .map(normalizePendingKey)
+            .filter(Boolean);
+
+        const pendingRaw = localStorage.getItem(PENDING_ASSESSMENT_IDS_KEY);
+        const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+        localStorage.setItem(
+            PENDING_ASSESSMENT_IDS_KEY,
+            JSON.stringify(pending.filter(item => !keys.includes(normalizePendingKey(item)))),
+        );
+
+        const metaRaw = localStorage.getItem(PENDING_ASSESSMENT_META_KEY);
+        const meta = metaRaw
+            ? JSON.parse(metaRaw) as Array<{ agent_id?: string; name?: string }>
+            : [];
+        localStorage.setItem(
+            PENDING_ASSESSMENT_META_KEY,
+            JSON.stringify(meta.filter(item =>
+                !keys.includes(normalizePendingKey(item.agent_id)) &&
+                !keys.includes(normalizePendingKey(item.name))
+            )),
+        );
+    } catch {
+        // localStorage writes are best-effort
+    }
+};
+
 const AgentViewPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -336,7 +438,10 @@ const AgentViewPage: React.FC = () => {
             }
 
             if (resolved) {
-                const overlaid = applyRecentEditOverlay(resolved);
+                const pendingAware = isLocallyPendingAssessment(resolved, id)
+                    ? markAssessmentRunning(resolved)
+                    : resolved;
+                const overlaid = applyRecentEditOverlay(pendingAware);
                 setAgent(overlaid);
             }
         } catch (error) {
@@ -417,13 +522,22 @@ const AgentViewPage: React.FC = () => {
 
     const handleRequestRiskAssessment = async () => {
         if (!agent || !id) return;
+        const previousAgent = agent;
+        const runningAgent = markAssessmentRunning(agent);
         setAssessing(true);
+        registerPendingAssessment(runningAgent, id);
+        setAgent(runningAgent);
+        upsertAgent(runningAgent);
         try {
             await mcpClient.createRiskAssessment(id);
             // Refresh agent data to show the new assessment status
+            refreshCatalog();
             await fetchAgent();
         } catch (error) {
             console.error("Error requesting risk assessment:", error);
+            unregisterPendingAssessment(previousAgent, id);
+            setAgent(previousAgent);
+            upsertAgent(previousAgent);
             alert("Failed to request risk assessment.");
         } finally {
             setAssessing(false);

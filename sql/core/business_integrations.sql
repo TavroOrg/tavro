@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     sla TEXT,
     version TEXT,
     parent_application_id TEXT,
+    company_id TEXT,
+    company_name TEXT,
     created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
 );
