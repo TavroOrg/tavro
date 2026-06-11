@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X } from 'lucide-react';
+import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip } from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
@@ -21,6 +21,9 @@ interface Message {
     text: string;
     timestamp: Date;
     streaming?: boolean;
+    type?: 'status';
+    statusPhase?: 'processing' | 'ready';
+    agentName?: string;
 }
 
 export interface ChatPanelProps {
@@ -40,7 +43,7 @@ function buildTranscript(messages: Message[], sessionTitle?: string, modelLabel?
     ].filter(Boolean).join('\n');
 
     const body = messages
-        .filter(m => m.id !== 'welcome' && !m.streaming)
+        .filter(m => m.id !== 'welcome' && !m.streaming && m.type !== 'status')
         .map(m => {
             const speaker = m.role === 'user' ? 'User' : 'Tavro AI Assistant';
             return `${speaker} (${m.timestamp.toLocaleString()}):\n${m.text}`;
@@ -307,6 +310,43 @@ const TypingIndicator: React.FC = () => {
     );
 };
 
+const AgentStatusCard: React.FC<{ message: Message }> = ({ message }) => {
+    const isProcessing = message.statusPhase === 'processing';
+    const name = message.agentName || 'Agent';
+
+    return (
+        <div className="flex items-start gap-2 mb-4">
+            <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
+                <Bot size={14} className="text-white" />
+            </div>
+            <div className={`flex items-start gap-3 px-4 py-3 rounded-2xl rounded-bl-sm border shadow-sm text-sm max-w-[85%] ${
+                isProcessing
+                    ? 'bg-blue-50 border-blue-200 text-blue-800'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+                {isProcessing ? (
+                    <Loader2 size={15} className="mt-0.5 flex-shrink-0 text-blue-500 animate-spin" />
+                ) : (
+                    <Paperclip size={15} className="mt-0.5 flex-shrink-0 text-emerald-600" />
+                )}
+                <div className="leading-snug">
+                    {isProcessing ? (
+                        <>
+                            <span className="font-semibold">{name}</span> has been created.{' '}
+                            Risk assessment and artifact generation are in progress&hellip;
+                        </>
+                    ) : (
+                        <>
+                            Artifacts for <span className="font-semibold">{name}</span> are ready.{' '}
+                            Check the <span className="font-semibold">Attachments</span> tab on the agent to view them.
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => void }> = ({ message, onDownloadPDF }) => {
     const isUser = message.role === 'user';
     const [copied, setCopied] = useState(false);
@@ -428,7 +468,7 @@ async function* resumeFromServer(requestId: string): AsyncGenerator<string> {
 
 function toStoredMessages(msgs: Message[]): StoredMessage[] {
     return msgs
-        .filter(m => m.id !== 'welcome' && !m.streaming)
+        .filter(m => m.id !== 'welcome' && !m.streaming && m.type !== 'status')
         .map(m => ({ id: m.id, role: m.role, text: m.text, timestamp: m.timestamp.toISOString() }));
 }
 
@@ -537,6 +577,60 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const persist = useCallback((msgs: Message[]) => {
         updateSessionMessages(toStoredMessages(msgs));
     }, [updateSessionMessages]);
+
+    // ── Agent creation / artifact status cards ────────────────────────────────
+    useEffect(() => {
+        const onAgentCreated = (event: Event) => {
+            const { result, args } = (event as CustomEvent).detail ?? {};
+            const agentId: string =
+                result?.agent_id ||
+                result?.identification?.agent_id ||
+                result?.agent_card?.agent_id ||
+                result?.agent_card?.identification?.agent_id ||
+                '';
+            const agentName: string =
+                args?.agent_name || result?.agent_name || result?.name || agentId || 'Agent';
+            if (!agentId && !agentName) return;
+
+            const statusId = `status-${agentId || agentName}`;
+            const statusMsg: Message = {
+                id: statusId,
+                role: 'assistant',
+                text: '',
+                timestamp: new Date(),
+                type: 'status',
+                statusPhase: 'processing',
+                agentName,
+            };
+            setMessages(prev => {
+                if (prev.some(m => m.id === statusId)) return prev;
+                const next = [...prev, statusMsg];
+                latestMessages.current = next;
+                return next;
+            });
+        };
+
+        const onArtifactsGenerated = (event: Event) => {
+            const { args } = (event as CustomEvent).detail ?? {};
+            const agentName: string = args?.agent_name || 'Agent';
+            const agentId: string = args?.agent_id || agentName;
+            const statusId = `status-${agentId || agentName}`;
+
+            // Remove the processing card — the portal notification takes over
+            setMessages(prev => {
+                const next = prev.filter(m => m.id !== statusId);
+                latestMessages.current = next;
+                return next;
+            });
+        };
+
+        window.addEventListener('tavro:agent-created', onAgentCreated);
+        window.addEventListener('tavro:agent-artifacts-generated', onArtifactsGenerated);
+        return () => {
+            window.removeEventListener('tavro:agent-created', onAgentCreated);
+            window.removeEventListener('tavro:agent-artifacts-generated', onArtifactsGenerated);
+        };
+    }, []);
 
     // ── Resume interrupted AI response after page refresh or tab switch ────────
     // Runs once per session change. If localStorage has a pending request for the
@@ -648,7 +742,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const buildHistory = (msgs: Message[]): ChatMessage[] => {
-        const filtered = msgs.filter(m => m.id !== 'welcome' && !m.streaming);
+        const filtered = msgs.filter(m => m.id !== 'welcome' && !m.streaming && m.type !== 'status');
         // Drop trailing user messages — if the previous response failed, the history
         // would end with a user turn, and adding the new user message creates
         // consecutive user roles which Anthropic rejects with HTTP 400.
@@ -956,9 +1050,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-                {messages.map(msg => (
-                    <ChatBubble key={msg.id} message={msg} onDownloadPDF={handleDownloadMessagePDF} />
-                ))}
+                {messages.map(msg =>
+                    msg.type === 'status'
+                        ? <AgentStatusCard key={msg.id} message={msg} />
+                        : <ChatBubble key={msg.id} message={msg} onDownloadPDF={handleDownloadMessagePDF} />
+                )}
                 {loading && <TypingIndicator />}
                 <div ref={messagesEndRef} />
             </div>

@@ -82,7 +82,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
                     <textarea
                         value={editDescription ?? agent.description ?? ''}
                         onChange={e => onEditDescriptionChange?.(e.target.value)}
-                        rows={3}
+                        rows={6}
                         className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 mb-4 bg-blue-50/40 outline-none resize-none rounded-r-lg"
                     />
                 ) : isInlineDescription && inlineEdit ? (
@@ -90,7 +90,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
                         <textarea
                             value={inlineEdit.value}
                             onChange={e => onInlineValueChange?.(e.target.value)}
-                            rows={3}
+                            rows={6}
                             className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 bg-blue-50/40 outline-none resize-none rounded-r-lg"
                             autoFocus
                         />
