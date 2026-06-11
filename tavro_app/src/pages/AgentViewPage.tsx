@@ -393,7 +393,18 @@ const AgentViewPage: React.FC = () => {
         if (!agent || !id) return;
         setDeleting(true);
         try {
-            await agentApi.deleteAgent(agent.identification?.agent_id ?? id);
+            const agentId = agent.identification?.agent_id ?? id;
+            await agentApi.deleteAgent(agentId);
+            // Clear pending assessment state so the poller doesn't re-create a phantom
+            // agent tile from the still-running Temporal workflow after deletion.
+            try {
+                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                const pending = pendingRaw ? JSON.parse(pendingRaw) as string[] : [];
+                localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(pending.filter(pid => pid !== agentId)));
+                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                const meta = metaRaw ? JSON.parse(metaRaw) as Array<{ agent_id: string }> : [];
+                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(meta.filter(item => item.agent_id !== agentId)));
+            } catch { /* localStorage writes are best-effort */ }
             refreshCatalog();
             navigate('/catalog');
         } catch (err: any) {

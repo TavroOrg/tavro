@@ -84,6 +84,19 @@ class AiModelApi {
     });
   }
 
+  async linkUseCase(modelId: string, useCaseId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/use-cases`, {
+      method: 'POST',
+      body: JSON.stringify({ ai_use_case_id: useCaseId }),
+    });
+  }
+
+  async unlinkUseCase(modelId: string, useCaseId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/use-cases/${encodeURIComponent(useCaseId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async listAttachments(modelId: string, category?: string): Promise<AiModelAttachmentRecord[]> {
     const suffix = category ? `?category=${encodeURIComponent(category)}` : '';
     return req(`/ai-models/${encodeURIComponent(modelId)}/attachments${suffix}`);

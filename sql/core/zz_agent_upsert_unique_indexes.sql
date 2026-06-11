@@ -55,6 +55,9 @@ ON core.agent_ai_models (agent_internal_id, ai_model_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_models
 ON core.ai_models (ai_model_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_ai_use_cases
+ON core.ai_model_ai_use_cases (ai_model_id, ai_use_case_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
@@ -707,6 +710,22 @@ BEGIN
         ) THEN
             ALTER TABLE core.agent_ai_models
             ADD CONSTRAINT fk_core_agent_ai_models_ai_model
+            FOREIGN KEY (ai_model_id)
+            REFERENCES core.ai_models (ai_model_id)
+            ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- AI Model <-> AI Use Case junction: ai_model_id FK to the catalog.
+    IF to_regclass('core.ai_model_ai_use_cases') IS NOT NULL
+       AND to_regclass('core.ai_models') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_core_ai_model_ai_use_cases_ai_model'
+        ) THEN
+            ALTER TABLE core.ai_model_ai_use_cases
+            ADD CONSTRAINT fk_core_ai_model_ai_use_cases_ai_model
             FOREIGN KEY (ai_model_id)
             REFERENCES core.ai_models (ai_model_id)
             ON DELETE CASCADE;
