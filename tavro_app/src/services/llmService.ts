@@ -50,24 +50,24 @@ export interface LLMConfig {
 }
 
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
-    openai: 'gpt-4o',
-    gemini: 'gemini-1.5-flash',
+    openai:    'gpt-4o',
+    gemini:    'gemini-1.5-flash',
     anthropic: 'claude-sonnet-4-6',
-    copilot: 'gpt-4.1',
+    copilot:   'gpt-4.1',
 };
 
 export const PROVIDER_HINTS: Record<LLMProvider, string> = {
-    openai: 'api.openai.com',
-    gemini: 'generativelanguage.googleapis.com',
+    openai:    'api.openai.com',
+    gemini:    'generativelanguage.googleapis.com',
     anthropic: 'api.anthropic.com',
-    copilot: 'GitHub Copilot SDK — supports OpenAI / Azure OpenAI / Anthropic BYOK',
+    copilot:   'GitHub Copilot SDK — supports OpenAI / Azure OpenAI / Anthropic BYOK',
 };
 
 export const PROVIDER_LABELS: Record<LLMProvider, string> = {
-    openai: 'OpenAI',
-    gemini: 'Google Gemini',
-    anthropic: 'Anthropic Claude',
-    copilot: 'GitHub Copilot SDK',
+    openai:    'OpenAI',
+    gemini:    'Google Gemini',
+    anthropic: 'Anthropic (Claude)',
+    copilot:   'GitHub Copilot SDK',
 };
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
@@ -96,15 +96,16 @@ function migrateLegacy(): void {
     }
 }
 
-/** Get config for a specific provider (returns null if no key saved) */
+/** Get config for a specific provider (returns null if nothing saved for this provider) */
 export function getProviderConfig(provider: LLMProvider): LLMConfig | null {
     migrateLegacy();
     const apiKey = localStorage.getItem(lsKey(provider)) ?? '';
-    if (!apiKey) return null;
-    let model = localStorage.getItem(lsModel(provider)) || DEFAULT_MODELS[provider];
-    if (provider === 'copilot' && model === 'gpt-5') {
-        model = DEFAULT_MODELS.copilot;
-        localStorage.setItem(lsModel(provider), model);
+    let model = localStorage.getItem(lsModel(provider)) || '';
+    // Return null only if truly nothing has been saved for this provider
+    if (!apiKey && !model) return null;
+    if (!model) {
+        model = DEFAULT_MODELS[provider];
+        if (provider === 'copilot' && model === 'gpt-5') model = DEFAULT_MODELS.copilot;
     }
     const cfg: LLMConfig = { provider, model, apiKey };
     if (provider === 'copilot') {
@@ -118,7 +119,7 @@ export function getProviderConfig(provider: LLMProvider): LLMConfig | null {
 
 /** Save config for a specific provider */
 export function saveProviderConfig(cfg: LLMConfig): void {
-    localStorage.setItem(lsKey(cfg.provider), cfg.apiKey);
+    if (cfg.apiKey) localStorage.setItem(lsKey(cfg.provider), cfg.apiKey);
     localStorage.setItem(lsModel(cfg.provider), cfg.model.trim() || DEFAULT_MODELS[cfg.provider]);
     if (cfg.provider === 'copilot') {
         if (cfg.byok) {
@@ -638,37 +639,28 @@ async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tool
     return { type: 'text', content };
 }
 
-/**
- * Non-streaming completion with optional tool-calling support.
- * Returns either a text response or a list of tool calls to execute.
- */
 export async function completeChat(messages: ChatMessage[], tools: any[] = []): Promise<CompletionResult> {
     const cfg = getLLMConfig();
     if (!cfg) throw new Error('NO_LLM_CONFIGURED');
+
     switch (cfg.provider) {
-        case 'openai': return completeChatOpenAI(cfg, messages, tools);
+        case 'openai':    return completeChatOpenAI(cfg, messages, tools);
         case 'anthropic': return completeChatAnthropic(cfg, messages, tools);
-        case 'gemini': return completeChatGemini(cfg, messages, tools);
-        case 'copilot': return completeChatCopilot(cfg, messages, tools);
+        case 'gemini':    return completeChatGemini(cfg, messages, tools);
+        case 'copilot':   return completeChatCopilot(cfg, messages, tools);
         default: throw new Error(`Unknown LLM provider: ${cfg.provider}`);
     }
 }
 
-/**
- * Stream a chat completion.
- * @throws Error if no LLM is configured or the API returns an error.
- */
 export async function* streamChat(messages: ChatMessage[]): AsyncGenerator<string> {
     const cfg = getLLMConfig();
-    if (!cfg) {
-        throw new Error('NO_LLM_CONFIGURED');
-    }
+    if (!cfg) throw new Error('NO_LLM_CONFIGURED');
+
     switch (cfg.provider) {
-        case 'openai': yield* streamOpenAI(cfg, messages); break;
-        case 'gemini': yield* streamGemini(cfg, messages); break;
+        case 'openai':    yield* streamOpenAI(cfg, messages); break;
+        case 'gemini':    yield* streamGemini(cfg, messages); break;
         case 'anthropic': yield* streamAnthropic(cfg, messages); break;
-        case 'copilot': yield* streamCopilot(cfg, messages); break;
-        default:
-            throw new Error(`Unknown LLM provider: ${cfg.provider}`);
+        case 'copilot':   yield* streamCopilot(cfg, messages); break;
+        default:          throw new Error(`Unknown LLM provider: ${cfg.provider}`);
     }
 }
