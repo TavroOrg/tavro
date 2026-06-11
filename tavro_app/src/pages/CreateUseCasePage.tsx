@@ -20,6 +20,7 @@ const CreateUseCasePage: React.FC = () => {
     const { refresh } = useUseCases();
     const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
     const linkProcessId = searchParams.get('linkProcessId')?.trim() || '';
+    const linkApplicationId = searchParams.get('linkApplicationId')?.trim() || '';
 
     const [form, setForm] = useState({
         name: '',
@@ -78,16 +79,27 @@ const CreateUseCasePage: React.FC = () => {
             if (linkProcessId && created?.use_case_id) {
                 await useCaseApi.linkProcess(created.use_case_id, linkProcessId);
             }
+            if (linkApplicationId && created?.use_case_id) {
+                await useCaseApi.linkApplication(created.use_case_id, linkApplicationId);
+            }
             setSuccess(true);
             sessionStorage.setItem(
                 'tavro_use_case_notice',
-                linkAgentId && linkProcessId
+                linkAgentId && linkProcessId && linkApplicationId
+                    ? 'AI Use Case created and linked to agent, process, and application successfully.'
+                    : linkAgentId && linkProcessId
                     ? 'AI Use Case created and linked to agent and process successfully.'
+                    : linkAgentId && linkApplicationId
+                        ? 'AI Use Case created and linked to agent and application successfully.'
+                    : linkProcessId && linkApplicationId
+                        ? 'AI Use Case created and linked to process and application successfully.'
                     : linkAgentId
                         ? 'AI Use Case created and linked to agent successfully.'
                         : linkProcessId
                             ? 'AI Use Case created and linked to process successfully.'
-                            : 'AI Use Case created successfully. It will appear in the catalog shortly.'
+                            : linkApplicationId
+                                ? 'AI Use Case created and linked to application successfully.'
+                                : 'AI Use Case created successfully. It will appear in the catalog shortly.'
             );
             refresh();
             setTimeout(() => {
@@ -97,6 +109,10 @@ const CreateUseCasePage: React.FC = () => {
                 }
                 if (linkProcessId) {
                     navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+                    return;
+                }
+                if (linkApplicationId) {
+                    navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
                     return;
                 }
                 navigate('/use-cases');
@@ -127,11 +143,15 @@ const CreateUseCasePage: React.FC = () => {
                             navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
                             return;
                         }
+                        if (linkApplicationId) {
+                            navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
+                            return;
+                        }
                         navigate('/use-cases');
                     }}
                     className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
                 >
-                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : linkProcessId ? 'Back to Process' : 'Back to Use Cases'}
+                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : linkProcessId ? 'Back to Process' : linkApplicationId ? 'Back to Application' : 'Back to Use Cases'}
                 </button>
             </div>
 
@@ -148,7 +168,9 @@ const CreateUseCasePage: React.FC = () => {
                                 ? 'Register a new AI use case and link it to this agent'
                                 : linkProcessId
                                     ? 'Register a new AI use case and link it to this process'
-                                : 'Register a new AI use case in the Agent Biz Ops catalog'}
+                                    : linkApplicationId
+                                        ? 'Register a new AI use case and link it to this application'
+                                        : 'Register a new AI use case in the Agent Biz Ops catalog'}
                         </p>
                     </div>
                 </div>
@@ -294,6 +316,10 @@ const CreateUseCasePage: React.FC = () => {
                             }
                             if (linkProcessId) {
                                 navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+                                return;
+                            }
+                            if (linkApplicationId) {
+                                navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
                                 return;
                             }
                             navigate('/use-cases');

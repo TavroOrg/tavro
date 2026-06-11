@@ -11,7 +11,9 @@ import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import { useCaseApi } from '../services/useCaseApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
-import type { BusinessProcessRecord } from '../types/businessRelations';
+import { aiModelApi } from '../services/aiModelApi';
+import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
+import type { AiModelRecord } from '../types/aiModel';
 
 const USE_CASE_AGENT_COUNT_CACHE_KEY = 'tavro_use_case_agent_count_cache';
 
@@ -25,6 +27,67 @@ interface ProcessRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
 }
+
+interface ApplicationRelationsSectionProps {
+  useCase: UseCaseDetail;
+  onSilentRefetch: () => void;
+}
+
+interface AiModelRelationsSectionProps {
+  useCase: UseCaseDetail;
+  onSilentRefetch: () => void;
+}
+
+const normalizeUseCaseAiModels = (
+  raw: any,
+): Array<{ identifier: string; name: string; description: string | null; provider: string | null; status: string | null }> => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m: any) => {
+      const identifier = m?.ai_model_id ?? m?.identifier ?? m?.id ?? '';
+      return {
+        identifier,
+        name: m?.model_name ?? m?.name ?? identifier,
+        description: m?.description ?? null,
+        provider: m?.provider ?? null,
+        status: m?.status ?? null,
+      };
+    })
+    .filter((m) => !!m.identifier);
+};
+
+const normalizeUseCaseApplications = (raw: any): Array<{
+  identifier: string;
+  name: string;
+  description: string | null;
+  business_criticality: string | null;
+  emergency_tier: string | null;
+}> => {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const rows: Array<{
+    identifier: string;
+    name: string;
+    description: string | null;
+    business_criticality: string | null;
+    emergency_tier: string | null;
+  }> = [];
+
+  raw.forEach((item: any) => {
+    const identifier = String(item?.business_application_id ?? item?.identifier ?? item?.id ?? '').trim();
+    if (!identifier || seen.has(identifier)) return;
+    seen.add(identifier);
+    rows.push({
+      identifier,
+      name: String(item?.application_name ?? item?.name ?? identifier),
+      description: item?.description ?? item?.application_description ?? null,
+      business_criticality: item?.business_criticality ?? null,
+      emergency_tier: item?.emergency_tier ?? null,
+    });
+  });
+
+  return rows;
+};
 
 const normalizeUseCaseProcesses = (raw: any): Array<{
   identifier: string;
@@ -78,10 +141,28 @@ const normalizeUseCaseAgents = (raw: any): Array<{ agent_id: string; name: strin
 const mergeUseCaseWithRestDetail = (
   base: UseCaseDetail | undefined,
   restPayload: any,
+  applicationCatalog: any[] | undefined,
   processCatalog: any[] | undefined,
   fallbackId: string,
 ): UseCaseDetail | undefined => {
   const normalizedUseCaseId = String(fallbackId || '').trim().toLowerCase();
+  const catalogLinkedApplications = normalizeUseCaseApplications(
+    (applicationCatalog ?? []).filter((app: any) => {
+      const related = Array.isArray(app?.related_use_cases) ? app.related_use_cases : [];
+      return related.some((uc: any) => {
+        const ucId = String(uc?.identifier ?? uc?.ai_use_case_id ?? '').trim().toLowerCase();
+        return ucId && ucId === normalizedUseCaseId;
+      });
+    }).map((app: any) => ({
+      identifier: app.business_application_id,
+      business_application_id: app.business_application_id,
+      name: app.application_name,
+      application_name: app.application_name,
+      description: app.application_description,
+      business_criticality: app.business_criticality,
+      emergency_tier: app.emergency_tier,
+    })),
+  );
   const catalogLinkedProcesses = normalizeUseCaseProcesses(
     (processCatalog ?? []).filter((proc: any) => {
       const related = Array.isArray(proc?.related_use_cases) ? proc.related_use_cases : [];
@@ -131,7 +212,47 @@ const mergeUseCaseWithRestDetail = (
     return Array.from(byId.values());
   };
 
+  const mergeApplicationLists = (...lists: Array<Array<{
+    identifier: string;
+    name: string;
+    description: string | null;
+    business_criticality: string | null;
+    emergency_tier: string | null;
+  }>>) => {
+    const byId = new Map<string, {
+      identifier: string;
+      name: string;
+      description: string | null;
+      business_criticality: string | null;
+      emergency_tier: string | null;
+    }>();
+    lists.forEach((list) => {
+      list.forEach((app) => {
+        const key = String(app.identifier || '').trim().toLowerCase();
+        if (!key) return;
+        if (!byId.has(key)) {
+          byId.set(key, app);
+          return;
+        }
+        const existing = byId.get(key)!;
+        byId.set(key, {
+          ...existing,
+          name: existing.name || app.name,
+          description: existing.description || app.description,
+          business_criticality: existing.business_criticality || app.business_criticality,
+          emergency_tier: existing.emergency_tier || app.emergency_tier,
+        });
+      });
+    });
+    return Array.from(byId.values());
+  };
+
   const row = Array.isArray(restPayload?.data) ? restPayload.data[0] : null;
+  const restLinkedApplications = row
+    ? normalizeUseCaseApplications(row.of_associated_business_applications ?? row.applications ?? [])
+    : [];
+  const baseLinkedApplications = normalizeUseCaseApplications((base as any)?.applications ?? (base as any)?.of_associated_business_applications ?? []);
+  const linkedApplications = mergeApplicationLists(restLinkedApplications, catalogLinkedApplications, baseLinkedApplications);
   const restLinkedProcesses = row
     ? normalizeUseCaseProcesses(row.of_associated_business_processes ?? row.business_processes ?? [])
     : [];
@@ -142,6 +263,7 @@ const mergeUseCaseWithRestDetail = (
     if (!base) return undefined;
     return {
       ...base,
+      applications: linkedApplications,
       business_processes: linkedProcesses,
     } as UseCaseDetail;
   }
@@ -152,6 +274,7 @@ const mergeUseCaseWithRestDetail = (
   if (base) {
     return {
       ...base,
+      applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
     } as UseCaseDetail;
@@ -168,6 +291,7 @@ const mergeUseCaseWithRestDetail = (
     expected_benefits: row.expected_benefits ?? null,
     function: row.function ?? null,
     agents: linkedAgents,
+    applications: linkedApplications,
     business_processes: linkedProcesses,
   } as UseCaseDetail;
 };
@@ -393,6 +517,262 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
                 <button
                   onClick={() => handleLink(agent)}
                   disabled={!agentId || busy}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                  Link
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+  const { refresh: refreshUC } = useUseCases();
+  const useCaseId = useCase.identifier ?? '';
+  const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [acting, setActing] = useState<string | null>(null);
+  const [relationError, setRelationError] = useState<string | null>(null);
+  const [pendingLinkIds, setPendingLinkIds] = useState<Set<string>>(new Set());
+  const [pendingUnlinkIds, setPendingUnlinkIds] = useState<Set<string>>(new Set());
+
+  const linkedApplicationsFromServer = useMemo(
+    () => normalizeUseCaseApplications((useCase as any).applications ?? (useCase as any).of_associated_business_applications ?? []),
+    [useCase],
+  );
+
+  const serverLinkedById = useMemo(() => {
+    const map = new Map<string, {
+      identifier: string;
+      name: string;
+      description: string | null;
+      business_criticality: string | null;
+      emergency_tier: string | null;
+    }>();
+    linkedApplicationsFromServer.forEach((app) => {
+      if (app.identifier) map.set(app.identifier, app);
+    });
+    return map;
+  }, [linkedApplicationsFromServer]);
+
+  useEffect(() => {
+    setPendingLinkIds((prev) => {
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (serverLinkedById.has(id)) next.delete(id);
+      }
+      return next;
+    });
+    setPendingUnlinkIds((prev) => {
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (!serverLinkedById.has(id)) next.delete(id);
+      }
+      return next;
+    });
+  }, [serverLinkedById]);
+
+  const linkedApplications = useMemo(() => {
+    const visibleServerRows = linkedApplicationsFromServer.filter((app) => !pendingUnlinkIds.has(app.identifier));
+    const optimisticLinks = Array.from(pendingLinkIds)
+      .filter((id) => !serverLinkedById.has(id))
+      .map((id) => {
+        const catalogRow = allApplications.find((app) => app.business_application_id === id);
+        return {
+          identifier: id,
+          name: catalogRow?.application_name || id,
+          description: catalogRow?.application_description ?? null,
+          business_criticality: catalogRow?.business_criticality ?? null,
+          emergency_tier: catalogRow?.emergency_tier ?? null,
+        };
+      });
+    return [...visibleServerRows, ...optimisticLinks];
+  }, [allApplications, linkedApplicationsFromServer, pendingLinkIds, pendingUnlinkIds, serverLinkedById]);
+
+  const linkedApplicationIds = useMemo(() => {
+    const ids = new Set(linkedApplicationsFromServer.map(app => app.identifier).filter(Boolean));
+    pendingLinkIds.forEach((id) => ids.add(id));
+    pendingUnlinkIds.forEach((id) => ids.delete(id));
+    return ids;
+  }, [linkedApplicationsFromServer, pendingLinkIds, pendingUnlinkIds]);
+
+  const availableApplications = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return allApplications.filter(app => {
+      if (linkedApplicationIds.has(app.business_application_id)) return false;
+      if (!q) return true;
+      return (
+        app.business_application_id.toLowerCase().includes(q) ||
+        (app.application_name ?? '').toLowerCase().includes(q) ||
+        (app.application_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allApplications, linkedApplicationIds, searchTerm]);
+
+  const loadApplicationCatalog = async () => {
+    setLoadingCatalog(true);
+    try {
+      const data = await businessRelationsApi.listApplications();
+      setAllApplications(data);
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to load application catalog.');
+    } finally {
+      setLoadingCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    loadApplicationCatalog();
+  }, []);
+
+  const handleLinkApplication = async (applicationId: string) => {
+    if (!useCaseId || !applicationId || linkedApplicationIds.has(applicationId)) return;
+    setActing(`add:${applicationId}`);
+    setRelationError(null);
+    setPendingUnlinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(applicationId);
+      return next;
+    });
+    setPendingLinkIds((prev) => new Set([...prev, applicationId]));
+    try {
+      await useCaseApi.linkApplication(useCaseId, applicationId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setPendingLinkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(applicationId);
+        return next;
+      });
+      setRelationError(err.message || 'Failed to link application.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleUnlinkApplication = async (applicationId: string) => {
+    if (!useCaseId || !applicationId || !linkedApplicationIds.has(applicationId)) return;
+    setActing(`remove:${applicationId}`);
+    setRelationError(null);
+    setPendingLinkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(applicationId);
+      return next;
+    });
+    setPendingUnlinkIds((prev) => new Set([...prev, applicationId]));
+    try {
+      await useCaseApi.unlinkApplication(useCaseId, applicationId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setPendingUnlinkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(applicationId);
+        return next;
+      });
+      setRelationError(err.message || 'Failed to unlink application.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {relationError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {relationError}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100">
+          <p className="text-sm font-bold text-slate-700">Currently Related Applications ({linkedApplications.length})</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {linkedApplications.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No business applications linked.</div>
+          )}
+          {linkedApplications.map((app) => {
+            const applicationId = app.identifier;
+            const removeKey = `remove:${applicationId}`;
+            const isPendingUnlink = pendingUnlinkIds.has(applicationId);
+            return (
+              <div key={applicationId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
+                <div className="min-w-0">
+                  <Link to={`/applications/${encodeURIComponent(applicationId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                    {app.name}
+                  </Link>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
+                </div>
+                <button
+                  onClick={() => handleUnlinkApplication(applicationId)}
+                  disabled={acting === removeKey}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-bold text-slate-700">Add Application Relation</p>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+            {useCaseId && (
+              <Link
+                to={`/applications/new?linkUseCaseId=${encodeURIComponent(useCaseId)}`}
+                className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <PlusCircle size={12} />
+                Create Application
+              </Link>
+            )}
+            <div className="relative w-full sm:w-[320px] max-w-full">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter applications..."
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+          {loadingCatalog && (
+            <div className="p-5 text-sm text-slate-500 inline-flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Loading applications...
+            </div>
+          )}
+          {!loadingCatalog && availableApplications.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No available applications to link.</div>
+          )}
+          {!loadingCatalog && availableApplications.map(app => {
+            const applicationId = app.business_application_id;
+            const addKey = `add:${applicationId}`;
+            const busy = acting === addKey;
+            return (
+              <div key={applicationId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-700 truncate">{app.application_name || applicationId}</p>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
+                </div>
+                <button
+                  onClick={() => handleLinkApplication(applicationId)}
+                  disabled={busy}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
@@ -661,6 +1041,183 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   );
 };
 
+const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+  const { refresh: refreshUC } = useUseCases();
+  const useCaseId = useCase.identifier ?? '';
+  const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [acting, setActing] = useState<string | null>(null);
+  const [relationError, setRelationError] = useState<string | null>(null);
+
+  const linkedModels = useMemo(
+    () => normalizeUseCaseAiModels((useCase as any).ai_models ?? (useCase as any).of_associated_ai_models ?? []),
+    [useCase],
+  );
+  const linkedModelIds = useMemo(
+    () => new Set(linkedModels.map((m) => m.identifier).filter(Boolean)),
+    [linkedModels],
+  );
+
+  const availableModels = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return allModels.filter((m) => {
+      if (linkedModelIds.has(m.ai_model_id)) return false;
+      if (!q) return true;
+      return (
+        m.ai_model_id.toLowerCase().includes(q) ||
+        (m.model_name ?? '').toLowerCase().includes(q) ||
+        (m.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allModels, linkedModelIds, searchTerm]);
+
+  const loadModelCatalog = async () => {
+    setLoadingCatalog(true);
+    try {
+      setAllModels(await aiModelApi.listModels());
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to load AI model catalog.');
+    } finally {
+      setLoadingCatalog(false);
+    }
+  };
+
+  useEffect(() => {
+    loadModelCatalog();
+  }, []);
+
+  const handleLinkModel = async (modelId: string) => {
+    if (!useCaseId || !modelId || linkedModelIds.has(modelId)) return;
+    setActing(`add:${modelId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.linkUseCase(modelId, useCaseId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to link AI model.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleUnlinkModel = async (modelId: string) => {
+    if (!useCaseId || !modelId) return;
+    setActing(`remove:${modelId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.unlinkUseCase(modelId, useCaseId);
+      refreshUC();
+      onSilentRefetch();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to unlink AI model.');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {relationError && (
+        <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          {relationError}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100">
+          <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({linkedModels.length})</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {linkedModels.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No AI models linked.</div>
+          )}
+          {linkedModels.map((model) => {
+            const modelId = model.identifier;
+            const removeKey = `remove:${modelId}`;
+            return (
+              <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <Link to={`/ai-models/${encodeURIComponent(modelId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                    {model.name}
+                  </Link>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                </div>
+                <button
+                  onClick={() => handleUnlinkModel(modelId)}
+                  disabled={acting === removeKey}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+            <Link
+              to="/ai-models/new"
+              className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+            >
+              <PlusCircle size={12} />
+              Create Model
+            </Link>
+            <div className="relative w-full sm:w-[320px] max-w-full">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter AI models..."
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+          {loadingCatalog && (
+            <div className="p-5 text-sm text-slate-500 inline-flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Loading AI models...
+            </div>
+          )}
+          {!loadingCatalog && availableModels.length === 0 && (
+            <div className="p-5 text-sm text-slate-500">No available AI models to link.</div>
+          )}
+          {!loadingCatalog && availableModels.map((model) => {
+            const modelId = model.ai_model_id;
+            const addKey = `add:${modelId}`;
+            const busy = acting === addKey;
+            return (
+              <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-700 truncate">{model.model_name || modelId}</p>
+                  <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                </div>
+                <button
+                  onClick={() => handleLinkModel(modelId)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                  Link
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UseCaseViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -716,18 +1273,22 @@ const UseCaseViewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [mcpResult, restResult, processesResult] = await Promise.allSettled([
+      const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
         mcpClient.getUseCaseDetails(id, { forceRefresh: true }),
         useCaseApi.getUseCase(id),
+        businessRelationsApi.listApplications(),
         businessRelationsApi.listProcesses(),
       ]);
 
       const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
       const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
+      const applicationRows = applicationsResult.status === 'fulfilled' && Array.isArray(applicationsResult.value)
+        ? applicationsResult.value
+        : [];
       const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
         ? processesResult.value
         : [];
-      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, processRows, id);
+      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, applicationRows, processRows, id);
 
       if (!merged) throw new Error('Use Case not found');
       setUseCase(merged);
@@ -741,17 +1302,21 @@ const UseCaseViewPage: React.FC = () => {
   async function fetchUseCaseSilently(forceRefresh = false) {
     if (!id) return;
     try {
-      const [mcpResult, restResult, processesResult] = await Promise.allSettled([
+      const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
         mcpClient.getUseCaseDetails(id, { forceRefresh }),
         useCaseApi.getUseCase(id),
+        businessRelationsApi.listApplications(),
         businessRelationsApi.listProcesses(),
       ]);
       const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
       const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
+      const applicationRows = applicationsResult.status === 'fulfilled' && Array.isArray(applicationsResult.value)
+        ? applicationsResult.value
+        : [];
       const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
         ? processesResult.value
         : [];
-      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, processRows, id);
+      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, applicationRows, processRows, id);
       if (merged) setUseCase(merged);
     } catch {
       // silent — don't disrupt the UI
@@ -1017,7 +1582,13 @@ const UseCaseViewPage: React.FC = () => {
         <UseCaseView
           useCase={useCase}
           agentsComponent={<AgentsSection useCase={useCase} agents={agents} onSilentRefetch={fetchUseCaseSilently} />}
-          businessImpactComponent={<ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />}
+          businessImpactComponent={
+            <div className="flex flex-col gap-6">
+              <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+            </div>
+          }
           isEditing={isEditing}
           editTitle={editTitle}
           onEditTitleChange={setEditTitle}
