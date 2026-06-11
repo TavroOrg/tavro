@@ -2734,15 +2734,19 @@ class AgentMetadataExporter:
         # Update issues — None means "leave unchanged"; [] means "clear all issues"
         if issues is not None:
             cls.execute_dml(
-                f"DELETE FROM {cls.CORE_DB_NAME}.issues "
-                f"WHERE identifier IN ("
-                f"  SELECT identifier FROM {cls.CORE_DB_NAME}.agent_issues "
-                f"  WHERE agent_id = '{agent_id}' {tenant_where}"
-                f") {tenant_where}"
-            )
-            cls.execute_dml(
-                f"DELETE FROM {cls.CORE_DB_NAME}.agent_issues "
-                f"WHERE agent_id = '{agent_id}' {tenant_where}"
+                f"WITH removed AS ("
+                f"  DELETE FROM {cls.CORE_DB_NAME}.agent_issues "
+                f"  WHERE agent_id = '{agent_id}' {tenant_where} "
+                f"  RETURNING identifier"
+                f") "
+                f"DELETE FROM {cls.CORE_DB_NAME}.issues i "
+                f"WHERE i.identifier IN (SELECT identifier FROM removed) "
+                f"{tenant_where.replace('tenant_id', 'i.tenant_id')} "
+                f"AND NOT EXISTS ("
+                f"  SELECT 1 FROM {cls.CORE_DB_NAME}.agent_issues rel "
+                f"  WHERE rel.identifier = i.identifier "
+                f"  {'AND rel.tenant_id = i.tenant_id' if is_tenant else ''}"
+                f")"
             )
             if issues:
                 u_issue_rows_i: List[str] = []
@@ -2778,6 +2782,28 @@ class AgentMetadataExporter:
                         f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
                     )
                 if u_issue_rows_i:
+                    issue_conflict = (
+                        " ON CONFLICT (tenant_id, identifier) DO UPDATE SET "
+                        "title = EXCLUDED.title, "
+                        "description = EXCLUDED.description, "
+                        "issue_type = EXCLUDED.issue_type, "
+                        "severity = EXCLUDED.severity, "
+                        "source = EXCLUDED.source, "
+                        "detected_at = EXCLUDED.detected_at, "
+                        "resolved_at = EXCLUDED.resolved_at, "
+                        "status = EXCLUDED.status, "
+                        "resolution_notes = EXCLUDED.resolution_notes, "
+                        "assignee = EXCLUDED.assignee, "
+                        "owner = EXCLUDED.owner, "
+                        "updated_ts = EXCLUDED.updated_ts"
+                    ) if is_tenant else ""
+                    agent_issue_conflict = (
+                        " ON CONFLICT (tenant_id, identifier, agent_id) DO UPDATE SET "
+                        "title = EXCLUDED.title, "
+                        "agent_name = EXCLUDED.agent_name, "
+                        "agent_internal_id = EXCLUDED.agent_internal_id, "
+                        "updated_ts = EXCLUDED.updated_ts"
+                    ) if is_tenant else ""
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.issues "
                         f"({tenant_col}identifier, title, "
@@ -2787,6 +2813,7 @@ class AgentMetadataExporter:
                         f"assignee, owner, "
                         f"created_ts, updated_ts) "
                         f"VALUES {','.join(u_issue_rows_i)}"
+                        f"{issue_conflict}"
                     )
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_issues "
@@ -2795,6 +2822,7 @@ class AgentMetadataExporter:
                         f"agent_internal_id, "
                         f"created_ts, updated_ts) "
                         f"VALUES {','.join(u_issue_rows_ai)}"
+                        f"{agent_issue_conflict}"
                     )
 
         # Update knowledge source — when provided, replace existing

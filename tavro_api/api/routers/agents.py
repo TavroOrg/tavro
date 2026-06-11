@@ -1459,21 +1459,36 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
             )
 
         if body.issues is not None:
-            # Delete orphaned core.issues rows for this agent before relinking
-            await db.execute(
-                text(f"""
-                    DELETE FROM {CORE}.issues
-                    WHERE identifier IN (
-                        SELECT identifier FROM {CORE}.agent_issues
-                        WHERE agent_id = :aid AND tenant_id = :tid
-                    ) AND tenant_id = :tid
-                """),
+            # Collect current identifiers before deleting links
+            old_ids_result = await db.execute(
+                text(f"SELECT identifier FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
                 {"aid": agent_id, "tid": tenant_id},
             )
+            old_identifiers = [r["identifier"] for r in old_ids_result.mappings().all()]
+
+            # Remove all current agent-issue links for this agent
             await db.execute(
                 text(f"DELETE FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
                 {"aid": agent_id, "tid": tenant_id},
             )
+
+            # Now remove issue records that are no longer linked to any agent.
+            # This runs as a separate query so NOT EXISTS sees the post-delete state.
+            if old_identifiers:
+                await db.execute(
+                    text(f"""
+                        DELETE FROM {CORE}.issues i
+                        WHERE i.tenant_id = :tid
+                          AND i.identifier = ANY(:ids)
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM {CORE}.agent_issues rel
+                              WHERE rel.tenant_id = :tid
+                                AND rel.identifier = i.identifier
+                          )
+                    """),
+                    {"tid": tenant_id, "ids": old_identifiers},
+                )
             agent_row = await db.execute(
                 text(f"SELECT agent_name, agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
                 {"aid": agent_id, "tid": tenant_id},
@@ -1497,6 +1512,19 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                             :assignee, :owner,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
+                        ON CONFLICT (tenant_id, identifier) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            description = EXCLUDED.description,
+                            issue_type = EXCLUDED.issue_type,
+                            severity = EXCLUDED.severity,
+                            source = EXCLUDED.source,
+                            detected_at = EXCLUDED.detected_at,
+                            resolved_at = EXCLUDED.resolved_at,
+                            status = EXCLUDED.status,
+                            resolution_notes = EXCLUDED.resolution_notes,
+                            assignee = EXCLUDED.assignee,
+                            owner = EXCLUDED.owner,
+                            updated_ts = CURRENT_TIMESTAMP
                     """),
                     {
                         "tid": tenant_id, "identifier": identifier, "title": title,
@@ -1521,6 +1549,11 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                             :tid, :identifier, :title, :agent_id, :agent_name,
                             :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
+                        ON CONFLICT (tenant_id, identifier, agent_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            agent_name = EXCLUDED.agent_name,
+                            agent_internal_id = EXCLUDED.agent_internal_id,
+                            updated_ts = CURRENT_TIMESTAMP
                     """),
                     {
                         "tid": tenant_id, "identifier": identifier, "title": title,
