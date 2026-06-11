@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from datetime import datetime
 from temporalio import activity
 from services.risk_agents.risk_classification import classify_risk
@@ -14,6 +15,15 @@ from services.db.db_functions import (
     refresh_curated_agent_360,
     create_local_agent_card,
 )
+
+
+def _generate_library_entry_async(agent_id: str, tenant_id: str) -> None:
+    """Fire-and-forget: runs in a daemon thread after agent_360 is written."""
+    try:
+        from tavro_library.agent_library import AgentMetadataExporter
+        AgentMetadataExporter.generate_library_entry(agent_id=agent_id, tenant_id=tenant_id)
+    except Exception as exc:
+        print(f"[agent_library] Background generation failed for agent '{agent_id}': {exc}")
 
 
 @activity.defn
@@ -129,8 +139,17 @@ async def refresh_curated_agent_360_activity(agent_internal_id: str, agent_id: s
     )
 
 @activity.defn
-async def create_local_agent_card_activity(agent_internal_id: str):
-    return await asyncio.to_thread(
+async def create_local_agent_card_activity(agent_internal_id: str, agent_id: str = None, tenant_id: str = None):
+    result = await asyncio.to_thread(
         create_local_agent_card,
         agent_internal_id,
     )
+    # agent_360 and agent card are both written — trigger library generation
+    # silently so the workflow completes without waiting.
+    threading.Thread(
+        target=_generate_library_entry_async,
+        args=(agent_id, tenant_id),
+        daemon=True,
+    ).start()
+    return result
+

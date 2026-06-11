@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SQL_CORE_DIR = Path(__file__).parent.parent.parent.parent / "sql" / "core"
+SQL_CORE_DIR          = Path(__file__).parent.parent.parent.parent / "sql" / "core"
+SQL_CURATED_DIR       = Path(__file__).parent.parent.parent.parent / "sql" / "curated"
+SQL_AGENT_LIBRARY_DIR = Path(__file__).parent.parent.parent.parent / "sql" / "agent_library"
 
 
 def _split_sql_statements(sql_content: str) -> list[str]:
@@ -117,17 +119,29 @@ def _split_sql_statements(sql_content: str) -> list[str]:
 
 def _get_sql_files() -> list[Path]:
     """
-    Dynamically discover all SQL files in sql/core/ directory.
-    Returns a sorted list of file paths.
+    Dynamically discover all SQL files in sql/core/ and sql/curated/ directories.
+    Returns a sorted list of file paths (core first, then curated).
     """
-    if not SQL_CORE_DIR.exists():
-        logger.warning("SQL_CORE_DIR does not exist: %s", SQL_CORE_DIR)
-        return []
+    files: list[Path] = []
 
-    sql_files = sorted(SQL_CORE_DIR.glob("*.sql"))
-    if sql_files:
-        logger.info("Discovered %s SQL table files to initialize", len(sql_files))
-    return sql_files
+    if SQL_CORE_DIR.exists():
+        files.extend(sorted(SQL_CORE_DIR.glob("*.sql")))
+    else:
+        logger.warning("SQL_CORE_DIR does not exist: %s", SQL_CORE_DIR)
+
+    if SQL_CURATED_DIR.exists():
+        files.extend(sorted(SQL_CURATED_DIR.glob("*.sql")))
+    else:
+        logger.warning("SQL_CURATED_DIR does not exist: %s", SQL_CURATED_DIR)
+
+    if SQL_AGENT_LIBRARY_DIR.exists():
+        files.extend(sorted(SQL_AGENT_LIBRARY_DIR.glob("*.sql")))
+    else:
+        logger.warning("SQL_AGENT_LIBRARY_DIR does not exist: %s", SQL_AGENT_LIBRARY_DIR)
+
+    if files:
+        logger.info("Discovered %s SQL table files to initialize", len(files))
+    return files
 
 
 async def initialize_tables(db: AsyncSession) -> None:

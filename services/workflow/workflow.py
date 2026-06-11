@@ -140,7 +140,7 @@ class RiskManagerWorkflow:
 
         await workflow.execute_activity(
             create_local_agent_card_activity,
-            args=[agent_internal_id],
+            args=[agent_internal_id, agent_id, tenant_id],
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=retry_policy,
         )
@@ -148,5 +148,5 @@ class RiskManagerWorkflow:
         return {
             "risk_result": risk_result,
             "assessment_id": assessment_id,
-            "agent_360_refresh": agent_360_refresh_result            
+            "agent_360_refresh": agent_360_refresh_result,
         }

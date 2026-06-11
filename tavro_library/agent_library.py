@@ -3756,3 +3756,325 @@ class AgentMetadataExporter:
             i += 1
 
         return bytes(pdf.output())
+
+    # -------------------------------------------------------------------------
+    # Agent Library
+    # -------------------------------------------------------------------------
+
+    AGENT_LIBRARY_SCHEMA = os.getenv("AGENT_LIBRARY_DB_NAME", "agent_library")
+
+    @classmethod
+    def generate_agent_library(cls) -> Dict[str, Any]:
+        """
+        Generate the agent library catalog for ALL agents in the database.
+
+        For each agent, Claude produces a 1-2 line summary (no acronyms, no
+        client references) and the single most relevant GICS Industry derived
+        from the agent description and any linked AI use-case text.
+
+        Each agent's actual tenant_id is read from the database and used for
+        the upsert — no tenant ID needs to be passed manually.
+
+        Results are upserted into agent_library.catalog and returned as a
+        list of dicts suitable for tabular display.
+
+        Usage (manual):
+            from tavro_library.agent_library import AgentMetadataExporter
+            result = AgentMetadataExporter.generate_agent_library()
+            for row in result["data"]:
+                print(row)
+        """
+        from services.risk_agents.agent_library_summary import generate_agent_summary
+        from services.risk_agents.agent_library_industries import classify_agent_industries
+
+        # ---------- 1. Fetch all agents + their tenant + AI use-case context ----------
+        agent_rows = cls.execute_select(
+            f"""
+            SELECT
+                a.agent_id,
+                a.agent_internal_id,
+                a.tenant_id,
+                a.agent_name,
+                a.agent_description,
+                STRING_AGG(
+                    TRIM(COALESCE(uc.description, '') || ' ' || COALESCE(uc.problem_statement, '')),
+                    ' | '
+                ) AS use_case_context
+            FROM {cls.CORE_DB_NAME}.agents a
+            LEFT JOIN {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+                ON rel.agent_id = a.agent_id
+            LEFT JOIN {cls.CORE_DB_NAME}.ai_use_cases uc
+                ON uc.ai_use_case_id = rel.ai_use_case_id
+            WHERE COALESCE(a.is_current, true) = true
+            GROUP BY a.agent_id, a.agent_internal_id, a.tenant_id, a.agent_name, a.agent_description
+            ORDER BY a.agent_name
+            """,
+            None,
+        )
+
+        generated = 0
+        failed = 0
+        catalog: List[Dict[str, Any]] = []
+
+        # ---------- 2. Generate per-agent library entry ----------
+        for row in agent_rows:
+            agent_id          = str(row.get("agent_id") or "").strip()
+            agent_internal_id = str(row.get("agent_internal_id") or "").strip()
+            agent_name        = str(row.get("agent_name") or "").strip()
+            description       = str(row.get("agent_description") or "").strip()
+            use_case_context  = str(row.get("use_case_context") or "").strip() or "Not specified."
+            row_tenant        = row.get("tenant_id")
+            tenant_id_clean   = (
+                cls.sanitize(str(row_tenant).strip())
+                if row_tenant and str(row_tenant).strip().lower() not in ["none", "null", ""]
+                else None
+            )
+
+            if not agent_id or not agent_name:
+                failed += 1
+                continue
+
+            try:
+                summary_result = generate_agent_summary(
+                    agent_name=agent_name,
+                    agent_description=description,
+                    use_case_context=use_case_context,
+                )
+                summary = str(summary_result.get("summary", "")).strip()
+
+                industries_result = classify_agent_industries(
+                    agent_name=agent_name,
+                    agent_description=description,
+                    use_case_context=use_case_context,
+                )
+                industry = str(industries_result.get("industry", "")).strip()
+
+                if not summary:
+                    failed += 1
+                    continue
+
+            except Exception as e:
+                print(f"[generate_agent_library] Agent error for '{agent_name}': {e}")
+                failed += 1
+                continue
+
+            # ---------- 4. Upsert into agent_library.catalog ----------
+            catalog_id   = str(uuid.uuid4())
+            now          = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            tid_val      = f"'{cls.sanitize(tenant_id_clean)}'" if tenant_id_clean else "NULL"
+            iid_val      = f"'{cls.sanitize(agent_internal_id)}'" if agent_internal_id else "NULL"
+            industry_val = f"'{cls.sanitize(industry)}'" if industry else "NULL"
+
+            try:
+                conflict_target = (
+                    "ON CONFLICT (agent_id, tenant_id) WHERE tenant_id IS NOT NULL"
+                    if tenant_id_clean else
+                    "ON CONFLICT (agent_id) WHERE tenant_id IS NULL"
+                )
+                cls.execute_dml(f"""
+                    INSERT INTO {cls.AGENT_LIBRARY_SCHEMA}.catalog (
+                        catalog_id, tenant_id, agent_id, agent_internal_id, agent_name,
+                        summary, industry, generated_ts, snapshot_ts
+                    )
+                    VALUES (
+                        '{catalog_id}', {tid_val}, '{cls.sanitize(agent_id)}', {iid_val},
+                        '{cls.sanitize(agent_name)}', '{cls.sanitize(summary)}',
+                        {industry_val},
+                        TIMESTAMP '{now}', TIMESTAMP '{now}'
+                    )
+                    {conflict_target}
+                    DO UPDATE SET
+                        agent_internal_id = EXCLUDED.agent_internal_id,
+                        agent_name        = EXCLUDED.agent_name,
+                        summary           = EXCLUDED.summary,
+                        industry          = EXCLUDED.industry,
+                        snapshot_ts       = EXCLUDED.snapshot_ts
+                """)
+                generated += 1
+                catalog.append({
+                    "agent_id":   agent_id,
+                    "agent_name": agent_name,
+                    "summary":    summary,
+                    "industry":   industry,
+                })
+            except Exception as e:
+                print(f"[generate_agent_library] DB upsert error for '{agent_name}': {e}")
+                failed += 1
+
+        return {
+            "generated": generated,
+            "failed":    failed,
+            "message":   (
+                f"Agent library generated: {generated} entries created/updated, "
+                f"{failed} failed."
+            ),
+            "data": catalog,
+        }
+
+    @classmethod
+    def generate_library_entry(
+        cls,
+        agent_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate (or refresh) the agent_library.catalog entry for a single agent.
+
+        Fetches the agent name, description, and linked AI use-case context from
+        the database, then runs the two CrewAI agents to produce a summary and
+        industry list, and upserts the result into agent_library.catalog.
+
+        Triggered automatically as a fire-and-forget background thread after
+        agent_360 is refreshed — the caller does not wait for the result.
+        """
+        from services.risk_agents.agent_library_summary import generate_agent_summary
+        from services.risk_agents.agent_library_industries import classify_agent_industries
+
+        if not agent_id:
+            return {"error": "agent_id is required."}
+
+        agent_id_clean = cls.sanitize(str(agent_id).strip())
+
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_id_clean = None
+        else:
+            tenant_id_clean = cls.sanitize(str(tenant_id).strip())
+
+        # ---------- 1. Fetch agent name, description, and internal id from DB ----------
+        agent_rows = cls.execute_select(
+            f"""
+            SELECT agent_internal_id, agent_name, agent_description
+            FROM {cls.CORE_DB_NAME}.agents
+            WHERE agent_id = %s
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+            """,
+            (agent_id_clean,),
+        )
+        if not agent_rows:
+            return {"error": f"No agent found with id '{agent_id_clean}'."}
+
+        agent_internal_id_clean = str(agent_rows[0].get("agent_internal_id") or "").strip()
+        agent_name_clean        = str(agent_rows[0].get("agent_name") or "").strip()
+        description             = str(agent_rows[0].get("agent_description") or "").strip()
+
+        if not agent_name_clean:
+            return {"error": f"Agent '{agent_id_clean}' has no name."}
+
+        # ---------- 2. Fetch linked AI use-case context ----------
+        use_case_rows = cls.execute_select(
+            f"""
+            SELECT
+                TRIM(COALESCE(uc.description, '') || ' ' || COALESCE(uc.problem_statement, ''))
+                    AS context_chunk
+            FROM {cls.CORE_DB_NAME}.agent_ai_use_cases rel
+            LEFT JOIN {cls.CORE_DB_NAME}.ai_use_cases uc
+                ON uc.ai_use_case_id = rel.ai_use_case_id
+            WHERE rel.agent_id = %s
+              AND TRIM(COALESCE(uc.description, '') || COALESCE(uc.problem_statement, '')) <> ''
+            """,
+            (agent_id_clean,),
+        )
+        use_case_context = (
+            " | ".join(r["context_chunk"] for r in use_case_rows if r.get("context_chunk"))
+            or "Not specified."
+        )
+
+        # ---------- 2. Run CrewAI agents ----------
+        summary_result = generate_agent_summary(
+            agent_name=agent_name_clean,
+            agent_description=description,
+            use_case_context=use_case_context,
+        )
+        summary = str(summary_result.get("summary", "")).strip()
+
+        industries_result = classify_agent_industries(
+            agent_name=agent_name_clean,
+            agent_description=description,
+            use_case_context=use_case_context,
+        )
+        industry = str(industries_result.get("industry", "")).strip()
+
+        if not summary:
+            return {"error": f"Summary generation returned empty result for agent '{agent_name_clean}'."}
+
+        # ---------- 3. Upsert into agent_library.catalog ----------
+        catalog_id  = str(uuid.uuid4())
+        now         = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        tid_val     = f"'{tenant_id_clean}'" if tenant_id_clean else "NULL"
+        iid_val     = f"'{cls.sanitize(agent_internal_id_clean)}'" if agent_internal_id_clean else "NULL"
+        industry_val = f"'{cls.sanitize(industry)}'" if industry else "NULL"
+
+        conflict_target = (
+            "ON CONFLICT (agent_id, tenant_id) WHERE tenant_id IS NOT NULL"
+            if tenant_id_clean else
+            "ON CONFLICT (agent_id) WHERE tenant_id IS NULL"
+        )
+        cls.execute_dml(f"""
+            INSERT INTO {cls.AGENT_LIBRARY_SCHEMA}.catalog (
+                catalog_id, tenant_id, agent_id, agent_internal_id, agent_name,
+                summary, industry, generated_ts, snapshot_ts
+            )
+            VALUES (
+                '{catalog_id}', {tid_val}, '{agent_id_clean}', {iid_val},
+                '{cls.sanitize(agent_name_clean)}', '{cls.sanitize(summary)}',
+                {industry_val},
+                TIMESTAMP '{now}', TIMESTAMP '{now}'
+            )
+            {conflict_target}
+            DO UPDATE SET
+                agent_internal_id = EXCLUDED.agent_internal_id,
+                agent_name        = EXCLUDED.agent_name,
+                summary           = EXCLUDED.summary,
+                industry          = EXCLUDED.industry,
+                snapshot_ts       = EXCLUDED.snapshot_ts
+        """)
+
+        return {
+            "agent_id":   agent_id_clean,
+            "agent_name": agent_name_clean,
+            "summary":    summary,
+            "industry":   industry,
+            "message":    "Agent library entry created/updated successfully.",
+        }
+
+    @classmethod
+    def get_agent_library(cls, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Return the pre-generated agent library catalog as a list of dicts.
+
+        Call generate_agent_library() first to populate the table.
+        """
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_mode = "GLOBAL"
+            tenant_id_clean = None
+        else:
+            tenant_mode = "TENANT"
+            tenant_id_clean = cls.sanitize(str(tenant_id).strip())
+
+        where = (
+            f"WHERE tenant_id = '{tenant_id_clean}'" if tenant_mode == "TENANT"
+            else ""
+        )
+
+        rows = cls.execute_select(
+            f"""
+            SELECT agent_id, agent_name, summary, industry
+            FROM {cls.AGENT_LIBRARY_SCHEMA}.catalog
+            {where}
+            ORDER BY agent_name
+            """
+        )
+
+        return {
+            "total": len(rows),
+            "data":  [
+                {
+                    "agent_id":              str(r.get("agent_id") or ""),
+                    "agent_name":            str(r.get("agent_name") or ""),
+                    "summary":               str(r.get("summary") or ""),
+                    "industry": r.get("industry") or [],
+                }
+                for r in rows
+            ],
+        }
