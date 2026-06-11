@@ -10,6 +10,7 @@ import {
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
 import AttachmentPanel from './AttachmentPanel';
+import TimedInfoToast from './TimedInfoToast';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
@@ -140,6 +141,8 @@ const Layout: React.FC = () => {
 
     return (
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+            {/* Global artifact-ready notification — appears centered at top of viewport */}
+            <TimedInfoToast storageKey="tavro_artifacts_notice" position="center" durationMs={8000} />
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
