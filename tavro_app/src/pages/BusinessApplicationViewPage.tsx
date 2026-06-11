@@ -27,6 +27,7 @@ import type {
 } from '../types/businessRelations';
 import type { AiModelRecord } from '../types/aiModel';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 import { useUseCases } from '../context/UseCaseContext';
 
 type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models';
@@ -291,6 +292,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { agents } = useCatalog();
+  const { activeCompany } = useBlueprint();
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
@@ -587,7 +589,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     try {
       const payload = buildApplicationPayload(form);
       if (isCreateMode) {
-        const created = await businessRelationsApi.createApplication(payload);
+        const created = await businessRelationsApi.createApplication(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
             await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id);
@@ -601,9 +603,11 @@ const BusinessApplicationViewPage: React.FC = () => {
           } catch (linkErr) {
             console.warn('Application created but auto-link to AI use case failed.', linkErr);
           }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
           navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
           return;
         }
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/applications/${encodeURIComponent(created.business_application_id)}`, { replace: true });
         return;
       }
@@ -645,6 +649,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActionError(null);
     try {
       await businessRelationsApi.deleteApplication(application.business_application_id);
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/applications');
     } catch (err: any) {
       setActionError(err.message || 'Failed to delete application');

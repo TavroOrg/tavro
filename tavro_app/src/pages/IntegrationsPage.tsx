@@ -15,6 +15,7 @@ import {
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { IntegrationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const PAGE_SIZE = 10;
 
@@ -35,6 +36,7 @@ const getAvailabilityMeta = (status: string | null | undefined) => {
 const IntegrationsPage: React.FC = () => {
   const navigate = useNavigate();
   const { loading: catalogLoading, error: catalogError, lastFetched } = useCatalog();
+  const { activeCompany } = useBlueprint();
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,7 @@ const IntegrationsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await businessRelationsApi.listIntegrations();
+        const data = await businessRelationsApi.listIntegrations(undefined, activeCompany?.id);
         setIntegrations(data);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load integrations');
@@ -72,7 +74,7 @@ const IntegrationsPage: React.FC = () => {
       }
     };
     load();
-  }, [catalogLoading, catalogError, lastFetched]);
+  }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

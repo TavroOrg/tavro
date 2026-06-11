@@ -641,7 +641,17 @@ async function streamAnthropicDirect({ model, apiKey, messages, sendEvent, sendD
 //   body          Already-formatted request body (provider wire format)
 
 app.post('/chat/byok/complete', async (req, res) => {
-    const { providerType, endpoint, apiKey, bearerToken, body } = req.body ?? {};
+    const { providerType, endpoint: rawEndpoint, apiKey: reqApiKey, bearerToken, body } = req.body ?? {};
+    const apiKey = reqApiKey || (
+        providerType === 'openai'    ? process.env.OPENAI_API_KEY :
+        providerType === 'azure'     ? process.env.AZURE_AI_FOUNDRY_KEY :
+        providerType === 'anthropic' ? process.env.ANTHROPIC_API_KEY :
+        ''
+    );
+    // Azure: prepend admin-configured endpoint when frontend sends only the path (no base URL).
+    const endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
+        ? `${(process.env.AZURE_AI_FOUNDRY_ENDPOINT || '').replace(/\/$/, '')}${rawEndpoint}`
+        : rawEndpoint;
 
     if (!endpoint || !body)     return res.status(400).json({ error: 'Missing endpoint or body' });
     if (!endpoint.startsWith('https://')) return res.status(400).json({ error: 'Only HTTPS endpoints allowed' });
@@ -679,7 +689,17 @@ app.post('/chat/byok/complete', async (req, res) => {
 // Accepts an optional requestId for response caching and client reconnection.
 
 app.post('/chat/byok/stream', async (req, res) => {
-    const { providerType, endpoint, apiKey, bearerToken, body, requestId } = req.body ?? {};
+    const { providerType, endpoint: rawEndpoint, apiKey: reqApiKey, bearerToken, body, requestId } = req.body ?? {};
+    const apiKey = reqApiKey || (
+        providerType === 'openai'    ? process.env.OPENAI_API_KEY :
+        providerType === 'azure'     ? process.env.AZURE_AI_FOUNDRY_KEY :
+        providerType === 'anthropic' ? process.env.ANTHROPIC_API_KEY :
+        ''
+    );
+    // Azure: prepend admin-configured endpoint when frontend sends only the path (no base URL).
+    const endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
+        ? `${(process.env.AZURE_AI_FOUNDRY_ENDPOINT || '').replace(/\/$/, '')}${rawEndpoint}`
+        : rawEndpoint;
 
     if (!endpoint || !body) { res.status(400).json({ error: 'Missing endpoint or body' }); return; }
     if (!endpoint.startsWith('https://')) { res.status(400).json({ error: 'Only HTTPS endpoints allowed' }); return; }

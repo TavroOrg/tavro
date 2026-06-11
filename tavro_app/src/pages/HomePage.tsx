@@ -1,117 +1,121 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Bot, ClipboardList, BarChart2, Brain, GitBranch, TrendingUp,
-  Map, Layers, Cpu, Zap, Activity, ChevronRight, ArrowRight,
+  ClipboardList, Map, Layers, Cpu, Zap, Activity, ArrowRight,
+  TrendingUp, AlertCircle, Bot, X, ArrowUpRight,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useChatContext } from '../context/ChatContext';
 import travoLogo from '../assets/travo_logo.png';
 
-const LIFECYCLE_STAGES = [
+const STAGES = [
+  { id: 'blueprint', label: 'Blueprint', Icon: Map, route: '/blueprint' },
+  { id: 'spark', label: 'Spark', Icon: Zap, route: '/spark' },
+  { id: 'plan', label: 'Plan', Icon: ClipboardList, route: '/use-cases' },
+  { id: 'build', label: 'Build', Icon: Cpu, route: '/catalog' },
+  { id: 'deploy', label: 'Deploy', Icon: Layers, route: null },
+  { id: 'govern', label: 'Govern', Icon: Activity, route: '/compliance' },
+];
+
+const STATS = [
   {
-    id: 'blueprint',
-    label: 'Blueprint',
-    Icon: Map,
-    description: 'Overall Enterprise Context',
-    steps: ['Enterprise Profile', 'Business Strategies', 'Org Structure', 'Financials', 'Risk Profile', 'Business Apps', 'Processes'],
+    label: 'Spark Ideas',
+    value: 84,
+    sub: '+12 this week',
+    subColor: 'text-emerald-600 dark:text-emerald-400',
+    Icon: Zap,
+    iconColor: 'text-violet-600 dark:text-violet-400',
+    iconBg: 'bg-violet-50 dark:bg-violet-900/20',
+  },
+  {
+    label: 'AI Use Cases',
+    value: 52,
+    sub: '8 in progress',
+    subColor: 'text-slate-500 dark:text-slate-400',
+    Icon: ClipboardList,
+    iconColor: 'text-blue-600 dark:text-blue-400',
+    iconBg: 'bg-blue-50 dark:bg-blue-900/20',
+  },
+  {
+    label: 'Active Agents',
+    value: 84,
+    sub: '6 live in prod',
+    subColor: 'text-emerald-600 dark:text-emerald-400',
+    Icon: Bot,
+    iconColor: 'text-purple-600 dark:text-purple-400',
+    iconBg: 'bg-purple-50 dark:bg-purple-900/20',
+  },
+  {
+    label: 'Open Issues',
+    value: 3,
+    sub: '2 need review',
+    subColor: 'text-rose-600 dark:text-rose-400',
+    Icon: AlertCircle,
+    iconColor: 'text-rose-600 dark:text-rose-400',
+    iconBg: 'bg-rose-50 dark:bg-rose-900/20',
+  },
+];
+
+const RECENT_ACTIVITY = [
+  { id: 1, text: 'Invoice automation moved to Design stage', time: '2h ago', dot: 'bg-violet-500' },
+  { id: 2, text: '3 new Spark ideas generated', time: '5h ago', dot: 'bg-emerald-500' },
+  { id: 3, text: 'HR onboarding agent - risk flag raised', time: 'Yesterday', dot: 'bg-amber-500' },
+  { id: 4, text: 'Procurement agent deployed to production', time: '2 days ago', dot: 'bg-emerald-500' },
+];
+
+const ATTENTION_ITEMS = [
+  {
+    id: 1,
+    badge: 'Risk',
+    badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    text: 'HR onboarding agent - autonomy level review required',
+    action: 'Review',
+    route: '/catalog',
+  },
+  {
+    id: 2,
+    badge: 'Approval',
+    badgeClass: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+    text: 'Invoice automation - stakeholder sign-off pending',
+    action: 'Review',
+    route: '/use-cases',
+  },
+  {
+    id: 3,
+    badge: 'Issue',
+    badgeClass: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+    text: 'Procurement agent - behavioral drift detected',
+    action: 'Review',
+    route: '/catalog',
+  },
+  {
+    id: 4,
+    badge: 'Incomplete',
+    badgeClass: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+    text: 'Blueprint - financials section not yet populated',
+    action: 'Complete',
     route: '/blueprint',
   },
-  {
-    id: 'plan',
-    label: 'Plan',
-    Icon: ClipboardList,
-    description: 'Use case to agent blueprint',
-    steps: ['Idea Generation', 'Use Case Discovery', 'Agent Blueprint', 'Risk Profiling', 'Agent Lineage', 'Agent Card', 'Stakeholder Alignment', 'Success Metrics', 'Change Mgmt'],
-    route: '/use-cases',
-  },
-  {
-    id: 'design',
-    label: 'Design',
-    Icon: Layers,
-    description: 'What-if analysis and agent variants',
-    steps: ['Variant Modeling', 'Autonomy Spectrum', 'Tool Set Selection', 'Cost Modelling', 'Scenario Stress Testing'],
-    route: '/use-cases',
-  },
-  {
-    id: 'develop',
-    label: 'Develop',
-    Icon: Cpu,
-    description: 'Development work plan generation',
-    steps: ['Work Plan Generation', 'MCP and Tool Build', 'Prompt Engineering', 'Guardrails Setup', 'Data Pipelines', 'Data Governance Integration'],
-    route: '/catalog',
-  },
-  {
-    id: 'deploy',
-    label: 'Deploy',
-    Icon: Zap,
-    description: 'Deployment work plan',
-    steps: ['Environment Config', 'Compute & Network', 'IAM & Security', 'CI/CD Pipeline', 'Versioning & Rollback'],
-    route: '/catalog',
-  },
-  {
-    id: 'monitor',
-    label: 'Monitor',
-    Icon: Activity,
-    description: 'Active governance and drift detection',
-    steps: ['Dynamic Risk Scoring', 'Drift Detection', 'Audit Trail', 'HITL Escalation', 'Continuous Improvement', 'AI ROI Tracking'],
-    route: '/insights',
-  },
-];
-
-const VALUE_PROPS = [
-  {
-    Icon: Bot,
-    title: 'Build & Control Agents',
-    description: 'Build new agents from scratch or bring governance to agents already running in your enterprise — all from one command center.',
-    colorClass: 'text-violet-600 dark:text-violet-400',
-    bgClass: 'bg-violet-50 dark:bg-violet-900/20',
-    borderClass: 'border-violet-200 dark:border-violet-800',
-  },
-  {
-    Icon: Brain,
-    title: 'Enterprise-Aware LLM',
-    description: 'Ground every AI decision in your company\'s real context — org structure, financials, risk profile, business apps, and processes.',
-    colorClass: 'text-purple-600 dark:text-purple-400',
-    bgClass: 'bg-purple-50 dark:bg-purple-900/20',
-    borderClass: 'border-purple-200 dark:border-purple-800',
-  },
-  {
-    Icon: GitBranch,
-    title: 'End-to-End AI Lifecycle',
-    description: 'From ideation to production governance — Blueprint, Plan, Design, Develop, Deploy, and Monitor with built-in steps at every stage.',
-    colorClass: 'text-indigo-600 dark:text-indigo-400',
-    bgClass: 'bg-indigo-50 dark:bg-indigo-900/20',
-    borderClass: 'border-indigo-200 dark:border-indigo-800',
-  },
-  {
-    Icon: TrendingUp,
-    title: 'AI BizOps Companion',
-    description: 'Your strategic partner for AI operations — aligning stakeholders, tracking ROI, managing risk, and driving continuous improvement.',
-    colorClass: 'text-blue-600 dark:text-blue-400',
-    bgClass: 'bg-blue-50 dark:bg-blue-900/20',
-    borderClass: 'border-blue-200 dark:border-blue-800',
-  },
-];
-
-const QUICK_ACTIONS = [
-  { Icon: ClipboardList, label: 'AI Use Cases', desc: 'Discover and manage AI implementations', route: '/use-cases' },
-  { Icon: Bot, label: 'Agent Catalog', desc: 'Explore your registered AI agents', route: '/catalog' },
-  { Icon: BarChart2, label: 'Insights', desc: 'Analytics and executive risk summaries', route: '/insights' },
 ];
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { setViewContext } = useChatContext();
-  const [activeStage, setActiveStage] = useState<string | null>(null);
+  const [showDeployMessage, setShowDeployMessage] = useState(false);
 
   useEffect(() => {
     setViewContext('home');
   }, [setViewContext]);
 
-  const activeStageData = LIFECYCLE_STAGES.find(s => s.id === activeStage);
+  const handleStageClick = (id: string, route: string | null) => {
+    if (id === 'deploy') {
+      setShowDeployMessage(true);
+    } else if (route) {
+      navigate(route);
+    }
+  };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-10 animate-fade-in">
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-8 animate-fade-in">
 
       {/* ── Hero ── */}
       <div className="bg-white dark:bg-slate-900 p-8 md:p-12 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -124,141 +128,117 @@ const HomePage: React.FC = () => {
               Welcome to <span className="text-purple-700 dark:text-purple-400">Tavro Agent BizOps</span>
             </h1>
             <p className="text-slate-500 dark:text-slate-400 text-base md:text-lg max-w-2xl leading-relaxed">
-              The enterprise platform that makes your LLMs enterprise-aware — guiding you from the first idea all the way through production governance.
+              Build, govern, and scale enterprise-aware AI agents - from first idea to production.
             </p>
           </div>
         </div>
       </div>
 
-      {/* ── Value Propositions ── */}
-      <div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {VALUE_PROPS.map(({ Icon, title, description, colorClass, bgClass, borderClass }) => (
-            <div
-              key={title}
-              className={`p-5 rounded-2xl border ${bgClass} ${borderClass} transition-all hover:shadow-md`}
-            >
-              <div className="p-2.5 rounded-xl inline-flex mb-3 bg-white dark:bg-slate-800 shadow-sm">
-                <Icon size={20} className={colorClass} />
+      {/* ── Stats ── */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        {STATS.map(({ label, value, sub, subColor, Icon, iconColor, iconBg }) => (
+          <div
+            key={label}
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                {label}
+              </p>
+              <div className={`p-1.5 rounded-lg ${iconBg}`}>
+                <Icon size={14} className={iconColor} />
               </div>
-              <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-2">{title}</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{description}</p>
             </div>
-          ))}
-        </div>
+            <p className="text-3xl font-bold text-slate-800 dark:text-white mb-1">{value}</p>
+            <p className={`text-xs font-medium ${subColor}`}>{sub}</p>
+          </div>
+        ))}
       </div>
 
-      {/* ── Lifecycle Pipeline ── */}
-      <div>
-        <div className="mb-5">
-          <h2 className="text-base font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-            AI Agent Lifecycle
-          </h2>
-        </div>
-
-        {/* Stage flow — horizontal on large screens */}
+      {/* ── Stage Pipeline ── */}
+      <div className="space-y-3">
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          {LIFECYCLE_STAGES.map(({ id, label, Icon, description, steps }, idx) => {
-            const isActive = activeStage === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveStage(isActive ? null : id)}
-                className={`relative text-left p-4 rounded-2xl border transition-all ${
-                  isActive
-                    ? 'bg-purple-700 border-purple-700 shadow-lg shadow-purple-300/30 dark:shadow-purple-900/50'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-purple-700 hover:shadow-md'
-                }`}
-              >
-                {/* Connecting arrow — only on xl, not on last */}
-                {idx < LIFECYCLE_STAGES.length - 1 && (
-                  <span className="hidden xl:flex absolute -right-4 top-1/2 -translate-y-1/2 z-10">
-                    <ArrowRight size={22} strokeWidth={2.5} className="text-purple-700 dark:text-purple-400" />
-                  </span>
-                )}
-
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${
-                  isActive ? 'bg-white/20' : 'bg-purple-50 dark:bg-purple-900/30'
-                }`}>
-                  <Icon size={16} className={isActive ? 'text-white' : 'text-purple-600 dark:text-purple-400'} />
-                </div>
-
-                <div className={`text-xs font-semibold uppercase tracking-wider mb-0.5 ${
-                  isActive ? 'text-purple-200' : 'text-slate-400 dark:text-slate-500'
-                }`}>
-                  Stage {idx + 1}
-                </div>
-                <div className={`font-bold text-sm ${isActive ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
-                  {label}
-                </div>
-                <div className={`text-xs mt-1 leading-tight ${
-                  isActive ? 'text-purple-200' : 'text-slate-500 dark:text-slate-400'
-                }`}>
-                  {steps.length} steps
-                </div>
-              </button>
-            );
-          })}
+          {STAGES.map(({ id, label, Icon, route }, idx) => (
+            <button
+              key={id}
+              onClick={() => handleStageClick(id, route)}
+              className="relative text-left p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-purple-300 dark:hover:border-purple-700 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:shadow-md transition-all group"
+            >
+              {idx < STAGES.length - 1 && (
+                <span className="hidden xl:flex absolute -right-4 top-1/2 -translate-y-1/2 z-10">
+                  <ArrowRight size={22} strokeWidth={2.5} className="text-purple-700 dark:text-purple-400" />
+                </span>
+              )}
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 bg-purple-50 dark:bg-purple-900/30 group-hover:bg-purple-100 dark:group-hover:bg-purple-900/50 transition-colors">
+                <Icon size={16} className="text-purple-600 dark:text-purple-400" />
+              </div>
+              <div className="font-bold text-sm text-slate-800 dark:text-slate-200">
+                {label}
+              </div>
+            </button>
+          ))}
         </div>
 
-        {/* Expanded stage detail */}
-        {activeStageData && (
-          <div className="mt-4 p-6 rounded-2xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 animate-fade-in">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-slate-800 dark:text-white">{activeStageData.label}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{activeStageData.description}</p>
-              </div>
-              <button
-                onClick={() => navigate(activeStageData.route)}
-                className="flex items-center gap-1.5 text-sm font-semibold text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300 flex-shrink-0 ml-4"
-              >
-                Open <ChevronRight size={14} />
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {activeStageData.steps.map((step, i) => (
-                <div
-                  key={step}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 rounded-full border border-purple-200 dark:border-purple-700 text-xs font-medium text-slate-700 dark:text-slate-300"
-                >
-                  <span className="w-4 h-4 rounded-full bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 text-[10px] flex items-center justify-center font-bold flex-shrink-0">
-                    {i + 1}
-                  </span>
-                  {step}
-                </div>
-              ))}
-            </div>
+        {/* Deploy notice */}
+
+        {showDeployMessage && (
+          <div className="flex items-start gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 animate-fade-in">
+            <TrendingUp size={18} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800 dark:text-amber-200 flex-1">
+              <span className="font-semibold">Deploy</span> is accomplished outside Tavro and facilitated through integrations - coming soon.
+            </p>
+            <button
+              onClick={() => setShowDeployMessage(false)}
+              className="text-amber-500 hover:text-amber-700 dark:hover:text-amber-300 flex-shrink-0"
+            >
+              <X size={16} />
+            </button>
           </div>
         )}
       </div>
 
-      {/* ── Quick Access ── */}
-      <div>
-        <h2 className="text-base font-bold text-slate-800 dark:text-white uppercase tracking-wider mb-4">
-          Quick Access
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {QUICK_ACTIONS.map(({ Icon, label, desc, route }) => (
-            <button
-              key={label}
-              onClick={() => navigate(route)}
-              className="flex items-center gap-4 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-purple-300 dark:hover:border-purple-700 hover:shadow-md transition-all group text-left"
-            >
-              <div className="p-3 bg-purple-50 dark:bg-purple-900/30 rounded-xl group-hover:scale-110 transition-transform flex-shrink-0">
-                <Icon size={20} className="text-purple-600 dark:text-purple-400" />
+      {/* ── Recent Activity & Needs Attention ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        {/* Recent Activity */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">
+            Recent Activity
+          </h2>
+          <div className="space-y-4">
+            {RECENT_ACTIVITY.map(({ id, text, time, dot }) => (
+              <div key={id} className="flex items-start gap-3">
+                <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
+                <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap flex-shrink-0">{time}</span>
               </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-sm">{label}</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{desc}</p>
-              </div>
-              <ChevronRight
-                size={16}
-                className="text-slate-300 dark:text-slate-600 flex-shrink-0 group-hover:text-purple-500 group-hover:translate-x-0.5 transition-all"
-              />
-            </button>
-          ))}
+            ))}
+          </div>
         </div>
+
+        {/* Needs Your Attention */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">
+            Needs Your Attention
+          </h2>
+          <div className="space-y-4">
+            {ATTENTION_ITEMS.map(({ id, badge, badgeClass, text, action, route }) => (
+              <div key={id} className="flex items-start gap-3">
+                <span className={`mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${badgeClass}`}>
+                  {badge}
+                </span>
+                <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
+                <button
+                  onClick={() => navigate(route)}
+                  className="flex items-center gap-0.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300 whitespace-nowrap flex-shrink-0"
+                >
+                  {action} <ArrowUpRight size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
       </div>
 
     </div>

@@ -339,6 +339,7 @@ const AiModelViewPage: React.FC = () => {
             console.warn('Model created but auto-link to process failed.', linkErr);
           }
         }
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/ai-models/${encodeURIComponent(created.ai_model_id)}`, { replace: true });
         return;
       }
