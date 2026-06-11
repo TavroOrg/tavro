@@ -15,6 +15,8 @@ import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { businessRelationsApi } from '../services/businessRelationsApi';
+import { aiModelApi } from '../services/aiModelApi';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
@@ -54,6 +56,30 @@ const Layout: React.FC = () => {
     const { agents } = useCatalog();
     const { useCases } = useUseCases();
     const { activeCompany } = useBlueprint();
+    const [appCount, setAppCount] = useState(0);
+    const [processCount, setProcessCount] = useState(0);
+    const [integrationCount, setIntegrationCount] = useState(0);
+    const [aiModelCount, setAiModelCount] = useState(0);
+
+    const fetchCatalogCounts = useCallback(() => {
+        Promise.allSettled([
+            businessRelationsApi.listApplications(),
+            businessRelationsApi.listProcesses(),
+            businessRelationsApi.listIntegrations(),
+            aiModelApi.listModels(),
+        ]).then(([apps, processes, integrations, models]) => {
+            if (apps.status === 'fulfilled') setAppCount(apps.value.length);
+            if (processes.status === 'fulfilled') setProcessCount(processes.value.length);
+            if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value.length);
+            if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+        });
+    }, []);
+
+    useEffect(() => {
+        fetchCatalogCounts();
+        window.addEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+        return () => window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+    }, [fetchCatalogCounts]);
 
     // ── Right panel state ────────────────────────────────────────────────────
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -247,7 +273,10 @@ const Layout: React.FC = () => {
                                 title={!isLeftPanelOpen ? "Applications" : undefined}
                             >
                                 <AppWindow size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/applications') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Applications</span>
+                                {isLeftPanelOpen && appCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{appCount} {appCount === 1 ? 'app' : 'apps'}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => navigate('/processes')}
@@ -257,7 +286,10 @@ const Layout: React.FC = () => {
                                 title={!isLeftPanelOpen ? "Processes" : undefined}
                             >
                                 <Workflow size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/processes') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Processes</span>
+                                {isLeftPanelOpen && processCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{processCount} {processCount === 1 ? 'process' : 'processes'}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => navigate('/ai-models')}
@@ -267,7 +299,10 @@ const Layout: React.FC = () => {
                                 title={!isLeftPanelOpen ? "AI Models" : undefined}
                             >
                                 <Boxes size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/ai-models') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI Models</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI Models</span>
+                                {isLeftPanelOpen && aiModelCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{aiModelCount} {aiModelCount === 1 ? 'model' : 'models'}</span>
+                                )}
                             </button>
 
                             <button
@@ -278,7 +313,10 @@ const Layout: React.FC = () => {
                                 title={!isLeftPanelOpen ? "Integrations" : undefined}
                             >
                                 <Plug size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/integrations') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
+                                {isLeftPanelOpen && integrationCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{integrationCount} {integrationCount === 1 ? 'integration' : 'integrations'}</span>
+                                )}
                             </button>
 
                             <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />

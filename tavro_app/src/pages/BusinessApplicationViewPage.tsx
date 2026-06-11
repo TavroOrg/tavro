@@ -575,9 +575,11 @@ const BusinessApplicationViewPage: React.FC = () => {
           } catch (linkErr) {
             console.warn('Application created but auto-link to AI use case failed.', linkErr);
           }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
           navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
           return;
         }
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/applications/${encodeURIComponent(created.business_application_id)}`, { replace: true });
         return;
       }
@@ -619,6 +621,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActionError(null);
     try {
       await businessRelationsApi.deleteApplication(application.business_application_id);
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/applications');
     } catch (err: any) {
       setActionError(err.message || 'Failed to delete application');
