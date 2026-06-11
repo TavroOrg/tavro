@@ -1191,6 +1191,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.tools ? { tools: args.tools } : {}),
             ...(args?.tables ? { tables: args.tables } : {}),
             ...(args?.columns ? { columns: args.columns } : {}),
+            ...(args?.skills ? { skills: args.skills } : {}),
             ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
