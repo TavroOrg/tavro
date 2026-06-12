@@ -41,6 +41,14 @@ type SparkBlueprintCtx = {
   dimensions: { label: string; category: string; summary?: string }[];
   edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
 };
+type AgentTable = { name: string; description?: string; tool_name?: string; columns?: string[] };
+type AgentColumn = { name: string; table_name?: string };
+type AgentSkill = { name: string; description: string; tags: string[]; input_modes: string[]; output_modes: string[] };
+
+const VALID_IO_MODES = new Set([
+  'text', 'structured_data', 'api_response', 'database_query',
+  'file', 'alert', 'report', 'event', 'stream',
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -107,6 +115,127 @@ function normalizeKnowledgeSource(value: unknown): AgentKnowledgeSource | undefi
     name,
     description: asNonEmptyString(source.description) ?? `Primary data source for ${name}`,
   };
+}
+
+function normalizeColumnNames(value: unknown): string[] {
+  const rawColumns = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const seen = new Set<string>();
+  const names: string[] = [];
+
+  for (const rawColumn of rawColumns) {
+    const column = asRecord(rawColumn);
+    const name = column
+      ? asNonEmptyString(column.name) ?? asNonEmptyString(column.column_name) ?? asNonEmptyString(column.identifier)
+      : asNonEmptyString(rawColumn);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+
+  return names;
+}
+
+function normalizeAgentTables(value: unknown): AgentTable[] {
+  const rawTables = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const seen = new Set<string>();
+  const tables: AgentTable[] = [];
+
+  for (const rawTable of rawTables) {
+    const table = asRecord(rawTable);
+    const name = table
+      ? asNonEmptyString(table.name) ?? asNonEmptyString(table.table_name)
+      : asNonEmptyString(rawTable);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const normalized: AgentTable = {
+      name,
+      columns: normalizeColumnNames(table?.columns ?? table?.column),
+    };
+    const description = asNonEmptyString(table?.description);
+    const toolName = asNonEmptyString(table?.tool_name) ?? asNonEmptyString(table?.tool);
+    if (description) normalized.description = description;
+    if (toolName) normalized.tool_name = toolName;
+    tables.push(normalized);
+  }
+
+  return tables;
+}
+
+function normalizeAgentSkills(value: unknown): AgentSkill[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const skills: AgentSkill[] = [];
+
+  const cleanModes = (raw: unknown): string[] => {
+    const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+    return arr.map(v => (typeof v === 'string' ? v.trim().toLowerCase() : '')).filter(m => VALID_IO_MODES.has(m));
+  };
+
+  for (const rawSkill of value) {
+    const skill = asRecord(rawSkill);
+    if (!skill) continue;
+    const name = asNonEmptyString(skill.name);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+
+    const rawTags = Array.isArray(skill.tags) ? skill.tags : typeof skill.tags === 'string' ? [skill.tags] : [];
+    const tags = rawTags.map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean).slice(0, 6);
+
+    const inputModes = cleanModes(skill.input_modes ?? skill.inputModes);
+    const outputModes = cleanModes(skill.output_modes ?? skill.outputModes);
+
+    skills.push({
+      name,
+      description: asNonEmptyString(skill.description) ?? `Skill: ${name}`,
+      tags,
+      input_modes: inputModes.length > 0 ? inputModes : ['text'],
+      output_modes: outputModes.length > 0 ? outputModes : ['structured_data'],
+    });
+  }
+
+  return skills.slice(0, 6);
+}
+
+function normalizeAgentColumns(value: unknown, tables: AgentTable[]): AgentColumn[] {
+  const rawColumns = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const fallbackTable = tables.length === 1 ? tables[0].name : undefined;
+  const seen = new Set<string>();
+  const columns: AgentColumn[] = [];
+
+  const addColumn = (name: string | null, tableName?: string | null) => {
+    if (!name) return;
+    const resolvedTable = tableName ?? fallbackTable;
+    const key = `${name.toLowerCase()}::${(resolvedTable ?? '').toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    columns.push(resolvedTable ? { name, table_name: resolvedTable } : { name });
+  };
+
+  for (const rawColumn of rawColumns) {
+    const column = asRecord(rawColumn);
+    if (column) {
+      addColumn(
+        asNonEmptyString(column.name) ?? asNonEmptyString(column.column_name) ?? asNonEmptyString(column.identifier),
+        asNonEmptyString(column.table_name) ?? asNonEmptyString(column.table),
+      );
+    } else {
+      addColumn(asNonEmptyString(rawColumn));
+    }
+  }
+
+  for (const table of tables) {
+    for (const columnName of table.columns ?? []) {
+      addColumn(columnName, table.name);
+    }
+  }
+
+  return columns;
 }
 
 // ── Idea Card ─────────────────────────────────────────────────────────────────
@@ -405,11 +534,18 @@ const IdeaModal: React.FC<{
             // Catalog fetch failed — use Claude-suggested tools as-is
           }
 
+          const agentTables = normalizeAgentTables(agentRec?.tables);
+          const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
+          const agentSkills = normalizeAgentSkills(agentRec?.skills);
+
           const agent = await mcpClient.createAgent({
             agent_name: agentName,
             description: asNonEmptyString(agentRec?.description) ?? agentName,
             instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
             tools: enrichedTools.length > 0 ? enrichedTools : undefined,
+            tables: agentTables.length > 0 ? agentTables : undefined,
+            columns: agentColumns.length > 0 ? agentColumns : undefined,
+            skills: agentSkills.length > 0 ? agentSkills : undefined,
             knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
             original_prompt: `Create agent for AI use case: ${idea.title}`,
           });

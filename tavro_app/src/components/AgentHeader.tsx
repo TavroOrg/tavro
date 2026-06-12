@@ -213,6 +213,35 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                             ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-blue-600 transition-colors">{agent.provider.organization || 'Tavro Internal'} <ExternalLink size={10} /></a>
                             : (agent.provider?.organization || 'Tavro Internal')}
                     </div>
+                    <div className={`w-[170px] px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskClassCardClass}`}>
+                        <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                            Blended Risk Classification
+                        </span>
+                        <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskClassTextClass}`}>
+                            {riskClass === 'low'
+                                ? <CheckCircle2 size={14} />
+                                : <ShieldAlert size={14} />}
+                            {riskClass ? riskClass.charAt(0).toUpperCase() + riskClass.slice(1) : 'N/A'}
+                        </span>
+                    </div>
+                    <div className="w-[170px] bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center justify-center text-center">
+                        <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>
+                        {agent.provider?.url
+                            ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-blue-600 transition-colors">{agent.provider.organization || 'Tavro Internal'} <ExternalLink size={10} /></a>
+                            : (agent.provider?.organization || 'Tavro Internal')}
+                    </div>
+                </div>
+                <div className="flex flex-col items-end sm:flex-row sm:items-center gap-3">
+                    {agent.url && (
+                        <a href={agent.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-medium">
+                            <Globe size={11} /> Agent URL
+                        </a>
+                    )}
+                    {agent.documentation_url && (
+                        <a href={agent.documentation_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-medium">
+                            <BookOpen size={11} /> Docs
+                        </a>
+                    )}
                 </div>
                 <div className="flex flex-col items-end sm:flex-row sm:items-center gap-3">
                     {agent.url && (
@@ -227,7 +256,6 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                     )}
                 </div>
             </div>
-        </div>
     );
 };
 
