@@ -7,14 +7,14 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Literal
 
 logger = logging.getLogger(__name__)
 
 CURRENT_YEAR = datetime.datetime.now().year
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -62,6 +62,18 @@ class SparkIdea(BaseModel):
     complexity: str
     estimated_impact: str
     similar_agents: list[SparkSimilarAgent]
+    user_reaction: Literal["like", "dislike"] | None = None
+    popularity_score: int = 0
+
+
+class SparkReactionRequest(BaseModel):
+    reaction: Literal["like", "dislike"] | None = None
+
+
+class SparkReactionResponse(BaseModel):
+    idea_id: str
+    user_reaction: Literal["like", "dislike"] | None = None
+    popularity_score: int
 
 
 class SparkConvertRequest(BaseModel):
@@ -799,7 +811,8 @@ async def get_spark_ideas(
 
     rows = await db.execute(text(f"""
         SELECT idea_id, title, description, rationale, signal_type, signal_label,
-               target_dimensions, target_nodes, complexity, estimated_impact, similar_agents
+               target_dimensions, target_nodes, complexity, estimated_impact, similar_agents,
+               user_reaction, popularity_score
         FROM core.spark_ideas
         WHERE {where}
         ORDER BY updated_at DESC
@@ -819,8 +832,53 @@ async def get_spark_ideas(
             complexity=r["complexity"] or "Medium",
             estimated_impact=r["estimated_impact"] or "Medium",
             similar_agents=[SparkSimilarAgent(**a) for a in (r["similar_agents"] or [])],
+            user_reaction=r["user_reaction"],
+            popularity_score=r["popularity_score"] or 0,
         ))
     return result
+
+
+@router.patch("/ideas/{idea_id}/reaction", response_model=SparkReactionResponse)
+async def update_spark_idea_reaction(
+    idea_id: str,
+    payload: SparkReactionRequest,
+    company_id: str = Query(..., description="Company UUID"),
+    db: AsyncSession = Depends(get_db),
+) -> SparkReactionResponse:
+    """Persist the current user's Spark idea reaction and derived popularity score."""
+    current = await db.execute(text("""
+        SELECT user_reaction, popularity_score
+        FROM core.spark_ideas
+        WHERE company_id = :company_id AND idea_id = :idea_id
+    """), {"company_id": company_id, "idea_id": idea_id})
+    row = current.mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Spark idea not found")
+
+    previous_reaction = row["user_reaction"]
+    previous_value = 1 if previous_reaction == "like" else -1 if previous_reaction == "dislike" else 0
+    next_value = 1 if payload.reaction == "like" else -1 if payload.reaction == "dislike" else 0
+    popularity_score = int(row["popularity_score"] or 0) - previous_value + next_value
+
+    await db.execute(text("""
+        UPDATE core.spark_ideas
+        SET user_reaction = :reaction,
+            popularity_score = :popularity_score,
+            updated_at = NOW()
+        WHERE company_id = :company_id AND idea_id = :idea_id
+    """), {
+        "company_id": company_id,
+        "idea_id": idea_id,
+        "reaction": payload.reaction,
+        "popularity_score": popularity_score,
+    })
+    await db.commit()
+
+    return SparkReactionResponse(
+        idea_id=idea_id,
+        user_reaction=payload.reaction,
+        popularity_score=popularity_score,
+    )
 
 
 @router.delete("/ideas", status_code=204)
@@ -886,7 +944,12 @@ async def generate_spark_ideas(
     if not direction_clean:
         async with AsyncSessionLocal() as clear_db:
             await clear_db.execute(
-                text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
+                text("""
+                    DELETE FROM core.spark_ideas
+                    WHERE company_id = :company_id
+                      AND user_reaction IS NULL
+                      AND COALESCE(popularity_score, 0) = 0
+                """),
                 {"company_id": company_id},
             )
             await clear_db.commit()
@@ -1025,7 +1088,12 @@ async def generate_spark_ideas_stream(
                 if not direction_clean:
                     async with AsyncSessionLocal() as clear_db:
                         await clear_db.execute(
-                            text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
+                            text("""
+                                DELETE FROM core.spark_ideas
+                                WHERE company_id = :company_id
+                                  AND user_reaction IS NULL
+                                  AND COALESCE(popularity_score, 0) = 0
+                            """),
                             {"company_id": company_id},
                         )
                         await clear_db.commit()

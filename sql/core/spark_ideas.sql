@@ -11,8 +11,12 @@ CREATE TABLE IF NOT EXISTS core.spark_ideas (
     complexity        TEXT,
     estimated_impact  TEXT,
     similar_agents    JSONB,
+    user_reaction     TEXT,
+    popularity_score  INTEGER NOT NULL DEFAULT 0,
     created_at        TIMESTAMPTZ DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ DEFAULT NOW()
+    updated_at        TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_spark_ideas_user_reaction
+        CHECK (user_reaction IS NULL OR user_reaction IN ('like', 'dislike'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_spark_ideas_company_id
