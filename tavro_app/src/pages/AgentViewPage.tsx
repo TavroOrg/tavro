@@ -563,11 +563,14 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: editName.trim() || undefined,
-                description: editDescription.trim() || undefined,
-                instruction: editInstruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const payload: import('../services/agentApi').AgentUpdatePayload = {};
+            if (editName.trim() !== currentName) payload.agent_name = editName.trim() || undefined;
+            if (editDescription.trim() !== currentDescription) payload.description = editDescription.trim() || undefined;
+            if (editInstruction.trim() !== currentInstruction) payload.instruction = editInstruction.trim() || undefined;
+            await agentApi.updateAgent(agentId, payload, currentName);
             handleAgentSaved({
                 name: editName.trim(),
                 description: editDescription.trim(),
@@ -614,11 +617,12 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: nextName || undefined,
-                description: nextDescription || undefined,
-                instruction: nextInstruction || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const inlinePayload: import('../services/agentApi').AgentUpdatePayload =
+                inlineEdit.field === 'name' ? { agent_name: nextName || undefined }
+                : inlineEdit.field === 'description' ? { description: nextDescription || undefined }
+                : { instruction: nextInstruction || undefined };
+            await agentApi.updateAgent(agentId, inlinePayload, currentName);
             handleAgentSaved({
                 name: nextName,
                 description: nextDescription,

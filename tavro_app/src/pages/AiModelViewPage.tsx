@@ -92,6 +92,18 @@ const buildPayload = (form: FormState): AiModelUpsertPayload => {
   return payload as AiModelUpsertPayload;
 };
 
+const changedPayload = (current: FormState, next: FormState): AiModelUpsertPayload => {
+  const currentPayload = buildPayload(current);
+  const nextPayload = buildPayload(next);
+  const changed: Record<string, string | null> = {};
+  FIELD_KEYS.forEach(key => {
+    if ((nextPayload as Record<string, string | null>)[key] !== (currentPayload as Record<string, string | null>)[key]) {
+      changed[key] = (nextPayload as Record<string, string | null>)[key] ?? null;
+    }
+  });
+  return changed as AiModelUpsertPayload;
+};
+
 const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean }> = ({ label, children, full }) => (
   <div className={`flex flex-col gap-1.5 ${full ? 'md:col-span-2' : ''}`}>
     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</label>
@@ -315,7 +327,13 @@ const AiModelViewPage: React.FC = () => {
         navigate(`/ai-models/${encodeURIComponent(created.ai_model_id)}`, { replace: true });
         return;
       }
-      await aiModelApi.updateModel(model!.ai_model_id, payload);
+      const changed = changedPayload(formFromModel(model!), form);
+      if (Object.keys(changed).length === 0) {
+        setEditing(false);
+        setInlineEdit(null);
+        return;
+      }
+      await aiModelApi.updateModel(model!.ai_model_id, changed, model!.model_name ?? undefined);
       const fresh = await aiModelApi.getModel(model!.ai_model_id);
       setModel(fresh);
       setForm(formFromModel(fresh));
@@ -372,7 +390,12 @@ const AiModelViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
-      await aiModelApi.updateModel(model.ai_model_id, buildPayload(nextForm));
+      const changed = changedPayload(formFromModel(model), nextForm);
+      if (Object.keys(changed).length === 0) {
+        setInlineEdit(null);
+        return;
+      }
+      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined);
       const fresh = await aiModelApi.getModel(model.ai_model_id);
       setModel(fresh);
       setForm(formFromModel(fresh));

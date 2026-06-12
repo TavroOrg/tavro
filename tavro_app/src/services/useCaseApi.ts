@@ -130,7 +130,8 @@ class UseCaseApiService {
             method: 'PUT',
             body: JSON.stringify(body),
         });
-        portalActivity.record(`Updated AI use case ${payload.title || __activityName || useCaseId}: ${changedUseCaseFields(payload)}`, 'violet');
+        const displayName = payload.title || __activityName || useCaseId;
+        portalActivity.record(`AI use case "${displayName}" — ${changedUseCaseFields(payload)} updated`, 'violet');
         return result;
     }
 
@@ -200,7 +201,10 @@ class UseCaseApiService {
         for (const file of files) {
             formData.append('files', file, file.name);
         }
-        return reqFormData('/use-cases/upload', formData);
+        const result = await reqFormData<{ uploaded_count: number; total_submitted: number; message: string }>('/use-cases/upload', formData);
+        const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
+        portalActivity.record(`Loaded ${result.uploaded_count} AI use case${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        return result;
     }
 
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {

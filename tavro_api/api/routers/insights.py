@@ -446,6 +446,14 @@ _PROFILE_SECTIONS = [
     ("ESG & Sustainability", ["organisation", "technology"]),
 ]
 
+def _profile_dimension_hint(categories: List[str], category_labels: Dict[str, str]) -> str:
+    labels = [_display(category_labels.get(cat), cat.title()) for cat in categories]
+    if not labels:
+        return "a Blueprint dimension"
+    if len(labels) == 1:
+        return f"a {labels[0]} dimension"
+    return f"{', '.join(labels[:-1])}, or {labels[-1]} dimensions"
+
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -549,6 +557,12 @@ SELECT dt.category::text AS category, dn.updated_at
 FROM twin.dim_node dn
 JOIN twin.dim_type dt ON dt.id = dn.dim_type_id
 WHERE dn.company_id = :cid AND dn.valid_to IS NULL
+"""
+
+_DIM_TYPE_LABELS_SQL = """
+SELECT category::text AS category, name
+FROM twin.dim_type
+ORDER BY system_defined DESC NULLS LAST, name
 """
 
 
@@ -895,10 +909,11 @@ def _home_attention_items(
 
     for gap in company_profile.get("gaps", [])[:2]:
         area = _display(gap.get("area"), "Profile")
+        dimension_hint = _display(gap.get("dimensionHint"), "Blueprint dimension")
         items.append({
             "id": f"blueprint-gap:{gap.get('id')}",
             "badge": "Incomplete",
-            "text": f"Blueprint - {area} section not yet populated",
+            "text": f"Blueprint - add {dimension_hint} for {area}",
             "action": "Complete",
             "route": "/blueprint",
         })
@@ -926,8 +941,16 @@ async def _build_company_profile(db: AsyncSession, company_id: Optional[str]) ->
         if not cid:
             return empty
         nodes = (await db.execute(text(_PROFILE_NODES_SQL), {"cid": cid})).mappings().all()
+        dim_type_rows = (await db.execute(text(_DIM_TYPE_LABELS_SQL))).mappings().all()
     except Exception:  # noqa: BLE001
         return empty
+
+    category_labels: Dict[str, str] = {}
+    for row in dim_type_rows:
+        category = _display(row.get("category"), "")
+        name = _display(row.get("name"), "")
+        if category and name and category not in category_labels:
+            category_labels[category] = name
 
     by_category: Dict[str, List[Any]] = {}
     for n in nodes:
@@ -949,6 +972,7 @@ async def _build_company_profile(db: AsyncSession, company_id: Optional[str]) ->
             "id": f"{s['label']}-{i}",
             "gap": f"{s['label']} dimensions missing",
             "area": s["label"],
+            "dimensionHint": _profile_dimension_hint(_PROFILE_SECTIONS[i][1], category_labels),
             "severity": "high" if i < 2 else "medium",
         }
         for i, s in enumerate(sections) if s["pct"] == 0

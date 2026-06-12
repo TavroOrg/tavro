@@ -100,12 +100,14 @@ export interface RiskWorkflowStatus {
 }
 
 function changedAgentFields(payload: AgentUpdatePayload): string {
-    const fields: string[] = [];
-    if (payload.agent_name !== undefined) fields.push('name');
-    if (payload.description !== undefined) fields.push('description');
-    if (payload.instruction !== undefined) fields.push('instruction');
-    if (payload.skills !== undefined) fields.push('skills');
-    return fields.length > 0 ? fields.join(', ') : 'details';
+    const parts: string[] = [];
+    if (payload.agent_name !== undefined) parts.push('name');
+    if (payload.description !== undefined) parts.push('description');
+    if (payload.instruction !== undefined) parts.push('instructions');
+    if (payload.skills !== undefined) {
+        parts.push(`${Array.isArray(payload.skills) ? payload.skills.length + ' ' : ''}skill${Array.isArray(payload.skills) && payload.skills.length === 1 ? '' : 's'}`);
+    }
+    return parts.length > 0 ? parts.join(', ') + ' updated' : 'details updated';
 }
 
 class AgentApiService {
@@ -134,12 +136,13 @@ class AgentApiService {
         });
     }
 
-    async updateAgent(agentId: string, payload: AgentUpdatePayload): Promise<{ message: string; agent_id: string }> {
+    async updateAgent(agentId: string, payload: AgentUpdatePayload, agentName?: string): Promise<{ message: string; agent_id: string }> {
         const result = await req<{ message: string; agent_id: string }>(`/agents/${encodeURIComponent(agentId)}`, {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
-        portalActivity.record(`Updated agent ${payload.agent_name || agentId}: ${changedAgentFields(payload)}`, 'violet');
+        const displayName = payload.agent_name || agentName || agentId;
+        portalActivity.record(`Agent "${displayName}" — ${changedAgentFields(payload)}`, 'violet');
         return result;
     }
 

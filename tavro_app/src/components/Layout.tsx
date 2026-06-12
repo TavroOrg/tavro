@@ -90,8 +90,9 @@ const Layout: React.FC = () => {
         };
         const agentCreated = (event: Event) => {
             const detail = (event as CustomEvent).detail ?? {};
-            const agent = detail.agent ?? detail;
-            const name = agent.agent_name || agent.name || agent.agent_id || 'agent';
+            const agent = detail.agent ?? detail.result ?? detail;
+            const args = detail.args ?? {};
+            const name = args.agent_name || agent.agent_name || agent.name || agent.agent_id || 'agent';
             portalActivity.record(`Created agent: ${name}`, 'emerald');
         };
         const agentArtifactsGenerated = (event: Event) => {

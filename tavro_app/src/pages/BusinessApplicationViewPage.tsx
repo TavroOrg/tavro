@@ -219,6 +219,21 @@ const buildApplicationPayload = (form: ApplicationFormState): BusinessApplicatio
   latest_release_documentation_link: toNullable(form.latest_release_documentation_link),
 });
 
+const changedApplicationPayload = (
+  current: ApplicationFormState,
+  next: ApplicationFormState,
+): BusinessApplicationUpsertPayload => {
+  const currentPayload = buildApplicationPayload(current);
+  const nextPayload = buildApplicationPayload(next);
+  const changed: BusinessApplicationUpsertPayload = {};
+  (Object.keys(nextPayload) as Array<keyof BusinessApplicationUpsertPayload>).forEach(key => {
+    if (nextPayload[key] !== currentPayload[key]) {
+      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+    }
+  });
+  return changed;
+};
+
 const labelFromOptions = (value: string, options: Option[]): string => {
   if (!value) return 'N/A';
   const found = options.find(o => o.value === value);
@@ -435,9 +450,15 @@ const BusinessApplicationViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
+      const changedPayload = changedApplicationPayload(formFromApplication(application), nextForm);
+      if (Object.keys(changedPayload).length === 0) {
+        setInlineEdit(null);
+        setAttemptedSave(false);
+        return;
+      }
       const updated = await businessRelationsApi.updateApplication(
         application.business_application_id,
-        buildApplicationPayload(nextForm),
+        changedPayload,
       );
       setApplication(updated);
       setForm(formFromApplication(updated));
@@ -584,7 +605,14 @@ const BusinessApplicationViewPage: React.FC = () => {
         return;
       }
       if (!application) return;
-      const updated = await businessRelationsApi.updateApplication(application.business_application_id, payload);
+      const changedPayload = changedApplicationPayload(formFromApplication(application), form);
+      if (Object.keys(changedPayload).length === 0) {
+        setAttemptedSave(false);
+        setInlineEdit(null);
+        setEditing(false);
+        return;
+      }
+      const updated = await businessRelationsApi.updateApplication(application.business_application_id, changedPayload);
       setApplication(updated);
       setForm(formFromApplication(updated));
       setAttemptedSave(false);
