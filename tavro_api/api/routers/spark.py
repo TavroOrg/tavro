@@ -74,6 +74,8 @@ class SparkConvertRequest(BaseModel):
     signal_label: str | None = None
     complexity: str | None = None
     estimated_impact: str | None = None
+    blueprint_dimensions: list[dict[str, Any]] | None = None
+    blueprint_edges: list[dict[str, Any]] | None = None
 
 
 class SparkConvertResponse(BaseModel):
@@ -1182,6 +1184,27 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             agent_recommendation=_fallback_agent_recommendation(request, no_llm_fields),
         )
 
+    blueprint_block = ""
+    if request.blueprint_dimensions:
+        dim_lines = "\n".join(
+            "  [{}] {}{}".format(
+                d.get("category", "custom"),
+                d.get("label", ""),
+                " — " + d["summary"][:100] if d.get("summary") else "",
+            )
+            for d in request.blueprint_dimensions[:30]
+        )
+        blueprint_block = f"\nCompany Blueprint Dimensions:\n{dim_lines}"
+        if request.blueprint_edges:
+            edge_lines = "\n".join(
+                "  {} —[{}]→ {}".format(
+                    e.get("sourceLabel", ""), e.get("relType", ""), e.get("targetLabel", "")
+                )
+                for e in request.blueprint_edges[:20]
+            )
+            blueprint_block += f"\n\nDimension Relationships:\n{edge_lines}"
+        blueprint_block += "\n\n"
+
     system = (
         "You are an AI governance expert who writes structured AI use case documentation. "
         "Be specific, actionable, and business-focused. No filler phrases."
@@ -1192,7 +1215,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Description: {request.description}\n"
         f"Rationale: {request.rationale}\n"
         f"Context: {request.signal_label or ''}\n"
-        f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
+        f"Dimensions: {', '.join(request.target_dimensions)}\n"
+        f"{blueprint_block}"
         "Return a single JSON object with exactly these fields:\n"
         "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
@@ -1248,7 +1272,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             f"Title: {request.title}\n"
             f"Description: {fields.get('description', request.description)}\n"
             f"Solution approach: {fields.get('solution_approach', '')}\n"
-            f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
+            f"Dimensions: {', '.join(request.target_dimensions)}\n"
+            f"{blueprint_block}"
             "Return a JSON object with exactly these fields:\n"
             "- agent_name: concise agent name, max 6 words\n"
             "- description: 1–2 sentences on what the agent does\n"
