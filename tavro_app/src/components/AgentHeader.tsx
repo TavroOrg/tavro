@@ -172,28 +172,20 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                             <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                                 Blended Score
                             </span>
-
-                                {riskScore != null ? (
-                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                        {riskLevel === 'low'
-                                            ? <CheckCircle2 size={14} />
-                                            : <ShieldAlert size={14} />}
-                                        {riskScore}
-                                    </span>
-                                ) : (
-                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                        {riskLevel === 'low'
-                                            ? <CheckCircle2 size={14} />
-                                            : <ShieldAlert size={14} />}
-                                        N/A
-                                    </span>
-                                )}
-                            </div>
-                            {isPendingAssessment && (
-                                <div className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap">
-                                    <Loader2 size={10} className="animate-spin" />
-                                    Running Risk Assessment
-                                </div>
+                            {riskScore != null ? (
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} />
+                                        : <ShieldAlert size={14} />}
+                                    {riskScore}
+                                </span>
+                            ) : (
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} />
+                                        : <ShieldAlert size={14} />}
+                                    N/A
+                                </span>
                             )}
                         </div>
                         <div className={`w-[170px] px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskClassCardClass}`}>
@@ -214,6 +206,12 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                 : (agent.provider?.organization || 'Tavro Internal')}
                         </div>
                     </div>
+                    {isPendingAssessment && (
+                        <div className="flex items-center self-start gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap w-[170px] justify-center">
+                            <Loader2 size={10} className="animate-spin" />
+                            Running Risk Assessment
+                        </div>
+                    )}
                     <div className="flex flex-col items-end sm:flex-row sm:items-center gap-3">
                         {agent.url && (
                             <a href={agent.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-medium">
