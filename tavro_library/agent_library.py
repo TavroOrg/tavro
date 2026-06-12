@@ -469,9 +469,9 @@ class AgentMetadataExporter:
 
                     issue_rows = cls.execute_select(
                         f"""
-                        SELECT DISTINCT ON (rel.identifier)
-                            rel.identifier,
-                            COALESCE(i.title, rel.title, rel.identifier) AS title,
+                        SELECT DISTINCT ON (rel.issue_id)
+                            rel.issue_id AS identifier,
+                            COALESCE(i.title, rel.title, rel.issue_id) AS title,
                             i.description,
                             i.issue_type,
                             i.severity,
@@ -486,13 +486,13 @@ class AgentMetadataExporter:
                             COALESCE(i.created_ts, rel.created_ts) AS created_ts
                         FROM {cls.CORE_DB_NAME}.agent_issues rel
                         LEFT JOIN {cls.CORE_DB_NAME}.issues i
-                          ON i.identifier = rel.identifier
+                          ON i.issue_id = rel.issue_id
                          AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
                         WHERE rel.agent_id = %s
                           {issue_tenant_where}
-                          AND rel.identifier IS NOT NULL
-                          AND rel.identifier <> ''
-                        ORDER BY rel.identifier, COALESCE(i.updated_ts, rel.updated_ts) DESC NULLS LAST
+                          AND rel.issue_id IS NOT NULL
+                          AND rel.issue_id <> ''
+                        ORDER BY rel.issue_id, COALESCE(i.updated_ts, rel.updated_ts) DESC NULLS LAST
                         """,
                         tuple(issue_params),
                     )
@@ -1660,7 +1660,7 @@ class AgentMetadataExporter:
             if issue_rows_i:
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.issues (
-                    {tenant_id_column}identifier, title,
+                    {tenant_id_column}issue_id, title,
                     description, issue_type, severity,
                     source, detected_at, resolved_at,
                     status, resolution_notes,
@@ -1671,7 +1671,7 @@ class AgentMetadataExporter:
                 """)
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_issues (
-                    {tenant_id_column}identifier, title,
+                    {tenant_id_column}issue_id, title,
                     agent_id, agent_name,
                     agent_internal_id,
                     created_ts, updated_ts
@@ -2780,14 +2780,14 @@ class AgentMetadataExporter:
                 f"WITH removed AS ("
                 f"  DELETE FROM {cls.CORE_DB_NAME}.agent_issues "
                 f"  WHERE agent_id = '{agent_id}' {tenant_where} "
-                f"  RETURNING identifier"
+                f"  RETURNING issue_id"
                 f") "
                 f"DELETE FROM {cls.CORE_DB_NAME}.issues i "
-                f"WHERE i.identifier IN (SELECT identifier FROM removed) "
+                f"WHERE i.issue_id IN (SELECT issue_id FROM removed) "
                 f"{tenant_where.replace('tenant_id', 'i.tenant_id')} "
                 f"AND NOT EXISTS ("
                 f"  SELECT 1 FROM {cls.CORE_DB_NAME}.agent_issues rel "
-                f"  WHERE rel.identifier = i.identifier "
+                f"  WHERE rel.issue_id = i.issue_id "
                 f"  {'AND rel.tenant_id = i.tenant_id' if is_tenant else ''}"
                 f")"
             )
@@ -2826,7 +2826,7 @@ class AgentMetadataExporter:
                     )
                 if u_issue_rows_i:
                     issue_conflict = (
-                        " ON CONFLICT (tenant_id, identifier) DO UPDATE SET "
+                        " ON CONFLICT (tenant_id, issue_id) DO UPDATE SET "
                         "title = EXCLUDED.title, "
                         "description = EXCLUDED.description, "
                         "issue_type = EXCLUDED.issue_type, "
@@ -2841,7 +2841,7 @@ class AgentMetadataExporter:
                         "updated_ts = EXCLUDED.updated_ts"
                     ) if is_tenant else ""
                     agent_issue_conflict = (
-                        " ON CONFLICT (tenant_id, identifier, agent_id) DO UPDATE SET "
+                        " ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET "
                         "title = EXCLUDED.title, "
                         "agent_name = EXCLUDED.agent_name, "
                         "agent_internal_id = EXCLUDED.agent_internal_id, "
@@ -2849,7 +2849,7 @@ class AgentMetadataExporter:
                     ) if is_tenant else ""
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.issues "
-                        f"({tenant_col}identifier, title, "
+                        f"({tenant_col}issue_id, title, "
                         f"description, issue_type, severity, "
                         f"source, detected_at, resolved_at, "
                         f"status, resolution_notes, "
@@ -2860,7 +2860,7 @@ class AgentMetadataExporter:
                     )
                     cls.execute_dml(
                         f"INSERT INTO {cls.CORE_DB_NAME}.agent_issues "
-                        f"({tenant_col}identifier, title, "
+                        f"({tenant_col}issue_id, title, "
                         f"agent_id, agent_name, "
                         f"agent_internal_id, "
                         f"created_ts, updated_ts) "

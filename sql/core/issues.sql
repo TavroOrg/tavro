@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.issues (
 	tenant_id TEXT,
-	identifier TEXT,
+	issue_id TEXT,
 	title TEXT,
 	description TEXT,
 	issue_type TEXT,

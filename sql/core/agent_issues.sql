@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_issues (
 	tenant_id TEXT,
-	identifier TEXT,
+	issue_id TEXT,
 	title TEXT,
 	agent_id TEXT,
 	agent_name TEXT,

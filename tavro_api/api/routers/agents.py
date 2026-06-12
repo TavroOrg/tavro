@@ -1101,7 +1101,7 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.issues (
-                        tenant_id, identifier, title, description, issue_type, severity,
+                        tenant_id, issue_id, title, description, issue_type, severity,
                         source, detected_at, resolved_at, status, resolution_notes,
                         assignee, owner, created_ts, updated_ts
                     ) VALUES (
@@ -1128,7 +1128,7 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_issues (
-                        tenant_id, identifier, title, agent_id, agent_name,
+                        tenant_id, issue_id, title, agent_id, agent_name,
                         agent_internal_id, created_ts, updated_ts
                     ) VALUES (
                         :tid, :identifier, :title, :agent_id, :agent_name,
@@ -1311,13 +1311,13 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
 
         issues_result = await db.execute(
             text(f"""
-                SELECT i.identifier, i.title, i.description, i.issue_type, i.severity,
+                SELECT i.issue_id AS identifier, i.title, i.description, i.issue_type, i.severity,
                        i.source, i.detected_at, i.resolved_at, i.status,
                        i.resolution_notes, i.assignee, i.owner,
                        i.created_ts, i.updated_ts
                 FROM {CORE}.agent_issues rel
                 JOIN {CORE}.issues i
-                  ON i.identifier = rel.identifier
+                  ON i.issue_id = rel.issue_id
                  AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
                 WHERE rel.agent_id = :aid
                   AND rel.tenant_id = :tid
@@ -1374,12 +1374,12 @@ async def get_issue(identifier: str, request: Request, db: AsyncSession = Depend
 
         result = await db.execute(
             text(f"""
-                SELECT identifier, title, description, issue_type, severity,
+                SELECT issue_id AS identifier, title, description, issue_type, severity,
                        source, detected_at, resolved_at, status,
                        resolution_notes, assignee, owner,
                        created_ts, updated_ts
                 FROM {CORE}.issues
-                WHERE identifier = :iid
+                WHERE issue_id = :iid
                   AND tenant_id = :tid
                 LIMIT 1
             """),
@@ -1392,7 +1392,7 @@ async def get_issue(identifier: str, request: Request, db: AsyncSession = Depend
             text(f"""
                 SELECT agent_id, agent_name
                 FROM {CORE}.agent_issues
-                WHERE identifier = :iid
+                WHERE issue_id = :iid
                   AND tenant_id = :tid
             """),
             {"iid": identifier, "tid": tenant_id},
@@ -1524,7 +1524,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         if body.issues is not None:
             # Collect current identifiers before deleting links
             old_ids_result = await db.execute(
-                text(f"SELECT identifier FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
+                text(f"SELECT issue_id AS identifier FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
                 {"aid": agent_id, "tid": tenant_id},
             )
             old_identifiers = [r["identifier"] for r in old_ids_result.mappings().all()]
@@ -1542,12 +1542,12 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                     text(f"""
                         DELETE FROM {CORE}.issues i
                         WHERE i.tenant_id = :tid
-                          AND i.identifier = ANY(:ids)
+                          AND i.issue_id = ANY(:ids)
                           AND NOT EXISTS (
                               SELECT 1
                               FROM {CORE}.agent_issues rel
                               WHERE rel.tenant_id = :tid
-                                AND rel.identifier = i.identifier
+                                AND rel.issue_id = i.issue_id
                           )
                     """),
                     {"tid": tenant_id, "ids": old_identifiers},
@@ -1566,7 +1566,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.issues (
-                            tenant_id, identifier, title, description, issue_type, severity,
+                            tenant_id, issue_id, title, description, issue_type, severity,
                             source, detected_at, resolved_at, status, resolution_notes,
                             assignee, owner, created_ts, updated_ts
                         ) VALUES (
@@ -1575,7 +1575,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                             :assignee, :owner,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
-                        ON CONFLICT (tenant_id, identifier) DO UPDATE SET
+                        ON CONFLICT (tenant_id, issue_id) DO UPDATE SET
                             title = EXCLUDED.title,
                             description = EXCLUDED.description,
                             issue_type = EXCLUDED.issue_type,
@@ -1606,13 +1606,13 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_issues (
-                            tenant_id, identifier, title, agent_id, agent_name,
+                            tenant_id, issue_id, title, agent_id, agent_name,
                             agent_internal_id, created_ts, updated_ts
                         ) VALUES (
                             :tid, :identifier, :title, :agent_id, :agent_name,
                             :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                         )
-                        ON CONFLICT (tenant_id, identifier, agent_id) DO UPDATE SET
+                        ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET
                             title = EXCLUDED.title,
                             agent_name = EXCLUDED.agent_name,
                             agent_internal_id = EXCLUDED.agent_internal_id,
