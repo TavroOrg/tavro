@@ -761,7 +761,7 @@ const AiModelViewPage: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col gap-5 w-full max-w-[1100px] mx-auto animate-fade-in pb-10">
+    <div className="flex flex-col gap-5 w-full max-w-[1400px] mx-auto animate-fade-in pb-10">
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={() => navigate('/ai-models')}
@@ -809,15 +809,42 @@ const AiModelViewPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-          <Boxes size={22} />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">
-            {isCreateMode ? 'New AI Model' : (form.model_name || model?.ai_model_id)}
-          </h2>
-          {!isCreateMode && <p className="text-[11px] font-mono text-slate-400">{model?.ai_model_id}</p>}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
+        <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+            <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+              <Boxes size={24} />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">AI Model</span>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">
+                {isCreateMode ? 'New AI Model' : (form.model_name || model?.ai_model_id)}
+              </h2>
+              {!isCreateMode && <p className="text-xs font-mono text-slate-400 mt-1">{model?.ai_model_id}</p>}
+              <p className="text-sm text-slate-600 line-clamp-2">
+                {form.description || 'No description available.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+            {[
+              { label: 'Status', value: form.status },
+              // { label: 'Provider', value: form.provider },
+              // { label: 'Vendor or In-house', value: form.vendor_or_inhouse },
+              { label: 'Risk Tier / Materiality', value: form.risk_tier_materiality },
+            ].map(metric => (
+              <div key={metric.label} className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  {metric.label}
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-700">
+                  {metric.value?.trim() || 'N/A'}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
