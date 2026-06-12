@@ -21,6 +21,7 @@ from api.routers import risk
 from api.routers import business_relations
 from api.routers import agents
 from api.routers import agent_upload
+from api.routers import agent_library
 from api.routers import use_cases
 from api.routers import use_case_upload
 from api.routers import insights
@@ -124,6 +125,7 @@ app.include_router(compliance_research.router, prefix="/api/v1/compliance", tags
 app.include_router(audit.router,       prefix="/api/v1/audit",       tags=["Audit"])
 app.include_router(business_relations.router, prefix="/api/v1")
 app.include_router(agents.router,    prefix="/api/v1/agents",     tags=["Agents"])
+app.include_router(agent_library.router, prefix="/api/v1/agent-library", tags=["Agent Library"])
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(use_cases.router,        prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
 app.include_router(use_case_upload.router,  prefix="/api/v1/use-cases",  tags=["AI Use Cases"])
