@@ -1370,6 +1370,7 @@ const UseCaseViewPage: React.FC = () => {
     setEditError(null);
     try {
       await useCaseApi.updateUseCase(id, {
+        __activityName: (useCase as any).name ?? (useCase as any).title ?? id,
         title: editTitle.trim() || undefined,
         description: editDescription.trim() || undefined,
         priority: editPriority || undefined,
@@ -1406,7 +1407,9 @@ const UseCaseViewPage: React.FC = () => {
     const { field, value } = inlineEdit;
     setInlineSaving(field);
     try {
-      const payload: any = {};
+      const payload: any = {
+        __activityName: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+      };
       if (field === 'title') payload.title = value.trim();
       else if (field === 'description') payload.description = value.trim();
       else if (field === 'priority') payload.priority = value;

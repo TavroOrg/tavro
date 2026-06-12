@@ -1,4 +1,5 @@
 import { getValidToken } from './auth';
+import { portalActivity } from './portalActivity';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -54,6 +55,7 @@ export interface UseCaseCreatePayload {
 }
 
 export interface UseCaseUpdatePayload {
+    __activityName?: string;
     title?: string;
     description?: string;
     business_problem_statement?: string;
@@ -61,6 +63,18 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+}
+
+function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
+    const fields: string[] = [];
+    if (payload.title !== undefined) fields.push('title');
+    if (payload.description !== undefined) fields.push('description');
+    if (payload.business_problem_statement !== undefined) fields.push('problem statement');
+    if (payload.expected_benefits !== undefined) fields.push('expected benefits');
+    if (payload.priority !== undefined) fields.push('priority');
+    if (payload.solution_approach !== undefined) fields.push('solution approach');
+    if (payload.use_case_owner !== undefined) fields.push('owner');
+    return fields.length > 0 ? fields.join(', ') : 'details';
 }
 
 export interface UseCaseListResponse {
@@ -95,10 +109,12 @@ class UseCaseApiService {
     }
 
     async createUseCase(payload: UseCaseCreatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req('/use-cases', {
+        const result = await req<{ message: string; use_case_id: string }>('/use-cases', {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+        portalActivity.record(`Created AI use case: ${payload.title}`, 'emerald');
+        return result;
     }
 
     async suggestDescription(title: string): Promise<{ description: string }> {
@@ -109,16 +125,21 @@ class UseCaseApiService {
     }
 
     async updateUseCase(useCaseId: string, payload: UseCaseUpdatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const { __activityName, ...body } = payload;
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'PUT',
-            body: JSON.stringify(payload),
+            body: JSON.stringify(body),
         });
+        portalActivity.record(`Updated AI use case ${payload.title || __activityName || useCaseId}: ${changedUseCaseFields(payload)}`, 'violet');
+        return result;
     }
 
     async deleteUseCase(useCaseId: string): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'DELETE',
         });
+        portalActivity.record(`Deleted AI use case: ${useCaseId}`, 'amber');
+        return result;
     }
 
     async linkAgent(useCaseId: string, agentId: string): Promise<{ message: string; associated_count: number }> {

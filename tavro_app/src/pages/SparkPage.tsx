@@ -27,6 +27,7 @@ import {
 import { useBlueprint } from '../context/BlueprintContext';
 import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
+import { portalActivity } from '../services/portalActivity';
 import type { SparkIdea } from '../types/spark';
 import {
   SPARK_DIMENSIONS,
@@ -623,9 +624,14 @@ const SparkPage: React.FC = () => {
     setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
+      let generatedCount = 0;
       for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined, ideaCount)) {
+        generatedCount += 1;
         setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
         setHasLibrary(true);
+      }
+      if (generatedCount > 0) {
+        portalActivity.record(`Generated ${generatedCount} Spark idea${generatedCount === 1 ? '' : 's'}`, 'emerald');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate ideas');

@@ -1,4 +1,5 @@
 import { getValidToken } from './auth';
+import { portalActivity } from './portalActivity';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -98,6 +99,15 @@ export interface RiskWorkflowStatus {
     updated_at: string;
 }
 
+function changedAgentFields(payload: AgentUpdatePayload): string {
+    const fields: string[] = [];
+    if (payload.agent_name !== undefined) fields.push('name');
+    if (payload.description !== undefined) fields.push('description');
+    if (payload.instruction !== undefined) fields.push('instruction');
+    if (payload.skills !== undefined) fields.push('skills');
+    return fields.length > 0 ? fields.join(', ') : 'details';
+}
+
 class AgentApiService {
     async getAgentCatalog(startRecord = 1, recordRange = '1-50'): Promise<AgentCatalogResponse> {
         const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
@@ -109,10 +119,12 @@ class AgentApiService {
     }
 
     async createAgent(payload: AgentCreatePayload): Promise<{ agent_id: string; agent_name: string; message: string }> {
-        return req('/agents/', {
+        const result = await req<{ agent_id: string; agent_name: string; message: string }>('/agents/', {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+        portalActivity.record(`Created agent: ${result.agent_name || payload.agent_name}`, 'emerald');
+        return result;
     }
 
     async suggestDescription(agentName: string): Promise<{ description: string }> {
@@ -123,22 +135,28 @@ class AgentApiService {
     }
 
     async updateAgent(agentId: string, payload: AgentUpdatePayload): Promise<{ message: string; agent_id: string }> {
-        return req(`/agents/${encodeURIComponent(agentId)}`, {
+        const result = await req<{ message: string; agent_id: string }>(`/agents/${encodeURIComponent(agentId)}`, {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
+        portalActivity.record(`Updated agent ${payload.agent_name || agentId}: ${changedAgentFields(payload)}`, 'violet');
+        return result;
     }
 
     async deleteAgent(agentId: string): Promise<{ message: string; agent_id: string }> {
-        return req(`/agents/${encodeURIComponent(agentId)}`, {
+        const result = await req<{ message: string; agent_id: string }>(`/agents/${encodeURIComponent(agentId)}`, {
             method: 'DELETE',
         });
+        portalActivity.record(`Deleted agent: ${agentId}`, 'amber');
+        return result;
     }
 
     async triggerRiskAssessment(agentId: string): Promise<{ message: string; agent_id: string; agent_internal_id: string }> {
-        return req(`/agents/${encodeURIComponent(agentId)}/risk-assessment`, {
+        const result = await req<{ message: string; agent_id: string; agent_internal_id: string }>(`/agents/${encodeURIComponent(agentId)}/risk-assessment`, {
             method: 'POST',
         });
+        portalActivity.record(`Triggered risk assessment for agent: ${agentId}`, 'amber');
+        return result;
     }
 
     async uploadAgents(files: File[]): Promise<{
@@ -151,7 +169,15 @@ class AgentApiService {
         for (const file of files) {
             formData.append('files', file, file.name);
         }
-        return reqFormData('/agents/upload', formData);
+        const result = await reqFormData<{
+            uploaded_count: number;
+            total_submitted: number;
+            file_results: Array<{ filename: string; valid_count: number; invalid_count: number; errors: string[] }>;
+            message: string;
+        }>('/agents/upload', formData);
+        const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
+        portalActivity.record(`Uploaded ${result.uploaded_count} agent${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        return result;
     }
 
     async getRiskWorkflows(params?: { status?: string; agentId?: string }): Promise<RiskWorkflowStatus[]> {
