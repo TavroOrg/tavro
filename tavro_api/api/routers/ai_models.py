@@ -118,6 +118,14 @@ class LinkUseCaseRequest(BaseModel):
     ai_use_case_id: str
 
 
+class LinkApplicationRequest(BaseModel):
+    business_application_id: str
+
+
+class LinkProcessRequest(BaseModel):
+    business_process_id: str
+
+
 class AiModelAttachmentCreate(BaseModel):
     filename: str
     mime_type: str
@@ -360,9 +368,45 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
         {"mid": mid},
     )
 
+    application_rows = await db.execute(
+        text(f"""
+            SELECT
+                rel.business_application_id,
+                COALESCE(ba.application_name, rel.application_name, rel.business_application_id) AS application_name,
+                ba.application_description AS description,
+                ba.business_criticality,
+                ba.emergency_tier
+            FROM {CORE}.ai_model_business_applications rel
+            LEFT JOIN {CORE}.business_applications ba
+                ON LOWER(TRIM(ba.business_application_id)) = LOWER(TRIM(rel.business_application_id))
+            WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+              AND rel.business_application_id IS NOT NULL AND rel.business_application_id <> ''
+            ORDER BY LOWER(COALESCE(ba.application_name, rel.application_name, rel.business_application_id))
+        """),
+        {"mid": mid},
+    )
+    process_rows = await db.execute(
+        text(f"""
+            SELECT
+                rel.business_process_id,
+                COALESCE(bp.process_name, rel.process_name, rel.business_process_id) AS process_name,
+                bp.process_description AS description,
+                bp.business_criticality
+            FROM {CORE}.ai_model_business_processes rel
+            LEFT JOIN {CORE}.business_processes bp
+                ON LOWER(TRIM(bp.business_process_id)) = LOWER(TRIM(rel.business_process_id))
+            WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+              AND rel.business_process_id IS NOT NULL AND rel.business_process_id <> ''
+            ORDER BY LOWER(COALESCE(bp.process_name, rel.process_name, rel.business_process_id))
+        """),
+        {"mid": mid},
+    )
+
     result = dict(model)
     result["agents"] = [dict(r._mapping) for r in agent_rows]
     result["ai_use_cases"] = [dict(r._mapping) for r in use_case_rows]
+    result["applications"] = [dict(r._mapping) for r in application_rows]
+    result["processes"] = [dict(r._mapping) for r in process_rows]
     return result
 
 
@@ -427,6 +471,14 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
         )
         await db.execute(
             text(f"DELETE FROM {CORE}.ai_model_ai_use_cases WHERE ai_model_id = :mid"),
+            {"mid": mid},
+        )
+        await db.execute(
+            text(f"DELETE FROM {CORE}.ai_model_business_applications WHERE ai_model_id = :mid"),
+            {"mid": mid},
+        )
+        await db.execute(
+            text(f"DELETE FROM {CORE}.ai_model_business_processes WHERE ai_model_id = :mid"),
             {"mid": mid},
         )
         await db.execute(
@@ -604,6 +656,162 @@ async def unlink_use_case(ai_model_id: str, use_case_id: str, db: AsyncSession =
         )
         await db.commit()
         return {"status": "unlinked", "ai_model_id": mid, "ai_use_case_id": uc_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST/DELETE /{ai_model_id}/applications  — link/unlink business application
+# ---------------------------------------------------------------------------
+
+@router.post("/{ai_model_id}/applications", summary="Link Application to AI Model")
+async def link_application(ai_model_id: str, body: LinkApplicationRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    mid = _norm_id(ai_model_id)
+    app_id = _norm_id(body.business_application_id)
+    tenant_id = _tenant(request)
+    if not app_id:
+        raise HTTPException(status_code=400, detail="business_application_id is required.")
+    try:
+        model_row = await db.execute(
+            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            {"mid": mid},
+        )
+        model = model_row.mappings().first()
+        if not model:
+            raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
+
+        app_row = await db.execute(
+            text(f"SELECT business_application_id, application_name FROM {CORE}.business_applications WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid)) LIMIT 1"),
+            {"aid": app_id},
+        )
+        application = app_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+        await db.execute(
+            text(f"""
+                INSERT INTO {CORE}.ai_model_business_applications
+                    (tenant_id, ai_model_id, ai_model_name, business_application_id, application_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (ai_model_id, business_application_id)
+                DO UPDATE SET
+                    ai_model_name = EXCLUDED.ai_model_name,
+                    application_name = EXCLUDED.application_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "mid": mid,
+                "mname": str(model.get("model_name") or mid),
+                "aid": app_id,
+                "aname": str(application.get("application_name") or app_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "ai_model_id": mid, "business_application_id": app_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{ai_model_id}/applications/{application_id}", summary="Unlink Application from AI Model")
+async def unlink_application(ai_model_id: str, application_id: str, db: AsyncSession = Depends(get_db)):
+    mid = _norm_id(ai_model_id)
+    app_id = _norm_id(application_id)
+    try:
+        result = await db.execute(
+            text(f"""
+                DELETE FROM {CORE}.ai_model_business_applications
+                WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+            """),
+            {"mid": mid, "aid": app_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "ai_model_id": mid, "business_application_id": app_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST/DELETE /{ai_model_id}/processes  — link/unlink business process
+# ---------------------------------------------------------------------------
+
+@router.post("/{ai_model_id}/processes", summary="Link Process to AI Model")
+async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    mid = _norm_id(ai_model_id)
+    proc_id = _norm_id(body.business_process_id)
+    tenant_id = _tenant(request)
+    if not proc_id:
+        raise HTTPException(status_code=400, detail="business_process_id is required.")
+    try:
+        model_row = await db.execute(
+            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            {"mid": mid},
+        )
+        model = model_row.mappings().first()
+        if not model:
+            raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
+
+        proc_row = await db.execute(
+            text(f"SELECT business_process_id, process_name FROM {CORE}.business_processes WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid)) LIMIT 1"),
+            {"pid": proc_id},
+        )
+        process = proc_row.mappings().first()
+        if not process:
+            raise HTTPException(status_code=404, detail=f"Process '{proc_id}' not found.")
+
+        await db.execute(
+            text(f"""
+                INSERT INTO {CORE}.ai_model_business_processes
+                    (tenant_id, ai_model_id, ai_model_name, business_process_id, process_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :mid, :mname, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (ai_model_id, business_process_id)
+                DO UPDATE SET
+                    ai_model_name = EXCLUDED.ai_model_name,
+                    process_name = EXCLUDED.process_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "mid": mid,
+                "mname": str(model.get("model_name") or mid),
+                "pid": proc_id,
+                "pname": str(process.get("process_name") or proc_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "ai_model_id": mid, "business_process_id": proc_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{ai_model_id}/processes/{process_id}", summary="Unlink Process from AI Model")
+async def unlink_process(ai_model_id: str, process_id: str, db: AsyncSession = Depends(get_db)):
+    mid = _norm_id(ai_model_id)
+    proc_id = _norm_id(process_id)
+    try:
+        result = await db.execute(
+            text(f"""
+                DELETE FROM {CORE}.ai_model_business_processes
+                WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
+                  AND LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid))
+            """),
+            {"mid": mid, "pid": proc_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "ai_model_id": mid, "business_process_id": proc_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

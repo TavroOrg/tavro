@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
+  AppWindow,
   ArrowLeft,
   Bot,
   Boxes,
@@ -18,12 +19,15 @@ import {
   Sparkles,
   Trash2,
   Unlink2,
+  Workflow,
   XCircle,
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
+import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
+import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
 
 type Option = { label: string; value: string };
 
@@ -219,6 +223,8 @@ const AiModelViewPage: React.FC = () => {
   const navigate = useNavigate();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
+  const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
+  const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [model, setModel] = useState<AiModelRecord | null>(null);
@@ -234,6 +240,12 @@ const AiModelViewPage: React.FC = () => {
   const [relationError, setRelationError] = useState<string | null>(null);
   const [useCaseSearch, setUseCaseSearch] = useState('');
   const [actingUseCase, setActingUseCase] = useState<string | null>(null);
+  const [applicationSearch, setApplicationSearch] = useState('');
+  const [actingApplication, setActingApplication] = useState<string | null>(null);
+  const [processSearch, setProcessSearch] = useState('');
+  const [actingProcess, setActingProcess] = useState<string | null>(null);
+  const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
+  const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
   const [editing, setEditing] = useState(isCreateMode);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
@@ -247,6 +259,8 @@ const AiModelViewPage: React.FC = () => {
 
   useEffect(() => {
     aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
+    businessRelationsApi.listApplications().then(setAllApplications).catch(() => setAllApplications([]));
+    businessRelationsApi.listProcesses().then(setAllProcesses).catch(() => setAllProcesses([]));
   }, []);
 
   useEffect(() => {
@@ -309,6 +323,20 @@ const AiModelViewPage: React.FC = () => {
             await aiModelApi.linkAgent(created.ai_model_id, linkAgentId);
           } catch (linkErr) {
             console.warn('Model created but auto-link to agent failed.', linkErr);
+          }
+        }
+        if (linkApplicationId) {
+          try {
+            await aiModelApi.linkApplication(created.ai_model_id, linkApplicationId);
+          } catch (linkErr) {
+            console.warn('Model created but auto-link to application failed.', linkErr);
+          }
+        }
+        if (linkProcessId) {
+          try {
+            await aiModelApi.linkProcess(created.ai_model_id, linkProcessId);
+          } catch (linkErr) {
+            console.warn('Model created but auto-link to process failed.', linkErr);
           }
         }
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
@@ -488,6 +516,98 @@ const AiModelViewPage: React.FC = () => {
     }
   };
 
+  const linkedApplications = model?.applications ?? [];
+  const linkedApplicationIds = useMemo(
+    () => new Set(linkedApplications.map(a => a.business_application_id).filter(Boolean)),
+    [linkedApplications],
+  );
+  const availableApplications = useMemo(() => {
+    const q = applicationSearch.trim().toLowerCase();
+    return allApplications.filter(a => {
+      if (linkedApplicationIds.has(a.business_application_id)) return false;
+      if (!q) return true;
+      return (
+        a.business_application_id.toLowerCase().includes(q) ||
+        (a.application_name ?? '').toLowerCase().includes(q) ||
+        (a.application_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allApplications, applicationSearch, linkedApplicationIds]);
+
+  const addApplication = async (applicationId: string) => {
+    if (!model) return;
+    setActingApplication(`add:${applicationId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.linkApplication(model.ai_model_id, applicationId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to link application.');
+    } finally {
+      setActingApplication(null);
+    }
+  };
+
+  const removeApplication = async (applicationId: string) => {
+    if (!model) return;
+    setActingApplication(`remove:${applicationId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.unlinkApplication(model.ai_model_id, applicationId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to remove application.');
+    } finally {
+      setActingApplication(null);
+    }
+  };
+
+  const linkedProcesses = model?.processes ?? [];
+  const linkedProcessIds = useMemo(
+    () => new Set(linkedProcesses.map(p => p.business_process_id).filter(Boolean)),
+    [linkedProcesses],
+  );
+  const availableProcesses = useMemo(() => {
+    const q = processSearch.trim().toLowerCase();
+    return allProcesses.filter(p => {
+      if (linkedProcessIds.has(p.business_process_id)) return false;
+      if (!q) return true;
+      return (
+        p.business_process_id.toLowerCase().includes(q) ||
+        (p.process_name ?? '').toLowerCase().includes(q) ||
+        (p.process_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allProcesses, processSearch, linkedProcessIds]);
+
+  const addProcess = async (processId: string) => {
+    if (!model) return;
+    setActingProcess(`add:${processId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.linkProcess(model.ai_model_id, processId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to link process.');
+    } finally {
+      setActingProcess(null);
+    }
+  };
+
+  const removeProcess = async (processId: string) => {
+    if (!model) return;
+    setActingProcess(`remove:${processId}`);
+    setRelationError(null);
+    try {
+      await aiModelApi.unlinkProcess(model.ai_model_id, processId);
+      await reloadModel();
+    } catch (err: any) {
+      setRelationError(err.message || 'Failed to remove process.');
+    } finally {
+      setActingProcess(null);
+    }
+  };
+
   const valueBoxCls =
     'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px] whitespace-pre-wrap break-words';
 
@@ -641,7 +761,7 @@ const AiModelViewPage: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col gap-5 w-full max-w-[1100px] mx-auto animate-fade-in pb-10">
+    <div className="flex flex-col gap-5 w-full max-w-[1400px] mx-auto animate-fade-in pb-10">
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={() => navigate('/ai-models')}
@@ -689,15 +809,42 @@ const AiModelViewPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-          <Boxes size={22} />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">
-            {isCreateMode ? 'New AI Model' : (form.model_name || model?.ai_model_id)}
-          </h2>
-          {!isCreateMode && <p className="text-[11px] font-mono text-slate-400">{model?.ai_model_id}</p>}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="h-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl w-full" />
+        <div className="p-6 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0 flex-1 md:max-w-[45%]">
+            <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm mt-1 shrink-0">
+              <Boxes size={24} />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">AI Model</span>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">
+                {isCreateMode ? 'New AI Model' : (form.model_name || model?.ai_model_id)}
+              </h2>
+              {!isCreateMode && <p className="text-xs font-mono text-slate-400 mt-1">{model?.ai_model_id}</p>}
+              <p className="text-sm text-slate-600 line-clamp-2">
+                {form.description || 'No description available.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+            {[
+              { label: 'Status', value: form.status },
+              // { label: 'Provider', value: form.provider },
+              // { label: 'Vendor or In-house', value: form.vendor_or_inhouse },
+              { label: 'Risk Tier / Materiality', value: form.risk_tier_materiality },
+            ].map(metric => (
+              <div key={metric.label} className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  {metric.label}
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-700">
+                  {metric.value?.trim() || 'N/A'}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -725,106 +872,105 @@ const AiModelViewPage: React.FC = () => {
       )}
 
       {tab === 'overview' && (<>
-      <Section title="Identification and Accountability">
-        <Field label="Model Name">{text('model_name', 'e.g. Credit Default Predictor')}</Field>
-        <Field label="Owner">{text('owner')}</Field>
-        <Field label="Description">
-          <div className="flex flex-col gap-1.5">
-            {area('description')}
-            {editableActive && (
-              <button
-                onClick={handleSuggest}
-                disabled={generating || !form.model_name.trim()}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50 w-fit"
-              >
-                {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                {generating ? 'Generating…' : 'AI assist'}
-              </button>
-            )}
-          </div>
-        </Field>
-        <Field label="Department Executive">{text('department_executive')}</Field>
-        <Field label="Business Functions">{text('business_functions')}</Field>
-        <Field label="Vendor or In-house">{select('vendor_or_inhouse', VENDOR_OPTIONS)}</Field>
-        <Field label="Provider">{text('provider')}</Field>
-        <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
-        <Field label="Parent Model">{parentField()}</Field>
-        <Field label="Version Number">{text('version_number')}</Field>
-      </Section>
+        <Section title="Identification and Accountability">
+          <Field label="Model Name">{text('model_name', 'e.g. Credit Default Predictor')}</Field>
+          <Field label="Owner">{text('owner')}</Field>
+          <Field label="Description">
+            <div className="flex flex-col gap-1.5">
+              {area('description')}
+              {editableActive && (
+                <button
+                  onClick={handleSuggest}
+                  disabled={generating || !form.model_name.trim()}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50 w-fit"
+                >
+                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  {generating ? 'Generating…' : 'AI assist'}
+                </button>
+              )}
+            </div>
+          </Field>
+          <Field label="Department Executive">{text('department_executive')}</Field>
+          <Field label="Business Functions">{text('business_functions')}</Field>
+          <Field label="Vendor or In-house">{select('vendor_or_inhouse', VENDOR_OPTIONS)}</Field>
+          <Field label="Provider">{text('provider')}</Field>
+          <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
+          <Field label="Parent Model">{parentField()}</Field>
+          <Field label="Version Number">{text('version_number')}</Field>
+        </Section>
 
-      <Section title="Intended Use and Decision Impact">
-        <Field label="Use case and business value drivers for the model" full>{text('use_case_value_drivers')}</Field>
-        <Field label="Types of users for the model">{text('user_types')}</Field>
-        <Field label="Type of decision that the model supports (e.g., credit, fraud, liquidity)">{text('decision_type')}</Field>
-        <Field label="Level of automation of the decisions (e.g., advisory)">{text('automation_level')}</Field>
-        <Field label="Mapping to regulatory (e.g., Fair Lending, HMDA, CECL)">{text('regulatory_mapping')}</Field>
-        <Field label="Impact on consumer">{text('consumer_impact')}</Field>
-        <Field label="Risk Tier / Materiality Classification">{text('risk_tier_materiality')}</Field>
-      </Section>
+        <Section title="Intended Use and Decision Impact">
+          <Field label="Use case and business value drivers for the model" full>{text('use_case_value_drivers')}</Field>
+          <Field label="Types of users for the model">{text('user_types')}</Field>
+          <Field label="Type of decision that the model supports (e.g., credit, fraud, liquidity)">{text('decision_type')}</Field>
+          <Field label="Level of automation of the decisions (e.g., advisory)">{text('automation_level')}</Field>
+          <Field label="Mapping to regulatory (e.g., Fair Lending, HMDA, CECL)">{text('regulatory_mapping')}</Field>
+          <Field label="Impact on consumer">{text('consumer_impact')}</Field>
+          <Field label="Risk Tier / Materiality Classification">{text('risk_tier_materiality')}</Field>
+        </Section>
 
-      <Section title="Model Construct">
-        <Field label="Type of model (e.g., statistical, machine learning, rules, agentic system)">{text('model_type')}</Field>
-        <Field label="The class of techniques used by the model to learn patterns from data">{text('technique_class')}</Field>
-        <Field label="The learning approach used to train the model (labeled / unlabeled)">{text('learning_approach')}</Field>
-        <Field label="How often the model is updated or retrained">{text('update_frequency')}</Field>
-        <Field label="Number of input variables / attributes">{text('input_variable_count')}</Field>
-        <Field label="How is data joined (e.g., API, transfer methods)">{text('data_join_method')}</Field>
-        <Field label="Reference to statistical assumptions the model relies on">{text('statistical_assumptions')}</Field>
-        <Field label="Documented constraints / weaknesses affecting reliability, fairness">{text('documented_constraints')}</Field>
-        <Field label="Stability Window / Applicability Scope">{text('stability_window')}</Field>
-      </Section>
+        <Section title="Model Construct">
+          <Field label="Type of model (e.g., statistical, machine learning, rules, agentic system)">{text('model_type')}</Field>
+          <Field label="The class of techniques used by the model to learn patterns from data">{text('technique_class')}</Field>
+          <Field label="The learning approach used to train the model (labeled / unlabeled)">{text('learning_approach')}</Field>
+          <Field label="How often the model is updated or retrained">{text('update_frequency')}</Field>
+          <Field label="Number of input variables / attributes">{text('input_variable_count')}</Field>
+          <Field label="How is data joined (e.g., API, transfer methods)">{text('data_join_method')}</Field>
+          <Field label="Reference to statistical assumptions the model relies on">{text('statistical_assumptions')}</Field>
+          <Field label="Documented constraints / weaknesses affecting reliability, fairness">{text('documented_constraints')}</Field>
+          <Field label="Stability Window / Applicability Scope">{text('stability_window')}</Field>
+        </Section>
 
-      <Section title="Model Validation">
-        <Field label="Date of Last Model Validation">{dateField('last_validation_date')}</Field>
-        <div />
-        {isCreateMode ? (
-          <p className="text-xs text-slate-500 md:col-span-2">Save the model to upload validation/monitoring files.</p>
-        ) : (
-          <>
-            <AttachmentField modelId={model!.ai_model_id} category="bias_fairness_testing" label="Bias and Fairness Testing" />
-            <AttachmentField modelId={model!.ai_model_id} category="model_drift_testing" label="Model Drift Testing" />
-            <AttachmentField modelId={model!.ai_model_id} category="model_performance_monitoring" label="Model Performance Monitoring" />
-          </>
-        )}
-      </Section>
+        <Section title="Model Validation">
+          <Field label="Date of Last Model Validation">{dateField('last_validation_date')}</Field>
+          <div />
+          {isCreateMode ? (
+            <p className="text-xs text-slate-500 md:col-span-2">Save the model to upload validation/monitoring files.</p>
+          ) : (
+            <>
+              <AttachmentField modelId={model!.ai_model_id} category="bias_fairness_testing" label="Bias and Fairness Testing" />
+              <AttachmentField modelId={model!.ai_model_id} category="model_drift_testing" label="Model Drift Testing" />
+              <AttachmentField modelId={model!.ai_model_id} category="model_performance_monitoring" label="Model Performance Monitoring" />
+            </>
+          )}
+        </Section>
 
-      <Section title="Model Monitoring">
-        {isCreateMode ? (
-          <p className="text-xs text-slate-500 md:col-span-2">Save the model to upload monitoring files.</p>
-        ) : (
-          <AttachmentField modelId={model!.ai_model_id} category="model_monitoring" label="Model Monitoring" />
-        )}
-      </Section>
+        <Section title="Model Monitoring">
+          {isCreateMode ? (
+            <p className="text-xs text-slate-500 md:col-span-2">Save the model to upload monitoring files.</p>
+          ) : (
+            <AttachmentField modelId={model!.ai_model_id} category="model_monitoring" label="Model Monitoring" />
+          )}
+        </Section>
 
-      <Section title="Model Recertification">
-        <Field label="Has use case remained the same?">{select('recert_use_case_same', YES_NO_OPTIONS)}</Field>
-        <Field label="If not, what changed?">{text('recert_use_case_changed')}</Field>
-        <Field label="Have inputs and data sources remained the same?">{select('recert_inputs_same', YES_NO_OPTIONS)}</Field>
-        <Field label="If not, what changed?">{text('recert_inputs_changed')}</Field>
-        <Field label="Have outputs and destinations remained the same?">{select('recert_outputs_same', YES_NO_OPTIONS)}</Field>
-        <Field label="If not, what changed?">{text('recert_outputs_changed')}</Field>
-        <Field label="Have users remained the same?">{select('recert_users_same', YES_NO_OPTIONS)}</Field>
-        <Field label="If not, what changed?">{text('recert_users_changed')}</Field>
-        <Field label="Have internal processing components and algorithms remained the same?">{select('recert_processing_same', YES_NO_OPTIONS)}</Field>
-        <Field label="If not, what changed?">{text('recert_processing_changed')}</Field>
-        <Field label="Have users completed required training on use of AI in models?">{select('recert_training_completed', YES_NO_OPTIONS)}</Field>
-        <div />
-        <Field label="Has a comprehensive risk assessment been conducted on any use of AI?">{select('recert_risk_assessment_done', YES_NO_OPTIONS)}</Field>
-        {isCreateMode ? (
-          <p className="text-xs text-slate-500 self-end">Save the model to attach results.</p>
-        ) : (
-          <AttachmentField modelId={model!.ai_model_id} category="recert_risk_assessment" label="If so, please attach results" />
-        )}
-      </Section>
+        <Section title="Model Recertification">
+          <Field label="Has use case remained the same?">{select('recert_use_case_same', YES_NO_OPTIONS)}</Field>
+          <Field label="If not, what changed?">{text('recert_use_case_changed')}</Field>
+          <Field label="Have inputs and data sources remained the same?">{select('recert_inputs_same', YES_NO_OPTIONS)}</Field>
+          <Field label="If not, what changed?">{text('recert_inputs_changed')}</Field>
+          <Field label="Have outputs and destinations remained the same?">{select('recert_outputs_same', YES_NO_OPTIONS)}</Field>
+          <Field label="If not, what changed?">{text('recert_outputs_changed')}</Field>
+          <Field label="Have users remained the same?">{select('recert_users_same', YES_NO_OPTIONS)}</Field>
+          <Field label="If not, what changed?">{text('recert_users_changed')}</Field>
+          <Field label="Have internal processing components and algorithms remained the same?">{select('recert_processing_same', YES_NO_OPTIONS)}</Field>
+          <Field label="If not, what changed?">{text('recert_processing_changed')}</Field>
+          <Field label="Have users completed required training on use of AI in models?">{select('recert_training_completed', YES_NO_OPTIONS)}</Field>
+          <div />
+          <Field label="Has a comprehensive risk assessment been conducted on any use of AI?">{select('recert_risk_assessment_done', YES_NO_OPTIONS)}</Field>
+          {isCreateMode ? (
+            <p className="text-xs text-slate-500 self-end">Save the model to attach results.</p>
+          ) : (
+            <AttachmentField modelId={model!.ai_model_id} category="recert_risk_assessment" label="If so, please attach results" />
+          )}
+        </Section>
       </>)}
 
       {tab === 'business_impact' && !isCreateMode && model && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-5">
           <div>
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Bot size={15} /> Related Agents ({linkedAgents.length})
+              <Bot size={15} />Agents ({linkedAgents.length})
             </h3>
-            <p className="text-xs text-slate-500">Attach the agents that use this AI model.</p>
           </div>
 
           {relationError && (
@@ -856,7 +1002,7 @@ const AiModelViewPage: React.FC = () => {
             })}
             {linkedAgents.length === 0 && (
               <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No agents attached to this model.
+                No linked Agents
               </div>
             )}
           </div>
@@ -864,7 +1010,7 @@ const AiModelViewPage: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                <Link2 size={12} /> Attach Agent
+                <Link2 size={12} /> Add Agent Relation
               </p>
               <div className="relative w-full max-w-sm">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -878,7 +1024,7 @@ const AiModelViewPage: React.FC = () => {
             </div>
             <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-100">
               {availableAgents.length === 0 && (
-                <div className="p-3 text-xs text-slate-500">No available agents to attach.</div>
+                <div className="p-3 text-xs text-slate-500">No available Agents to link.</div>
               )}
               {availableAgents.map(a => {
                 const aid = a.identification?.agent_id ?? '';
@@ -908,9 +1054,8 @@ const AiModelViewPage: React.FC = () => {
 
           <div>
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <ClipboardList size={15} /> Related AI Use Cases ({linkedUseCases.length})
+              <ClipboardList size={15} />AI Use Cases ({linkedUseCases.length})
             </h3>
-            <p className="text-xs text-slate-500">Map the AI use cases this model supports.</p>
           </div>
 
           <div className="flex flex-col gap-3">
@@ -941,7 +1086,7 @@ const AiModelViewPage: React.FC = () => {
             })}
             {linkedUseCases.length === 0 && (
               <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No AI use cases mapped to this model.
+                No linked AI Use Cases.
               </div>
             )}
           </div>
@@ -949,7 +1094,7 @@ const AiModelViewPage: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                <Link2 size={12} /> Map AI Use Case
+                <Link2 size={12} />Add AI Use Case Relation
               </p>
               <div className="relative w-full max-w-sm">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -963,7 +1108,7 @@ const AiModelViewPage: React.FC = () => {
             </div>
             <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-100">
               {availableUseCases.length === 0 && (
-                <div className="p-3 text-xs text-slate-500">No available AI use cases to map.</div>
+                <div className="p-3 text-xs text-slate-500">No available AI use cases to link.</div>
               )}
               {availableUseCases.map(uc => {
                 const id = uc.identifier ?? '';
@@ -980,6 +1125,172 @@ const AiModelViewPage: React.FC = () => {
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                     >
                       {actingUseCase === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Related Applications (many-to-many) ── */}
+          <div className="h-px bg-slate-100 w-full" />
+
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <AppWindow size={15} />Applications ({linkedApplications.length})
+            </h3>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {linkedApplications.map((app, idx) => {
+              const appId = app.business_application_id || `application-${idx}`;
+              const removeKey = `remove:${appId}`;
+              return (
+                <div key={`${appId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="min-w-0">
+                    <Link to={`/applications/${encodeURIComponent(appId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                      {app.application_name || appId}
+                    </Link>
+                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{appId}</span>
+                    {app.description && (
+                      <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{app.description}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => removeApplication(appId)}
+                    disabled={actingApplication === removeKey}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {actingApplication === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            {linkedApplications.length === 0 && (
+              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                No linked Applications.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                <Link2 size={12} />Add Application Relation
+              </p>
+              <div className="relative w-full max-w-sm">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={applicationSearch}
+                  onChange={(e) => setApplicationSearch(e.target.value)}
+                  placeholder="Filter applications..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-100">
+              {availableApplications.length === 0 && (
+                <div className="p-3 text-xs text-slate-500">No available Applications to link.</div>
+              )}
+              {availableApplications.map(app => {
+                const addKey = `add:${app.business_application_id}`;
+                return (
+                  <div key={app.business_application_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{app.application_name || app.business_application_id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{app.business_application_id}</p>
+                    </div>
+                    <button
+                      onClick={() => addApplication(app.business_application_id)}
+                      disabled={actingApplication === addKey}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {actingApplication === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Related Processes (many-to-many) ── */}
+          <div className="h-px bg-slate-100 w-full" />
+
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <Workflow size={15} />Processes ({linkedProcesses.length})
+            </h3>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {linkedProcesses.map((proc, idx) => {
+              const procId = proc.business_process_id || `process-${idx}`;
+              const removeKey = `remove:${procId}`;
+              return (
+                <div key={`${procId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="min-w-0">
+                    <Link to={`/processes/${encodeURIComponent(procId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                      {proc.process_name || procId}
+                    </Link>
+                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{procId}</span>
+                    {proc.description && (
+                      <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{proc.description}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => removeProcess(procId)}
+                    disabled={actingProcess === removeKey}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {actingProcess === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            {linkedProcesses.length === 0 && (
+              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                No linked Processes.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                <Link2 size={12} />Add Process Relation
+              </p>
+              <div className="relative w-full max-w-sm">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={processSearch}
+                  onChange={(e) => setProcessSearch(e.target.value)}
+                  placeholder="Filter processes..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-100">
+              {availableProcesses.length === 0 && (
+                <div className="p-3 text-xs text-slate-500">No available Processes to link.</div>
+              )}
+              {availableProcesses.map(proc => {
+                const addKey = `add:${proc.business_process_id}`;
+                return (
+                  <div key={proc.business_process_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{proc.process_name || proc.business_process_id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{proc.business_process_id}</p>
+                    </div>
+                    <button
+                      onClick={() => addProcess(proc.business_process_id)}
+                      disabled={actingProcess === addKey}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {actingProcess === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
                       Link
                     </button>
                   </div>
