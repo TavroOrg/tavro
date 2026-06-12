@@ -153,6 +153,32 @@ class AiModelApi {
     });
   }
 
+  async linkApplication(modelId: string, applicationId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/applications`, {
+      method: 'POST',
+      body: JSON.stringify({ business_application_id: applicationId }),
+    });
+  }
+
+  async unlinkApplication(modelId: string, applicationId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async linkProcess(modelId: string, processId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/processes`, {
+      method: 'POST',
+      body: JSON.stringify({ business_process_id: processId }),
+    });
+  }
+
+  async unlinkProcess(modelId: string, processId: string): Promise<void> {
+    await req(`/ai-models/${encodeURIComponent(modelId)}/processes/${encodeURIComponent(processId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async listAttachments(modelId: string, category?: string): Promise<AiModelAttachmentRecord[]> {
     const suffix = category ? `?category=${encodeURIComponent(category)}` : '';
     return req(`/ai-models/${encodeURIComponent(modelId)}/attachments${suffix}`);

@@ -401,12 +401,170 @@ def _sanitize_knowledge_source(source: Any) -> dict[str, str] | None:
     }
 
 
+_VALID_IO_MODES = {
+    "text", "structured_data", "api_response", "database_query",
+    "file", "alert", "report", "event", "stream",
+}
+
+def _sanitize_skills(raw_skills: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_skills, list):
+        return []
+
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_skills:
+        if not isinstance(item, dict):
+            continue
+        name = _to_text(item.get("name"))
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+
+        def _clean_modes(raw: Any) -> list[str]:
+            if isinstance(raw, str):
+                raw = [raw]
+            if not isinstance(raw, list):
+                return []
+            return [m for m in (_to_text(v).lower() for v in raw) if m in _VALID_IO_MODES]
+
+        input_modes = _clean_modes(item.get("input_modes") or item.get("inputModes"))
+        output_modes = _clean_modes(item.get("output_modes") or item.get("outputModes"))
+
+        raw_tags = item.get("tags")
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        tags = [_to_text(t) for t in (raw_tags or []) if _to_text(t)][:6]
+
+        cleaned.append({
+            "name": name,
+            "description": _to_text(item.get("description"), f"Skill: {name}"),
+            "tags": tags,
+            "input_modes": input_modes or ["text"],
+            "output_modes": output_modes or ["structured_data"],
+        })
+    return cleaned[:6]
+
+
+def _sanitize_column_names(raw_columns: Any) -> list[str]:
+    if isinstance(raw_columns, (str, dict)):
+        raw_columns = [raw_columns]
+    if not isinstance(raw_columns, list):
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_columns:
+        if isinstance(raw, dict):
+            name = _to_text(raw.get("name") or raw.get("column_name") or raw.get("identifier"))
+        else:
+            name = _to_text(raw)
+        key = name.lower()
+        if name and key not in seen:
+            names.append(name)
+            seen.add(key)
+    return names
+
+
+def _sanitize_tables(raw_tables: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_tables, (str, dict)):
+        raw_tables = [raw_tables]
+    if not isinstance(raw_tables, list):
+        return []
+
+    tables: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in raw_tables:
+        if isinstance(raw, str):
+            raw = {"name": raw}
+        if not isinstance(raw, dict):
+            continue
+        name = _to_text(raw.get("name") or raw.get("table_name"))
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        table: dict[str, Any] = {
+            "name": name,
+            "description": _to_text(raw.get("description"), f"Operational data table for {name}"),
+            "columns": _sanitize_column_names(raw.get("columns") or raw.get("column")),
+        }
+        tool_name = _to_text(raw.get("tool_name") or raw.get("tool"))
+        if tool_name:
+            table["tool_name"] = tool_name
+        tables.append(table)
+    return tables[:4]
+
+
+def _sanitize_columns(raw_columns: Any, tables: list[dict[str, Any]]) -> list[dict[str, str]]:
+    if isinstance(raw_columns, (str, dict)):
+        raw_columns = [raw_columns]
+    if not isinstance(raw_columns, list):
+        raw_columns = []
+
+    columns: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    fallback_table = tables[0]["name"] if len(tables) == 1 else ""
+
+    def add_column(name: str, table_name: str = "") -> None:
+        table = table_name or fallback_table
+        key = (name.lower(), table.lower())
+        if name and key not in seen:
+            item = {"name": name}
+            if table:
+                item["table_name"] = table
+            columns.append(item)
+            seen.add(key)
+
+    for raw in raw_columns:
+        if isinstance(raw, str):
+            add_column(_to_text(raw))
+            continue
+        if not isinstance(raw, dict):
+            continue
+        name = _to_text(raw.get("name") or raw.get("column_name") or raw.get("identifier"))
+        table_name = _to_text(raw.get("table_name") or raw.get("table"))
+        add_column(name, table_name)
+
+    for table in tables:
+        table_name = _to_text(table.get("name"))
+        for column_name in table.get("columns") or []:
+            add_column(_to_text(column_name), table_name)
+
+    return columns[:24]
+
+
+def _fallback_lineage(request: SparkConvertRequest, fields: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    use_case_title = _to_text(fields.get("title"), request.title)
+    context_label = _to_text(request.signal_label, use_case_title)
+    base_name = re.sub(r"[^A-Za-z0-9]+", " ", context_label).strip() or use_case_title
+    words = re.findall(r"[A-Za-z0-9]+", base_name)[:4] or ["Operational"]
+    table_name = " ".join(words + ["Signals"])
+    columns = [
+        "record_id",
+        "event_timestamp",
+        "source_system",
+        "status",
+        "priority_score",
+        "recommended_action",
+    ]
+    tables = [{
+        "name": table_name,
+        "description": f"Source records and signals used by the {use_case_title} agent.",
+        "columns": columns,
+    }]
+    return tables, [{"name": name, "table_name": table_name} for name in columns]
+
+
 def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[str, Any]) -> dict[str, Any]:
     use_case_title = _to_text(fields.get("title"), request.title)
     use_case_desc = _to_text(fields.get("description"), request.description)
     dimensions = [d for d in request.target_dimensions if _to_text(d)]
     dim_text = ", ".join(dimensions) if dimensions else "process"
     context_label = _to_text(request.signal_label, dim_text)
+    tables, columns = _fallback_lineage(request, fields)
 
     return {
         "agent_name": _to_agent_name(use_case_title),
@@ -438,6 +596,31 @@ def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[st
             "name": "Company Blueprint Context",
             "description": f"Spark context for {use_case_title}: {use_case_desc or request.rationale}",
         },
+        "tables": tables,
+        "columns": columns,
+        "skills": [
+            {
+                "name": "Signal Monitoring",
+                "description": f"Continuously monitors {context_label.lower()} signals and triggers on threshold breaches.",
+                "tags": ["monitoring", "alerting", dim_text],
+                "input_modes": ["structured_data", "database_query"],
+                "output_modes": ["alert", "structured_data"],
+            },
+            {
+                "name": "Recommendation Generation",
+                "description": f"Produces prioritized, rationale-backed action recommendations for {use_case_title}.",
+                "tags": ["recommendation", "reasoning", dim_text],
+                "input_modes": ["structured_data"],
+                "output_modes": ["report", "structured_data"],
+            },
+            {
+                "name": "Outcome Tracking",
+                "description": "Persists decision traces and incorporates human feedback for governance and model improvement.",
+                "tags": ["governance", "feedback", "audit"],
+                "input_modes": ["text", "structured_data"],
+                "output_modes": ["structured_data"],
+            },
+        ],
     }
 
 
@@ -471,6 +654,18 @@ def _normalize_agent_recommendation(
     knowledge_source = _sanitize_knowledge_source(candidate.get("knowledge_source"))
     if knowledge_source:
         result["knowledge_source"] = knowledge_source
+
+    tables = _sanitize_tables(candidate.get("tables") or candidate.get("table"))
+    if tables:
+        result["tables"] = tables
+
+    columns = _sanitize_columns(candidate.get("columns") or candidate.get("column"), result.get("tables") or [])
+    if columns:
+        result["columns"] = columns
+
+    skills = _sanitize_skills(candidate.get("skills"))
+    if skills:
+        result["skills"] = skills
 
     return result
 
@@ -1142,17 +1337,24 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             "- description: 1–2 sentences on what the agent does\n"
             "- instruction: 3–5 sentences of operational instructions — how it ingests data, what it produces, and when it acts\n"
             "- tools: list of up to 4 objects {\"name\": \"...\", \"description\": \"...\"} — the external systems/APIs this agent calls (use real system names if mentioned in the use case, otherwise use descriptive generic names)\n"
-            "- knowledge_source: one object {\"name\": \"...\", \"description\": \"...\"} — the primary data source the agent reads from\n\n"
+            "- knowledge_source: one object {\"name\": \"...\", \"description\": \"...\"} — the primary data source the agent reads from\n"
+            "- tables: list of 1-4 objects {\"name\": \"...\", \"description\": \"...\", \"tool_name\": \"...\", \"columns\": [\"...\"]} - source or output tables the agent reads/writes. Use tool_name only when the table belongs to one of the tools above\n"
+            "- columns: list of 3-7 objects {\"name\": \"...\", \"table_name\": \"...\"} - concrete columns for those tables. Every table_name must match a table name from tables\n"
+            "- skills: list of 2-4 discrete capabilities this agent has, each as an object with:\n"
+            "    {\"name\": \"...\", \"description\": \"...\", \"tags\": [\"...\"], "
+            "\"input_modes\": [\"...\"], \"output_modes\": [\"...\"]}\n"
+            "  input_modes and output_modes must each be one or more of: "
+            "text, structured_data, api_response, database_query, file, alert, report, event, stream\n\n"
             "Return ONLY the JSON object. No prose."
         )
         try:
-            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1200)
+            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1600)
             agent_raw = "".join(block.get("text", "") for block in agent_data.get("content", []) if block.get("type") == "text")
             extracted_agent = _extract_json_object(agent_raw)
 
             if agent_data.get("stop_reason") == "max_tokens" and _extract_balanced_json(extracted_agent, "{", "}") is None:
-                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1200; retrying with larger budget")
-                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2200)
+                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1600; retrying with larger budget")
+                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2800)
                 agent_raw = "".join(block.get("text", "") for block in retry_data.get("content", []) if block.get("type") == "text")
                 extracted_agent = _extract_json_object(agent_raw)
 
