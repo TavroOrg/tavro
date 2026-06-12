@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     inherent_risk_classification_score DOUBLE PRECISION,
     sla TEXT,
     process_health_state TEXT,
+    company_id TEXT,
+    company_name TEXT,
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );

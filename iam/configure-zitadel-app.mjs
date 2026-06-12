@@ -19,6 +19,8 @@ const requestHost = process.env.ZITADEL_REQUEST_HOST;
 const forwardedProto = process.env.ZITADEL_REQUEST_PROTO;
 const projectName = process.env.ZITADEL_PROJECT_NAME || "tavro-mcp";
 const appName = process.env.ZITADEL_APP_NAME || "tavro-mcp";
+const adminRoleName = process.env.ZITADEL_ADMIN_ROLE || "portal_admin";
+const adminRuntimeConfigFile = process.env.TAVRO_ADMIN_RUNTIME_CONFIG_FILE || "";
 const redirectUris = required("ZITADEL_APP_REDIRECT_URIS")
   .split(",")
   .map((uri) => uri.trim())
@@ -176,6 +178,62 @@ async function ensureApp(token, projectId) {
   };
 }
 
+async function ensurePortalAdminRole(token, projectId) {
+  const data = await request(token, `/management/v1/projects/${projectId}/roles/_search`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const exists = data.result?.some((r) => r.key === adminRoleName);
+  if (exists) {
+    console.log(`Role '${adminRoleName}' already exists`);
+    return;
+  }
+  await request(token, `/management/v1/projects/${projectId}/roles`, {
+    method: "POST",
+    body: JSON.stringify({
+      roleKey: adminRoleName,
+      displayName: "Portal Admin",
+      group: "admin",
+    }),
+  });
+  console.log(`Created role '${adminRoleName}'`);
+}
+
+async function enableRoleAssertion(token, projectId) {
+  const projectData = await request(token, `/management/v1/projects/${projectId}`);
+  const name = projectData.project?.name || projectData.name || projectName;
+  try {
+    await request(token, `/management/v1/projects/${projectId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name,
+        projectRoleAssertion: true,
+        projectRoleCheck: false,
+        hasProjectCheck: false,
+        privateLabelingSetting: "PRIVATE_LABELING_SETTING_UNSPECIFIED",
+      }),
+    });
+    console.log("Enabled role assertion on project");
+  } catch (error) {
+    if (!error.message.includes("No changes")) {
+      throw error;
+    }
+  }
+}
+
+function writeAdminRuntimeConfig(clientId) {
+  if (!adminRuntimeConfigFile) return;
+  const config = {
+    zitadelIssuer: issuer,
+    zitadelClientId: clientId,
+    zitadelRedirectPath: process.env.VITE_ADMIN_ZITADEL_REDIRECT_PATH || process.env.VITE_ZITADEL_REDIRECT_PATH || "/auth/callback",
+    zitadelScope: process.env.VITE_ADMIN_ZITADEL_SCOPE || "openid profile email urn:zitadel:iam:user:resourceowner urn:zitadel:iam:org:project:roles",
+  };
+  fs.mkdirSync(path.dirname(adminRuntimeConfigFile), { recursive: true });
+  fs.writeFileSync(adminRuntimeConfigFile, JSON.stringify(config, null, 2));
+  console.log(`Wrote Admin Portal runtime auth config to ${adminRuntimeConfigFile}`);
+}
+
 function writeRuntimeConfig(clientId) {
   const config = {
     zitadelIssuer: issuer,
@@ -211,7 +269,11 @@ async function configure() {
         }
       }
 
+      await ensurePortalAdminRole(token, projectId);
+      await enableRoleAssertion(token, projectId);
+
       writeRuntimeConfig(clientId);
+      writeAdminRuntimeConfig(clientId);
       console.log("Configured ZITADEL OIDC app URLs:", {
         projectId,
         appId,

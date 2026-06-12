@@ -62,9 +62,10 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 class BusinessRelationsApi {
-  async listApplications(search?: string): Promise<BusinessApplicationRecord[]> {
+  async listApplications(search?: string, companyId?: string): Promise<BusinessApplicationRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
+    if (companyId) params.set('company_id', companyId);
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
@@ -77,8 +78,9 @@ class BusinessRelationsApi {
     return req(`/applications/${encodeURIComponent(applicationId)}`);
   }
 
-  async createApplication(payload: BusinessApplicationUpsertPayload): Promise<BusinessApplicationRecord> {
-    return req('/applications', {
+  async createApplication(payload: BusinessApplicationUpsertPayload, companyId?: string): Promise<BusinessApplicationRecord> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/applications${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -107,9 +109,10 @@ class BusinessRelationsApi {
     });
   }
 
-  async listProcesses(search?: string): Promise<BusinessProcessRecord[]> {
+  async listProcesses(search?: string, companyId?: string): Promise<BusinessProcessRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
+    if (companyId) params.set('company_id', companyId);
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
@@ -122,8 +125,9 @@ class BusinessRelationsApi {
     return req(`/processes/${encodeURIComponent(processId)}`);
   }
 
-  async createProcess(payload: BusinessProcessUpsertPayload): Promise<BusinessProcessRecord> {
-    return req('/processes', {
+  async createProcess(payload: BusinessProcessUpsertPayload, companyId?: string): Promise<BusinessProcessRecord> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/processes${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -273,6 +277,18 @@ class BusinessRelationsApi {
     });
   }
 
+  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async linkAgentToChildAgent(parentAgentId: string, childAgentId: string): Promise<void> {
     await req(`/agents/${encodeURIComponent(parentAgentId)}/child-agents/${encodeURIComponent(childAgentId)}`, {
       method: 'PUT',
@@ -285,9 +301,10 @@ class BusinessRelationsApi {
     });
   }
 
-  async listIntegrations(search?: string): Promise<IntegrationRecord[]> {
+  async listIntegrations(search?: string, companyId?: string): Promise<IntegrationRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
+    if (companyId) params.set('company_id', companyId);
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';

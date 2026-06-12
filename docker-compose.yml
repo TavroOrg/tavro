@@ -18,6 +18,10 @@ services:
         PG_MAJOR: "16"
     container_name: tavro-postgres
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     environment:
       POSTGRES_USER:                     ${POSTGRES_USER}
       POSTGRES_PASSWORD:                 ${POSTGRES_PASSWORD}
@@ -42,6 +46,10 @@ services:
       dockerfile: services/Dockerfile
     container_name: risk-temporal
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     command: temporal server start-dev --ip 0.0.0.0 --ui-public-path /temporal --ui-port 8233
     ports:
       - "7233:7233"   # Temporal gRPC
@@ -54,6 +62,10 @@ services:
       dockerfile: tavro_api/Dockerfile
     container_name: tavro-api
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4g
     depends_on:
       tavro-postgres:
         condition: service_healthy
@@ -112,11 +124,20 @@ services:
       dockerfile: Dockerfile
     container_name: tavro-copilot-sdk
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     environment:
       # Docker-internal URL for the Tavro MCP server.
       # The copilot-server registers this with each Copilot SDK session so the
       # SDK can automatically route tool calls to Tavro's MCP backend.
       MCP_INTERNAL_URL: http://risk-mcp-server:9001/zitadel/mcp
+      GITHUB_COPILOT_TOKEN: ${GITHUB_COPILOT_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_AI_FOUNDRY_ENDPOINT: ${AZURE_AI_FOUNDRY_ENDPOINT:-}
+      AZURE_AI_FOUNDRY_KEY: ${AZURE_AI_FOUNDRY_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "4001:4000"
     healthcheck:
@@ -125,6 +146,49 @@ services:
       timeout: 15s
       retries: 3
       start_period: 20s
+
+  # ── Admin Portal — FastAPI (API + React UI) on port 7000 ─────────────────────
+  tavro-admin:
+    build:
+      context: .
+      dockerfile: tavro_admin/Dockerfile
+    container_name: tavro-admin
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:          postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+      # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      ADMIN_ENCRYPTION_KEY:  ${ADMIN_ENCRYPTION_KEY:-}
+      AGENT_CARD_DIR:        /app/agent_cards
+      RISK_CLASSIFY_URL:     http://tavro-api:8000/api/v1/risk/classify-risk
+      RISK_CONCURRENCY:      "2"
+      RISK_TIMEOUT_S:        "600"
+      # Used by the backend auth dependency to validate tokens against ZITADEL's userinfo endpoint
+      ZITADEL_ISSUER:        ${VITE_ZITADEL_ISSUER}
+      # Docker-internal URL to reach ZITADEL from inside the container network
+      ZITADEL_INTERNAL_URL:  http://zitadel-api:8080
+      ZITADEL_INTERNAL_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./sql:/sql:ro
+      - ./tavro_api/agent_cards:/app/agent_cards
+      # Runtime auth config written by zitadel-configure-app; served at /runtime/tavro-admin-runtime-config.json
+      - tavro_runtime_config:/app/static/runtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
+      - ./.env:/app/.env:rw                           # connector credential read/write
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
@@ -140,6 +204,10 @@ services:
         VITE_MCP_URL: ${VITE_MCP_URL:-http://localhost:9001/zitadel/mcp}
     container_name: tavro-app
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     depends_on:
       tavro-api:
         condition: service_healthy
@@ -159,6 +227,10 @@ services:
   proxy:
     image: ${TRAEFIK_IMAGE}
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
@@ -184,6 +256,10 @@ services:
   zitadel-api:
     image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION}
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     user: "0"
     command: start-from-init --masterkey "${ZITADEL_MASTERKEY}"
     environment:
@@ -282,6 +358,10 @@ services:
         ZITADEL_VERSION: ${ZITADEL_VERSION}
     image: tavro-zitadel-login:${ZITADEL_VERSION}
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     user: "0"
     environment:
       ZITADEL_API_URL: http://zitadel-api:8080
@@ -341,6 +421,10 @@ services:
   zitadel-configure-app:
     image: node:20-alpine
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     working_dir: /work
     command:
       - /bin/sh
@@ -359,6 +443,9 @@ services:
       ZITADEL_APP_NAME: ${ZITADEL_APP_NAME:-tavro-mcp}
       ZITADEL_APP_REDIRECT_URIS: ${ZITADEL_APP_REDIRECT_URIS}
       ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS: ${ZITADEL_APP_POST_LOGOUT_REDIRECT_URIS}
+      ZITADEL_ADMIN_ROLE: ${ZITADEL_ADMIN_ROLE:-portal_admin}
+      VITE_ADMIN_ZITADEL_SCOPE: ${VITE_ADMIN_ZITADEL_SCOPE:-openid profile email urn:zitadel:iam:user:resourceowner urn:zitadel:iam:org:project:roles}
+      TAVRO_ADMIN_RUNTIME_CONFIG_FILE: /runtime/tavro-admin-runtime-config.json
     volumes:
       - ./iam:/work/iam:ro
       - zitadel-bootstrap:/zitadel/bootstrap:ro
@@ -395,6 +482,10 @@ services:
       dockerfile: Dockerfile.mcp
     container_name: risk-mcp-server
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
@@ -441,6 +532,10 @@ services:
     <<: *risk_worker_base
     container_name: risk-worker
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     command: tail -f /dev/null
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
@@ -457,6 +552,10 @@ services:
     <<: *risk_worker_base
     container_name: risk-sample-loader
     profiles: ["manual"]
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     command: python -u worker.py
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
@@ -475,6 +574,10 @@ services:
     profiles: ["manual"]
     <<: *risk_worker_base
     container_name: risk-connector
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     command: python -u run_connectors.py
     environment:
       DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro

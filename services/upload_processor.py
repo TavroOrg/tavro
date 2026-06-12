@@ -278,19 +278,20 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         return
     tenant_id = ident.get("tenant_id")
     agent_id = ident.get("agent_id")
-    # If tenant_id wasn't provided on the incoming card, try to read it from the agents table
     if tenant_id is None:
         rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
         if rows and rows[0].get("tenant_id"):
             tenant_id = rows[0].get("tenant_id")
-    select_rows = []
+
+    tools_master_rows = []
+    relation_rows = []
     for tool in tools:
         delegation_possible = (
             str(tool.get("delegation_possible")).lower() == "true"
             if tool.get("delegation_possible") is not None else None
         )
-        select_rows.append(f"""
-            SELECT {_sq(tenant_id)} AS tenant_id, {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
+        tools_master_rows.append(f"""
+            SELECT {_sq(tenant_id)} AS tenant_id,
                    {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
                    {_sq(tool.get('description'))} AS tool_description,
                    {_bool(delegation_possible)}::boolean AS delegation_possible,
@@ -300,23 +301,29 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
                    {_sq(tool.get('default_value'))} AS default_config_json_text,
                    TIMESTAMP '{now_str}' AS now_ts
         """.strip())
-    union_all = "\nUNION ALL\n".join(select_rows)
+        relation_rows.append(f"""
+            SELECT {_sq(tenant_id)} AS tenant_id,
+                   {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
+                   {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
+                   TIMESTAMP '{now_str}' AS now_ts
+        """.strip())
+
+    tools_union = "\nUNION ALL\n".join(tools_master_rows)
     _exec(conn, f"""
-        INSERT INTO {CORE}.agent_tools (
-            tenant_id, agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+        INSERT INTO {CORE}.tools (
+            tenant_id, tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
             created_ts, updated_ts
         )
-        SELECT tenant_id, agent_internal_id, agent_id, tool_id, tool_name, tool_description,
+        SELECT tenant_id, tool_id, tool_name, tool_description,
                delegation_possible, allowed_delegates,
                input_schema_json_text, output_schema_json_text, default_config_json_text,
                now_ts, now_ts
-        FROM ({union_all}) AS s
-        ON CONFLICT (agent_internal_id, tool_id)
+        FROM ({tools_union}) AS s
+        ON CONFLICT (tool_id)
         DO UPDATE SET
-            tenant_id                = EXCLUDED.tenant_id,
-            agent_id                 = EXCLUDED.agent_id,
+            tool_name                = EXCLUDED.tool_name,
             tool_description         = EXCLUDED.tool_description,
             delegation_possible      = EXCLUDED.delegation_possible,
             allowed_delegates        = EXCLUDED.allowed_delegates,
@@ -324,6 +331,23 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
+    """, f"tools upsert ({len(tools)} tools)")
+
+    relation_union = "\nUNION ALL\n".join(relation_rows)
+    _exec(conn, f"""
+        INSERT INTO {CORE}.agent_tools (
+            tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+            created_ts, updated_ts
+        )
+        SELECT tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+               now_ts, now_ts
+        FROM ({relation_union}) AS s
+        ON CONFLICT (agent_internal_id, tool_id)
+        DO UPDATE SET
+            tenant_id  = EXCLUDED.tenant_id,
+            agent_id   = EXCLUDED.agent_id,
+            tool_name  = EXCLUDED.tool_name,
+            updated_ts = EXCLUDED.updated_ts
     """, f"agent_tools upsert ({len(tools)} tools)")
 
 

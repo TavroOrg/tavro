@@ -590,8 +590,23 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             fetchAgents(false);
         };
 
+        const handleAgentArtifactsGenerated = (event: Event) => {
+            const { args } = (event as CustomEvent).detail ?? {};
+            const agentName: string = args?.agent_name || 'Agent';
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: {
+                    key: 'tavro_artifacts_notice',
+                    message: `Artifacts generated for ${agentName}. Please refer to the Attachments tab.`,
+                },
+            }));
+        };
+
         window.addEventListener('tavro:agent-created', handleAgentCreated);
-        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+        window.addEventListener('tavro:agent-artifacts-generated', handleAgentArtifactsGenerated);
+        return () => {
+            window.removeEventListener('tavro:agent-created', handleAgentCreated);
+            window.removeEventListener('tavro:agent-artifacts-generated', handleAgentArtifactsGenerated);
+        };
     }, [upsertAgent, fetchAgents]);
 
     return (
