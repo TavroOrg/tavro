@@ -346,6 +346,8 @@ async def create_agent(
     data_source: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     skills: Optional[List[Dict[str, Any]]] = None,
+    company_id: Optional[str] = None,
+    company_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
@@ -488,6 +490,8 @@ async def create_agent(
             knowledge_source=knowledge_source,
             skills=skills,
             tenant_id=tenant_id,
+            company_id=company_id,
+            company_name=company_name,
         )
         return result
 
@@ -532,7 +536,7 @@ async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 @core.tool(name="create_ai_use_case")
-async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None) -> Dict[str, Any]:
+async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str] = None, company_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Register a new AI Use Case to establish governance and business context.
 
@@ -599,9 +603,19 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
             payload["impacted_business_processes"] = impacted_business_processes
 
         headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        cid = company_id.strip() if company_id and company_id.strip() else None
+        cname = company_name.strip() if company_name and company_name.strip() else None
+        url = f"{TAVRO_API_URL}/api/v1/use-cases/"
+        params_list = []
+        if cid:
+            params_list.append(f"company_id={cid}")
+        if cname:
+            params_list.append(f"company_name={cname}")
+        if params_list:
+            url += "?" + "&".join(params_list)
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{TAVRO_API_URL}/api/v1/use-cases/",
+                url,
                 json=payload,
                 headers=headers,
             )

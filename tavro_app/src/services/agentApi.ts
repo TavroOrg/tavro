@@ -99,17 +99,22 @@ export interface RiskWorkflowStatus {
 }
 
 class AgentApiService {
-    async getAgentCatalog(startRecord = 1, recordRange = '1-50'): Promise<AgentCatalogResponse> {
+    async getAgentCatalog(startRecord = 1, recordRange = '1-50', companyId?: string): Promise<AgentCatalogResponse> {
         const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
-        return req(`/agents?${params}`);
+        if (companyId) params.set('company_id', companyId);
+        return req(`/agents/?${params}`);
     }
 
     async getAgentCard(agentId: string): Promise<any> {
         return req(`/agents/${encodeURIComponent(agentId)}`);
     }
 
-    async createAgent(payload: AgentCreatePayload): Promise<{ agent_id: string; agent_name: string; message: string }> {
-        return req('/agents/', {
+    async createAgent(payload: AgentCreatePayload, companyId?: string, companyName?: string): Promise<{ agent_id: string; agent_name: string; message: string }> {
+        const qs = new URLSearchParams();
+        if (companyId) qs.set('company_id', companyId);
+        if (companyName) qs.set('company_name', companyName);
+        const params = qs.toString() ? `?${qs}` : '';
+        return req(`/agents/${params}`, {
             method: 'POST',
             body: JSON.stringify(payload),
         });
@@ -141,7 +146,7 @@ class AgentApiService {
         });
     }
 
-    async uploadAgents(files: File[]): Promise<{
+    async uploadAgents(files: File[], companyId?: string, companyName?: string): Promise<{
         uploaded_count: number;
         total_submitted: number;
         file_results: Array<{ filename: string; valid_count: number; invalid_count: number; errors: string[] }>;
@@ -151,7 +156,11 @@ class AgentApiService {
         for (const file of files) {
             formData.append('files', file, file.name);
         }
-        return reqFormData('/agents/upload', formData);
+        const qp = new URLSearchParams();
+        if (companyId) qp.set('company_id', companyId);
+        if (companyName) qp.set('company_name', companyName);
+        const qs = qp.toString() ? `?${qp}` : '';
+        return reqFormData(`/agents/upload${qs}`, formData);
     }
 
     async getRiskWorkflows(params?: { status?: string; agentId?: string }): Promise<RiskWorkflowStatus[]> {
