@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Read env vars from the Node.js process without requiring @types/node.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _penv: Record<string, string | undefined> = (globalThis as any).process?.env ?? {}
+
+const copilotApiUrl = _penv.VITE_COPILOT_API_URL ?? 'http://localhost:4001'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -22,24 +28,8 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/github/, '')
       },
-      '/api/tavro-mcp': {
-        target: 'https://agent-cloud-dev.tavro.ai',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/tavro-mcp/, ''),
-        // selfHandleResponse lets us pipe the stream directly, bypassing http-proxy's
-        // internal buffering which was causing SSE/chunked responses to hang in the browser.
-        selfHandleResponse: true,
-        configure: (proxy: any) => {
-          proxy.on('proxyRes', (proxyRes: any, _req: any, res: any) => {
-            // Forward all response headers from upstream to the browser
-            res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
-            // Pipe the raw upstream stream directly to the browser socket — no buffering
-            proxyRes.pipe(res);
-          });
-        }
-      },
       '/copilot-api': {
-        target: 'http://localhost:4001',
+        target: copilotApiUrl,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/copilot-api/, '')
       }

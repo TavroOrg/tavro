@@ -16,11 +16,11 @@ from dotenv import load_dotenv
 
 load_dotenv(override=False)
 
-COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
+COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_DB_NAME"))
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
 
     @classmethod
     @contextmanager
@@ -632,8 +632,8 @@ class AgentMetadataExporter:
     
     @staticmethod
     def send_payload_async(payload: Dict[str, Any]) -> None:
-        primary_url = os.getenv("RISK_CLASSIFY_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
-        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+        primary_url = os.getenv("RISK_CLASSIFY_URL")
+        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL")
 
         def _send():
             try:

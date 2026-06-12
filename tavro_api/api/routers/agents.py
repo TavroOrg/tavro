@@ -22,10 +22,10 @@ from api.routers.blueprint import (
 
 router = APIRouter()
 
-CORE    = os.getenv("CORE_DB_NAME",       "core")
-CURATED = os.getenv("CURATED_DB_NAME",    "curated")
-RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
-_RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+CORE    = os.getenv("CORE_DB_NAME")
+CURATED = os.getenv("CURATED_DB_NAME")
+RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME")
+_RISK_URL = os.getenv("RISK_CLASSIFY_URL")
 
 
 def _tenant(request: Request) -> Optional[str]:
