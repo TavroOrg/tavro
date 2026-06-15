@@ -200,14 +200,22 @@ async def get_agent_catalog(
 
     tenant_id = _require_tenant(request)
     params: Dict[str, Any] = {"start": start, "end": end, "tid": tenant_id}
-    where = "WHERE (tenant_id = :tid OR tenant_id IS NULL)"
+    where = "WHERE (a360.tenant_id = :tid OR a360.tenant_id IS NULL)"
 
     try:
         result = await db.execute(
             text(f"""
                 SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
                 FROM (
-                    SELECT * FROM {CURATED}.agent_360
+                    SELECT
+                        a360.*,
+                        ag.source_system
+                    FROM {CURATED}.agent_360 a360
+                    LEFT JOIN {CORE}.agents ag
+                      ON ag.agent_internal_id = a360.agent_internal_id
+                     AND ag.agent_id = a360.agent_id
+                     AND COALESCE(ag.is_current, true) = true
+                     AND (ag.tenant_id = a360.tenant_id OR ag.tenant_id IS NULL OR a360.tenant_id IS NULL)
                     {where}
                 ) t
             """),
@@ -215,8 +223,19 @@ async def get_agent_catalog(
         )
         rows = result.mappings().all()
         total = int(rows[0]["total_records"]) if rows else 0
-        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in rows
-                if start <= r["rn"] <= end]
+        data = []
+        for r in rows:
+            if not (start <= r["rn"] <= end):
+                continue
+
+            item = {k: v for k, v in r.items() if k not in ("rn", "total_records")}
+
+            provider = _clean_text(item.get("source_system")) or "Tavro Internal"
+
+            item["source_system"] = provider
+            item["provider"] = {"organization": provider, "url": ""}
+
+            data.append(item)
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
     except Exception as e:
