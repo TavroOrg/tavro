@@ -7,6 +7,8 @@ import { portalActivity } from '../services/portalActivity';
 interface LoadAIUseCaseModalProps {
     onClose: () => void;
     onSuccess: () => void;
+    companyId?: string;
+    companyName?: string;
 }
 
 interface FileEntry {
@@ -16,7 +18,7 @@ interface FileEntry {
 
 type Tab = 'files' | 'drive';
 
-const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSuccess }) => {
+const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSuccess, companyId, companyName }) => {
     const [activeTab, setActiveTab] = useState<Tab>('files');
 
     // ── File upload state ──────────────────────────────────────────────────────
@@ -79,7 +81,7 @@ const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSucc
         setErrorMessage(null);
         setSuccessMessage(null);
         try {
-            const result = await useCaseApi.uploadUseCases(validFiles);
+            const result = await useCaseApi.uploadUseCases(validFiles, companyId, companyName);
             setSuccessMessage(result.message);
             setFileEntries([]);
             onSuccess();

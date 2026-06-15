@@ -42,6 +42,7 @@ type ChatViewContext = {
     /** Pre-built system prompt from buildSystemPrompt() — takes precedence over default */
     systemPrompt?: string;
     blueprintData?: {
+        companyId?: string;
         companyName: string;
         industry: string;
         region: string;
@@ -695,7 +696,9 @@ ${toolSummary}`;
                 return `
 
 ## Blueprint-Grounded Tool Parameters
-Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}
+Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}${bp.companyId ? ` | Company ID: ${bp.companyId}` : ''}
+
+**MANDATORY**: Whenever you call a write tool (create_agent, create_ai_use_case, or any tool that creates/modifies records), you MUST set the \`company_id\` parameter to "${bp.companyId ?? ''}" — this is the active company's UUID. Never omit or change this value.
 
 Blueprint dimensions active for this company:
 ${dimBlock}
@@ -740,13 +743,15 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 return;
             }
 
+            const activeCompanyId = context.blueprintData?.companyId;
+            const activeCompanyName = context.blueprintData?.companyName;
             yield* copilotOrchestrator.run(
                 baseSystemPrompt,
                 history.slice(-10),
                 userMessage,
                 toolDefs,
                 llmCfg,
-                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt),
+                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt, activeCompanyId, activeCompanyName),
                 requestId,
             );
 
@@ -768,13 +773,20 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         name: string,
         args: Record<string, any>,
         originalPrompt: string,
+        companyId?: string,
+        companyName?: string,
     ): Promise<any> {
-        const toolArgs = {
+        const toolArgs: Record<string, any> = {
             ...args,
             original_prompt: (args.original_prompt && String(args.original_prompt).trim())
                 ? args.original_prompt
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
+        // Guarantee company_id/company_name are set for write tools — Claude may omit them even when instructed
+        if (name === 'create_agent' || name === 'create_ai_use_case') {
+            if (companyId && !toolArgs.company_id) toolArgs.company_id = companyId;
+            if (companyName && !toolArgs.company_name) toolArgs.company_name = companyName;
+        }
         try {
             const result = await this.callTool(name, toolArgs);
             // Fire cache-busting events for write tools so the UI auto-refreshes.
@@ -1142,6 +1154,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             '5 - planning': '5 - Planning',
         };
         const priority = priorityMap[rawPriority.toLowerCase()] || '3 - Moderate';
+        const companyId = localStorage.getItem('tavro_active_company_id');
+        const companyName = localStorage.getItem('tavro_active_company_name');
         const payload = {
             title,
             description,
@@ -1154,6 +1168,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(fields?.impacted_business_applications ? { impacted_business_applications: fields.impacted_business_applications } : {}),
             ...(fields?.impacted_business_processes ? { impacted_business_processes: fields.impacted_business_processes } : {}),
             ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
+            ...(companyId ? { company_id: companyId } : {}),
+            ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_ai_use_case', payload);
         if (data && typeof data === 'object' && data.error) {
@@ -1188,6 +1204,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         const agentName = (args?.agent_name ?? '').trim();
         const description = (args?.description ?? '').trim() || agentName;
         const instruction = (args?.instruction ?? '').trim() || description;
+        const companyId = localStorage.getItem('tavro_active_company_id');
+        const companyName = localStorage.getItem('tavro_active_company_name');
         const payload = {
             agent_name: agentName,
             description,
@@ -1199,6 +1217,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
+            ...(companyId ? { company_id: companyId } : {}),
+            ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();

@@ -38,6 +38,10 @@ import {
 
 type AgentTool = { name: string; description: string };
 type AgentKnowledgeSource = { name: string; description: string };
+type SparkBlueprintCtx = {
+  dimensions: { label: string; category: string; summary?: string }[];
+  edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
+};
 type AgentTable = { name: string; description?: string; tool_name?: string; columns?: string[] };
 type AgentColumn = { name: string; table_name?: string };
 type AgentSkill = { name: string; description: string; tags: string[]; input_modes: string[]; output_modes: string[] };
@@ -425,8 +429,9 @@ const IdeaListRow: React.FC<{
 const IdeaModal: React.FC<{
   idea: SparkIdea;
   companyId: string;
+  blueprintCtx?: SparkBlueprintCtx;
   onClose: () => void;
-}> = ({ idea, companyId, onClose }) => {
+}> = ({ idea, companyId, blueprintCtx, onClose }) => {
   const navigate = useNavigate();
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
@@ -464,6 +469,8 @@ const IdeaModal: React.FC<{
         signal_label: idea.signal_label,
         complexity: idea.complexity,
         estimated_impact: idea.estimated_impact,
+        blueprint_dimensions: blueprintCtx?.dimensions,
+        blueprint_edges: blueprintCtx?.edges,
       });
       const agentRec = asRecord(agentRecRaw);
 
@@ -687,7 +694,26 @@ const IdeaModal: React.FC<{
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const SparkPage: React.FC = () => {
-  const { activeCompany } = useBlueprint();
+  const { activeCompany, nodes, graph } = useBlueprint();
+
+  const blueprintCtx = useMemo<SparkBlueprintCtx | null>(() => {
+    if (!activeCompany || !nodes.length) return null;
+    const nodeMap = graph ? new Map(graph.nodes.map(n => [n.id, n.label])) : null;
+    return {
+      dimensions: nodes.slice(0, 30).map(n => ({
+        label: n.label,
+        category: n.category ?? 'custom',
+        summary: n.summary?.slice(0, 120),
+      })),
+      edges: (graph && nodeMap)
+        ? graph.edges.slice(0, 50).map(e => ({
+            sourceLabel: nodeMap.get(e.source) ?? e.source,
+            targetLabel: nodeMap.get(e.target) ?? e.target,
+            relType: e.rel_type,
+          }))
+        : undefined,
+    };
+  }, [activeCompany, nodes, graph]);
   const [ideas, setIdeas] = useState<SparkIdea[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [selectedIdea, setSelectedIdea] = useState<SparkIdea | null>(null);
@@ -707,6 +733,9 @@ const SparkPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const companyId = activeCompany?.id ?? null;
+  const companyName = activeCompany?.name;
+  const industry = activeCompany?.industry;
+  const region = activeCompany?.region;
 
   const toggleDimension = (key: string) => {
     setActiveDimensions(prev => {
@@ -761,7 +790,15 @@ const SparkPage: React.FC = () => {
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
       let generatedCount = 0;
-      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined, ideaCount)) {
+      for await (const idea of sparkApi.generateIdeasStream(
+        companyId,
+        dims,
+        direction.trim() || undefined,
+        ideaCount,
+        companyName,
+        industry,
+        region,
+      )) {
         generatedCount += 1;
         setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
         setHasLibrary(true);
@@ -774,7 +811,7 @@ const SparkPage: React.FC = () => {
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction, ideaCount]);
+  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region]);
 
   const enterSelectMode = () => {
     setSelectMode(true);
@@ -1280,6 +1317,7 @@ const SparkPage: React.FC = () => {
         <IdeaModal
           idea={selectedIdea}
           companyId={companyId}
+          blueprintCtx={blueprintCtx ?? undefined}
           onClose={() => setSelectedIdea(null)}
         />
       )}

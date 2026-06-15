@@ -20,5 +20,7 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   blended_risk_score decimal(10, 2),
   inherent_risk_classification_score decimal(10, 2),
   residual_risk_classification_score decimal(10, 2),
-  solution_approach TEXT
+  solution_approach TEXT,
+  company_id TEXT,
+  company_name TEXT
 );

@@ -15,6 +15,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { agentApi } from '../services/agentApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCatalog } from '../context/CatalogContext';
 import type {
@@ -197,7 +198,14 @@ const IntegrationViewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
   const { activeCompany } = useBlueprint();
-  const { agents } = useCatalog();
+  const { agents: catalogAgents } = useCatalog();
+  const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
+
+  useEffect(() => {
+    agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => {});
+  }, [activeCompany?.id]);
+
+  const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
   const isCreateMode = !id || id === 'new';
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);

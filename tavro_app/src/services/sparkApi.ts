@@ -63,11 +63,17 @@ class SparkApi {
     dimensions?: string[],
     direction?: string,
     ideaCount?: number,
+    companyName?: string,
+    industry?: string,
+    region?: string,
   ): AsyncGenerator<SparkIdea> {
     const params = new URLSearchParams({ company_id: companyId });
     if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
     if (direction && direction.trim()) params.set('direction', direction.trim());
     if (ideaCount) params.set('idea_count', String(ideaCount));
+    if (companyName && companyName.trim()) params.set('company_name', companyName.trim());
+    if (industry && industry.trim()) params.set('industry', industry.trim());
+    if (region && region.trim()) params.set('region', region.trim());
 
     const res = await fetch(`${V1}/spark/generate/stream?${params}`, {
       method: 'POST',
@@ -124,11 +130,14 @@ class SparkApi {
   }
 
   /** Generate fresh ideas, persist to DB, return them. */
-  async generateIdeas(companyId: string, dimensions?: string[], direction?: string, ideaCount?: number): Promise<SparkIdea[]> {
+  async generateIdeas(companyId: string, dimensions?: string[], direction?: string, ideaCount?: number, companyName?: string, industry?: string, region?: string): Promise<SparkIdea[]> {
     const params = new URLSearchParams({ company_id: companyId });
     if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
     if (direction && direction.trim()) params.set('direction', direction.trim());
     if (ideaCount) params.set('idea_count', String(ideaCount));
+    if (companyName && companyName.trim()) params.set('company_name', companyName.trim());
+    if (industry && industry.trim()) params.set('industry', industry.trim());
+    if (region && region.trim()) params.set('region', region.trim());
     const path = `/spark/generate?${params.toString()}`;
     appLogger.req('Spark generateIdeas → request', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
     const t0 = Date.now();

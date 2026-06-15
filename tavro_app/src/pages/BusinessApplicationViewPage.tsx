@@ -29,6 +29,7 @@ import type { AiModelRecord } from '../types/aiModel';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { agentApi } from '../services/agentApi';
 
 type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models';
 type Option = { label: string; value: string };
@@ -306,12 +307,35 @@ const BusinessApplicationViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { agents } = useCatalog();
+  const { agents: catalogAgents } = useCatalog();
   const { activeCompany } = useBlueprint();
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
+
+  const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
+  const [companyUseCases, setCompanyUseCases] = useState<typeof allUseCases>([]);
+
+  useEffect(() => {
+    agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => {});
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-200' })
+      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+        identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
+        name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
+        description: raw.description ?? null,
+        status: raw.status ?? null,
+        priority: raw.priority ?? null,
+        overall_risk: raw.overall_risk ?? null,
+      })))
+      ).catch(() => {});
+  }, [activeCompany?.id]);
+
+  const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
+  const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
 
   const [application, setApplication] = useState<BusinessApplicationRecord | null>(null);
   const [form, setForm] = useState<ApplicationFormState>(emptyForm);
@@ -440,7 +464,7 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const availableUseCases = useMemo(() => {
     const q = searchUseCases.trim().toLowerCase();
-    return allUseCases.filter((useCase) => {
+    return useCasesForLinking.filter((useCase) => {
       const useCaseId = useCase.identifier || '';
       if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
       if (!q) return true;
@@ -450,7 +474,7 @@ const BusinessApplicationViewPage: React.FC = () => {
         (useCase.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [allUseCases, linkedUseCaseIds, searchUseCases]);
+  }, [useCasesForLinking, linkedUseCaseIds, searchUseCases]);
 
   const setField = (key: keyof ApplicationFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));

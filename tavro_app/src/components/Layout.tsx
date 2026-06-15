@@ -63,18 +63,19 @@ const Layout: React.FC = () => {
     const [aiModelCount, setAiModelCount] = useState(0);
 
     const fetchCatalogCounts = useCallback(() => {
+        const companyId = activeCompany?.id;
         Promise.allSettled([
-            businessRelationsApi.listApplications(),
-            businessRelationsApi.listProcesses(),
-            businessRelationsApi.listIntegrations(),
+            businessRelationsApi.countApplications(companyId),
+            businessRelationsApi.countProcesses(companyId),
+            businessRelationsApi.countIntegrations(companyId),
             aiModelApi.listModels(),
         ]).then(([apps, processes, integrations, models]) => {
-            if (apps.status === 'fulfilled') setAppCount(apps.value.length);
-            if (processes.status === 'fulfilled') setProcessCount(processes.value.length);
-            if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value.length);
+            if (apps.status === 'fulfilled') setAppCount(apps.value);
+            if (processes.status === 'fulfilled') setProcessCount(processes.value);
+            if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
             if (models.status === 'fulfilled') setAiModelCount(models.value.length);
         });
-    }, []);
+    }, [activeCompany]);
 
     useEffect(() => {
         fetchCatalogCounts();

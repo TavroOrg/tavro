@@ -7,6 +7,8 @@ import UseCaseView from '../components/UseCaseView';
 import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X, CheckCircle2 } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
+import { agentApi } from '../services/agentApi';
 import { useChatSync } from '../hooks/useChatSync';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import { useCaseApi } from '../services/useCaseApi';
@@ -26,11 +28,13 @@ interface AgentsSectionProps {
 interface ProcessRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
+  companyId?: string;
 }
 
 interface ApplicationRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
+  companyId?: string;
 }
 
 interface AiModelRelationsSectionProps {
@@ -531,7 +535,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
   );
 };
 
-const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = ({ useCase, onSilentRefetch, companyId }) => {
   const { refresh: refreshUC } = useUseCases();
   const useCaseId = useCase.identifier ?? '';
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
@@ -618,7 +622,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
   const loadApplicationCatalog = async () => {
     setLoadingCatalog(true);
     try {
-      const data = await businessRelationsApi.listApplications();
+      const data = await businessRelationsApi.listApplications(undefined, companyId);
       setAllApplications(data);
     } catch (err: any) {
       setRelationError(err.message || 'Failed to load application catalog.');
@@ -629,7 +633,8 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
 
   useEffect(() => {
     loadApplicationCatalog();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
 
   const handleLinkApplication = async (applicationId: string) => {
     if (!useCaseId || !applicationId || linkedApplicationIds.has(applicationId)) return;
@@ -787,7 +792,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
   );
 };
 
-const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCase, onSilentRefetch, companyId }) => {
   const { refresh: refreshUC } = useUseCases();
   const useCaseId = useCase.identifier ?? '';
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
@@ -872,7 +877,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   const loadProcessCatalog = async () => {
     setLoadingCatalog(true);
     try {
-      const data = await businessRelationsApi.listProcesses();
+      const data = await businessRelationsApi.listProcesses(undefined, companyId);
       setAllProcesses(data);
     } catch (err: any) {
       setRelationError(err.message || 'Failed to load process catalog.');
@@ -883,7 +888,8 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
 
   useEffect(() => {
     loadProcessCatalog();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
 
   const handleLinkProcess = async (processId: string) => {
     if (!useCaseId || !processId || linkedProcessIds.has(processId)) return;
@@ -1243,7 +1249,15 @@ const UseCaseViewPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const { agents } = useCatalog();
+  const { agents: catalogAgents } = useCatalog();
+  const { activeCompany } = useBlueprint();
+  const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
+
+  useEffect(() => {
+    agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => {});
+  }, [activeCompany?.id]);
+
+  const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
 
   const handleCopyJson = () => {
     if (!useCase) return;
@@ -1276,8 +1290,8 @@ const UseCaseViewPage: React.FC = () => {
       const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
         mcpClient.getUseCaseDetails(id, { forceRefresh: true }),
         useCaseApi.getUseCase(id),
-        businessRelationsApi.listApplications(),
-        businessRelationsApi.listProcesses(),
+        businessRelationsApi.listApplications(undefined, activeCompany?.id),
+        businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
 
       const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
@@ -1305,8 +1319,8 @@ const UseCaseViewPage: React.FC = () => {
       const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
         mcpClient.getUseCaseDetails(id, { forceRefresh }),
         useCaseApi.getUseCase(id),
-        businessRelationsApi.listApplications(),
-        businessRelationsApi.listProcesses(),
+        businessRelationsApi.listApplications(undefined, activeCompany?.id),
+        businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
       const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
       const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
@@ -1607,8 +1621,8 @@ const UseCaseViewPage: React.FC = () => {
           agentsComponent={<AgentsSection useCase={useCase} agents={agents} onSilentRefetch={fetchUseCaseSilently} />}
           businessImpactComponent={
             <div className="flex flex-col gap-6">
-              <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
-              <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
+              <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
               <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
             </div>
           }

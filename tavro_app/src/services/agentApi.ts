@@ -111,17 +111,22 @@ function changedAgentFields(payload: AgentUpdatePayload): string {
 }
 
 class AgentApiService {
-    async getAgentCatalog(startRecord = 1, recordRange = '1-50'): Promise<AgentCatalogResponse> {
+    async getAgentCatalog(startRecord = 1, recordRange = '1-50', companyId?: string): Promise<AgentCatalogResponse> {
         const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
-        return req(`/agents?${params}`);
+        if (companyId) params.set('company_id', companyId);
+        return req(`/agents/?${params}`);
     }
 
     async getAgentCard(agentId: string): Promise<any> {
         return req(`/agents/${encodeURIComponent(agentId)}`);
     }
 
-    async createAgent(payload: AgentCreatePayload): Promise<{ agent_id: string; agent_name: string; message: string }> {
-        const result = await req<{ agent_id: string; agent_name: string; message: string }>('/agents/', {
+    async createAgent(payload: AgentCreatePayload, companyId?: string, companyName?: string): Promise<{ agent_id: string; agent_name: string; message: string }> {
+        const qs = new URLSearchParams();
+        if (companyId) qs.set('company_id', companyId);
+        if (companyName) qs.set('company_name', companyName);
+        const params = qs.toString() ? `?${qs}` : '';
+        const result = await req<{ agent_id: string; agent_name: string; message: string }>(`/agents/${params}`, {
             method: 'POST',
             body: JSON.stringify(payload),
         });
@@ -162,7 +167,7 @@ class AgentApiService {
         return result;
     }
 
-    async uploadAgents(files: File[]): Promise<{
+    async uploadAgents(files: File[], companyId?: string, companyName?: string): Promise<{
         uploaded_count: number;
         total_submitted: number;
         file_results: Array<{ filename: string; valid_count: number; invalid_count: number; errors: string[] }>;
@@ -172,12 +177,16 @@ class AgentApiService {
         for (const file of files) {
             formData.append('files', file, file.name);
         }
+        const qp = new URLSearchParams();
+        if (companyId) qp.set('company_id', companyId);
+        if (companyName) qp.set('company_name', companyName);
+        const qs = qp.toString() ? `?${qp}` : '';
         const result = await reqFormData<{
             uploaded_count: number;
             total_submitted: number;
             file_results: Array<{ filename: string; valid_count: number; invalid_count: number; errors: string[] }>;
             message: string;
-        }>('/agents/upload', formData);
+        }>(`/agents/upload${qs}`, formData);
         const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
         portalActivity.record(`Uploaded ${result.uploaded_count} agent${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
         return result;
@@ -189,6 +198,31 @@ class AgentApiService {
         if (params?.agentId) qp.set('agent_id', params.agentId);
         const q = qp.toString();
         return req(`/risk/workflows${q ? `?${q}` : ''}`);
+    }
+
+    async listAgentsForLinking(companyId?: string): Promise<import('../types/agent').AgentData[]> {
+        const response = await this.getAgentCatalog(1, '1-500', companyId);
+        return (response.data ?? []).map((item: any) => ({
+            ...item,
+            name: item.name || item.agent_name || 'Unnamed Agent',
+            description: item.description || item.agent_description || item.summary || '',
+            version: item.version || '1.0',
+            identification: {
+                ...item.identification,
+                agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
+                role: item.identification?.role || item.role || null,
+                instruction: item.identification?.instruction || item.instruction || null,
+                owner: item.identification?.owner || item.owner || item.agent_owner || undefined,
+                environment: item.identification?.environment || item.environment || undefined,
+                governance_status: item.identification?.governance_status || item.latest_event_status || undefined,
+            },
+            configuration: item.configuration || { autonomy_level: item.autonomy_level ?? null },
+            tool: item.tool || [],
+            data_source: item.data_source || [],
+            application: item.application || [],
+            business_process: item.business_process || [],
+            risk_assessment: item.risk_assessment || null,
+        }));
     }
 }
 

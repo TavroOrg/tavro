@@ -147,6 +147,13 @@ class BusinessRelationsApi {
     return (data?.items ?? []) as BusinessApplicationRecord[];
   }
 
+  async countApplications(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/applications?${params.toString()}`);
+    return (data?.total ?? 0) as number;
+  }
+
   async getApplication(applicationId: string): Promise<BusinessApplicationRecord> {
     return req(`/applications/${encodeURIComponent(applicationId)}`);
   }
@@ -199,6 +206,13 @@ class BusinessRelationsApi {
     const data = await req<any>(`/processes${suffix}`);
     if (Array.isArray(data)) return data as BusinessProcessRecord[];
     return (data?.items ?? []) as BusinessProcessRecord[];
+  }
+
+  async countProcesses(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/processes?${params.toString()}`);
+    return (data?.total ?? 0) as number;
   }
 
   async getProcess(processId: string): Promise<BusinessProcessRecord> {
@@ -398,6 +412,13 @@ class BusinessRelationsApi {
     const data = await req<unknown>(`/integrations${suffix}`);
     if (Array.isArray(data)) return data as IntegrationRecord[];
     return ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+  }
+
+  async countIntegrations(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/integrations?${params.toString()}`);
+    return (data?.total ?? 0) as number;
   }
 
   async getIntegration(integrationId: string): Promise<IntegrationRecord> {
