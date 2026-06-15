@@ -26,7 +26,7 @@ import re
 import uuid
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,6 +163,8 @@ async def upload_use_cases(
     request: Request,
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
+    company_id: Optional[str] = Query(default=None, description="Assign uploaded use cases to this company UUID"),
+    company_name: Optional[str] = Query(default=None, description="Company name to store with uploaded use cases"),
 ):
     """
     Upload one or more AI Use Case JSON files. Each file must have a `.json` extension.
@@ -211,6 +213,8 @@ async def upload_use_cases(
 
         use_case_id = fields["identifier"] or str(uuid.uuid4())
 
+        cid = company_id.strip() if company_id and company_id.strip() else None
+        cname = company_name.strip() if company_name and company_name.strip() else None
         try:
             await db.execute(
                 text(f"""
@@ -220,14 +224,14 @@ async def upload_use_cases(
                          solution_approach, agent_risk_exposure_are, no_of_associated_agents,
                          inherent_risk_classification, residual_risk_classification,
                          inherent_risk_classification_score, residual_risk_classification_score,
-                         agent_risk_tier_art, created_ts, updated_ts)
+                         agent_risk_tier_art, company_id, company_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :uid, :name, :desc, :owner,
                          :problem, :benefits, :priority, :status,
                          :solution, :are, :num_agents,
                          :inherent_class, :residual_class,
                          :inherent_score, :residual_score,
-                         :art, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :art, :company_id, :company_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
                 {
                     "tid": tenant_id,
@@ -247,6 +251,8 @@ async def upload_use_cases(
                     "inherent_score": fields["inherent_risk_classification_score"],
                     "residual_score": fields["residual_risk_classification_score"],
                     "art": fields["agent_risk_tier_art"],
+                    "company_id": cid,
+                    "company_name": cname,
                 },
             )
 

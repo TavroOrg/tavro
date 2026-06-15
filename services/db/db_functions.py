@@ -1414,7 +1414,8 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                     latest_event_status,
                     snapshot_ts,
                     agent_internal_id,
-                    summary
+                    summary,
+                    company_id
                 )
                 SELECT
                     a.tenant_id,
@@ -1439,7 +1440,8 @@ def refresh_curated_agent_360(agent_internal_id: str, agent_id: str, tenant_id: 
                     latest_event.status,
                     CURRENT_TIMESTAMP,
                     a.agent_internal_id,
-                    risk.summary
+                    risk.summary,
+                    a.company_id
                 FROM {agents_table} a
                 LEFT JOIN {config_table} cfg
                     ON  cfg.agent_internal_id = a.agent_internal_id

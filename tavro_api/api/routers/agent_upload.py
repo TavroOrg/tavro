@@ -21,7 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, HTTPException, Query
+from typing import Optional
 
 router = APIRouter()
 
@@ -101,7 +102,7 @@ def _save_card_to_disk(card: dict) -> None:
     print(f"[INFO] Saved agent card to disk: {file_path}")
 
 
-def _process_card_sync(card_dict: dict, tenant_id: str | None) -> dict:
+def _process_card_sync(card_dict: dict, tenant_id: str | None, company_id: str | None = None, company_name: str | None = None) -> dict:
     """Synchronous wrapper called in the thread executor.
 
     Returns a result dict: {success, validation_error, error}
@@ -112,7 +113,7 @@ def _process_card_sync(card_dict: dict, tenant_id: str | None) -> dict:
     try:
         from services.upload_processor import process_card_for_upload
         original = copy.deepcopy(card_dict)
-        process_card_for_upload(card_dict, tenant_id)
+        process_card_for_upload(card_dict, tenant_id, company_id=company_id, company_name=company_name)
         _save_card_to_disk(_strip_risk_fields(original))
         return {"success": True, "validation_error": False, "error": None}
     except ValueError as e:
@@ -129,6 +130,8 @@ def _process_card_sync(card_dict: dict, tenant_id: str | None) -> dict:
 async def upload_agents(
     request: Request,
     files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Filter uploaded agents to this company UUID"),
+    company_name: Optional[str] = Query(default=None, description="Company name to store with uploaded agents"),
 ):
     """
     Upload one or more agent JSON files. Each file must have a `.json` extension.
@@ -171,12 +174,17 @@ async def upload_agents(
     # --- Process cards concurrently in thread pool (sync psycopg2 calls) ---
     loop = asyncio.get_event_loop()
 
+    cid = company_id.strip() if company_id and company_id.strip() else None
+    cname = company_name.strip() if company_name and company_name.strip() else None
+
     async def _process_one(card: dict, filename: str) -> dict:
         res = await loop.run_in_executor(
             _upload_executor,
             _process_card_sync,
             card,
             tenant_id,
+            cid,
+            cname,
         )
         return {**res, "filename": filename}
 
