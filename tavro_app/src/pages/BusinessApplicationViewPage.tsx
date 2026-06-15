@@ -20,16 +20,18 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { aiModelApi } from '../services/aiModelApi';
 import type {
   BusinessApplicationRecord,
   BusinessApplicationUpsertPayload,
 } from '../types/businessRelations';
+import type { AiModelRecord } from '../types/aiModel';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { agentApi } from '../services/agentApi';
 
-type Tab = 'overview' | 'related' | 'related_use_cases';
+type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models';
 type Option = { label: string; value: string };
 
 const EMERGENCY_TIER_OPTIONS: Option[] = [
@@ -340,6 +342,32 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [actingUseCase, setActingUseCase] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
   const [useCaseRelationError, setUseCaseRelationError] = useState<string | null>(null);
+  const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
+  const [searchModels, setSearchModels] = useState('');
+  const [actingModel, setActingModel] = useState<string | null>(null);
+  const [modelRelationError, setModelRelationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
+  }, []);
+
+  const linkedModels = application?.related_ai_models ?? [];
+  const linkedModelIds = useMemo(
+    () => new Set(linkedModels.map(m => m.ai_model_id).filter(Boolean)),
+    [linkedModels],
+  );
+  const availableModels = useMemo(() => {
+    const q = searchModels.trim().toLowerCase();
+    return allModels.filter(m => {
+      if (linkedModelIds.has(m.ai_model_id)) return false;
+      if (!q) return true;
+      return (
+        m.ai_model_id.toLowerCase().includes(q) ||
+        (m.model_name ?? '').toLowerCase().includes(q) ||
+        (m.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allModels, searchModels, linkedModelIds]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -681,6 +709,34 @@ const BusinessApplicationViewPage: React.FC = () => {
     }
   };
 
+  const addModel = async (modelId: string) => {
+    if (!application) return;
+    setActingModel(modelId);
+    setModelRelationError(null);
+    try {
+      await aiModelApi.linkApplication(modelId, application.business_application_id);
+      await load();
+    } catch (err: any) {
+      setModelRelationError(err.message || 'Failed to link AI model.');
+    } finally {
+      setActingModel(null);
+    }
+  };
+
+  const removeModel = async (modelId: string) => {
+    if (!application) return;
+    setActingModel(modelId);
+    setModelRelationError(null);
+    try {
+      await aiModelApi.unlinkApplication(modelId, application.business_application_id);
+      await load();
+    } catch (err: any) {
+      setModelRelationError(err.message || 'Failed to remove AI model.');
+    } finally {
+      setActingModel(null);
+    }
+  };
+
   const addUseCase = async (useCaseId: string) => {
     if (!application) return;
     setActingUseCase(useCaseId);
@@ -894,6 +950,16 @@ const BusinessApplicationViewPage: React.FC = () => {
               }`}
             >
               Related AI Use Cases({relatedUseCaseCount})
+            </button>
+            <button
+              onClick={() => setTab('related_ai_models')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_ai_models'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related AI Models({linkedModels.length})
             </button>
           </>
         )}
@@ -1356,6 +1422,98 @@ const BusinessApplicationViewPage: React.FC = () => {
                     <button
                       onClick={() => addAgent(agentId)}
                       disabled={!agentId || busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'related_ai_models' && application && (
+        <div className="flex flex-col gap-4">
+          {modelRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {modelRelationError}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({linkedModels.length})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {linkedModels.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No AI models linked.</div>
+              )}
+              {linkedModels.map((model, idx) => {
+                const modelId = model.ai_model_id || `missing-${idx}`;
+                const busy = actingModel === modelId;
+                return (
+                  <div key={`${modelId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/ai-models/${encodeURIComponent(modelId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {model.model_name || modelId}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                    </div>
+                    <button
+                      onClick={() => removeModel(modelId)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
+                <Link
+                  to={`/ai-models/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <PlusCircle size={12} />
+                  Create Model
+                </Link>
+                <div className="relative w-full sm:w-[320px] max-w-full">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={searchModels}
+                    onChange={(e) => setSearchModels(e.target.value)}
+                    placeholder="Filter AI models..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableModels.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available AI models to link.</div>
+              )}
+              {availableModels.map(model => {
+                const busy = actingModel === model.ai_model_id;
+                return (
+                  <div key={model.ai_model_id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{model.model_name || model.ai_model_id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{model.ai_model_id}</p>
+                    </div>
+                    <button
+                      onClick={() => addModel(model.ai_model_id)}
+                      disabled={busy}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
