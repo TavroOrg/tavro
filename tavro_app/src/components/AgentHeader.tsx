@@ -73,12 +73,12 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     const riskClass = (agent.latest_risk_class ?? agent.risk_assessment?.blended_risk_classification ?? '').toLowerCase();
     const riskClassCardClass =
         riskClass === 'high' ? 'bg-red-50 border-red-200' :
-            riskClass === 'medium' ? 'bg-yellow-50 border-yellow-200' :
+            riskClass === 'medium' ? 'bg-amber-50 border-amber-200' :
                 riskClass === 'low' ? 'bg-emerald-50 border-emerald-200' :
                     'bg-slate-50 border-slate-200';
     const riskClassTextClass =
         riskClass === 'high' ? 'text-red-600' :
-            riskClass === 'medium' ? 'text-yellow-600' :
+            riskClass === 'medium' ? 'text-amber-600' :
                 riskClass === 'low' ? 'text-emerald-600' :
                     'text-slate-400';
     const isInlineName = inlineEdit?.field === 'name';
