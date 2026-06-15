@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +22,10 @@ from api.routers.blueprint import (
 
 router = APIRouter()
 
-CORE    = os.getenv("CORE_DB_NAME",       "core")
-CURATED = os.getenv("CURATED_DB_NAME",    "curated")
-RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
-_RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+CORE    = os.getenv("CORE_DB_NAME")
+CURATED = os.getenv("CURATED_DB_NAME")
+RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME")
+_RISK_URL = os.getenv("RISK_CLASSIFY_URL")
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -190,6 +190,7 @@ async def get_agent_catalog(
     request: Request,
     start_record: int = 1,
     record_range: str = "1-50",
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -199,26 +200,124 @@ async def get_agent_catalog(
         start, end = start_record, start_record + 49
 
     tenant_id = _require_tenant(request)
-    params: Dict[str, Any] = {"start": start, "end": end, "tid": tenant_id}
-    where = "WHERE (tenant_id = :tid OR tenant_id IS NULL)"
+    params: Dict[str, Any] = {"tid": tenant_id}
+    where_parts = ["(a.tenant_id = :tid OR a.tenant_id IS NULL)"]
+
+    cid = company_id.strip() if company_id and company_id.strip() else None
+    if cid:
+        try:
+            col_check = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                    LIMIT 1
+                """),
+                {"schema": CURATED, "tbl": "agent_360"},
+            )
+            if col_check.first():
+                where_parts.append("CAST(a.company_id AS text) = :company_id")
+                params["company_id"] = cid
+        except Exception:
+            pass
+
+    where = "WHERE " + " AND ".join(where_parts)
 
     try:
         result = await db.execute(
             text(f"""
                 SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
                 FROM (
-                    SELECT * FROM {CURATED}.agent_360
+                    SELECT * FROM {CURATED}.agent_360 a
                     {where}
                 ) t
             """),
             params,
         )
         rows = result.mappings().all()
-        total = int(rows[0]["total_records"]) if rows else 0
-        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in rows
-                if start <= r["rn"] <= end]
+
+        # When a company_id filter is active, supplement curated results with any
+        # matching agents from core.agents not yet synced to the curated table.
+        curated_agent_ids: set = {r["agent_id"] for r in rows} if cid else set()
+        extra_rows: list = []
+        if cid and curated_agent_ids is not None:
+            try:
+                core_col = await db.execute(
+                    text("""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                        LIMIT 1
+                    """),
+                    {"schema": CORE, "tbl": "agents"},
+                )
+                if core_col.first():
+                    extra_result = await db.execute(
+                        text(f"""
+                            SELECT
+                                a.agent_id, a.agent_internal_id, a.agent_name AS agent_name,
+                                a.agent_description, a.tenant_id, a.company_id,
+                                a.created_ts, a.updated_ts
+                            FROM {CORE}.agents a
+                            WHERE (a.tenant_id = :tid OR a.tenant_id IS NULL)
+                              AND a.is_current = true
+                              AND CAST(a.company_id AS text) = :company_id
+                        """),
+                        {"tid": tenant_id, "company_id": cid},
+                    )
+                    for r in extra_result.mappings().all():
+                        if r["agent_id"] not in curated_agent_ids:
+                            extra_rows.append(dict(r))
+            except Exception:
+                pass
+
+        # Combine curated rows with any unsynchronised core rows
+        all_raw = [dict(r) for r in rows] + extra_rows
+        total = len(all_raw)
+        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")}
+                for i, r in enumerate(all_raw, start=1)
+                if start <= i <= end]
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
+    except Exception:
+        pass
+
+    # Fallback to core.agents if curated.agent_360 fails entirely (e.g. TOAST corruption)
+    try:
+        core_where_parts = ["(a.tenant_id = :tid OR a.tenant_id IS NULL)", "a.is_current = true"]
+        core_params: Dict[str, Any] = {"tid": tenant_id}
+        if cid:
+            try:
+                col_check2 = await db.execute(
+                    text("""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                        LIMIT 1
+                    """),
+                    {"schema": CORE, "tbl": "agents"},
+                )
+                if col_check2.first():
+                    core_where_parts.append("CAST(a.company_id AS text) = :company_id")
+                    core_params["company_id"] = cid
+            except Exception:
+                pass
+
+        core_where = "WHERE " + " AND ".join(core_where_parts)
+        result2 = await db.execute(
+            text(f"""
+                SELECT
+                    a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
+                    a.tenant_id, a.created_ts, a.updated_ts,
+                    ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
+                FROM {CORE}.agents a
+                {core_where}
+            """),
+            core_params,
+        )
+        rows2 = result2.mappings().all()
+        total2 = int(rows2[0]["total_records"]) if rows2 else 0
+        data2 = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in rows2
+                 if start <= r["rn"] <= end]
+        return {"start_record": start, "end_record": end, "record_count": len(data2),
+                "total_records": total2, "data": data2}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -759,24 +858,28 @@ async def create_agent(
     body: AgentCreateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
+    company_id: Optional[str] = Query(default=None),
+    company_name: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     agent_id = str(uuid.uuid4())
     agent_internal_id = str(uuid.uuid4())
     tenant_id = _require_tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+    cname = company_name.strip() if company_name and company_name.strip() else None
 
     try:
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agents
                     (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
-                     created_ts, updated_ts, is_current)
+                     created_ts, updated_ts, is_current, company_id, company_name)
                 VALUES
                     (:tid, :iid, :aid, :name, :desc,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "name": body.agent_name, "desc": body.description},
+             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname},
         )
 
         await db.execute(
@@ -1081,17 +1184,19 @@ async def create_agent(
                     snapshot_ts,
                     tool_count, data_source_count, business_application_count,
                     business_process_count, ai_model_count,
-                    contains_pii, contains_phi, contains_pci
+                    contains_pii, contains_phi, contains_pci,
+                    company_id, company_name
                 ) VALUES (
                     :tid, :aid, :iid, :name, :desc,
                     CURRENT_TIMESTAMP,
                     0, 0, 0, 0, 0,
-                    false, false, false
+                    false, false, false,
+                    :cid, :cname
                 )
                 ON CONFLICT (agent_internal_id) DO NOTHING
             """),
             {"tid": tenant_id, "aid": agent_id, "iid": agent_internal_id,
-             "name": body.agent_name, "desc": body.description},
+             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname},
         )
         await db.commit()
     except Exception as e:

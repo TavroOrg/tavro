@@ -639,6 +639,12 @@ async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: lis
         if b:
             buckets.append(b)
 
+    if "technology" in active_signals:
+        b = await _fetch_dim_node_candidates(db, company_id, ["technology"], "integration_surface", "Technology platform with AI automation potential", limit=per_bucket)
+        if b:
+            buckets.append(b)
+
+    # Round-robin interleave across buckets so ideas span all dimensions
     seen: set[str] = set()
     unique: list[dict] = []
     max_rounds = max((len(b) for b in buckets), default=0)
