@@ -154,7 +154,13 @@ function buildFlow(graph: GraphData, companyName: string, expanded: Set<string>)
 // ── Inner ─────────────────────────────────────────────────────────────────────
 const FIT: FitViewOptions = { padding: 0.18, maxZoom: 1.4 };
 
-const Inner: React.FC<{ graph: GraphData; companyName: string; onNodeClick?: (id: string) => void }> = ({ graph, companyName, onNodeClick }) => {
+const Inner: React.FC<{
+  graph: GraphData;
+  companyName: string;
+  industry?: string | null;
+  legalEntity?: string | null;
+  onNodeClick?: (id: string) => void;
+}> = ({ graph, companyName, industry, legalEntity, onNodeClick }) => {
   const { fitView } = useReactFlow();
   const [exp, setExp] = useState<Set<string>>(new Set());
   useEffect(() => { setExp(new Set()); }, [companyName]);
@@ -193,9 +199,22 @@ const Inner: React.FC<{ graph: GraphData; companyName: string; onNodeClick?: (id
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex-shrink-0 gap-3 flex-wrap">
-        <div>
-          <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">{companyName} Blueprint</p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">{graph.nodes.length} dimensions · click a category to expand</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-10 gap-y-2 min-w-0">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Company</p>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{companyName}</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {graph.nodes.length} dimensions · click a category to expand
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Industry</p>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate">{industry || '-'}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Legal Entity</p>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate">{legalEntity || '-'}</p>
+          </div>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           {catSummary.map(([cat, count]) => {
@@ -242,10 +261,16 @@ const Inner: React.FC<{ graph: GraphData; companyName: string; onNodeClick?: (id
 };
 
 // ── Export ────────────────────────────────────────────────────────────────────
-interface Props { graph: GraphData; companyName: string; onNodeClick?: (nodeId: string) => void; }
+interface Props {
+  graph: GraphData;
+  companyName: string;
+  industry?: string | null;
+  legalEntity?: string | null;
+  onNodeClick?: (nodeId: string) => void;
+}
 
 const BlueprintGraphRF: React.FC<Props> = (props) => (
-  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors" style={{ height: 580 }}>
+  <div className="h-full min-h-0 bg-white dark:bg-slate-900 rounded-t-2xl border border-b-0 border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
     <ReactFlowProvider><Inner {...props} /></ReactFlowProvider>
   </div>
 );

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import time
 from pathlib import Path
@@ -1132,6 +1132,90 @@ async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="generate_agent_artifacts")
+async def generate_agent_artifacts(
+    original_prompt: str,
+    *,
+    agent_id: str,
+    agent_name: str,
+    requirements_markdown: str,
+    technical_markdown: str,
+) -> Dict[str, Any]:
+    """
+    Convert the Requirements and Technical Design markdown documents to PDF files
+    and attach them to the specified agent record.
+
+    Call this tool immediately after generating both documents for a newly created agent.
+    It produces two PDFs:
+      - "{agent_name} Requirement.pdf"
+      - "{agent_name} Technical.pdf"
+    Both are uploaded as attachments to the agent and visible in the Attachments tab.
+
+    Args:
+        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+        agent_id (str): The agent_id returned by create_agent.
+        agent_name (str): The exact name of the agent (used to name the PDF files).
+        requirements_markdown (str): The full markdown content of the Requirements document.
+        technical_markdown (str): The full markdown content of the Technical Design document.
+
+    Returns:
+        Dict[str, Any]: Attachment metadata for both uploaded PDFs, or error details.
+    """
+    print(f"generate_agent_artifacts requested for agent_id={agent_id}")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "generate_agent_artifacts",
+            original_prompt,
+            {"agent_id": agent_id, "agent_name": agent_name},
+            tenant_id,
+        )
+
+        import base64 as _base64
+        req_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(requirements_markdown)
+        tech_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(technical_markdown)
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        results = []
+        for pdf_bytes, doc_type in (
+            (req_pdf_bytes, "Requirement"),
+            (tech_pdf_bytes, "Technical"),
+        ):
+            filename = f"{agent_name} {doc_type}.pdf"
+            payload = {
+                "filename": filename,
+                "mime_type": "application/pdf",
+                "content_base64": _base64.b64encode(pdf_bytes).decode("utf-8"),
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{TAVRO_API_URL}/api/v1/agents/{agent_id}/attachments",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                results.append(resp.json())
+
+        return {
+            "message": f"Artifacts generated and attached to agent '{agent_name}'.",
+            "attachments": results,
+        }
+
+    except ValueError as ve:
+        print("Validation error: %s", ve)
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        print("Unexpected error in generate_agent_artifacts: %s", e)
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 
 @core.tool(name="update_company")
 async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
