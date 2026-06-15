@@ -129,7 +129,7 @@ const Layout: React.FC = () => {
             'tavro_mcp_refresh_token', 'tavro_mcp_access_token', 'tavro_tenant_id',
             'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
-            'tavro_oidc_state'
+            'tavro_oidc_state', 'tavro_last_activity_at'
         ].forEach(k => localStorage.removeItem(k));
         // Clear persisted chat sessions and reset MCP client
         clearAllSessions();
