@@ -350,21 +350,24 @@ def _build_direction_prompt(
     user = (
         f"FOCUS: Generate exactly {count} distinct AI use case ideas, ALL specifically about: \"{direction}\"\n\n"
         f"{company_header}"
-        f"Company context (systems, processes, and integrations — reference them where applicable):\n"
+        f"Company context — you MUST ground each idea in one specific system or process listed below. "
+        f"Name it explicitly in the description and in the source_node field:\n"
         f"{context_lines}{edge_lines}\n\n"
         "For each idea return a JSON object with:\n"
         "- title: formal AI use case title, max 8 words. "
         "Do NOT include the word 'Agent'. Do NOT write an agent name. "
         "(good: 'OData Quality Gate Anomaly Detection'; bad: 'OData Quality Gate Agent')\n"
         "- description: exactly 2 sentences — "
-        "sentence 1: what the agent does and which system/integration it connects to; "
+        "sentence 1: what the agent does and which SPECIFIC system or process from the context above it connects to (name it exactly); "
         "sentence 2: what output it produces and how it is acted on\n"
         "- rationale: 1 sentence — specific ROI, quantified where possible "
         "(e.g. 'reduces manual data reconciliation by ~4 hrs/week')\n"
         "- complexity: exactly 'Low', 'Medium', or 'High'\n"
         "- estimated_impact: exactly 'Low', 'Medium', or 'High'\n"
-        "- category: one of: process, integration, application, risk, strategy\n\n"
-        f"ALL {count} ideas MUST be about \"{direction}\". "
+        "- category: one of: process, integration, application, risk, strategy, technology\n"
+        "- source_node: the EXACT label of the company system or process this idea is grounded in "
+        "(must match one of the labels in the context above)\n\n"
+        f"ALL {count} ideas MUST be about \"{direction}\" AND grounded in a specific company system or process. "
         "Return ONLY a JSON array. No prose, no markdown fences."
     )
     return system, user
@@ -907,7 +910,7 @@ async def _fetch_all_company_nodes(db: AsyncSession, company_id: str, limit: int
     try:
         async with db.begin_nested():
             rows = await db.execute(text("""
-                SELECT dn.label, dn.summary, dt.category
+                SELECT dn.id, dn.label, dn.summary, dt.category
                 FROM twin.dim_node dn
                 JOIN twin.dim_type dt ON dn.dim_type_id = dt.id
                 WHERE dn.company_id = :company_id
@@ -916,6 +919,7 @@ async def _fetch_all_company_nodes(db: AsyncSession, company_id: str, limit: int
             """), {"company_id": company_id, "limit": limit})
             return [
                 {
+                    "node_id": str(row["id"]),
                     "label": row["label"] or "Unnamed",
                     "category": row["category"],
                     "summary": (row["summary"] or "")[:200],
@@ -962,6 +966,7 @@ async def _generate_direction_ideas(
     edges: list[dict] | None = None,
 ) -> list[SparkIdea]:
     """Direction-first generation: Claude produces ideas about the topic using company context."""
+    node_lookup = {n["label"].lower(): n for n in company_nodes}
     system, user = _build_direction_prompt(company_nodes, direction, count, company_name, industry, region, edges)
 
     try:
@@ -983,6 +988,16 @@ async def _generate_direction_ideas(
             category = e.get("category", "process")
             signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
             node_id = f"dir:{hashlib.sha256(f'{direction}:{i}'.encode()).hexdigest()[:8]}"
+            source_label = (e.get("source_node") or "").strip().lower()
+            matched_node = node_lookup.get(source_label)
+            target_nodes = []
+            if matched_node:
+                target_nodes = [SparkTargetNode(
+                    id=matched_node["node_id"],
+                    label=matched_node["label"],
+                    category=matched_node["category"],
+                    summary=matched_node.get("summary") or None,
+                )]
             ideas.append(SparkIdea(
                 idea_id=_idea_id(node_id, signal_type, direction),
                 title=e.get("title") or f"AI for {direction}",
@@ -991,7 +1006,7 @@ async def _generate_direction_ideas(
                 signal_type=signal_type,
                 signal_label=f"Focus: {direction.strip()}",
                 target_dimensions=[category],
-                target_nodes=[],
+                target_nodes=target_nodes,
                 complexity=e.get("complexity", "Medium"),
                 estimated_impact=e.get("estimated_impact", "Medium"),
                 similar_agents=[],
@@ -1003,32 +1018,55 @@ async def _generate_direction_ideas(
 
 
 async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: list[str], count: int = SPARK_DEFAULT_IDEAS) -> list[dict]:
-    candidates: list[dict] = []
-    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration"]
+    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration", "technology"]
+
+    # Fetch per-category buckets; cap each bucket so one category doesn't dominate
+    per_bucket = max(2, (count + 2) // 3)
+    buckets: list[list[dict]] = []
 
     if "process" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["process"], "gap_coverage", "Process with no AI coverage", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["process"], "gap_coverage", "Process with no AI coverage", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "risk" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["risk"], "risk_hotspot", "Risk area with no monitoring agent", limit=4)
+        b = await _fetch_dim_node_candidates(db, company_id, ["risk"], "risk_hotspot", "Risk area with no monitoring agent", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "strategy" in active_signals or "finance" in active_signals:
         strat_cats = [c for c in ["strategy", "finance"] if c in active_signals or not dim_filter]
         if strat_cats:
-            candidates += await _fetch_dim_node_candidates(db, company_id, strat_cats, "strategic_gap", "Strategic or financial area with AI potential", limit=4)
+            b = await _fetch_dim_node_candidates(db, company_id, strat_cats, "strategic_gap", "Strategic or financial area with AI potential", limit=per_bucket)
+            if b:
+                buckets.append(b)
 
     if "application" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["application"], "integration_surface", "Application with no AI agent integration", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["application"], "integration_surface", "Application with no AI agent integration", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "integration" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["integration"], "integration_surface", "Integration surface with no agent coverage", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["integration"], "integration_surface", "Integration surface with no agent coverage", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
+    if "technology" in active_signals:
+        b = await _fetch_dim_node_candidates(db, company_id, ["technology"], "integration_surface", "Technology platform with AI automation potential", limit=per_bucket)
+        if b:
+            buckets.append(b)
+
+    # Round-robin interleave across buckets so ideas span all dimensions
     seen: set[str] = set()
     unique: list[dict] = []
-    for c in candidates:
-        if c["node_id"] not in seen:
-            seen.add(c["node_id"])
-            unique.append(c)
+    max_rounds = max((len(b) for b in buckets), default=0)
+    for r in range(max_rounds):
+        for bucket in buckets:
+            if r < len(bucket):
+                node = bucket[r]
+                if node["node_id"] not in seen:
+                    seen.add(node["node_id"])
+                    unique.append(node)
 
     return unique[:count]
 
@@ -1227,6 +1265,8 @@ async def generate_spark_ideas_stream(
 
             if direction_clean and api_key:
                 company_nodes = await _fetch_all_company_nodes(db, company_id)
+                # Build lookup: lowercase label -> node dict (for target_nodes resolution)
+                node_lookup = {n["label"].lower(): n for n in company_nodes}
                 system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count, company_name, industry, region, edges)
 
                 buffer = ""
@@ -1244,6 +1284,17 @@ async def generate_spark_ideas_stream(
                         category = obj.get("category", "process")
                         signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
                         node_id = f"dir:{hashlib.sha256(f'{direction_clean}:{len(collected)}'.encode()).hexdigest()[:8]}"
+                        # Resolve source_node label back to a blueprint node for target_nodes
+                        source_label = (obj.get("source_node") or "").strip().lower()
+                        matched_node = node_lookup.get(source_label)
+                        target_nodes = []
+                        if matched_node:
+                            target_nodes = [SparkTargetNode(
+                                id=matched_node["node_id"],
+                                label=matched_node["label"],
+                                category=matched_node["category"],
+                                summary=matched_node.get("summary") or None,
+                            )]
                         idea = SparkIdea(
                             idea_id=_idea_id(node_id, signal_type, direction_clean),
                             title=obj.get("title") or f"AI for {direction_clean}",
@@ -1252,7 +1303,7 @@ async def generate_spark_ideas_stream(
                             signal_type=signal_type,
                             signal_label=f"Focus: {direction_clean.strip()}",
                             target_dimensions=[category],
-                            target_nodes=[],
+                            target_nodes=target_nodes,
                             complexity=obj.get("complexity", "Medium"),
                             estimated_impact=obj.get("estimated_impact", "Medium"),
                             similar_agents=[],
