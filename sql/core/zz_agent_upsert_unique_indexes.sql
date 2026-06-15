@@ -700,6 +700,9 @@ BEGIN
             ADD CONSTRAINT chk_spark_ideas_user_reaction
             CHECK (user_reaction IS NULL OR user_reaction IN ('like', 'dislike'));
         END IF;
+
+        CREATE INDEX IF NOT EXISTS idx_spark_ideas_company_id
+        ON core.spark_ideas (company_id);
     END IF;
 
 END $$;

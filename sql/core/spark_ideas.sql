@@ -17,5 +17,3 @@ CREATE TABLE IF NOT EXISTS core.spark_ideas (
     updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_spark_ideas_company_id
-ON core.spark_ideas(company_id);
