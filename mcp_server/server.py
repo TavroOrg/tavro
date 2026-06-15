@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from tavro_library.agent_library import AgentMetadataExporter
 from tavro_library.users import get_approved_user
 
-TAVRO_API_URL = os.getenv("TAVRO_API_URL", "http://tavro-api:8000")
+TAVRO_API_URL = os.getenv("TAVRO_API_URL")
 
 
 def _load_zitadel_client_id_from_runtime_config() -> str:

@@ -189,3 +189,14 @@ ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_INSECURE=true
 LOGIN_OTEL_SERVICE_NAME=zitadel-login
 LOGIN_OTEL_EXPORTER_OTLP_ENDPOINT=
 LOGIN_OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+
+####################################
+
+RISK_CLASSIFY_URL=http://tavro-api:8000/api/v1/risk/classify-risk
+RISK_CLASSIFY_FALLBACK_URL=http://localhost:8000/api/v1/risk/classify-risk
+COMPANY_API_BASE_URL=http://tavro-api:8000/api/v1/companies
+TAVRO_API_URL=http://tavro-api:8000
+
+# ── Vite dev server and proxy configuration ───────────────────
+VITE_COPILOT_API_URL=http://localhost:4001

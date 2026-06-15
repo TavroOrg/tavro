@@ -99,6 +99,7 @@ services:
       # Temporal
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
+      RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -506,7 +507,10 @@ services:
       ZITADEL_SCOPES: ${ZITADEL_SCOPES:-openid profile email}
       VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
       VITE_ZITADEL_CLIENT_ID: ${VITE_ZITADEL_CLIENT_ID}
-      TAVRO_API_URL: http://tavro-api:8000
+      TAVRO_API_URL:             ${TAVRO_API_URL}
+      COMPANY_API_BASE_URL:      ${COMPANY_API_BASE_URL}
+      RISK_CLASSIFY_URL:         ${RISK_CLASSIFY_URL}
+      RISK_CLASSIFY_FALLBACK_URL: ${RISK_CLASSIFY_FALLBACK_URL}
       GITHUB_CLIENT_ID:     ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
