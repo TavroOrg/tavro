@@ -16,7 +16,7 @@ from utils.db import DATABASE_URL, SyncSessionLocal, sync_engine
 
 from tavro_agent_card import TavroAgentCard
 
-API_URL = os.getenv("API_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
+API_URL = os.getenv("API_URL")
 API_DISPATCH_MAX_WORKERS = int(os.getenv("API_DISPATCH_MAX_WORKERS", "20"))
 # Default tenant assigned to all agents loaded via the worker / connectors.
 # Set TENANT_ID in the container environment (docker-compose or .env).
