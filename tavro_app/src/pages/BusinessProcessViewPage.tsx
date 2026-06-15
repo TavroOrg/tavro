@@ -27,6 +27,7 @@ import type {
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { agentApi } from '../services/agentApi';
 
 type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases';
 type Option = { label: string; value: string };
@@ -266,12 +267,35 @@ const BusinessProcessViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { agents } = useCatalog();
+  const { agents: catalogAgents } = useCatalog();
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const { activeCompany } = useBlueprint();
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
+
+  const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
+  const [companyUseCases, setCompanyUseCases] = useState<typeof allUseCases>([]);
+
+  useEffect(() => {
+    agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => {});
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-200' })
+      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+        identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
+        name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
+        description: raw.description ?? null,
+        status: raw.status ?? null,
+        priority: raw.priority ?? null,
+        overall_risk: raw.overall_risk ?? null,
+      }))))
+      .catch(() => {});
+  }, [activeCompany?.id]);
+
+  const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
+  const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
@@ -322,7 +346,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const loadParentOptions = async () => {
     try {
-      const data = await businessRelationsApi.listProcesses();
+      const data = await businessRelationsApi.listProcesses(undefined, activeCompany?.id);
       setAllProcesses(data);
     } catch {
       setAllProcesses([]);
@@ -338,7 +362,7 @@ const BusinessProcessViewPage: React.FC = () => {
     try {
       const [proc, processes] = await Promise.all([
         businessRelationsApi.getProcess(id),
-        businessRelationsApi.listProcesses(),
+        businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
       setProcess(proc);
       setForm(formFromProcess(proc));
@@ -405,7 +429,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const availableUseCases = useMemo(() => {
     const q = searchUseCases.trim().toLowerCase();
-    return allUseCases.filter((useCase) => {
+    return useCasesForLinking.filter((useCase) => {
       const useCaseId = useCase.identifier || '';
       if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
       if (!q) return true;
@@ -415,7 +439,7 @@ const BusinessProcessViewPage: React.FC = () => {
         (useCase.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [allUseCases, linkedUseCaseIds, searchUseCases]);
+  }, [useCasesForLinking, linkedUseCaseIds, searchUseCases]);
 
   const relatedProcessRows = useMemo(() => {
     if (!process) return [];
