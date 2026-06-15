@@ -168,42 +168,42 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
 
                 <div className="flex flex-col items-center md:items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
                     <div className="grid grid-cols-3 gap-3 w-full">
-                        <div className={`px-4 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskCardClass}`}>
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                        <div className={`px-3 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center min-w-0 overflow-hidden ${riskCardClass}`}>
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">
                                 Blended Score
                             </span>
                             {riskScore != null ? (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskTextClass}`}>
                                     {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
-                                    {riskScore}
+                                        ? <CheckCircle2 size={14} className="shrink-0" />
+                                        : <ShieldAlert size={14} className="shrink-0" />}
+                                    <span className="break-all">{riskScore}</span>
                                 </span>
                             ) : (
-                                <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskTextClass}`}>
                                     {riskLevel === 'low'
-                                        ? <CheckCircle2 size={14} />
-                                        : <ShieldAlert size={14} />}
+                                        ? <CheckCircle2 size={14} className="shrink-0" />
+                                        : <ShieldAlert size={14} className="shrink-0" />}
                                     N/A
                                 </span>
                             )}
                         </div>
-                        <div className={`px-4 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskClassCardClass}`}>
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                        <div className={`px-3 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center min-w-0 overflow-hidden ${riskClassCardClass}`}>
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">
                                 Blended Risk Classification
                             </span>
-                            <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskClassTextClass}`}>
+                            <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskClassTextClass}`}>
                                 {riskClass === 'low'
-                                    ? <CheckCircle2 size={14} />
-                                    : <ShieldAlert size={14} />}
-                                {riskClass ? riskClass.charAt(0).toUpperCase() + riskClass.slice(1) : 'N/A'}
+                                    ? <CheckCircle2 size={14} className="shrink-0" />
+                                    : <ShieldAlert size={14} className="shrink-0" />}
+                                <span className="break-words">{riskClass ? riskClass.charAt(0).toUpperCase() + riskClass.slice(1) : 'N/A'}</span>
                             </span>
                         </div>
-                        <div className="px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center justify-center text-center">
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>
+                        <div className="px-3 py-3 bg-white rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center justify-center text-center min-w-0 overflow-hidden">
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">Provider</span>
                             {agent.provider?.url
-                                ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-blue-600 transition-colors">{agent.provider.organization || 'Tavro Internal'} <ExternalLink size={10} /></a>
-                                : (agent.provider?.organization || 'Tavro Internal')}
+                                ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex flex-wrap items-center justify-center gap-1 hover:text-blue-600 transition-colors break-all"><span className="break-words">{agent.provider.organization || 'Tavro Internal'}</span> <ExternalLink size={10} className="shrink-0" /></a>
+                                : <span className="break-words">{agent.provider?.organization || 'Tavro Internal'}</span>}
                         </div>
                     </div>
                     {isPendingAssessment && (
