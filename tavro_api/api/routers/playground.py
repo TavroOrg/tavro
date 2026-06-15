@@ -16,6 +16,8 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any
 
+import boto3
+from botocore.exceptions import ClientError
 import httpx
 from azure.identity import DefaultAzureCredential
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,6 +38,56 @@ AZURE_OPENAI_API_VERSION_DEFAULT = "2024-02-15-preview"
 AZURE_FOUNDRY_AGENT_API_VERSION_DEFAULT = "v1"
 AZURE_FOUNDRY_USE_AGENT_RUNS_DEFAULT = "false"
 AZURE_FOUNDRY_USE_CHAT_COMPLETIONS_DEFAULT = "false"
+
+AWS_BEDROCK_REGION_DEFAULT = "us-east-2"
+AWS_BEDROCK_MODEL_DEFAULT = "claude-3-5-sonnet"
+
+# Cross-region inference profile IDs (work across us-east-1/2 and us-west-2)
+BEDROCK_MODEL_MAP = {
+    "claude-3-5-sonnet": "anthropic.claude-3-5-sonnet-20241022-v1:0",
+    "claude-3-sonnet":   "anthropic.claude-3-sonnet-20240229-v1:0",
+    "claude-3-haiku":    "anthropic.claude-3-haiku-20240307-v1:0",
+    "claude-3-opus":     "anthropic.claude-3-opus-20240229-v1:0",
+    "gpt-oss-120b": "openai.gpt-oss-120b-1:0",
+    "gpt-oss-20b":  "openai.gpt-oss-20b-1:0",
+    "gpt-oss-safeguard-120b": "openai.gpt-oss-safeguard-120b-v1:0",
+    "llama-3-1-70b":     "meta.llama3-1-70b-instruct-v1:0",
+    "llama-3-8b":        "meta.llama3-8b-instruct-v1:0",
+    "mistral-large":     "mistral.mistral-large-2402-v1:0",
+    "mistral-7b":        "mistral.mistral-7b-instruct-v0:0",
+}
+
+# Bedrock Agent foundationModel IDs — only Claude models are supported for agent runtime
+BEDROCK_AGENT_SUPPORTED_MODELS = {
+    "claude-3-5-sonnet": "anthropic.claude-3-5-sonnet-20241022-v1:0",
+    "claude-3-sonnet":   "anthropic.claude-3-sonnet-20240229-v1:0",
+    "claude-3-haiku":    "anthropic.claude-3-haiku-20240307-v1:0",
+    "claude-3-opus":     "anthropic.claude-3-opus-20240229-v1:0",
+
+    "gpt-oss-120b": "openai.gpt-oss-120b-1:0",
+    "gpt-oss-20b":  "openai.gpt-oss-20b-1:0",
+}
+
+def _resolve_bedrock_model(model_id: str) -> str:
+    """Resolve model ID for bedrock-runtime (converse API)."""
+    if model_id in BEDROCK_MODEL_MAP:
+        return BEDROCK_MODEL_MAP[model_id]
+    # Already a fully-qualified Bedrock ID (contains dots or cross-region prefix)
+    if "." in model_id:
+        return model_id
+    # Try OpenAI-style Bedrock model names if a plain key is passed.
+    if model_id.startswith("gpt-oss"):
+        return f"openai.{model_id}-v1:0"
+    return BEDROCK_MODEL_MAP["claude-3-5-sonnet"]
+
+def _resolve_bedrock_agent_model(model_id: str) -> str:
+    """Resolve model ID for bedrock-agents (agent creation) - NO 'us.' prefix"""
+    # Get the runtime model ID first
+    runtime_model = _resolve_bedrock_model(model_id or AWS_BEDROCK_MODEL_DEFAULT)
+    # Strip the 'us.' prefix if present (it's only for runtime cross-region inference)
+    if runtime_model.startswith("us."):
+        return runtime_model[3:]  # Remove 'us.' prefix
+    return runtime_model
 
 # ── In-memory session store ───────────────────────────────────────────────────
 # { session_id: { config, messages, created_at, updated_at } }
@@ -93,6 +145,16 @@ class SessionResponse(BaseModel):
 class AzureFoundryAgentProvisioning(BaseModel):
     enabled: bool = False
     agent_name: str | None = None
+    agent: dict[str, Any] | None = None
+
+class BedrockAgentProvisioning(BaseModel):
+    enabled: bool = False
+    agent_id: str | None = None
+    agent_name: str | None = None
+    agent_arn: str | None = None
+    agent_session_id: str | None = None  # Session ID for agent invocations
+    agent_alias_id: str | None = None
+    agent_alias_name: str | None = None
     agent: dict[str, Any] | None = None
 
 # =============================================================
@@ -1096,8 +1158,511 @@ async def _run_azure_foundry_agent(
 
     return response_text or "[No response generated]", tokens_used
 
+BEDROCK_TRACE_LOG_GROUP = "/tavro/bedrock-agent-traces"
+
+
+def _put_bedrock_trace_log(
+    access_key: str,
+    secret_key: str,
+    region: str,
+    agent_id: str,
+    session_id: str,
+    payload: dict,
+) -> None:
+    logs_client = boto3.client(
+        "logs",
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+    log_stream_name = f"{agent_id}/{session_id}"
+
+    try:
+        logs_client.create_log_group(logGroupName=BEDROCK_TRACE_LOG_GROUP)
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ResourceAlreadyExistsException":
+            raise
+
+    try:
+        logs_client.create_log_stream(
+            logGroupName=BEDROCK_TRACE_LOG_GROUP,
+            logStreamName=log_stream_name,
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ResourceAlreadyExistsException":
+            raise
+
+    token = None
+    streams = logs_client.describe_log_streams(
+        logGroupName=BEDROCK_TRACE_LOG_GROUP,
+        logStreamNamePrefix=log_stream_name,
+        limit=1,
+    ).get("logStreams", [])
+
+    if streams:
+        token = streams[0].get("uploadSequenceToken")
+
+    event = {
+        "timestamp": int(datetime.utcnow().timestamp() * 1000),
+        "message": json.dumps(payload, default=str),
+    }
+
+    kwargs = {
+        "logGroupName": BEDROCK_TRACE_LOG_GROUP,
+        "logStreamName": log_stream_name,
+        "logEvents": [event],
+    }
+
+    if token:
+        kwargs["sequenceToken"] = token
+
+    logs_client.put_log_events(**kwargs)
 # =============================================================
-# POST /session — create a new session
+# AWS Bedrock Support
+# =============================================================
+
+def _bedrock_settings() -> tuple[str, str, str]:
+    """Get AWS Bedrock configuration from environment."""
+    access_key = os.getenv("PLAYGROUND_BEDROCK_ACCESS_KEY", "").strip()
+    secret_key = os.getenv("PLAYGROUND_BEDROCK_SECRET_KEY", "").strip()
+    region = os.getenv("PLAYGROUND_BEDROCK_REGION", AWS_BEDROCK_REGION_DEFAULT).strip()
+
+    missing = []
+    if not access_key:
+        missing.append("PLAYGROUND_BEDROCK_ACCESS_KEY")
+    if not secret_key:
+        missing.append("PLAYGROUND_BEDROCK_SECRET_KEY")
+    if not region:
+        missing.append("PLAYGROUND_BEDROCK_REGION")
+    if missing:
+        raise HTTPException(status_code=500, detail=f"{', '.join(missing)} not configured for AWS Bedrock")
+
+    return access_key, secret_key, region
+async def _ensure_bedrock_agent_session(session: dict) -> str:
+    existing = session.get("bedrock_session_id")
+    if existing:
+        return existing
+
+    session_id = str(uuid.uuid4())
+    session["bedrock_session_id"] = session_id
+    return session_id
+
+async def _run_bedrock_agent_chat(
+    config: SessionConfig,
+    session: dict,
+    user_message: str,
+    bedrock_agent: dict,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int, dict]:
+    """
+    Invoke Bedrock Agent with tracing enabled.
+    Returns response text, tokens used, and trace information.
+    """
+    access_key, secret_key, region = _bedrock_settings()
+
+    message_text = user_message
+    if attachments:
+        attachment_chunks = [_openai_attachment_to_text(att) for att in attachments]
+        message_text += "\n\n" + "\n\n".join(attachment_chunks)
+
+    agent_id = bedrock_agent.get("agent_id")
+    agent_alias_id = bedrock_agent.get("agent_alias_id")
+
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No Bedrock agent ID found")
+    if not agent_alias_id:
+        raise HTTPException(status_code=400, detail="No Bedrock agent alias ID found")
+
+    bedrock_session_id = await _ensure_bedrock_agent_session(session)
+
+    agent_runtime_client = boto3.client(
+        "bedrock-agent-runtime",
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+    try:
+        response = agent_runtime_client.invoke_agent(
+            agentId=agent_id,
+            agentAliasId=agent_alias_id,
+            sessionId=bedrock_session_id,
+            inputText=message_text,
+            enableTrace=True,
+        )
+
+        session["bedrock_last_invocation_id"] = response.get("invocationId")
+
+        response_text = ""
+        trace_events = []
+        print("SESSION ID:", bedrock_session_id)
+        print("AGENT ID:", agent_id)
+        print("ALIAS ID:", agent_alias_id)
+        print("INVOCATION ID:", response.get("invocationId"))
+
+        for event in response.get("completion", []):
+            if "chunk" in event:
+                chunk = event["chunk"]
+                if "bytes" in chunk:
+                    response_text += chunk["bytes"].decode("utf-8")
+
+            if "trace" in event:
+                trace_events.append(event["trace"])
+
+        if trace_events:
+            combined_trace_payload = {
+                "agent_id": agent_id,
+                "agent_alias_id": agent_alias_id,
+                "session_id": bedrock_session_id,
+                "event_time": datetime.utcnow().isoformat(),
+                "user_input": message_text,
+                "response_text": response_text.strip(),
+                "trace_event_count": len(trace_events),
+                "traces": trace_events,
+            }
+
+            print("COMBINED TRACE EVENT:")
+            print(json.dumps(combined_trace_payload, indent=2, default=str))
+
+            _put_bedrock_trace_log(
+                access_key=access_key,
+                secret_key=secret_key,
+                region=region,
+                agent_id=agent_id,
+                session_id=bedrock_session_id,
+                payload=combined_trace_payload,
+            )
+        tokens_used = len(message_text.split()) + len(response_text.split())
+        session["bedrock_traces"] = trace_events
+
+        return (
+            response_text.strip() or "[No response generated]",
+            tokens_used,
+            {"traces": trace_events},
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AWS Bedrock Agent API error: {str(e)[:400]}",
+        )
+
+async def _run_bedrock_chat(
+    config: SessionConfig,
+    history: list[dict],
+    user_message: str,
+    attachments: list["Attachment"] | None = None,
+) -> tuple[str, int]:
+    """
+    Run model using AWS Bedrock with Converse API (fallback).
+    Used when agent is not available. Supports Claude and other foundation models.
+    """
+    access_key, secret_key, region = _bedrock_settings()
+
+    # Build message history — Converse API requires content as a list of blocks
+    messages = []
+    for msg in history:
+        content = msg["content"]
+        if isinstance(content, str):
+            content = [{"text": content}]
+        messages.append({"role": msg["role"], "content": content})
+
+    # Add user message with attachments
+    extra_attachment_text = ""
+    if attachments:
+        attachment_chunks = [_openai_attachment_to_text(att) for att in attachments]
+        extra_attachment_text = "\n\n" + "\n\n".join(attachment_chunks)
+
+    messages.append({
+        "role": "user",
+        "content": [{"text": f"{user_message}{extra_attachment_text}"}],
+    })
+
+    # Create Bedrock client
+    bedrock_client = boto3.client(
+        "bedrock-runtime",
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+    # Prepare request for Converse API
+    model_id = _resolve_bedrock_model(config.model or AWS_BEDROCK_MODEL_DEFAULT)
+
+    def invoke_with_model(model_value: str):
+        return bedrock_client.converse(
+            modelId=model_value,
+            messages=messages,
+            system=[{"text": config.system_prompt}],
+            inferenceConfig={
+                "maxTokens": config.max_tokens,
+                "temperature": config.temperature,
+            },
+        )
+
+    def find_alternate_model_id(primary_model: str) -> str:
+        if primary_model.startswith("us."):
+            return primary_model[3:]
+        if primary_model.startswith("us.openai."):
+            return primary_model[3:]
+        if primary_model.startswith("openai."):
+            return f"us.{primary_model}"
+        if "." not in primary_model:
+            return f"us.{primary_model}"
+        return primary_model
+
+    try:
+        response = invoke_with_model(model_id)
+    except Exception as e:
+        detail = str(e)
+        if "provided model identifier is invalid" in detail.lower():
+            fallback_model_id = find_alternate_model_id(model_id)
+            try:
+                response = invoke_with_model(fallback_model_id)
+            except Exception as retry_error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"AWS Bedrock API error: {str(retry_error)[:400]}",
+                )
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail=f"AWS Bedrock API error: {detail[:400]}",
+            )
+
+    # Extract response text — Converse API returns {"text": "..."} blocks
+    content = response.get("output", {}).get("message", {}).get("content", [])
+    response_text = ""
+    for block in content:
+        if "text" in block:
+            response_text += block["text"]
+
+    # Get token usage
+    usage = response.get("usage", {})
+    tokens_used = (
+        usage.get("inputTokens", 0) + usage.get("outputTokens", 0)
+    )
+
+    return response_text or "[No response generated]", tokens_used
+
+
+def _get_bedrock_agent_role_arn(access_key: str, secret_key: str, region: str) -> str:
+    iam_client = boto3.client(
+        "iam",
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+    response = iam_client.get_role(
+        RoleName="BedrockAgentRole"
+    )
+
+    return response["Role"]["Arn"]
+
+async def _prepare_bedrock_agent(agents_client, agent_id: str) -> None:
+    """Wait for NOT_PREPARED, call prepare_agent, then wait for PREPARED."""
+    # Wait for the agent to leave CREATING state (up to 30 s)
+    for _ in range(15):
+        await asyncio.sleep(2)
+        resp = agents_client.get_agent(agentId=agent_id)
+        status = resp.get("agent", {}).get("agentStatus", "")
+        if status in ("NOT_PREPARED", "PREPARED"):
+            break
+        if status in ("FAILED", "DELETING"):
+            raise HTTPException(status_code=502, detail=f"Bedrock agent entered status '{status}' after creation")
+
+    resp = agents_client.get_agent(agentId=agent_id)
+    if resp.get("agent", {}).get("agentStatus") == "PREPARED":
+        return
+
+    agents_client.prepare_agent(agentId=agent_id)
+
+    # Poll until PREPARED (up to 120 s)
+    for _ in range(60):
+        await asyncio.sleep(2)
+        resp = agents_client.get_agent(agentId=agent_id)
+        status = resp.get("agent", {}).get("agentStatus", "")
+        if status == "PREPARED":
+            return
+        if status == "FAILED":
+            raise HTTPException(status_code=502, detail="Bedrock agent preparation failed")
+
+    raise HTTPException(status_code=502, detail="Bedrock agent preparation timed out")
+
+
+def _bedrock_agent_alias_name(agent_name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9-]+", "-", agent_name.strip().lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    if not normalized:
+        normalized = "tavro-agent"
+    alias_name = f"{normalized}-alias"
+    if len(alias_name) > 63:
+        alias_name = alias_name[:63].strip("-")
+    return alias_name
+
+
+def _get_or_create_bedrock_agent_alias(agents_client, agent_id: str, alias_name: str) -> tuple[str, dict[str, Any]]:
+    response = agents_client.list_agent_aliases(agentId=agent_id)
+    for alias in response.get("agentAliasSummaries", []):
+        if alias.get("agentAliasName") == alias_name or alias.get("name") == alias_name:
+            return alias.get("agentAliasId") or alias.get("id"), alias
+
+    response = agents_client.create_agent_alias(
+        agentId=agent_id,
+        agentAliasName=alias_name,
+        description="Alias for Tavro playground Bedrock agent",
+    )
+    alias = response.get("agentAlias") or {}
+    alias_id = alias.get("agentAliasId") or alias.get("id")
+    if not alias_id:
+        raise HTTPException(status_code=502, detail="Failed to create Bedrock agent alias")
+    return alias_id, alias
+
+
+async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisioning:
+    """
+    Provision an agent in AWS Bedrock.
+    Creates a new agent with the given configuration.
+    Only Claude models are supported for Bedrock Agent Runtime (others require inference profiles).
+    """
+    # Check if model is supported for agent runtime
+    model_key = config.model or AWS_BEDROCK_MODEL_DEFAULT
+    print(f"Creating Bedrock Agent with model: {model_key}")
+    if model_key not in BEDROCK_AGENT_SUPPORTED_MODELS:
+        # Model not supported for agent runtime - return disabled
+        return BedrockAgentProvisioning(
+            enabled=False,
+            agent_name=f"unsupported-{model_key}",
+        )
+
+    access_key, secret_key, region = _bedrock_settings()
+
+    # Create Bedrock Agents client
+    agents_client = boto3.client(
+        "bedrock-agent",
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+
+    agent_name = _azure_agent_resource_name(config.agent_name)  # Reuse naming convention
+    description = (
+        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
+    )[:200]
+    # Use agent-supported model ID (no 'us.' prefix)
+    model_id = BEDROCK_AGENT_SUPPORTED_MODELS.get(model_key, BEDROCK_AGENT_SUPPORTED_MODELS["claude-3-5-sonnet"])
+    print(f"Resolved Bedrock model ID: {model_id}")
+
+    try:
+        # Get or create the agent role
+        role_arn = _get_bedrock_agent_role_arn(access_key, secret_key, region)
+
+        # Create agent
+        response = agents_client.create_agent(
+            agentName=agent_name,
+            agentResourceRoleArn=role_arn,
+            instruction=config.system_prompt,
+            foundationModel=model_id,
+            description=description,
+            tags={
+                "source": "tavro-playground",
+                "tavro_agent_name": re.sub(r"[^a-zA-Z0-9 _.:/=+\-@]", "-", config.agent_name)[:100],
+                "tavro_use_case_id": re.sub(r"[^a-zA-Z0-9 _.:/=+\-@]", "-", config.use_case_id or "")[:100],
+                "tavro_use_case_title": re.sub(r"[^a-zA-Z0-9 _.:/=+\-@]", "-", config.use_case_title or "")[:100],
+            }
+        )
+
+        agent_id = response.get("agent", {}).get("agentId") or response.get("agentId")
+        agent_arn = response.get("agent", {}).get("agentArn")
+
+        await _prepare_bedrock_agent(agents_client, agent_id)
+
+        alias_name = _bedrock_agent_alias_name(agent_name)
+        alias_id, alias_obj = _get_or_create_bedrock_agent_alias(agents_client, agent_id, alias_name)
+
+        return BedrockAgentProvisioning(
+            enabled=True,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            agent_arn=agent_arn,
+            agent_session_id=None,
+            agent_alias_id=alias_id,
+            agent_alias_name=alias_name,
+            agent=response.get("agent"),
+        )
+
+    except agents_client.exceptions.ConflictException:
+        # Agent already exists — update its model/config and re-prepare
+        existing = agents_client.list_agents()
+        for a in existing.get("agentSummaries", []):
+            if a.get("agentName") == agent_name:
+                existing_id = a.get("agentId")
+                agents_client.update_agent(
+                    agentId=existing_id,
+                    agentName=agent_name,
+                    agentResourceRoleArn=role_arn,
+                    foundationModel=model_id,
+                    instruction=config.system_prompt,
+                    description=description,
+                )
+                await _prepare_bedrock_agent(agents_client, existing_id)
+                updated = agents_client.get_agent(agentId=existing_id)
+                alias_name = _bedrock_agent_alias_name(agent_name)
+                alias_id, alias_obj = _get_or_create_bedrock_agent_alias(agents_client, existing_id, alias_name)
+                return BedrockAgentProvisioning(
+                    enabled=True,
+                    agent_id=existing_id,
+                    agent_name=agent_name,
+                    agent_arn=updated.get("agent", {}).get("agentArn"),
+                    agent_session_id=str(uuid.uuid4()),
+                    agent_alias_id=alias_id,
+                    agent_alias_name=alias_name,
+                    agent=updated.get("agent"),
+                )
+        raise HTTPException(status_code=502, detail=f"Bedrock agent '{agent_name}' conflict but could not find existing agent")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AWS Bedrock agent provisioning failed: {str(e)[:400]}",
+        )
+
+
+async def _provision_bedrock_agent_background(session_id: str, config: SessionConfig) -> None:
+    try:
+        bedrock_agent = await _provision_bedrock_agent(config)
+        session = session_store.get(session_id)
+        if session:
+            session["bedrock_agent"] = bedrock_agent.model_dump()
+            session["updated_at"] = datetime.utcnow().isoformat()
+    except Exception as e:
+        session = session_store.get(session_id)
+        if session:
+            session["bedrock_agent"] = BedrockAgentProvisioning(
+                enabled=False,
+                agent_name=config.agent_name,
+                agent={"error": str(e)},
+            ).model_dump()
+            session["updated_at"] = datetime.utcnow().isoformat()
+
+
+def _get_aws_account_id(access_key: str, secret_key: str) -> str:
+    """Get AWS account ID from STS."""
+    try:
+        sts_client = boto3.client(
+            "sts",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+        response = sts_client.get_caller_identity()
+        return response["Account"]
+    except Exception:
+        # Fallback: return a placeholder
+        return "000000000000"
+
 # =============================================================
 
 @router.post("/session", status_code=201)
@@ -1107,9 +1672,12 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
 
     provider = (config.provider or "claude").lower()
     azure_agent = AzureFoundryAgentProvisioning()
+    bedrock_agent = BedrockAgentProvisioning()
 
     if provider in ("azure_foundry", "azure", "azure_openai"):
         azure_agent = await _provision_azure_foundry_agent(config)
+    elif provider in ("aws_bedrock", "bedrock", "aws"):
+        bedrock_agent = BedrockAgentProvisioning()
 
     session_store[session_id] = {
         "session_id":  session_id,
@@ -1119,15 +1687,19 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
         "updated_at":  now,
         "token_total": 0,
         "azure_foundry_agent": azure_agent.model_dump(),
+        "bedrock_agent": bedrock_agent.model_dump(),
     }
 
     if provider in ("azure_foundry", "azure", "azure_openai"):
         await _ensure_azure_foundry_conversation(config, session_store[session_id])
+    elif provider in ("aws_bedrock", "bedrock", "aws"):
+        asyncio.create_task(_provision_bedrock_agent_background(session_id, config))
 
     return {
         "session_id": session_id,
         "status": "created",
         "azure_foundry_agent": azure_agent.model_dump(),
+        "bedrock_agent": bedrock_agent.model_dump(),
         "azure_foundry_conversation_id": session_store[session_id].get("azure_foundry_conversation_id"),
     }
 
@@ -1181,6 +1753,9 @@ async def send_message(
     elif provider in ("azure_foundry", "azure", "azure_openai"):
         api_key = ""
         _azure_foundry_project_settings(config)
+    elif provider in ("aws_bedrock", "bedrock", "aws"):
+        api_key = ""
+        _bedrock_settings()  # Validate AWS credentials are configured
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported playground provider: {config.provider}")
 
@@ -1228,6 +1803,31 @@ async def send_message(
                 response_text, tokens_used = await _run_azure_openai_chat(
                     config, history, body.content, attachments=body.attachments
                 )
+        elif provider in ("aws_bedrock", "bedrock", "aws"):
+            bedrock_agent = session.get("bedrock_agent", {})
+
+            if bedrock_agent and bedrock_agent.get("agent_id") and bedrock_agent.get("agent_alias_id"):
+                response_text, tokens_used, trace_data = await _run_bedrock_agent_chat(
+                    config,
+                    session,
+                    body.content,
+                    bedrock_agent,
+                    attachments=body.attachments,
+                )
+                session["bedrock_traces"] = trace_data.get("traces", [])
+            else:
+                bedrock_error = (bedrock_agent.get("agent") or {}).get("error")
+
+                if bedrock_error:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Bedrock agent provisioning failed: {bedrock_error}",
+                    )
+
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bedrock agent is still being created/prepared. Wait a few seconds and send the message again.",
+                )
         else:
             response_text, tokens_used = await _run_agent_loop(
                 config, history, body.content, company_dims, api_key,
@@ -1274,6 +1874,10 @@ async def send_message(
         "azure_foundry_thread_id": session.get("azure_foundry_thread_id"),
         "azure_foundry_last_run_id": session.get("azure_foundry_last_run_id"),
         "azure_foundry_last_response_id": session.get("azure_foundry_last_response_id"),
+        "bedrock_agent": session.get("bedrock_agent"),
+        "bedrock_session_id": session.get("bedrock_session_id"),
+        "bedrock_last_invocation_id": session.get("bedrock_last_invocation_id"),
+        "bedrock_traces": session.get("bedrock_traces", []),
     }
 
 
@@ -1290,6 +1894,32 @@ async def end_session(session_id: str):
     msg_count   = len([m for m in session["messages"] if m["role"] != "system"])
     token_total = session.get("token_total", 0)
 
+    bedrock_session_id = session.get("bedrock_session_id")
+
+    if bedrock_session_id:
+        try:
+            access_key, secret_key, region = _bedrock_settings()
+
+            agent_runtime_client = boto3.client(
+                "bedrock-agent-runtime",
+                region_name=region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
+
+            bedrock_agent = session.get("bedrock_agent", {})
+
+            if bedrock_agent.get("agent_id") and bedrock_agent.get("agent_alias_id"):
+                agent_runtime_client.invoke_agent(
+                    agentId=bedrock_agent["agent_id"],
+                    agentAliasId=bedrock_agent["agent_alias_id"],
+                    sessionId=bedrock_session_id,
+                    inputText="end session",
+                    endSession=True,
+                )
+
+        except Exception as e:
+            print("END_SESSION ERROR:", str(e))
     return {
         "session_id":  session_id,
         "status":      "ended",
