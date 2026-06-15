@@ -37,6 +37,18 @@ import {
 
 type AgentTool = { name: string; description: string };
 type AgentKnowledgeSource = { name: string; description: string };
+type SparkBlueprintCtx = {
+  dimensions: { label: string; category: string; summary?: string }[];
+  edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
+};
+type AgentTable = { name: string; description?: string; tool_name?: string; columns?: string[] };
+type AgentColumn = { name: string; table_name?: string };
+type AgentSkill = { name: string; description: string; tags: string[]; input_modes: string[]; output_modes: string[] };
+
+const VALID_IO_MODES = new Set([
+  'text', 'structured_data', 'api_response', 'database_query',
+  'file', 'alert', 'report', 'event', 'stream',
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -103,6 +115,127 @@ function normalizeKnowledgeSource(value: unknown): AgentKnowledgeSource | undefi
     name,
     description: asNonEmptyString(source.description) ?? `Primary data source for ${name}`,
   };
+}
+
+function normalizeColumnNames(value: unknown): string[] {
+  const rawColumns = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const seen = new Set<string>();
+  const names: string[] = [];
+
+  for (const rawColumn of rawColumns) {
+    const column = asRecord(rawColumn);
+    const name = column
+      ? asNonEmptyString(column.name) ?? asNonEmptyString(column.column_name) ?? asNonEmptyString(column.identifier)
+      : asNonEmptyString(rawColumn);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+
+  return names;
+}
+
+function normalizeAgentTables(value: unknown): AgentTable[] {
+  const rawTables = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const seen = new Set<string>();
+  const tables: AgentTable[] = [];
+
+  for (const rawTable of rawTables) {
+    const table = asRecord(rawTable);
+    const name = table
+      ? asNonEmptyString(table.name) ?? asNonEmptyString(table.table_name)
+      : asNonEmptyString(rawTable);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const normalized: AgentTable = {
+      name,
+      columns: normalizeColumnNames(table?.columns ?? table?.column),
+    };
+    const description = asNonEmptyString(table?.description);
+    const toolName = asNonEmptyString(table?.tool_name) ?? asNonEmptyString(table?.tool);
+    if (description) normalized.description = description;
+    if (toolName) normalized.tool_name = toolName;
+    tables.push(normalized);
+  }
+
+  return tables;
+}
+
+function normalizeAgentSkills(value: unknown): AgentSkill[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const skills: AgentSkill[] = [];
+
+  const cleanModes = (raw: unknown): string[] => {
+    const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+    return arr.map(v => (typeof v === 'string' ? v.trim().toLowerCase() : '')).filter(m => VALID_IO_MODES.has(m));
+  };
+
+  for (const rawSkill of value) {
+    const skill = asRecord(rawSkill);
+    if (!skill) continue;
+    const name = asNonEmptyString(skill.name);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+
+    const rawTags = Array.isArray(skill.tags) ? skill.tags : typeof skill.tags === 'string' ? [skill.tags] : [];
+    const tags = rawTags.map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean).slice(0, 6);
+
+    const inputModes = cleanModes(skill.input_modes ?? skill.inputModes);
+    const outputModes = cleanModes(skill.output_modes ?? skill.outputModes);
+
+    skills.push({
+      name,
+      description: asNonEmptyString(skill.description) ?? `Skill: ${name}`,
+      tags,
+      input_modes: inputModes.length > 0 ? inputModes : ['text'],
+      output_modes: outputModes.length > 0 ? outputModes : ['structured_data'],
+    });
+  }
+
+  return skills.slice(0, 6);
+}
+
+function normalizeAgentColumns(value: unknown, tables: AgentTable[]): AgentColumn[] {
+  const rawColumns = Array.isArray(value) ? value : typeof value === 'string' || asRecord(value) ? [value] : [];
+  const fallbackTable = tables.length === 1 ? tables[0].name : undefined;
+  const seen = new Set<string>();
+  const columns: AgentColumn[] = [];
+
+  const addColumn = (name: string | null, tableName?: string | null) => {
+    if (!name) return;
+    const resolvedTable = tableName ?? fallbackTable;
+    const key = `${name.toLowerCase()}::${(resolvedTable ?? '').toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    columns.push(resolvedTable ? { name, table_name: resolvedTable } : { name });
+  };
+
+  for (const rawColumn of rawColumns) {
+    const column = asRecord(rawColumn);
+    if (column) {
+      addColumn(
+        asNonEmptyString(column.name) ?? asNonEmptyString(column.column_name) ?? asNonEmptyString(column.identifier),
+        asNonEmptyString(column.table_name) ?? asNonEmptyString(column.table),
+      );
+    } else {
+      addColumn(asNonEmptyString(rawColumn));
+    }
+  }
+
+  for (const table of tables) {
+    for (const columnName of table.columns ?? []) {
+      addColumn(columnName, table.name);
+    }
+  }
+
+  return columns;
 }
 
 // ── Idea Card ─────────────────────────────────────────────────────────────────
@@ -295,8 +428,9 @@ const IdeaListRow: React.FC<{
 const IdeaModal: React.FC<{
   idea: SparkIdea;
   companyId: string;
+  blueprintCtx?: SparkBlueprintCtx;
   onClose: () => void;
-}> = ({ idea, companyId, onClose }) => {
+}> = ({ idea, companyId, blueprintCtx, onClose }) => {
   const navigate = useNavigate();
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
@@ -334,6 +468,8 @@ const IdeaModal: React.FC<{
         signal_label: idea.signal_label,
         complexity: idea.complexity,
         estimated_impact: idea.estimated_impact,
+        blueprint_dimensions: blueprintCtx?.dimensions,
+        blueprint_edges: blueprintCtx?.edges,
       });
       const agentRec = asRecord(agentRecRaw);
 
@@ -398,11 +534,18 @@ const IdeaModal: React.FC<{
             // Catalog fetch failed — use Claude-suggested tools as-is
           }
 
+          const agentTables = normalizeAgentTables(agentRec?.tables);
+          const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
+          const agentSkills = normalizeAgentSkills(agentRec?.skills);
+
           const agent = await mcpClient.createAgent({
             agent_name: agentName,
             description: asNonEmptyString(agentRec?.description) ?? agentName,
             instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
             tools: enrichedTools.length > 0 ? enrichedTools : undefined,
+            tables: agentTables.length > 0 ? agentTables : undefined,
+            columns: agentColumns.length > 0 ? agentColumns : undefined,
+            skills: agentSkills.length > 0 ? agentSkills : undefined,
             knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
             original_prompt: `Create agent for AI use case: ${idea.title}`,
           });
@@ -550,7 +693,26 @@ const IdeaModal: React.FC<{
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const SparkPage: React.FC = () => {
-  const { activeCompany } = useBlueprint();
+  const { activeCompany, nodes, graph } = useBlueprint();
+
+  const blueprintCtx = useMemo<SparkBlueprintCtx | null>(() => {
+    if (!activeCompany || !nodes.length) return null;
+    const nodeMap = graph ? new Map(graph.nodes.map(n => [n.id, n.label])) : null;
+    return {
+      dimensions: nodes.slice(0, 30).map(n => ({
+        label: n.label,
+        category: n.category ?? 'custom',
+        summary: n.summary?.slice(0, 120),
+      })),
+      edges: (graph && nodeMap)
+        ? graph.edges.slice(0, 50).map(e => ({
+            sourceLabel: nodeMap.get(e.source) ?? e.source,
+            targetLabel: nodeMap.get(e.target) ?? e.target,
+            relType: e.rel_type,
+          }))
+        : undefined,
+    };
+  }, [activeCompany, nodes, graph]);
   const [ideas, setIdeas] = useState<SparkIdea[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [selectedIdea, setSelectedIdea] = useState<SparkIdea | null>(null);
@@ -570,6 +732,9 @@ const SparkPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   const companyId = activeCompany?.id ?? null;
+  const companyName = activeCompany?.name;
+  const industry = activeCompany?.industry;
+  const region = activeCompany?.region;
 
   const toggleDimension = (key: string) => {
     setActiveDimensions(prev => {
@@ -623,7 +788,15 @@ const SparkPage: React.FC = () => {
     setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
-      for await (const idea of sparkApi.generateIdeasStream(companyId, dims, direction.trim() || undefined, ideaCount)) {
+      for await (const idea of sparkApi.generateIdeasStream(
+        companyId,
+        dims,
+        direction.trim() || undefined,
+        ideaCount,
+        companyName,
+        industry,
+        region,
+      )) {
         setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
         setHasLibrary(true);
       }
@@ -632,7 +805,7 @@ const SparkPage: React.FC = () => {
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction, ideaCount]);
+  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region]);
 
   const enterSelectMode = () => {
     setSelectMode(true);
@@ -1138,6 +1311,7 @@ const SparkPage: React.FC = () => {
         <IdeaModal
           idea={selectedIdea}
           companyId={companyId}
+          blueprintCtx={blueprintCtx ?? undefined}
           onClose={() => setSelectedIdea(null)}
         />
       )}

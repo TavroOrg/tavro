@@ -47,9 +47,9 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'CONFIG', label: 'Technical Configuration' },
     { id: 'IMPACT', label: 'Business Impact' },
     { id: 'LINEAGE', label: 'Lineage Map' },
-    { id: 'ISSUES', label: 'Issues' },
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
+    { id: 'ISSUES', label: 'Issues' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({

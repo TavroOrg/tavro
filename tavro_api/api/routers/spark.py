@@ -74,6 +74,8 @@ class SparkConvertRequest(BaseModel):
     signal_label: str | None = None
     complexity: str | None = None
     estimated_impact: str | None = None
+    blueprint_dimensions: list[dict[str, Any]] | None = None
+    blueprint_edges: list[dict[str, Any]] | None = None
 
 
 class SparkConvertResponse(BaseModel):
@@ -306,37 +308,66 @@ def _extract_complete_objects(buffer: str) -> tuple[list[dict], str]:
     return objects, buffer[i:] if i < n else ""
 
 
-def _build_direction_prompt(company_nodes: list[dict], direction: str, count: int) -> tuple[str, str]:
+def _build_direction_prompt(
+    company_nodes: list[dict],
+    direction: str,
+    count: int,
+    company_name: str | None = None,
+    industry: str | None = None,
+    region: str | None = None,
+    edges: list[dict] | None = None,
+) -> tuple[str, str]:
     """Return (system, user) prompts for direction-mode idea generation."""
+    company_label = company_name or "the company"
+    industry_label = industry or "enterprise operations"
+    region_clause = f" ({region})" if region else ""
+
     context_lines = "\n".join(
         f"  [{c['category'].upper()}] {c['label']}"
         + (f": {c['summary']}" if c.get("summary") else "")
         for c in company_nodes
     )
+    edge_lines = ""
+    if edges:
+        edge_lines = "\n\nDimension relationships (how systems and processes connect):\n" + "\n".join(
+            f"  {e['source_label']} —[{e['rel_type']}]→ {e['target_label']}"
+            for e in edges[:30]
+        )
+
     system = (
-        f"You are a senior AI implementation consultant specialising in manufacturing operations. "
+        f"You are a senior AI implementation consultant specialising in {industry_label}. "
+        f"You are analysing {company_label}{region_clause}, a {industry_label} company. "
         f"Today's year is {CURRENT_YEAR}. Never reference past-year goals or stale targets. "
         "Generate specific, concrete, buildable AI use case ideas with measurable ROI. "
         "Do not generate agents here. Do not include agent names in titles. "
         "Each idea must name one specific AI capability — not vague phrases like 'leverage AI'."
     )
+    company_header = (
+        f"Company: {company_label} | Industry: {industry_label}"
+        + (f" | Region: {region}" if region else "")
+        + "\n\n"
+    )
     user = (
         f"FOCUS: Generate exactly {count} distinct AI use case ideas, ALL specifically about: \"{direction}\"\n\n"
-        f"Company context (systems, processes, and integrations — reference them where applicable):\n"
-        f"{context_lines}\n\n"
+        f"{company_header}"
+        f"Company context — you MUST ground each idea in one specific system or process listed below. "
+        f"Name it explicitly in the description and in the source_node field:\n"
+        f"{context_lines}{edge_lines}\n\n"
         "For each idea return a JSON object with:\n"
         "- title: formal AI use case title, max 8 words. "
         "Do NOT include the word 'Agent'. Do NOT write an agent name. "
         "(good: 'OData Quality Gate Anomaly Detection'; bad: 'OData Quality Gate Agent')\n"
         "- description: exactly 2 sentences — "
-        "sentence 1: what the agent does and which system/integration it connects to; "
+        "sentence 1: what the agent does and which SPECIFIC system or process from the context above it connects to (name it exactly); "
         "sentence 2: what output it produces and how it is acted on\n"
         "- rationale: 1 sentence — specific ROI, quantified where possible "
         "(e.g. 'reduces manual data reconciliation by ~4 hrs/week')\n"
         "- complexity: exactly 'Low', 'Medium', or 'High'\n"
         "- estimated_impact: exactly 'Low', 'Medium', or 'High'\n"
-        "- category: one of: process, integration, application, risk, strategy\n\n"
-        f"ALL {count} ideas MUST be about \"{direction}\". "
+        "- category: one of: process, integration, application, risk, strategy, technology\n"
+        "- source_node: the EXACT label of the company system or process this idea is grounded in "
+        "(must match one of the labels in the context above)\n\n"
+        f"ALL {count} ideas MUST be about \"{direction}\" AND grounded in a specific company system or process. "
         "Return ONLY a JSON array. No prose, no markdown fences."
     )
     return system, user
@@ -401,12 +432,170 @@ def _sanitize_knowledge_source(source: Any) -> dict[str, str] | None:
     }
 
 
+_VALID_IO_MODES = {
+    "text", "structured_data", "api_response", "database_query",
+    "file", "alert", "report", "event", "stream",
+}
+
+def _sanitize_skills(raw_skills: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_skills, list):
+        return []
+
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_skills:
+        if not isinstance(item, dict):
+            continue
+        name = _to_text(item.get("name"))
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+
+        def _clean_modes(raw: Any) -> list[str]:
+            if isinstance(raw, str):
+                raw = [raw]
+            if not isinstance(raw, list):
+                return []
+            return [m for m in (_to_text(v).lower() for v in raw) if m in _VALID_IO_MODES]
+
+        input_modes = _clean_modes(item.get("input_modes") or item.get("inputModes"))
+        output_modes = _clean_modes(item.get("output_modes") or item.get("outputModes"))
+
+        raw_tags = item.get("tags")
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        tags = [_to_text(t) for t in (raw_tags or []) if _to_text(t)][:6]
+
+        cleaned.append({
+            "name": name,
+            "description": _to_text(item.get("description"), f"Skill: {name}"),
+            "tags": tags,
+            "input_modes": input_modes or ["text"],
+            "output_modes": output_modes or ["structured_data"],
+        })
+    return cleaned[:6]
+
+
+def _sanitize_column_names(raw_columns: Any) -> list[str]:
+    if isinstance(raw_columns, (str, dict)):
+        raw_columns = [raw_columns]
+    if not isinstance(raw_columns, list):
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_columns:
+        if isinstance(raw, dict):
+            name = _to_text(raw.get("name") or raw.get("column_name") or raw.get("identifier"))
+        else:
+            name = _to_text(raw)
+        key = name.lower()
+        if name and key not in seen:
+            names.append(name)
+            seen.add(key)
+    return names
+
+
+def _sanitize_tables(raw_tables: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_tables, (str, dict)):
+        raw_tables = [raw_tables]
+    if not isinstance(raw_tables, list):
+        return []
+
+    tables: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in raw_tables:
+        if isinstance(raw, str):
+            raw = {"name": raw}
+        if not isinstance(raw, dict):
+            continue
+        name = _to_text(raw.get("name") or raw.get("table_name"))
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        table: dict[str, Any] = {
+            "name": name,
+            "description": _to_text(raw.get("description"), f"Operational data table for {name}"),
+            "columns": _sanitize_column_names(raw.get("columns") or raw.get("column")),
+        }
+        tool_name = _to_text(raw.get("tool_name") or raw.get("tool"))
+        if tool_name:
+            table["tool_name"] = tool_name
+        tables.append(table)
+    return tables[:4]
+
+
+def _sanitize_columns(raw_columns: Any, tables: list[dict[str, Any]]) -> list[dict[str, str]]:
+    if isinstance(raw_columns, (str, dict)):
+        raw_columns = [raw_columns]
+    if not isinstance(raw_columns, list):
+        raw_columns = []
+
+    columns: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    fallback_table = tables[0]["name"] if len(tables) == 1 else ""
+
+    def add_column(name: str, table_name: str = "") -> None:
+        table = table_name or fallback_table
+        key = (name.lower(), table.lower())
+        if name and key not in seen:
+            item = {"name": name}
+            if table:
+                item["table_name"] = table
+            columns.append(item)
+            seen.add(key)
+
+    for raw in raw_columns:
+        if isinstance(raw, str):
+            add_column(_to_text(raw))
+            continue
+        if not isinstance(raw, dict):
+            continue
+        name = _to_text(raw.get("name") or raw.get("column_name") or raw.get("identifier"))
+        table_name = _to_text(raw.get("table_name") or raw.get("table"))
+        add_column(name, table_name)
+
+    for table in tables:
+        table_name = _to_text(table.get("name"))
+        for column_name in table.get("columns") or []:
+            add_column(_to_text(column_name), table_name)
+
+    return columns[:24]
+
+
+def _fallback_lineage(request: SparkConvertRequest, fields: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    use_case_title = _to_text(fields.get("title"), request.title)
+    context_label = _to_text(request.signal_label, use_case_title)
+    base_name = re.sub(r"[^A-Za-z0-9]+", " ", context_label).strip() or use_case_title
+    words = re.findall(r"[A-Za-z0-9]+", base_name)[:4] or ["Operational"]
+    table_name = " ".join(words + ["Signals"])
+    columns = [
+        "record_id",
+        "event_timestamp",
+        "source_system",
+        "status",
+        "priority_score",
+        "recommended_action",
+    ]
+    tables = [{
+        "name": table_name,
+        "description": f"Source records and signals used by the {use_case_title} agent.",
+        "columns": columns,
+    }]
+    return tables, [{"name": name, "table_name": table_name} for name in columns]
+
+
 def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[str, Any]) -> dict[str, Any]:
     use_case_title = _to_text(fields.get("title"), request.title)
     use_case_desc = _to_text(fields.get("description"), request.description)
     dimensions = [d for d in request.target_dimensions if _to_text(d)]
     dim_text = ", ".join(dimensions) if dimensions else "process"
     context_label = _to_text(request.signal_label, dim_text)
+    tables, columns = _fallback_lineage(request, fields)
 
     return {
         "agent_name": _to_agent_name(use_case_title),
@@ -438,6 +627,31 @@ def _fallback_agent_recommendation(request: SparkConvertRequest, fields: dict[st
             "name": "Company Blueprint Context",
             "description": f"Spark context for {use_case_title}: {use_case_desc or request.rationale}",
         },
+        "tables": tables,
+        "columns": columns,
+        "skills": [
+            {
+                "name": "Signal Monitoring",
+                "description": f"Continuously monitors {context_label.lower()} signals and triggers on threshold breaches.",
+                "tags": ["monitoring", "alerting", dim_text],
+                "input_modes": ["structured_data", "database_query"],
+                "output_modes": ["alert", "structured_data"],
+            },
+            {
+                "name": "Recommendation Generation",
+                "description": f"Produces prioritized, rationale-backed action recommendations for {use_case_title}.",
+                "tags": ["recommendation", "reasoning", dim_text],
+                "input_modes": ["structured_data"],
+                "output_modes": ["report", "structured_data"],
+            },
+            {
+                "name": "Outcome Tracking",
+                "description": "Persists decision traces and incorporates human feedback for governance and model improvement.",
+                "tags": ["governance", "feedback", "audit"],
+                "input_modes": ["text", "structured_data"],
+                "output_modes": ["structured_data"],
+            },
+        ],
     }
 
 
@@ -471,6 +685,18 @@ def _normalize_agent_recommendation(
     knowledge_source = _sanitize_knowledge_source(candidate.get("knowledge_source"))
     if knowledge_source:
         result["knowledge_source"] = knowledge_source
+
+    tables = _sanitize_tables(candidate.get("tables") or candidate.get("table"))
+    if tables:
+        result["tables"] = tables
+
+    columns = _sanitize_columns(candidate.get("columns") or candidate.get("column"), result.get("tables") or [])
+    if columns:
+        result["columns"] = columns
+
+    skills = _sanitize_skills(candidate.get("skills"))
+    if skills:
+        result["skills"] = skills
 
     return result
 
@@ -524,8 +750,19 @@ async def _fetch_agents(db: AsyncSession) -> list[SparkSimilarAgent]:
 
 # ── LLM enrichment ─────────────────────────────────────────────────────────────
 
-def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> tuple[str, str]:
+def _build_gap_prompt(
+    candidates: list[dict],
+    direction: str | None = None,
+    company_name: str | None = None,
+    industry: str | None = None,
+    region: str | None = None,
+    edges: list[dict] | None = None,
+) -> tuple[str, str]:
     """Return (system, user) prompts for gap-analysis idea generation."""
+    company_label = company_name or "the company"
+    industry_label = industry or "enterprise operations"
+    region_clause = f" ({region})" if region else ""
+
     signals = [
         {
             "index": i,
@@ -542,8 +779,20 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
         "find the angle that links it — do not generate an off-topic idea just to fill the slot."
     ) if direction and direction.strip() else ""
 
+    edge_context = ""
+    if edges:
+        edge_context = (
+            "\n\nDimension relationships (how the company's systems and processes connect — "
+            "use these to ground ideas in real dependencies and integration surfaces):\n"
+            + "\n".join(
+                f"  {e['source_label']} —[{e['rel_type']}]→ {e['target_label']}"
+                for e in edges[:30]
+            )
+        )
+
     system = (
-        f"You are a senior AI implementation consultant specialising in manufacturing operations. "
+        f"You are a senior AI implementation consultant specialising in {industry_label}. "
+        f"You are analysing {company_label}{region_clause}, a {industry_label} company. "
         f"Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months. "
         f"Today's year is {CURRENT_YEAR}. "
         f"NEVER reference goals, targets, revenue plans, or milestones tied to years before {CURRENT_YEAR}. "
@@ -561,7 +810,13 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
         "  • Scope-inflated: describes a full enterprise programme with no specific agent\n"
         "  • Disconnected: idea has no real link to the specific system named in the context signal"
     )
+    company_header = (
+        f"Company: {company_label} | Industry: {industry_label}"
+        + (f" | Region: {region}" if region else "")
+        + "\n\n"
+    )
     user = (
+        f"{company_header}"
         "For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n"
         "- title: formal AI use case title, max 8 words. "
         "Do NOT include the word 'Agent'. Do NOT write an agent name. "
@@ -579,14 +834,23 @@ def _build_gap_prompt(candidates: list[dict], direction: str | None = None) -> t
         "  High = saves >$50K/yr or prevents critical production or compliance risk\n"
         "  Medium = saves $10–50K/yr or eliminates significant manual work\n"
         "  Low = incremental improvement, <$10K/yr\n\n"
-        f"Signals:\n{json.dumps(signals, indent=2)}\n\n"
+        f"Signals:\n{json.dumps(signals, indent=2)}"
+        f"{edge_context}\n\n"
         "Return ONLY a JSON array with one object per signal, same order. No prose, no markdown fences."
     )
     return system, user
 
 
-async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: str | None = None) -> list[dict]:
-    system, user = _build_gap_prompt(candidates, direction)
+async def _enrich_with_claude(
+    candidates: list[dict],
+    api_key: str,
+    direction: str | None = None,
+    company_name: str | None = None,
+    industry: str | None = None,
+    region: str | None = None,
+    edges: list[dict] | None = None,
+) -> list[dict]:
+    system, user = _build_gap_prompt(candidates, direction, company_name, industry, region, edges)
     try:
         data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system)
         raw_text = ""
@@ -602,9 +866,18 @@ async def _enrich_with_claude(candidates: list[dict], api_key: str, direction: s
     return [_basic_idea(c["node_id"], c["label"], c["category"], c.get("summary"), c["signal_type"], c["signal_label"]) for c in candidates]
 
 
-async def _build_ideas(unique: list[dict], all_agents: list[SparkSimilarAgent], api_key: str, direction: str | None = None) -> list[SparkIdea]:
+async def _build_ideas(
+    unique: list[dict],
+    all_agents: list[SparkSimilarAgent],
+    api_key: str,
+    direction: str | None = None,
+    company_name: str | None = None,
+    industry: str | None = None,
+    region: str | None = None,
+    edges: list[dict] | None = None,
+) -> list[SparkIdea]:
     if api_key:
-        enriched = await _enrich_with_claude(unique, api_key, direction=direction)
+        enriched = await _enrich_with_claude(unique, api_key, direction=direction, company_name=company_name, industry=industry, region=region, edges=edges)
     else:
         enriched = [_basic_idea(c["node_id"], c["label"], c["category"], c.get("summary"), c["signal_type"], c["signal_label"]) for c in unique]
 
@@ -637,7 +910,7 @@ async def _fetch_all_company_nodes(db: AsyncSession, company_id: str, limit: int
     try:
         async with db.begin_nested():
             rows = await db.execute(text("""
-                SELECT dn.label, dn.summary, dt.category
+                SELECT dn.id, dn.label, dn.summary, dt.category
                 FROM twin.dim_node dn
                 JOIN twin.dim_type dt ON dn.dim_type_id = dt.id
                 WHERE dn.company_id = :company_id
@@ -646,9 +919,35 @@ async def _fetch_all_company_nodes(db: AsyncSession, company_id: str, limit: int
             """), {"company_id": company_id, "limit": limit})
             return [
                 {
+                    "node_id": str(row["id"]),
                     "label": row["label"] or "Unnamed",
                     "category": row["category"],
                     "summary": (row["summary"] or "")[:200],
+                }
+                for row in rows.mappings()
+            ]
+    except Exception:
+        return []
+
+
+async def _fetch_company_edges(db: AsyncSession, company_id: str, limit: int = 50) -> list[dict]:
+    """Fetch dimension relationships to enrich LLM context with how systems and processes connect."""
+    try:
+        async with db.begin_nested():
+            rows = await db.execute(text("""
+                SELECT sn.label AS source_label, tn.label AS target_label, e.rel_type
+                FROM twin.dim_edge e
+                JOIN twin.dim_node sn ON sn.id = e.source_id
+                JOIN twin.dim_node tn ON tn.id = e.target_id
+                WHERE sn.company_id = :company_id
+                ORDER BY e.rel_type, sn.label
+                LIMIT :limit
+            """), {"company_id": company_id, "limit": limit})
+            return [
+                {
+                    "source_label": row["source_label"] or "",
+                    "target_label": row["target_label"] or "",
+                    "rel_type": row["rel_type"] or "relates_to",
                 }
                 for row in rows.mappings()
             ]
@@ -661,9 +960,14 @@ async def _generate_direction_ideas(
     api_key: str,
     direction: str,
     count: int = SPARK_MAX_IDEAS,
+    company_name: str | None = None,
+    industry: str | None = None,
+    region: str | None = None,
+    edges: list[dict] | None = None,
 ) -> list[SparkIdea]:
     """Direction-first generation: Claude produces ideas about the topic using company context."""
-    system, user = _build_direction_prompt(company_nodes, direction, count)
+    node_lookup = {n["label"].lower(): n for n in company_nodes}
+    system, user = _build_direction_prompt(company_nodes, direction, count, company_name, industry, region, edges)
 
     try:
         data = await _call_anthropic(
@@ -684,6 +988,16 @@ async def _generate_direction_ideas(
             category = e.get("category", "process")
             signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
             node_id = f"dir:{hashlib.sha256(f'{direction}:{i}'.encode()).hexdigest()[:8]}"
+            source_label = (e.get("source_node") or "").strip().lower()
+            matched_node = node_lookup.get(source_label)
+            target_nodes = []
+            if matched_node:
+                target_nodes = [SparkTargetNode(
+                    id=matched_node["node_id"],
+                    label=matched_node["label"],
+                    category=matched_node["category"],
+                    summary=matched_node.get("summary") or None,
+                )]
             ideas.append(SparkIdea(
                 idea_id=_idea_id(node_id, signal_type, direction),
                 title=e.get("title") or f"AI for {direction}",
@@ -692,7 +1006,7 @@ async def _generate_direction_ideas(
                 signal_type=signal_type,
                 signal_label=f"Focus: {direction.strip()}",
                 target_dimensions=[category],
-                target_nodes=[],
+                target_nodes=target_nodes,
                 complexity=e.get("complexity", "Medium"),
                 estimated_impact=e.get("estimated_impact", "Medium"),
                 similar_agents=[],
@@ -704,32 +1018,55 @@ async def _generate_direction_ideas(
 
 
 async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: list[str], count: int = SPARK_DEFAULT_IDEAS) -> list[dict]:
-    candidates: list[dict] = []
-    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration"]
+    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration", "technology"]
+
+    # Fetch per-category buckets; cap each bucket so one category doesn't dominate
+    per_bucket = max(2, (count + 2) // 3)
+    buckets: list[list[dict]] = []
 
     if "process" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["process"], "gap_coverage", "Process with no AI coverage", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["process"], "gap_coverage", "Process with no AI coverage", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "risk" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["risk"], "risk_hotspot", "Risk area with no monitoring agent", limit=4)
+        b = await _fetch_dim_node_candidates(db, company_id, ["risk"], "risk_hotspot", "Risk area with no monitoring agent", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "strategy" in active_signals or "finance" in active_signals:
         strat_cats = [c for c in ["strategy", "finance"] if c in active_signals or not dim_filter]
         if strat_cats:
-            candidates += await _fetch_dim_node_candidates(db, company_id, strat_cats, "strategic_gap", "Strategic or financial area with AI potential", limit=4)
+            b = await _fetch_dim_node_candidates(db, company_id, strat_cats, "strategic_gap", "Strategic or financial area with AI potential", limit=per_bucket)
+            if b:
+                buckets.append(b)
 
     if "application" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["application"], "integration_surface", "Application with no AI agent integration", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["application"], "integration_surface", "Application with no AI agent integration", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
     if "integration" in active_signals:
-        candidates += await _fetch_dim_node_candidates(db, company_id, ["integration"], "integration_surface", "Integration surface with no agent coverage", limit=6)
+        b = await _fetch_dim_node_candidates(db, company_id, ["integration"], "integration_surface", "Integration surface with no agent coverage", limit=per_bucket)
+        if b:
+            buckets.append(b)
 
+    if "technology" in active_signals:
+        b = await _fetch_dim_node_candidates(db, company_id, ["technology"], "integration_surface", "Technology platform with AI automation potential", limit=per_bucket)
+        if b:
+            buckets.append(b)
+
+    # Round-robin interleave across buckets so ideas span all dimensions
     seen: set[str] = set()
     unique: list[dict] = []
-    for c in candidates:
-        if c["node_id"] not in seen:
-            seen.add(c["node_id"])
-            unique.append(c)
+    max_rounds = max((len(b) for b in buckets), default=0)
+    for r in range(max_rounds):
+        for bucket in buckets:
+            if r < len(bucket):
+                node = bucket[r]
+                if node["node_id"] not in seen:
+                    seen.add(node["node_id"])
+                    unique.append(node)
 
     return unique[:count]
 
@@ -854,6 +1191,9 @@ async def generate_spark_ideas(
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area (e.g. 'Quality management')"),
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
+    company_name: str | None = Query(None, description="Company display name from the blueprint"),
+    industry: str | None = Query(None, description="Company industry from the blueprint"),
+    region: str | None = Query(None, description="Company region from the blueprint"),
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Generate fresh ideas from company context, persist to DB, return them."""
@@ -861,22 +1201,24 @@ async def generate_spark_ideas(
     direction_clean = direction.strip() if direction and direction.strip() else None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
+    edges = await _fetch_company_edges(db, company_id)
+
     if direction_clean and api_key:
         # Direction mode: Claude generates ideas *about* the topic using all company nodes as context.
         # Does not depend on which nodes happen to be randomly selected.
         company_nodes = await _fetch_all_company_nodes(db, company_id)
-        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean, idea_count)
+        ideas = await _generate_direction_ideas(company_nodes, api_key, direction_clean, idea_count, company_name, industry, region, edges)
         if not ideas:
             # Fallback to normal flow if direction generation fails
             unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
             all_agents = await _fetch_agents(db)
-            ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean)
+            ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean, company_name=company_name, industry=industry, region=region, edges=edges)
     else:
         unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
         if not unique:
             return []
         all_agents = await _fetch_agents(db)
-        ideas = await _build_ideas(unique, all_agents, api_key)
+        ideas = await _build_ideas(unique, all_agents, api_key, company_name=company_name, industry=industry, region=region, edges=edges)
 
     if not ideas:
         return []
@@ -901,6 +1243,9 @@ async def generate_spark_ideas_stream(
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area"),
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
+    company_name: str | None = Query(None, description="Company display name from the blueprint"),
+    industry: str | None = Query(None, description="Company industry from the blueprint"),
+    region: str | None = Query(None, description="Company region from the blueprint"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -916,9 +1261,13 @@ async def generate_spark_ideas_stream(
     async def event_stream() -> AsyncGenerator[str, None]:
         collected: list[SparkIdea] = []
         try:
+            edges = await _fetch_company_edges(db, company_id)
+
             if direction_clean and api_key:
                 company_nodes = await _fetch_all_company_nodes(db, company_id)
-                system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count)
+                # Build lookup: lowercase label -> node dict (for target_nodes resolution)
+                node_lookup = {n["label"].lower(): n for n in company_nodes}
+                system, user = _build_direction_prompt(company_nodes, direction_clean, idea_count, company_name, industry, region, edges)
 
                 buffer = ""
                 async for chunk in _stream_anthropic(
@@ -935,6 +1284,17 @@ async def generate_spark_ideas_stream(
                         category = obj.get("category", "process")
                         signal_type = "integration_surface" if category in ("integration", "application") else "gap_coverage"
                         node_id = f"dir:{hashlib.sha256(f'{direction_clean}:{len(collected)}'.encode()).hexdigest()[:8]}"
+                        # Resolve source_node label back to a blueprint node for target_nodes
+                        source_label = (obj.get("source_node") or "").strip().lower()
+                        matched_node = node_lookup.get(source_label)
+                        target_nodes = []
+                        if matched_node:
+                            target_nodes = [SparkTargetNode(
+                                id=matched_node["node_id"],
+                                label=matched_node["label"],
+                                category=matched_node["category"],
+                                summary=matched_node.get("summary") or None,
+                            )]
                         idea = SparkIdea(
                             idea_id=_idea_id(node_id, signal_type, direction_clean),
                             title=obj.get("title") or f"AI for {direction_clean}",
@@ -943,7 +1303,7 @@ async def generate_spark_ideas_stream(
                             signal_type=signal_type,
                             signal_label=f"Focus: {direction_clean.strip()}",
                             target_dimensions=[category],
-                            target_nodes=[],
+                            target_nodes=target_nodes,
                             complexity=obj.get("complexity", "Medium"),
                             estimated_impact=obj.get("estimated_impact", "Medium"),
                             similar_agents=[],
@@ -960,7 +1320,7 @@ async def generate_spark_ideas_stream(
                     all_agents = await _fetch_agents(db)
 
                     if api_key:
-                        system, user = _build_gap_prompt(unique)
+                        system, user = _build_gap_prompt(unique, direction_clean, company_name, industry, region, edges)
                         buffer = ""
                         obj_index = 0
                         async for chunk in _stream_anthropic(
@@ -1070,6 +1430,27 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             agent_recommendation=_fallback_agent_recommendation(request, no_llm_fields),
         )
 
+    blueprint_block = ""
+    if request.blueprint_dimensions:
+        dim_lines = "\n".join(
+            "  [{}] {}{}".format(
+                d.get("category", "custom"),
+                d.get("label", ""),
+                " — " + d["summary"][:100] if d.get("summary") else "",
+            )
+            for d in request.blueprint_dimensions[:30]
+        )
+        blueprint_block = f"\nCompany Blueprint Dimensions:\n{dim_lines}"
+        if request.blueprint_edges:
+            edge_lines = "\n".join(
+                "  {} —[{}]→ {}".format(
+                    e.get("sourceLabel", ""), e.get("relType", ""), e.get("targetLabel", "")
+                )
+                for e in request.blueprint_edges[:20]
+            )
+            blueprint_block += f"\n\nDimension Relationships:\n{edge_lines}"
+        blueprint_block += "\n\n"
+
     system = (
         "You are an AI governance expert who writes structured AI use case documentation. "
         "Be specific, actionable, and business-focused. No filler phrases."
@@ -1080,7 +1461,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Description: {request.description}\n"
         f"Rationale: {request.rationale}\n"
         f"Context: {request.signal_label or ''}\n"
-        f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
+        f"Dimensions: {', '.join(request.target_dimensions)}\n"
+        f"{blueprint_block}"
         "Return a single JSON object with exactly these fields:\n"
         "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
@@ -1136,23 +1518,31 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             f"Title: {request.title}\n"
             f"Description: {fields.get('description', request.description)}\n"
             f"Solution approach: {fields.get('solution_approach', '')}\n"
-            f"Dimensions: {', '.join(request.target_dimensions)}\n\n"
+            f"Dimensions: {', '.join(request.target_dimensions)}\n"
+            f"{blueprint_block}"
             "Return a JSON object with exactly these fields:\n"
             "- agent_name: concise agent name, max 6 words\n"
             "- description: 1–2 sentences on what the agent does\n"
             "- instruction: 3–5 sentences of operational instructions — how it ingests data, what it produces, and when it acts\n"
             "- tools: list of up to 4 objects {\"name\": \"...\", \"description\": \"...\"} — the external systems/APIs this agent calls (use real system names if mentioned in the use case, otherwise use descriptive generic names)\n"
-            "- knowledge_source: one object {\"name\": \"...\", \"description\": \"...\"} — the primary data source the agent reads from\n\n"
+            "- knowledge_source: one object {\"name\": \"...\", \"description\": \"...\"} — the primary data source the agent reads from\n"
+            "- tables: list of 1-4 objects {\"name\": \"...\", \"description\": \"...\", \"tool_name\": \"...\", \"columns\": [\"...\"]} - source or output tables the agent reads/writes. Use tool_name only when the table belongs to one of the tools above\n"
+            "- columns: list of 3-7 objects {\"name\": \"...\", \"table_name\": \"...\"} - concrete columns for those tables. Every table_name must match a table name from tables\n"
+            "- skills: list of 2-4 discrete capabilities this agent has, each as an object with:\n"
+            "    {\"name\": \"...\", \"description\": \"...\", \"tags\": [\"...\"], "
+            "\"input_modes\": [\"...\"], \"output_modes\": [\"...\"]}\n"
+            "  input_modes and output_modes must each be one or more of: "
+            "text, structured_data, api_response, database_query, file, alert, report, event, stream\n\n"
             "Return ONLY the JSON object. No prose."
         )
         try:
-            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1200)
+            agent_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=1600)
             agent_raw = "".join(block.get("text", "") for block in agent_data.get("content", []) if block.get("type") == "text")
             extracted_agent = _extract_json_object(agent_raw)
 
             if agent_data.get("stop_reason") == "max_tokens" and _extract_balanced_json(extracted_agent, "{", "}") is None:
-                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1200; retrying with larger budget")
-                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2200)
+                logger.warning("spark.convert_idea agent recommendation truncated at max_tokens=1600; retrying with larger budget")
+                retry_data = await _call_anthropic(api_key, [{"role": "user", "content": agent_user}], agent_system, max_tokens=2800)
                 agent_raw = "".join(block.get("text", "") for block in retry_data.get("content", []) if block.get("type") == "text")
                 extracted_agent = _extract_json_object(agent_raw)
 

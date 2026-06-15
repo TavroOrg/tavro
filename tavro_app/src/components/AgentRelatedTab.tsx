@@ -19,8 +19,10 @@ import {
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
 import { aiModelApi } from '../services/aiModelApi';
+import { agentApi } from '../services/agentApi';
 import { useUseCases } from '../context/UseCaseContext';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 import type {
   AgentRelationsPayload,
   BusinessApplicationRecord,
@@ -237,6 +239,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const lastBusinessImpactSignatureRef = useRef<string>('');
   const { useCases: allUseCases } = useUseCases();
   const { agents: catalogAgents } = useCatalog();
+  const { activeCompany } = useBlueprint();
+  const [allCompanyUseCases, setAllCompanyUseCases] = useState<UseCaseSummary[]>([]);
+  const [allCompanyAgents, setAllCompanyAgents] = useState<typeof catalogAgents>([]);
   const fallbackApplicationCount = useMemo(
     () => (agent.application ?? []).filter(isLinkedApplicationLike).length,
     [agent.application],
@@ -274,18 +279,33 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     }
     setLoadingRelations(true);
     try {
-      const [agentRelations, appCatalog, processCatalog, modelCatalog, integrationCatalog] = await Promise.all([
+      const companyId = activeCompany?.id;
+      const [agentRelations, appCatalog, processCatalog, modelCatalog, integrationCatalog, useCasePage, companyAgents] = await Promise.all([
         businessRelationsApi.getAgentRelations(agentId),
-        showApplications ? businessRelationsApi.listApplications() : Promise.resolve([] as BusinessApplicationRecord[]),
-        showProcesses ? businessRelationsApi.listProcesses() : Promise.resolve([] as BusinessProcessRecord[]),
+        showApplications ? businessRelationsApi.listApplications(undefined, companyId) : Promise.resolve([] as BusinessApplicationRecord[]),
+        showProcesses ? businessRelationsApi.listProcesses(undefined, companyId) : Promise.resolve([] as BusinessProcessRecord[]),
         showAiModels ? aiModelApi.listModels() : Promise.resolve([] as AiModelRecord[]),
-        showIntegrations ? businessRelationsApi.listIntegrations() : Promise.resolve([] as IntegrationRecord[]),
+        showIntegrations ? businessRelationsApi.listIntegrations(undefined, companyId) : Promise.resolve([] as IntegrationRecord[]),
+        showUseCases ? useCaseApi.listUseCases({ companyId, recordRange: '1-200' }) : Promise.resolve(null),
+        showChildAgents ? agentApi.listAgentsForLinking(companyId) : Promise.resolve([] as typeof catalogAgents),
       ]);
       setRelations(agentRelations);
       setAllApplications(appCatalog);
       setAllProcesses(processCatalog);
       setAllAiModels(modelCatalog);
       setAllIntegrations(integrationCatalog);
+      setAllCompanyAgents(companyAgents);
+      if (useCasePage) {
+        const mapped: UseCaseSummary[] = (useCasePage.data ?? []).map((raw: any) => ({
+          identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
+          name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
+          description: raw.description ?? raw.short_description ?? null,
+          status: raw.status ?? null,
+          priority: raw.priority ?? null,
+          overall_risk: raw.overall_risk ?? null,
+        }));
+        setAllCompanyUseCases(mapped);
+      }
 
       const relationUseCases = normalizeLinkedUseCasesFromRelations(agentRelations);
       if (Array.isArray(agentRelations.ai_use_cases)) {
@@ -318,7 +338,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   useEffect(() => {
     refreshRelations();
-  }, [agentId, showApplications, showProcesses, showAiModels, showIntegrations]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, showApplications, showProcesses, showAiModels, showIntegrations, showUseCases, activeCompany?.id]);
 
   const liveApplications = relations?.applications ?? [];
   const liveProcesses = relations?.business_processes ?? [];
@@ -422,7 +443,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const availableChildAgents = useMemo(() => {
     const q = childAgentSearch.trim().toLowerCase();
     const selfId = agentId ?? '';
-    return catalogAgents.filter(a => {
+    const source = allCompanyAgents.length > 0 ? allCompanyAgents : catalogAgents;
+    return source.filter(a => {
       const id = a.identification?.agent_id ?? '';
       if (!id || id === selfId) return false;
       if (linkedChildAgentIds.has(id)) return false;
@@ -433,7 +455,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         (a.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [catalogAgents, childAgentSearch, linkedChildAgentIds, agentId]);
+  }, [allCompanyAgents, catalogAgents, childAgentSearch, linkedChildAgentIds, agentId]);
 
   const linkedAiModelIds = useMemo(() => {
     return new Set(liveAiModels.map(m => m.ai_model_id).filter(Boolean));
@@ -475,7 +497,8 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
 
   const availableUseCases = useMemo(() => {
     const q = useCaseSearch.trim().toLowerCase();
-    return allUseCases.filter(uc => {
+    const source = allCompanyUseCases.length > 0 ? allCompanyUseCases : allUseCases;
+    return source.filter(uc => {
       const id = uc.identifier ?? '';
       if (!id || linkedUseCaseIds.has(id)) return false;
       if (!q) return true;
@@ -485,7 +508,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         (uc.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [allUseCases, useCaseSearch, linkedUseCaseIds]);
+  }, [allCompanyUseCases, allUseCases, useCaseSearch, linkedUseCaseIds]);
 
   const handleAddApplication = async (businessApplicationId: string) => {
     if (!agentId) return;

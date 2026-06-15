@@ -64,6 +64,12 @@ ON core.ai_models (ai_model_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_ai_use_cases
 ON core.ai_model_ai_use_cases (ai_model_id, ai_use_case_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_business_applications
+ON core.ai_model_business_applications (ai_model_id, business_application_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_business_processes
+ON core.ai_model_business_processes (ai_model_id, business_process_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
@@ -653,6 +659,38 @@ BEGIN
         END IF;
     END IF;
 
+    -- AI Model <-> Business Application junction FKs.
+    IF to_regclass('core.ai_model_business_applications') IS NOT NULL THEN
+        IF to_regclass('core.ai_models') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_applications_ai_model') THEN
+            ALTER TABLE core.ai_model_business_applications
+            ADD CONSTRAINT fk_core_ai_model_business_applications_ai_model
+            FOREIGN KEY (ai_model_id) REFERENCES core.ai_models (ai_model_id) ON DELETE CASCADE;
+        END IF;
+        IF to_regclass('core.business_applications') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_applications_application') THEN
+            ALTER TABLE core.ai_model_business_applications
+            ADD CONSTRAINT fk_core_ai_model_business_applications_application
+            FOREIGN KEY (business_application_id) REFERENCES core.business_applications (business_application_id) ON DELETE CASCADE;
+        END IF;
+    END IF;
+
+    -- AI Model <-> Business Process junction FKs.
+    IF to_regclass('core.ai_model_business_processes') IS NOT NULL THEN
+        IF to_regclass('core.ai_models') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_processes_ai_model') THEN
+            ALTER TABLE core.ai_model_business_processes
+            ADD CONSTRAINT fk_core_ai_model_business_processes_ai_model
+            FOREIGN KEY (ai_model_id) REFERENCES core.ai_models (ai_model_id) ON DELETE CASCADE;
+        END IF;
+        IF to_regclass('core.business_processes') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_processes_process') THEN
+            ALTER TABLE core.ai_model_business_processes
+            ADD CONSTRAINT fk_core_ai_model_business_processes_process
+            FOREIGN KEY (business_process_id) REFERENCES core.business_processes (business_process_id) ON DELETE CASCADE;
+        END IF;
+    END IF;
+
     -- Agent-to-agent (parent/child) self-reference on core.agents.
     -- Mirrors business_processes.parent_process_id. No FK is added because
     -- core.agents is versioned (agent_internal_id is not unique), so it cannot
@@ -668,6 +706,54 @@ BEGIN
 
         CREATE INDEX IF NOT EXISTS ix_core_agents_parent_internal_id
         ON core.agents (parent_agent_internal_id);
+    END IF;
+
+    -- company_id / company_name on core.agents
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN company_name TEXT;
+        END IF;
+    END IF;
+
+    -- company_id / company_name on core.ai_use_cases
+    IF to_regclass('core.ai_use_cases') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_use_cases' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE core.ai_use_cases ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_use_cases' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE core.ai_use_cases ADD COLUMN company_name TEXT;
+        END IF;
+    END IF;
+
+    -- company_id / company_name on curated.agent_360
+    IF to_regclass('curated.agent_360') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'curated' AND table_name = 'agent_360' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE curated.agent_360 ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'curated' AND table_name = 'agent_360' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE curated.agent_360 ADD COLUMN company_name TEXT;
+        END IF;
     END IF;
 
 END $$;

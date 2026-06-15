@@ -54,6 +54,23 @@ export interface AiModelRecord {
   // Present on GET /{id}
   agents?: AiModelAgentReference[];
   ai_use_cases?: AiModelUseCaseReference[];
+  applications?: AiModelApplicationReference[];
+  processes?: AiModelProcessReference[];
+}
+
+export interface AiModelApplicationReference {
+  business_application_id: string;
+  application_name: string | null;
+  description: string | null;
+  business_criticality: string | null;
+  emergency_tier: string | null;
+}
+
+export interface AiModelProcessReference {
+  business_process_id: string;
+  process_name: string | null;
+  description: string | null;
+  business_criticality: string | null;
 }
 
 export interface AiModelAgentReference {
@@ -83,6 +100,8 @@ export type AiModelUpsertPayload = Partial<
     | 'updated_ts'
     | 'agents'
     | 'ai_use_cases'
+    | 'applications'
+    | 'processes'
   >
 >;
 

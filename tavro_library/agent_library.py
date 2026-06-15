@@ -16,11 +16,11 @@ from dotenv import load_dotenv
 
 load_dotenv(override=False)
 
-COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
+COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_DB_NAME"))
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
 
     @classmethod
     @contextmanager
@@ -700,8 +700,8 @@ class AgentMetadataExporter:
     
     @staticmethod
     def send_payload_async(payload: Dict[str, Any]) -> None:
-        primary_url = os.getenv("RISK_CLASSIFY_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
-        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+        primary_url = os.getenv("RISK_CLASSIFY_URL")
+        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL")
 
         def _send():
             try:
@@ -1304,7 +1304,9 @@ class AgentMetadataExporter:
         knowledge_source: Optional[Dict[str, str]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None,
-        issues: Optional[List[Dict]] = None,
+        company_id: Optional[str] = None,
+        company_name: Optional[str] = None,
+        issues: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """
         Create a new agent.
@@ -1337,6 +1339,8 @@ class AgentMetadataExporter:
         description = cls.sanitize(raw_description)
         instruction = cls.sanitize(raw_instruction)
         tenant_id = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+        company_id = cls.sanitize(str(company_id).strip()) if company_id else None
+        company_name = cls.sanitize(str(company_name).strip()) if company_name else None
 
         agent_id = str(uuid.uuid4())
         agent_internal_id = str(uuid.uuid4())
@@ -1357,6 +1361,8 @@ class AgentMetadataExporter:
         # 1. agents table
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
         tenant_id_column = "tenant_id," if tenant_id else ""
+        company_id_value = f"'{company_id}'," if company_id else "NULL,"
+        company_name_value = f"'{company_name}'," if company_name else "NULL,"
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
@@ -1364,6 +1370,8 @@ class AgentMetadataExporter:
             agent_id,
             agent_name,
             agent_description,
+            company_id,
+            company_name,
             created_ts,
             updated_ts,
             is_current
@@ -1374,6 +1382,8 @@ class AgentMetadataExporter:
             '{agent_id}',
             '{agent_name}',
             '{description}',
+            {company_id_value}
+            {company_name_value}
             TIMESTAMP '{now}',
             TIMESTAMP '{now}',
             true

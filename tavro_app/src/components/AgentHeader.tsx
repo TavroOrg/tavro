@@ -72,15 +72,15 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
 
     const riskClass = (agent.latest_risk_class ?? agent.risk_assessment?.blended_risk_classification ?? '').toLowerCase();
     const riskClassCardClass =
-        riskClass === 'high'   ? 'bg-red-50 border-red-200' :
-        riskClass === 'medium' ? 'bg-yellow-50 border-yellow-200' :
-        riskClass === 'low'    ? 'bg-emerald-50 border-emerald-200' :
-                                 'bg-slate-50 border-slate-200';
+        riskClass === 'high' ? 'bg-red-50 border-red-200' :
+            riskClass === 'medium' ? 'bg-amber-50 border-amber-200' :
+                riskClass === 'low' ? 'bg-emerald-50 border-emerald-200' :
+                    'bg-slate-50 border-slate-200';
     const riskClassTextClass =
-        riskClass === 'high'   ? 'text-red-600' :
-        riskClass === 'medium' ? 'text-yellow-600' :
-        riskClass === 'low'    ? 'text-emerald-600' :
-                                 'text-slate-400';
+        riskClass === 'high' ? 'text-red-600' :
+            riskClass === 'medium' ? 'text-amber-600' :
+                riskClass === 'low' ? 'text-emerald-600' :
+                    'text-slate-400';
     const isInlineName = inlineEdit?.field === 'name';
     const isSavingName = inlineSaving === 'name';
     const nameSaveDisabled = isSavingName || !inlineEdit?.value.trim();
@@ -167,53 +167,51 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                 </div>
 
                 <div className="flex flex-col items-center md:items-end gap-3 shrink-0 flex-1 md:max-w-[30%] mt-2 md:mt-0">
-                    <div className="flex items-stretch justify-center md:justify-end gap-3 w-full">
-                        <div className={`w-[170px] px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskCardClass}`}>
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                    <div className="grid grid-cols-3 gap-3 w-full">
+                        <div className={`px-3 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center min-w-0 overflow-hidden ${riskCardClass}`}>
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">
                                 Blended Score
                             </span>
-
-                                {riskScore != null ? (
-                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                        {riskLevel === 'low'
-                                            ? <CheckCircle2 size={14} />
-                                            : <ShieldAlert size={14} />}
-                                        {riskScore}
-                                    </span>
-                                ) : (
-                                    <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskTextClass}`}>
-                                        {riskLevel === 'low'
-                                            ? <CheckCircle2 size={14} />
-                                            : <ShieldAlert size={14} />}
-                                        N/A
-                                    </span>
-                                )}
-                            </div>
-                            {isPendingAssessment && (
-                                <div className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap">
-                                    <Loader2 size={10} className="animate-spin" />
-                                    Running Risk Assessment
-                                </div>
+                            {riskScore != null ? (
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} className="shrink-0" />
+                                        : <ShieldAlert size={14} className="shrink-0" />}
+                                    <span className="break-all">{riskScore}</span>
+                                </span>
+                            ) : (
+                                <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskTextClass}`}>
+                                    {riskLevel === 'low'
+                                        ? <CheckCircle2 size={14} className="shrink-0" />
+                                        : <ShieldAlert size={14} className="shrink-0" />}
+                                    N/A
+                                </span>
                             )}
                         </div>
-                        <div className={`w-[170px] px-4 py-2 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center ${riskClassCardClass}`}>
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                        <div className={`px-3 py-3 rounded-xl border shadow-sm text-xs font-semibold flex flex-col items-center justify-center text-center min-w-0 overflow-hidden ${riskClassCardClass}`}>
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">
                                 Blended Risk Classification
                             </span>
-                            <span className={`inline-flex items-center gap-1 text-sm font-bold ${riskClassTextClass}`}>
+                            <span className={`inline-flex items-center gap-1 text-sm font-bold whitespace-nowrap ${riskClassTextClass}`}>
                                 {riskClass === 'low'
-                                    ? <CheckCircle2 size={14} />
-                                    : <ShieldAlert size={14} />}
-                                {riskClass ? riskClass.charAt(0).toUpperCase() + riskClass.slice(1) : 'N/A'}
+                                    ? <CheckCircle2 size={14} className="shrink-0" />
+                                    : <ShieldAlert size={14} className="shrink-0" />}
+                                <span className="break-words">{riskClass ? riskClass.charAt(0).toUpperCase() + riskClass.slice(1) : 'N/A'}</span>
                             </span>
                         </div>
-                        <div className="w-[170px] bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center justify-center text-center">
-                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-widest mb-1.5">Provider</span>
+                        <div className="px-3 py-3 bg-white rounded-xl border border-slate-200 shadow-sm text-xs font-semibold text-slate-600 flex flex-col items-center justify-center text-center min-w-0 overflow-hidden">
+                            <span className="w-full text-center text-[10px] leading-tight text-slate-400 font-bold uppercase tracking-normal mb-1.5 [word-break:normal] [overflow-wrap:normal]">Provider</span>
                             {agent.provider?.url
-                                ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-blue-600 transition-colors">{agent.provider.organization || 'Tavro Internal'} <ExternalLink size={10} /></a>
-                                : (agent.provider?.organization || 'Tavro Internal')}
+                                ? <a href={agent.provider.url} target="_blank" rel="noreferrer" className="flex flex-wrap items-center justify-center gap-1 hover:text-blue-600 transition-colors break-all"><span className="break-words">{agent.provider.organization || 'Tavro Internal'}</span> <ExternalLink size={10} className="shrink-0" /></a>
+                                : <span className="break-words">{agent.provider?.organization || 'Tavro Internal'}</span>}
                         </div>
                     </div>
+                    {isPendingAssessment && (
+                        <div className="flex items-center self-start gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md border bg-amber-50 text-amber-700 border-amber-100 whitespace-nowrap justify-center">
+                            <Loader2 size={10} className="animate-spin" />
+                            Running Risk Assessment
+                        </div>
+                    )}
                     <div className="flex flex-col items-end sm:flex-row sm:items-center gap-3">
                         {agent.url && (
                             <a href={agent.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-medium">
