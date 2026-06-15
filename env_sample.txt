@@ -56,6 +56,12 @@ AZURE_AI_FOUNDRY_CLIENT_ID=
 AZURE_AI_FOUNDRY_TENANT_ID=
 AZURE_AI_FOUNDRY_CLIENT_SECRET=
 
+# ── Agent Playground - AWS Bedrock ──────────────────────────────────────────
+# AWS credentials for provisioning Bedrock agents in Agent Playground
+PLAYGROUND_BEDROCK_ACCESS_KEY=
+PLAYGROUND_BEDROCK_SECRET_KEY=
+PLAYGROUND_BEDROCK_REGION=
+
 # ── Catalog Connector - Azure / Copilot ──────────────────────────────────────
 # Required when running the API in Docker locally. In Azure, use managed identity instead.
 AZURE_CLIENT_ID=
@@ -189,3 +195,14 @@ ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_INSECURE=true
 LOGIN_OTEL_SERVICE_NAME=zitadel-login
 LOGIN_OTEL_EXPORTER_OTLP_ENDPOINT=
 LOGIN_OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+
+####################################
+
+RISK_CLASSIFY_URL=http://tavro-api:8000/api/v1/risk/classify-risk
+RISK_CLASSIFY_FALLBACK_URL=http://localhost:8000/api/v1/risk/classify-risk
+COMPANY_API_BASE_URL=http://tavro-api:8000/api/v1/companies
+TAVRO_API_URL=http://tavro-api:8000
+
+# ── Vite dev server and proxy configuration ───────────────────
+VITE_COPILOT_API_URL=http://localhost:4001

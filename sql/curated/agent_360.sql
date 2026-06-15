@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS curated.agent_360 (
     latest_event_status TEXT,
     snapshot_ts timestamp,
     agent_internal_id TEXT,
-    summary TEXT
+    summary TEXT,
+    company_id TEXT,
+    company_name TEXT
 );
 

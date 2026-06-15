@@ -6,7 +6,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,6 +172,7 @@ async def list_use_cases(
     request: Request,
     title: Optional[str] = None,
     process_id: Optional[str] = None,
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     start_record: int = 1,
     record_range: str = "1-10",
     db: AsyncSession = Depends(get_db),
@@ -191,6 +192,21 @@ async def list_use_cases(
             "(u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
         )
         params["tid"] = tenant_id
+    if company_id and company_id.strip():
+        try:
+            col_check = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                    LIMIT 1
+                """),
+                {"schema": CORE, "tbl": "ai_use_cases"},
+            )
+            if col_check.first():
+                where_clauses.append("CAST(u.company_id AS text) = :company_id")
+                params["company_id"] = company_id.strip()
+        except Exception:
+            pass
     if title:
         where_clauses.append("LOWER(u.name) LIKE LOWER(:title)")
         params["title"] = f"%{title}%"
@@ -271,9 +287,17 @@ async def list_use_cases(
 # ---------------------------------------------------------------------------
 
 @router.post("/", summary="Create AI Use Case", status_code=201)
-async def create_use_case(body: UseCaseCreateRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def create_use_case(
+    body: UseCaseCreateRequest,
+    request: Request,
+    company_id: Optional[str] = Query(default=None),
+    company_name: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
     use_case_id = str(uuid.uuid4())
     tenant_id = _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+    cname = company_name.strip() if company_name and company_name.strip() else None
     try:
         priority = _normalize_priority(body.priority)
     except ValueError as e:
@@ -285,11 +309,11 @@ async def create_use_case(body: UseCaseCreateRequest, request: Request, db: Asyn
                 INSERT INTO {CORE}.ai_use_cases
                     (tenant_id, ai_use_case_id, name, description, owner,
                      problem_statement, expected_benefits, priority, status,
-                     solution_approach, created_ts, updated_ts)
+                     solution_approach, created_ts, updated_ts, company_id, company_name)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
                      :problem, :benefits, :priority, 'New',
-                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname)
             """),
             {
                 "tid": tenant_id, "uid": use_case_id,
@@ -299,6 +323,7 @@ async def create_use_case(body: UseCaseCreateRequest, request: Request, db: Asyn
                 "benefits": body.expected_benefits,
                 "priority": priority,
                 "solution": body.solution_approach or "",
+                "cid": cid, "cname": cname,
             },
         )
         await db.commit()

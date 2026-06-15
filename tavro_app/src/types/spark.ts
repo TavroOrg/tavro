@@ -37,6 +37,8 @@ export interface SparkConvertRequest {
   signal_label?: string;
   complexity?: string;
   estimated_impact?: string;
+  blueprint_dimensions?: { label: string; category: string; summary?: string }[];
+  blueprint_edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
 }
 
 export const SPARK_DIMENSIONS = [

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { mcpClient } from '../services/mcpClient';
 import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import { useCaseApi } from '../services/useCaseApi';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const PRIORITIES = [
     '1 - Critical',
@@ -18,6 +18,7 @@ const CreateUseCasePage: React.FC = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const { refresh } = useUseCases();
+    const { activeCompany } = useBlueprint();
     const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
     const linkProcessId = searchParams.get('linkProcessId')?.trim() || '';
     const linkApplicationId = searchParams.get('linkApplicationId')?.trim() || '';
@@ -65,14 +66,14 @@ const CreateUseCasePage: React.FC = () => {
         setSaving(true);
         setError(null);
         try {
-            const created = await mcpClient.createAiUseCase({
+            const created = await useCaseApi.createUseCase({
                 title: form.name.trim(),
                 description: form.description.trim(),
                 business_problem_statement: form.problem_statement.trim(),
                 expected_benefits: form.expected_benefits.trim(),
                 priority: form.priority,
                 ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
-            });
+            }, activeCompany?.id, activeCompany?.name);
             if (linkAgentId && created?.use_case_id) {
                 await useCaseApi.linkAgent(created.use_case_id, linkAgentId);
             }
