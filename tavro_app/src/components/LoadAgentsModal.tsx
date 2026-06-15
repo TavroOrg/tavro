@@ -6,6 +6,8 @@ import { driveApi, FileValidationResult } from '../services/driveApi';
 interface LoadAgentsModalProps {
     onClose: () => void;
     onSuccess: () => void;
+    companyId?: string;
+    companyName?: string;
 }
 
 interface FileEntry {
@@ -102,7 +104,7 @@ const ValidationResultPanel: React.FC<ValidationResultPanelProps> = ({ result })
 
 // ── Main modal ─────────────────────────────────────────────────────────────────
 
-const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess }) => {
+const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess, companyId, companyName }) => {
     const [activeTab, setActiveTab] = useState<Tab>('files');
 
     // ── File upload state ──────────────────────────────────────────────────────
@@ -165,7 +167,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess })
         setErrorMessage(null);
         setUploadResult(null);
         try {
-            const result = await agentApi.uploadAgents(validFiles);
+            const result = await agentApi.uploadAgents(validFiles, companyId, companyName);
             setUploadResult({
                 message: result.message,
                 uploaded_count: result.uploaded_count,
