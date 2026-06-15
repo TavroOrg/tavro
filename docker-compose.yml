@@ -104,6 +104,11 @@ services:
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
+      # Used by the backend auth dependency to validate tokens against ZITADEL's userinfo endpoint
+      ZITADEL_ISSUER:        ${VITE_ZITADEL_ISSUER}
+      # Docker-internal URL to reach ZITADEL from inside the container network
+      ZITADEL_INTERNAL_URL:  http://zitadel-api:8080
+      ZITADEL_INTERNAL_HOST: ${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -115,6 +120,8 @@ services:
       - ./utils:/app/utils:ro               # live reload — risk utils
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
+      - tavro_runtime_config:/app/static/runtime:ro  # runtime auth config (zitadelIssuer, zitadelClientId)
+      - zitadel-bootstrap:/app/zitadel-bootstrap:ro  # Zitadel login-client PAT for server-side session creation
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]

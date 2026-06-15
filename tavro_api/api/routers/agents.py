@@ -11,6 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from temporalio.client import Client
 
 from api.database import get_db
 from api.routers.blueprint import (
@@ -19,13 +20,15 @@ from api.routers.blueprint import (
     _collect_text,
     _extract_json,
 )
+from services.workflow.workflow import RiskManagerWorkflow
 
 router = APIRouter()
 
 CORE    = os.getenv("CORE_DB_NAME")
 CURATED = os.getenv("CURATED_DB_NAME")
 RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME")
-_RISK_URL = os.getenv("RISK_CLASSIFY_URL")
+_TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+_TASK_QUEUE = "risk-classification-queue"
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -49,6 +52,9 @@ def _resolve_agent_llm() -> tuple[str, str]:
 
 def _require_tenant(request: Request) -> str:
     tenant_id = _tenant(request)
+    if not tenant_id:
+        auth = getattr(request.state, "auth", None)
+        tenant_id = auth.get("tenant_id") if auth else None
     if not tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant context.")
     return tenant_id
@@ -82,10 +88,38 @@ def _risk_payload(agent_internal_id: str, agent_id: str, agent_name: str,
 
 async def _fire_risk(payload: Dict[str, Any]) -> None:
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            await client.post(_RISK_URL, json=payload)
+        client = await Client.connect(_TEMPORAL_ADDRESS)
+        workflow_id = f"risk-manager-{uuid.uuid4()}"
+        await client.start_workflow(
+            RiskManagerWorkflow.run,
+            args=[
+                payload["agent_internal_id"],
+                payload["agent_id"],
+                payload["agent_name"],
+                payload["agent_description"],
+                payload["agent_instructions"],
+                payload["agent_role"],
+                payload["provider"],
+                payload["agent_platform"],
+                payload["attack_vector_av"],
+                payload["attack_complexity_ac"],
+                payload["attack_requirements_at"],
+                payload["privileges_required_pr"],
+                payload["user_interaction_ui"],
+                payload["vulnerable_system_confidentiality_vc"],
+                payload["vulnerable_system_integrity_vi"],
+                payload["vulnerable_system_availability_va"],
+                payload["subsequent_system_confidentiality_sc"],
+                payload["subsequent_system_integrity_si"],
+                payload["subsequent_system_availability_sa"],
+                payload.get("tenant_id"),
+            ],
+            id=workflow_id,
+            task_queue=_TASK_QUEUE,
+        )
+        print(f"[risk-trigger] started workflow {workflow_id} for agent {payload['agent_id']}")
     except Exception as e:
-        print(f"[risk-trigger] {e}")
+        print(f"[risk-trigger] failed to start workflow: {e}")
 
 
 # ---------------------------------------------------------------------------

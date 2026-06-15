@@ -39,6 +39,9 @@ def _get_tenant(request: Request):
 def _require_tenant(request: Request) -> str:
     tenant_id = _get_tenant(request)
     if not tenant_id:
+        auth = getattr(request.state, "auth", None)
+        tenant_id = auth.get("tenant_id") if auth else None
+    if not tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant context.")
     return tenant_id
 

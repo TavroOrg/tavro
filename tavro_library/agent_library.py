@@ -3375,7 +3375,8 @@ class AgentMetadataExporter:
         industry: str,
         region: str,
         legal_entity: str,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create company via external API.
@@ -3391,14 +3392,17 @@ class AgentMetadataExporter:
             "legal_entity": legal_entity,
         }
 
+        headers: Dict[str, str] = {"Content-Type": "application/json", "accept": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
         try:
             response = requests.post(
                 COMPANY_API_BASE_URL,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=headers,
                 timeout=30
             )
 
@@ -3432,7 +3436,8 @@ class AgentMetadataExporter:
     def get_company(
         cls,
         company_id: str,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get company by ID via external API.
@@ -3443,10 +3448,16 @@ class AgentMetadataExporter:
 
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
+        headers: Dict[str, str] = {"accept": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
         try:
             response = requests.get(
                 url,
-                headers={"accept": "application/json"},
+                headers=headers,
                 timeout=30
             )
 
@@ -3483,7 +3494,8 @@ class AgentMetadataExporter:
         industry: str,
         region: str,
         legal_entity: str,
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update company via PATCH API (expects full object).
@@ -3501,14 +3513,17 @@ class AgentMetadataExporter:
 
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
+        headers: Dict[str, str] = {"Content-Type": "application/json", "accept": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
         try:
             response = requests.patch(
                 url,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=headers,
                 timeout=30
             )
 

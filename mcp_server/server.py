@@ -26,6 +26,20 @@ from tavro_library.users import get_approved_user
 TAVRO_API_URL = os.getenv("TAVRO_API_URL")
 
 
+def _api_headers(token: AccessToken | None, *, content_type: str | None = None) -> dict:
+    """Build headers for requests to tavro-api: Authorization + optional tenant + optional content-type."""
+    raw = token.token if token else None
+    headers = {}
+    if raw:
+        headers["Authorization"] = f"Bearer {raw}"
+    tenant_id = token.claims.get("tenant_id") if token else None
+    if tenant_id:
+        headers["x-tenant-id"] = str(tenant_id)
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
+
+
 def _load_zitadel_client_id_from_runtime_config() -> str:
     runtime_config_path = os.getenv(
         "TAVRO_RUNTIME_CONFIG_FILE",
@@ -313,7 +327,7 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
             tenant_id,
         )
 
-        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        headers = _api_headers(token)
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{TAVRO_API_URL}/api/v1/agents/",
@@ -602,7 +616,7 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
         if impacted_business_processes is not None:
             payload["impacted_business_processes"] = impacted_business_processes
 
-        headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        headers = _api_headers(token, content_type="application/json")
         cid = company_id.strip() if company_id and company_id.strip() else None
         cname = company_name.strip() if company_name and company_name.strip() else None
         url = f"{TAVRO_API_URL}/api/v1/use-cases/"
@@ -682,7 +696,7 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
             tenant_id,
         )
            
-        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        headers = _api_headers(token)
         async with httpx.AsyncClient(timeout=30.0) as client:
             if use_case_id:
                 resp = await client.get(
@@ -1105,6 +1119,7 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
             region=region,
             legal_entity=legal_entity,
             tenant_id=str(tenant_id),
+            access_token=token.token if token else None,
         )
 
         return result
@@ -1140,6 +1155,7 @@ async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any
         return AgentMetadataExporter.get_company(
             company_id=company_id,
             tenant_id=str(tenant_id),
+            access_token=token.token if token else None,
         )
 
     except ValueError as ve:
@@ -1193,9 +1209,7 @@ async def generate_agent_artifacts(
         req_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(requirements_markdown)
         tech_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(technical_markdown)
 
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if tenant_id:
-            headers["x-tenant-id"] = str(tenant_id)
+        headers = _api_headers(token, content_type="application/json")
 
         results = []
         for pdf_bytes, doc_type in (
@@ -1270,6 +1284,7 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
         existing = AgentMetadataExporter.get_company(
             company_id=company_id,
             tenant_id=str(tenant_id),
+            access_token=token.token if token else None,
         )
 
         # ---------------------------------------
@@ -1292,6 +1307,7 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
             region=payload["region"],
             legal_entity=payload["legal_entity"],
             tenant_id=str(tenant_id),
+            access_token=token.token if token else None,
         )
 
         return result
