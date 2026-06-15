@@ -275,16 +275,7 @@ const IdeaCard: React.FC<{
               {selected && <Check size={11} className="text-white" />}
             </div>
           ) : (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                disabled={deleting}
-                className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Remove idea"
-              >
-                <Trash2 size={16} />
-              </button>
+            <div className="flex items-center gap-1">           
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onReact('like'); }}
@@ -300,6 +291,15 @@ const IdeaCard: React.FC<{
                 title="Dislike idea"
               >
                 <ThumbsDown size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                disabled={deleting}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Remove idea"
+              >
+                <Trash2 size={16} />
               </button>
             </div>
           )}
