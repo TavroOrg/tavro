@@ -2,7 +2,8 @@
 
 export type InfraProvider =
   | 'claude'          // Anthropic API direct — works today, no cloud setup needed
-  | 'azure_foundry';  // Azure AI Foundry Agent Service
+  | 'azure_foundry'   // Azure AI Foundry Agent Service
+  | 'aws_bedrock';    // AWS Bedrock
 
 export interface InfraProviderMeta {
   id:          InfraProvider;
@@ -32,6 +33,15 @@ export const INFRA_PROVIDERS: InfraProviderMeta[] = [
     available:   true,
     icon:        '☁️',
     configKeys:  ['AZURE_AI_FOUNDRY_ENDPOINT', 'AZURE_AI_FOUNDRY_KEY'],
+  },
+  {
+    id:          'aws_bedrock',
+    label:       'AWS Bedrock',
+    shortLabel:  'AWS',
+    description: 'Amazon Bedrock with Claude 3, Llama, Mistral, and other models. Easy access to foundation models via AWS.',
+    available:   true,
+    icon:        '🔶',
+    configKeys:  ['BEDROCK_ACCESS_KEY', 'BEDROCK_SECRET_KEY', 'BEDROCK_REGION'],
   },
 ];
 
@@ -105,4 +115,5 @@ export const OBSERVATION_TYPES: Record<PlaygroundObservation['type'], { label: s
 export const PROVIDER_MODELS: Record<InfraProvider, string[]> = {
   claude:        ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
   azure_foundry: ['gpt-4o', 'gpt-4o-mini', 'phi-4'],
+  aws_bedrock:   ['gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-120b'],
 };

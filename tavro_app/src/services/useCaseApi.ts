@@ -82,20 +82,25 @@ export interface UseCaseAttachmentRecord {
 }
 
 class UseCaseApiService {
-    async listUseCases(opts?: { title?: string; startRecord?: number; recordRange?: string }): Promise<UseCaseListResponse> {
+    async listUseCases(opts?: { title?: string; startRecord?: number; recordRange?: string; companyId?: string }): Promise<UseCaseListResponse> {
         const params = new URLSearchParams();
         if (opts?.title) params.set('title', opts.title);
         if (opts?.startRecord) params.set('start_record', String(opts.startRecord));
         if (opts?.recordRange) params.set('record_range', opts.recordRange);
-        return req(`/use-cases?${params}`);
+        if (opts?.companyId) params.set('company_id', opts.companyId);
+        return req(`/use-cases/?${params}`);
     }
 
     async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
     }
 
-    async createUseCase(payload: UseCaseCreatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req('/use-cases', {
+    async createUseCase(payload: UseCaseCreatePayload, companyId?: string, companyName?: string): Promise<{ message: string; use_case_id: string }> {
+        const qs = new URLSearchParams();
+        if (companyId) qs.set('company_id', companyId);
+        if (companyName) qs.set('company_name', companyName);
+        const params = qs.toString() ? `?${qs}` : '';
+        return req(`/use-cases/${params}`, {
             method: 'POST',
             body: JSON.stringify(payload),
         });
@@ -174,12 +179,16 @@ class UseCaseApiService {
         });
     }
 
-    async uploadUseCases(files: File[]): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
+    async uploadUseCases(files: File[], companyId?: string, companyName?: string): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
         const formData = new FormData();
         for (const file of files) {
             formData.append('files', file, file.name);
         }
-        return reqFormData('/use-cases/upload', formData);
+        const qp = new URLSearchParams();
+        if (companyId) qp.set('company_id', companyId);
+        if (companyName) qp.set('company_name', companyName);
+        const qs = qp.toString() ? `?${qp}` : '';
+        return reqFormData(`/use-cases/upload${qs}`, formData);
     }
 
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {
