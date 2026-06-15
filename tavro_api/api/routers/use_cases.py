@@ -203,7 +203,7 @@ async def list_use_cases(
                 {"schema": CORE, "tbl": "ai_use_cases"},
             )
             if col_check.first():
-                where_clauses.append("CAST(u.company_id AS text) = :company_id")
+                where_clauses.append("(CAST(u.company_id AS text) = :company_id OR u.company_id IS NULL OR CAST(u.company_id AS text) = '')")
                 params["company_id"] = company_id.strip()
         except Exception:
             pass

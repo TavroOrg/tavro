@@ -215,7 +215,7 @@ async def get_agent_catalog(
                 {"schema": CURATED, "tbl": "agent_360"},
             )
             if col_check.first():
-                where_parts.append("CAST(a.company_id AS text) = :company_id")
+                where_parts.append("(CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL OR CAST(a.company_id AS text) = '')")
                 params["company_id"] = cid
         except Exception:
             pass

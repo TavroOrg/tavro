@@ -1168,7 +1168,7 @@ async def _fetch_integrations(
 
     if company_id is not None:
         if "company_id" in int_cols:
-            where_parts.append("bi.company_id = :filter_company_id")
+            where_parts.append("(bi.company_id = :filter_company_id OR bi.company_id IS NULL OR TRIM(CAST(bi.company_id AS text)) = '')")
             query_params["filter_company_id"] = company_id
         else:
             return []
@@ -1498,7 +1498,7 @@ async def _fetch_applications(
 
     if company_id is not None:
         if "company_id" in app_cols:
-            where_parts.append("ba.company_id = :filter_company_id")
+            where_parts.append("(ba.company_id = :filter_company_id OR ba.company_id IS NULL OR TRIM(CAST(ba.company_id AS text)) = '')")
             query_params["filter_company_id"] = company_id
         else:
             return []
@@ -1794,7 +1794,7 @@ async def _fetch_processes(
 
     if company_id is not None:
         if "company_id" in process_cols:
-            where_parts.append("bp.company_id = :filter_company_id")
+            where_parts.append("(bp.company_id = :filter_company_id OR bp.company_id IS NULL OR TRIM(CAST(bp.company_id AS text)) = '')")
             query_params["filter_company_id"] = company_id
         else:
             return []
