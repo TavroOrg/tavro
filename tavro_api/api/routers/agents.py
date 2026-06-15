@@ -595,6 +595,7 @@ def _write_agent_card(
     agent_name: str,
     description: str,
     instruction: str,
+    provider: str = "Portal",
     tools: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     tables: Optional[List[Dict[str, Any]]] = None,
@@ -712,7 +713,7 @@ def _write_agent_card(
             "protocol_version": None,
             "instruction_sets": [],
             "skills": skill_entries,
-            "provider": {"organization": None, "url": ""},
+            "provider": {"organization": provider, "url": ""},
             "url": "",
             "documentation_url": None,
             "icon_url": None,
@@ -783,19 +784,20 @@ async def create_agent(
     agent_id = str(uuid.uuid4())
     agent_internal_id = str(uuid.uuid4())
     tenant_id = _require_tenant(request)
+    provider = "Portal"
 
     try:
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agents
                     (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
-                     created_ts, updated_ts, is_current)
+                     source_system, created_ts, updated_ts, is_current)
                 VALUES
                     (:tid, :iid, :aid, :name, :desc,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
+                     :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "name": body.agent_name, "desc": body.description},
+             "name": body.agent_name, "desc": body.description, "source_system": provider},
         )
 
         await db.execute(

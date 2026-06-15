@@ -1041,6 +1041,7 @@ class AgentMetadataExporter:
         agent_name: str,
         description: str,
         instruction: str,
+        provider: str = "MCP Server",
         tools: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
@@ -1159,7 +1160,7 @@ class AgentMetadataExporter:
                 "protocol_version": None,
                 "instruction_sets": [],
                 "skills": skill_entries,
-                "provider": {"organization": None, "url": ""},
+                "provider": {"organization": provider, "url": ""},
                 "url": "",
                 "documentation_url": None,
                 "icon_url": None,
@@ -1264,6 +1265,7 @@ class AgentMetadataExporter:
         agent_id = str(uuid.uuid4())
         agent_internal_id = str(uuid.uuid4())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        provider = "MCP Server"
 
         queries = []
         data_source_values = []
@@ -1287,6 +1289,7 @@ class AgentMetadataExporter:
             agent_id,
             agent_name,
             agent_description,
+            source_system,
             created_ts,
             updated_ts,
             is_current
@@ -1297,6 +1300,7 @@ class AgentMetadataExporter:
             '{agent_id}',
             '{agent_name}',
             '{description}',
+            '{provider}',
             TIMESTAMP '{now}',
             TIMESTAMP '{now}',
             true
@@ -1719,6 +1723,7 @@ class AgentMetadataExporter:
             agent_name=raw_agent_name,
             description=raw_description,
             instruction=raw_instruction,
+            provider=provider,
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
@@ -1734,7 +1739,7 @@ class AgentMetadataExporter:
             "agent_description": raw_description,
             "agent_instructions": raw_instruction,
             "agent_role": "",
-            "provider": "MCP Server",
+            "provider": provider,
             "agent_platform": "",
             "tenant_id": tenant_id,
             "attack_vector_av": "N",
