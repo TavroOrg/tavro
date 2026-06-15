@@ -691,4 +691,15 @@ BEGIN
         ON core.agents (parent_agent_internal_id);
     END IF;
 
+    IF to_regclass('core.spark_ideas') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'chk_spark_ideas_user_reaction'
+        ) THEN
+            ALTER TABLE core.spark_ideas
+            ADD CONSTRAINT chk_spark_ideas_user_reaction
+            CHECK (user_reaction IS NULL OR user_reaction IN ('like', 'dislike'));
+        END IF;
+    END IF;
+
 END $$;
