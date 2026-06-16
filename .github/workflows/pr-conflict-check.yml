@@ -130,7 +130,7 @@ jobs:
             echo "has_pr_conflict=true" >> "$GITHUB_OUTPUT"
             {
               echo "pr_conflict_report<<PR_EOF"
-              printf '%s' "$CONFLICT_LINES"
+              printf '%s\n' "$CONFLICT_LINES"
               echo "PR_EOF"
             } >> "$GITHUB_OUTPUT"
           else
@@ -191,7 +191,7 @@ jobs:
           echo "subject=$SUBJECT" >> "$GITHUB_OUTPUT"
           {
             echo "body<<BODY_EOF"
-            printf '%s' "$BODY"
+            printf '%s\n' "$BODY"
             echo "BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
