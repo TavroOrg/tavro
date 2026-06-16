@@ -195,7 +195,7 @@ jobs:
             echo "BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # ── 6. Send email ──────────────────────────────────────────────────────
+      # ── 6. Send email ─────────────────────────────────────────────────────
       - name: Send notification email
         uses: dawidd6/action-send-mail@v3
         with:
