@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import { AgentData } from '../types/agent';
@@ -7,8 +7,32 @@ import AgentCatalog from '../components/AgentCatalog';
 import LoadAgentsModal from '../components/LoadAgentsModal';
 import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
+import { useBlueprint } from '../context/BlueprintContext';
+import { agentApi } from '../services/agentApi';
 
 const PAGE_SIZE = 10;
+
+const normalizeAgent = (item: any): AgentData => ({
+    ...item,
+    name: item.name || item.agent_name || 'Unnamed Agent',
+    description: item.description || item.agent_description || item.summary || '',
+    version: item.version || '1.0',
+    identification: {
+        ...item.identification,
+        agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
+        role: item.identification?.role || item.role || null,
+        instruction: item.identification?.instruction || item.instruction || null,
+        owner: item.identification?.owner || item.owner || item.agent_owner || undefined,
+        environment: item.identification?.environment || item.environment || undefined,
+        governance_status: item.identification?.governance_status || item.latest_event_status || undefined,
+    },
+    configuration: item.configuration || { autonomy_level: item.autonomy_level ?? null },
+    tool: item.tool || [],
+    data_source: item.data_source || [],
+    application: item.application || [],
+    business_process: item.business_process || [],
+    risk_assessment: item.risk_assessment || null,
+});
 
 const Dashboard: React.FC = () => {
     useChatSync('agent_catalog', null);
@@ -16,9 +40,30 @@ const Dashboard: React.FC = () => {
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [showLoadModal, setShowLoadModal] = useState(false);
-    const { agents: allAgents, loading, error, refresh } = useCatalog();
+    const { refresh } = useCatalog();
+    const { activeCompany } = useBlueprint();
+    const [allAgents, setAllAgents] = useState<AgentData[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const navigate = useNavigate();
+
+    const loadAgents = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const response = await agentApi.getAgentCatalog(1, '1-500', activeCompany?.id);
+            setAllAgents((response.data ?? []).map(normalizeAgent));
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to load agent catalog');
+        } finally {
+            setLoading(false);
+        }
+    }, [activeCompany?.id]);
+
+    useEffect(() => {
+        loadAgents();
+    }, [loadAgents]);
 
     const totalPages = Math.max(1, Math.ceil(allAgents.length / PAGE_SIZE));
     const hasMore = page < totalPages;
@@ -117,7 +162,7 @@ const Dashboard: React.FC = () => {
                         </div>
                     </div>
                     <button
-                        onClick={refresh}
+                        onClick={() => { refresh(); loadAgents(); }}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-all"
                     >
                         <RefreshCw size={14} /> Retry
@@ -152,8 +197,11 @@ const Dashboard: React.FC = () => {
         {showLoadModal && (
             <LoadAgentsModal
                 onClose={() => setShowLoadModal(false)}
+                companyId={activeCompany?.id}
+                companyName={activeCompany?.name}
                 onSuccess={() => {
                     refresh();
+                    loadAgents();
                     setTimeout(() => setShowLoadModal(false), 3000);
                 }}
             />

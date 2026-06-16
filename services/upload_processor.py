@@ -129,6 +129,8 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
     ident = card.get("identification", {})
     agent_id = ident.get("agent_id")
     incoming_internal_id = ident.get("agent_internal_id")
+    company_id = ident.get("company_id")
+    company_name = ident.get("company_name")
 
     row = {
         "agent_name":             card.get("name"),
@@ -149,6 +151,7 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             tenant_id, agent_id, agent_internal_id, agent_name, agent_description,
             protocol_version, preferred_transport, supports_auth_ext_card,
             card_version, source_hash, source_system, record_hash,
+            company_id, company_name,
             valid_from_ts, valid_to_ts, is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(tenant_id)}, {_sq(agent_id)}, {_sq(agent_internal_id)},
@@ -156,6 +159,7 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             {_sq(row['protocol_version'])}, {_sq(row['preferred_transport'])},
             {_bool(row['supports_auth_ext_card'])}, {_sq(row['card_version'])},
             {_sq(source_hash)}, {_sq(row['source_system'])}, {_sq(record_hash)},
+            {_sq(company_id)}, {_sq(company_name)},
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
@@ -171,6 +175,8 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             source_hash            = EXCLUDED.source_hash,
             source_system          = EXCLUDED.source_system,
             record_hash            = EXCLUDED.record_hash,
+            company_id             = EXCLUDED.company_id,
+            company_name           = EXCLUDED.company_name,
             updated_ts             = EXCLUDED.updated_ts
     """, "agents upsert")
     return agent_internal_id
@@ -1409,7 +1415,7 @@ def _validate_agent_card(card_dict: dict) -> tuple:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) -> bool:
+def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None, company_id: Optional[str] = None, company_name: Optional[str] = None) -> bool:
     """
     Process a single agent card from an uploaded JSON file.
 
@@ -1449,12 +1455,16 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
 
     try:
         with _db() as conn:
+            # Inject tenant_id, company_id, company_name into the card before any upsert reads them
+            if tenant_id is not None:
+                card_dict.setdefault("identification", {})["tenant_id"] = tenant_id
+            if company_id is not None:
+                card_dict.setdefault("identification", {})["company_id"] = company_id
+            if company_name is not None:
+                card_dict.setdefault("identification", {})["company_name"] = company_name
+
             print("[INFO] Step  1/20 - agents")
             agent_internal_id = _upsert_agent(conn, card_dict, now_str, incoming_source_hash, tenant_id)
-            # Propagate tenant_id into the card's identification so downstream upserts can read it
-            if tenant_id is not None:
-                ident = card_dict.setdefault("identification", {})
-                ident["tenant_id"] = tenant_id
 
             steps = [
                 (" 2/20 - agent_configurations",            _upsert_agent_configuration),

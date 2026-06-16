@@ -48,6 +48,7 @@ const BlueprintContext = createContext<BlueprintState>({
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'tavro_active_company_id';
+const STORAGE_NAME_KEY = 'tavro_active_company_name';
 
 export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [companies,     setCompanies]     = useState<Company[]>([]);
@@ -130,6 +131,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     if (!activeCompany) return;
     localStorage.setItem(STORAGE_KEY, activeCompany.id);
+    localStorage.setItem(STORAGE_NAME_KEY, activeCompany.name ?? '');
     fetchNodes(activeCompany);
     fetchGraph(activeCompany);
   }, [activeCompany, fetchNodes, fetchGraph]);
@@ -143,6 +145,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveCompany(curr => {
       if (curr?.id !== id) return curr;
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_NAME_KEY);
       return null;
     });
     setNodes([]);
