@@ -1,0 +1,210 @@
+name: PR Conflict Check & Notify
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  # ── Fixed CC recipients (update these two addresses) ──────────────────────
+  FIXED_CC_1: "khushboo@tavro.ai"
+  FIXED_CC_2: "ankush@tavro.ai"
+
+jobs:
+  conflict-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout with full history so git merge simulations work ────────
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # ── 2. Resolve the PR author's email ───────────────────────────────────
+      #    Priority: commit email → GitHub profile email → noreply fallback
+      - name: Resolve author email
+        id: author
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          LOGIN="${{ github.event.pull_request.user.login }}"
+
+          EMAIL=$(git log -1 --format='%ae' "$HEAD_SHA")
+
+          if [[ -z "$EMAIL" || "$EMAIL" == *"noreply"* ]]; then
+            EMAIL=$(gh api "users/$LOGIN" --jq '.email // empty')
+          fi
+
+          if [[ -z "$EMAIL" ]]; then
+            EMAIL="${LOGIN}@users.noreply.github.com"
+          fi
+
+          echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
+          echo "Resolved author email: $EMAIL"
+
+      # ── 3. Check: current PR vs its base branch ────────────────────────────
+      - name: Check — base branch conflict
+        id: base_check
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          git fetch origin "$BASE"
+          git checkout -B _test_base "origin/$BASE"
+
+          if git merge --no-commit --no-ff "$HEAD_SHA" 2>&1; then
+            echo "has_conflict=false" >> "$GITHUB_OUTPUT"
+            echo "conflicting_files=" >> "$GITHUB_OUTPUT"
+          else
+            FILES=$(git diff --name-only --diff-filter=U | tr '\n' ',' | sed 's/,$//')
+            echo "has_conflict=true"        >> "$GITHUB_OUTPUT"
+            echo "conflicting_files=$FILES" >> "$GITHUB_OUTPUT"
+            echo "Base-branch conflicts: $FILES"
+          fi
+
+          git merge --abort 2>/dev/null || true
+          git checkout -
+
+      # ── 4. Check: current PR vs every other open PR on the same base ───────
+      #    Simulation: base + current PR merged → try to merge other PR
+      - name: Check — cross-PR conflicts
+        id: pr_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          gh pr list \
+            --base "$BASE" --state open \
+            --json number,headRefName,title \
+            --jq ".[] | select(.number != $PR_NUM)" \
+            > /tmp/other_prs.json
+
+          CONFLICT_LINES=""
+
+          while IFS= read -r pr_json; do
+            [[ -z "$pr_json" ]] && continue
+
+            OTHER_NUM=$(echo "$pr_json"    | jq -r '.number')
+            OTHER_BRANCH=$(echo "$pr_json" | jq -r '.headRefName')
+            OTHER_TITLE=$(echo "$pr_json"  | jq -r '.title')
+
+            git fetch origin "$OTHER_BRANCH" 2>/dev/null || continue
+
+            # Build temp branch: base + current PR already applied
+            git checkout -B "_ctest_${OTHER_NUM}" "origin/$BASE" 2>/dev/null
+
+            if ! git merge -m "tmp: apply current PR" "$HEAD_SHA" 2>/dev/null; then
+              git merge --abort 2>/dev/null || true
+              git checkout - 2>/dev/null
+              git branch -D "_ctest_${OTHER_NUM}" 2>/dev/null || true
+              continue
+            fi
+
+            # Try merging the other PR on top
+            if ! git merge --no-commit --no-ff "origin/$OTHER_BRANCH" 2>/dev/null; then
+              FILES=$(git diff --name-only --diff-filter=U | tr '\n' ',' | sed 's/,$//')
+              CONFLICT_LINES="${CONFLICT_LINES}  PR #${OTHER_NUM}: \"${OTHER_TITLE}\""$'\n'
+              CONFLICT_LINES="${CONFLICT_LINES}  Files: ${FILES}"$'\n\n'
+            fi
+
+            git merge --abort 2>/dev/null || true
+            git checkout - 2>/dev/null
+            git branch -D "_ctest_${OTHER_NUM}" 2>/dev/null || true
+
+          done < /tmp/other_prs.json
+
+          if [[ -n "$CONFLICT_LINES" ]]; then
+            echo "has_pr_conflict=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "pr_conflict_report<<PR_EOF"
+              printf '%s' "$CONFLICT_LINES"
+              echo "PR_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pr_conflict=false" >> "$GITHUB_OUTPUT"
+            echo "pr_conflict_report="   >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 5. Build the email subject + body ─────────────────────────────────
+      - name: Build email content
+        id: email
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_CONFLICT_REPORT: ${{ steps.pr_check.outputs.pr_conflict_report }}
+        run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          HEAD="${{ github.event.pull_request.head.ref }}"
+          BASE="${{ github.event.pull_request.base.ref }}"
+          REPO="${{ github.repository }}"
+          BASE_CONFLICT="${{ steps.base_check.outputs.has_conflict }}"
+          PR_CONFLICT="${{ steps.pr_check.outputs.has_pr_conflict }}"
+          BASE_FILES="${{ steps.base_check.outputs.conflicting_files }}"
+
+          if [[ "$BASE_CONFLICT" == "true" || "$PR_CONFLICT" == "true" ]]; then
+            SUBJECT="[Action Required] Merge conflicts in PR #${PR_NUM} — ${REPO}"
+
+            BODY="Merge conflicts were detected for PR #${PR_NUM}."$'\n\n'
+            BODY+="Repository : ${REPO}"$'\n'
+            BODY+="PR Title   : ${PR_TITLE}"$'\n'
+            BODY+="Author     : ${AUTHOR}"$'\n'
+            BODY+="Branch     : ${HEAD} → ${BASE}"$'\n'
+            BODY+="PR URL     : ${PR_URL}"$'\n\n'
+
+            if [[ "$BASE_CONFLICT" == "true" ]]; then
+              BODY+="── Conflict with base branch (${BASE}) ──"$'\n'
+              BODY+="  Conflicting files: ${BASE_FILES}"$'\n\n'
+            fi
+
+            if [[ "$PR_CONFLICT" == "true" ]]; then
+              BODY+="── Conflicts with other open PRs ──"$'\n'
+              BODY+="${PR_CONFLICT_REPORT}"$'\n'
+            fi
+
+            BODY+="Please resolve these conflicts before this PR can be merged."
+          else
+            SUBJECT="PR #${PR_NUM} is conflict-free — ${REPO}"
+
+            BODY="No merge conflicts detected for PR #${PR_NUM}."$'\n\n'
+            BODY+="Repository : ${REPO}"$'\n'
+            BODY+="PR Title   : ${PR_TITLE}"$'\n'
+            BODY+="Author     : ${AUTHOR}"$'\n'
+            BODY+="Branch     : ${HEAD} → ${BASE}"$'\n'
+            BODY+="PR URL     : ${PR_URL}"$'\n\n'
+            BODY+="This PR can be merged cleanly into ${BASE}."
+          fi
+
+          echo "subject=$SUBJECT" >> "$GITHUB_OUTPUT"
+          {
+            echo "body<<BODY_EOF"
+            printf '%s' "$BODY"
+            echo "BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── 6. Send email ──────────────────────────────────────────────────────
+      - name: Send notification email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ steps.author.outputs.email }}
+          cc: ${{ env.FIXED_CC_1 }},${{ env.FIXED_CC_2 }}
+          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
+          subject: ${{ steps.email.outputs.subject }}
+          body: ${{ steps.email.outputs.body }}
