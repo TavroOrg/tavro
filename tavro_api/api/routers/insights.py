@@ -403,7 +403,7 @@ _PROFILE_SECTIONS = [
     ("Regulatory Context", ["risk"]),
     ("Financial Profile", ["finance"]),
     ("Competitive Landscape", ["application", "process", "integration"]),
-    ("ESG & Sustainability", ["organisation", "technology"]),
+    ("ESG & Sustainability", ["organisation"]),
 ]
 
 

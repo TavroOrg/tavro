@@ -1018,7 +1018,7 @@ async def _generate_direction_ideas(
 
 
 async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: list[str], count: int = SPARK_DEFAULT_IDEAS) -> list[dict]:
-    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration", "technology"]
+    active_signals = dim_filter or ["process", "risk", "strategy", "application", "integration"]
 
     # Fetch per-category buckets; cap each bucket so one category doesn't dominate
     per_bucket = max(2, (count + 2) // 3)
@@ -1048,11 +1048,6 @@ async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: lis
 
     if "integration" in active_signals:
         b = await _fetch_dim_node_candidates(db, company_id, ["integration"], "integration_surface", "Integration surface with no agent coverage", limit=per_bucket)
-        if b:
-            buckets.append(b)
-
-    if "technology" in active_signals:
-        b = await _fetch_dim_node_candidates(db, company_id, ["technology"], "integration_surface", "Technology platform with AI automation potential", limit=per_bucket)
         if b:
             buckets.append(b)
 
