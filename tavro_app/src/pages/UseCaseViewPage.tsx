@@ -1383,15 +1383,36 @@ const UseCaseViewPage: React.FC = () => {
     setEditSaving(true);
     setEditError(null);
     try {
-      await useCaseApi.updateUseCase(id, {
-        title: editTitle.trim() || undefined,
-        description: editDescription.trim() || undefined,
-        priority: editPriority || undefined,
-        use_case_owner: editOwner.trim() || undefined,
-        business_problem_statement: editProblemStatement.trim() || undefined,
-        expected_benefits: editExpectedBenefits.trim() || undefined,
-        solution_approach: editSolutionApproach.trim() || undefined,
-      } as any);
+      const uc = useCase as any;
+      const payload: any = {
+        __activityName: (useCase as any).name ?? (useCase as any).title ?? id,
+      };
+      const currentTitle = String(uc.name ?? uc.title ?? '').trim();
+      const currentDescription = String(uc.description ?? '').trim();
+      const currentPriority = String(uc.priority ?? '3 - Moderate');
+      const currentOwner = String(uc.owner ?? uc.use_case_owner ?? '').trim();
+      const currentProblemStatement = String(uc.problem_statement ?? uc.business_problem_statement ?? '').trim();
+      const currentExpectedBenefits = String(uc.expected_benefits ?? '').trim();
+      const currentSolutionApproach = String(uc.solution_approach ?? '').trim();
+
+      const nextTitle = editTitle.trim();
+      const nextDescription = editDescription.trim();
+      const nextOwner = editOwner.trim();
+      const nextProblemStatement = editProblemStatement.trim();
+      const nextExpectedBenefits = editExpectedBenefits.trim();
+      const nextSolutionApproach = editSolutionApproach.trim();
+
+      if (nextTitle !== currentTitle) payload.title = nextTitle || undefined;
+      if (nextDescription !== currentDescription) payload.description = nextDescription || undefined;
+      if (editPriority !== currentPriority) payload.priority = editPriority || undefined;
+      if (nextOwner !== currentOwner) payload.use_case_owner = nextOwner || undefined;
+      if (nextProblemStatement !== currentProblemStatement) payload.business_problem_statement = nextProblemStatement || undefined;
+      if (nextExpectedBenefits !== currentExpectedBenefits) payload.expected_benefits = nextExpectedBenefits || undefined;
+      if (nextSolutionApproach !== currentSolutionApproach) payload.solution_approach = nextSolutionApproach || undefined;
+
+      if (Object.keys(payload).length > 1) {
+        await useCaseApi.updateUseCase(id, payload);
+      }
       handleUseCaseSaved({
         title: editTitle.trim(),
         description: editDescription.trim(),
@@ -1420,7 +1441,9 @@ const UseCaseViewPage: React.FC = () => {
     const { field, value } = inlineEdit;
     setInlineSaving(field);
     try {
-      const payload: any = {};
+      const payload: any = {
+        __activityName: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+      };
       if (field === 'title') payload.title = value.trim();
       else if (field === 'description') payload.description = value.trim();
       else if (field === 'priority') payload.priority = value;
