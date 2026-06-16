@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AgentData } from '../types/agent';
+import type { AgentData } from '../types/agent';
 import AgentHeader from './AgentHeader';
 import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
@@ -9,12 +9,15 @@ import type { AgentBusinessImpactSnapshot } from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
+import AgentIssuesTab from './AgentIssuesTab';
+import type { AgentIssue } from '../types/agent';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
 interface AgentViewProps {
     agent: AgentData;
     onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
+    onIssuesChange?: (issues: AgentIssue[]) => void;
     isEditing?: boolean;
     editName?: string;
     onEditNameChange?: (v: string) => void;
@@ -35,6 +38,7 @@ type TabType =
     | 'CONFIG'
     | 'IMPACT'
     | 'LINEAGE'
+    | 'ISSUES'
     | 'RISK'
     | 'CONTEXT';
 
@@ -45,10 +49,11 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'LINEAGE', label: 'Lineage Map' },
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
+    { id: 'ISSUES', label: 'Issues' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({
-    agent, onBusinessImpactChange,
+    agent, onBusinessImpactChange,onIssuesChange,
     isEditing, editName, onEditNameChange,
     editDescription, onEditDescriptionChange,
     editInstruction, onEditInstructionChange,
@@ -134,6 +139,10 @@ const AgentView: React.FC<AgentViewProps> = ({
 
                 {activeTab === 'LINEAGE' && (
                     <div><AgentLineage agent={agent} agentId={agentId} /></div>
+                )}
+
+                {activeTab === 'ISSUES' && (
+                    <div><AgentIssuesTab agent={agent} onIssuesChange={onIssuesChange} /></div>
                 )}
 
                 {activeTab === 'RISK' && agentId && (

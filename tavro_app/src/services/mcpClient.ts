@@ -1230,6 +1230,8 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.skills ? { skills: args.skills } : {}),
             ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.skills ? { skills: args.skills } : {}),
+            ...(args?.issues ? { issues: args.issues } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
             ...(companyId ? { company_id: companyId } : {}),
             ...(companyName ? { company_name: companyName } : {}),

@@ -52,12 +52,14 @@ export interface AgentCreatePayload {
     tables?: Array<{ table_id?: string; name?: string; table_name?: string; columns?: any[]; tool_name?: string; tool_id?: string }>;
     data_source?: Array<Record<string, any>>;
     knowledge_source?: { name: string; description: string };
+    issues?: AgentIssuePayload[];
 }
 
 export interface AgentUpdatePayload {
     agent_name?: string;
     description?: string;
     instruction?: string;
+    issues?: AgentIssuePayload[];
     skills?: Array<{
         id?: string;
         identifier?: string;
@@ -75,6 +77,38 @@ export interface AgentUpdatePayload {
         input_bounds?: string[];
         output_bounds?: string[];
     } | string>;
+}
+
+export interface AgentIssuePayload {
+    identifier?: string;
+    title: string;
+    description?: string;
+    issue_type?: string;
+    severity?: string;
+    source?: string;
+    detected_at?: string;
+    resolved_at?: string;
+    status?: string;
+    resolution_notes?: string;
+    assignee?: string;
+    owner?: string;
+}
+
+export interface AgentIssue {
+    identifier: string;
+    title: string;
+    description?: string | null;
+    issue_type?: string | null;
+    severity?: string | null;
+    source?: string | null;
+    detected_at?: string | null;
+    resolved_at?: string | null;
+    status?: string | null;
+    resolution_notes?: string | null;
+    assignee?: string | null;
+    owner?: string | null;
+    created_ts?: string | null;
+    updated_ts?: string | null;
 }
 
 export interface AgentCatalogResponse {
@@ -149,6 +183,10 @@ class AgentApiService {
         const displayName = payload.agent_name || agentName || agentId;
         portalActivity.record(`Agent "${displayName}" — ${changedAgentFields(payload)}`, 'violet');
         return result;
+    }
+
+    async getIssue(issueId: string): Promise<AgentIssue & { linked_agents?: Array<{ agent_id: string; agent_name: string }> }> {
+        return req(`/agents/issues/${encodeURIComponent(issueId)}`);
     }
 
     async deleteAgent(agentId: string): Promise<{ message: string; agent_id: string }> {

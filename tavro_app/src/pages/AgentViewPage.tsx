@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
@@ -321,6 +321,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            issues: [],
             skills: [],
             application: [],
             business_process: [],
@@ -392,6 +393,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    issues: apiData?.issues ?? mcpData.issues ?? existingCatalog?.issues ?? [],
                     skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
@@ -418,6 +420,7 @@ const AgentViewPage: React.FC = () => {
                     skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
+                    issues: apiData.issues ?? apiCatalog?.issues ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
@@ -665,6 +668,16 @@ const AgentViewPage: React.FC = () => {
         }, 500);
     };
 
+    const handleIssuesChange = (issues: AgentIssue[]) => {
+        mcpClient.invalidateCache();
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = { ...prev, issues };
+            upsertAgent(next);
+            return next;
+        });
+    };
+
     if (loading && !agent) {
         return <div className="flex-row justify-center items-center h-64 text-secondary">Loading Agent Details...</div>;
     }
@@ -780,6 +793,7 @@ const AgentViewPage: React.FC = () => {
             <AgentView
                 agent={agent}
                 onBusinessImpactChange={handleBusinessImpactChange}
+                onIssuesChange={handleIssuesChange}
                 isEditing={isEditing}
                 editName={editName}
                 onEditNameChange={setEditName}
