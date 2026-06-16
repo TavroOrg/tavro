@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
-import { mcpClient } from '../services/mcpClient';
 import UseCaseView from '../components/UseCaseView';
 import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X, CheckCircle2 } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
@@ -413,7 +412,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
     // Optimistic update
     setPendingLinks(prev => [...prev, agent]);
     try {
-      await mcpClient.createAiUseCaseAgentRelationship(useCaseId, aId);
+      await useCaseApi.linkAgent(useCaseId, aId);
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
@@ -431,7 +430,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
     // Optimistic update
     setPendingUnlinkIds(prev => new Set([...prev, linkedAgentId]));
     try {
-      await mcpClient.removeAiUseCaseAgentRelationship(useCaseId, linkedAgentId);
+      await useCaseApi.unlinkAgent(useCaseId, linkedAgentId);
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
@@ -1287,14 +1286,12 @@ const UseCaseViewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        mcpClient.getUseCaseDetails(id, { forceRefresh: true }),
+      const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
         useCaseApi.getUseCase(id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
 
-      const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
       const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
       const applicationRows = applicationsResult.status === 'fulfilled' && Array.isArray(applicationsResult.value)
         ? applicationsResult.value
@@ -1302,7 +1299,7 @@ const UseCaseViewPage: React.FC = () => {
       const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
         ? processesResult.value
         : [];
-      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, applicationRows, processRows, id);
+      const merged = mergeUseCaseWithRestDetail(undefined, restDetail, applicationRows, processRows, id);
 
       if (!merged) throw new Error('Use Case not found');
       setUseCase(merged);
@@ -1313,16 +1310,14 @@ const UseCaseViewPage: React.FC = () => {
     }
   }
 
-  async function fetchUseCaseSilently(forceRefresh = false) {
+  async function fetchUseCaseSilently() {
     if (!id) return;
     try {
-      const [mcpResult, restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        mcpClient.getUseCaseDetails(id, { forceRefresh }),
+      const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
         useCaseApi.getUseCase(id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
-      const mcpDetail = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
       const restDetail = restResult.status === 'fulfilled' ? restResult.value : undefined;
       const applicationRows = applicationsResult.status === 'fulfilled' && Array.isArray(applicationsResult.value)
         ? applicationsResult.value
@@ -1330,7 +1325,7 @@ const UseCaseViewPage: React.FC = () => {
       const processRows = processesResult.status === 'fulfilled' && Array.isArray(processesResult.value)
         ? processesResult.value
         : [];
-      const merged = mergeUseCaseWithRestDetail(mcpDetail, restDetail, applicationRows, processRows, id);
+      const merged = mergeUseCaseWithRestDetail(undefined, restDetail, applicationRows, processRows, id);
       if (merged) setUseCase(merged);
     } catch {
       // silent — don't disrupt the UI
@@ -1465,7 +1460,6 @@ const UseCaseViewPage: React.FC = () => {
         return next as UseCaseDetail;
       });
       setInlineEdit(null);
-      mcpClient.invalidateCache();
       refreshUseCases();
     } catch (err: any) {
       console.error('Failed to save inline edit:', err);
@@ -1500,8 +1494,7 @@ const UseCaseViewPage: React.FC = () => {
       (next as any).use_case_owner = updated.owner;
       return next;
     });
-    mcpClient.invalidateCache();
-    fetchUseCaseSilently(true);
+    fetchUseCaseSilently();
     refreshUseCases();
   };
 
