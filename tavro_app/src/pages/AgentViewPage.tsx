@@ -95,6 +95,9 @@ const firstNonEmptySkills = (...payloads: any[]): NonNullable<AgentData['skills'
     return [];
 };
 
+const slugifyForFilename = (value: string): string =>
+    value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'agent';
+
 const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     const applications = (agent.application ?? [])
         .map((app: any) => ({
@@ -134,6 +137,15 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     const normalizedProcesses = processes.length ? processes : [EMPTY_PROCESS_CARD];
     const normalizedUseCases = aiUseCases.length ? aiUseCases : [EMPTY_USE_CASE_CARD];
 
+    const agentId = agent.identification?.agent_id || agent.name || '';
+    const agentName = agent.name ?? '';
+    const hasCode = agentId
+        ? localStorage.getItem(`tavro:agent-code:${agentId}`) !== null
+        : false;
+    const savedFilename = hasCode && agentId
+        ? `${slugifyForFilename(agentId)}_${slugifyForFilename(agentName)}.py`
+        : null;
+
     return {
         ...agent,
         application: normalizedApplications,
@@ -141,6 +153,7 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
         ai_use_case: normalizedUseCases,
         ai_use_cases: normalizedUseCases,
         skills: normalizeSkillsFromPayload(agent),
+        ...(savedFilename ? { code_file_name: savedFilename } : {}),
     };
 };
 
@@ -409,6 +422,7 @@ const AgentViewPage: React.FC = () => {
                     version: '1.0',
                     identification: {
                         agent_id: apiData.agent_id ?? id,
+                        agent_internal_id: apiData.agent_internal_id ?? null,
                         role: apiData.role ?? null,
                         instruction: apiData.instruction ?? null,
                         governance_status: apiData.governance_status ??
@@ -424,6 +438,7 @@ const AgentViewPage: React.FC = () => {
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
+                    tenant_id: apiData.tenant_id ?? null,
                 };
             } else {
                 const fromCatalog = catalogAgents.find(a =>
