@@ -462,8 +462,45 @@ const AgentViewPage: React.FC = () => {
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
         if (agent.identification.governance_status !== 'Risk Assessment is running') return;
-        const handleWorkflowUpdate = () => { fetchAgent(); };
+
+        const handleWorkflowUpdate = () => {
+            // Invalidate the MCP detail cache so fetchAgent() always gets fresh
+            // governance_status from the server rather than a stale cached response.
+            mcpClient.invalidateCache();
+            fetchAgent();
+        };
         window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+
+        // If the workflow already completed before the user navigated to this page,
+        // the tavro_temporal_workflow_update event may never fire again (snapshot is
+        // stable). Check the current snapshot now and proactively re-fetch if there
+        // is no running workflow for this agent.
+        try {
+            const raw = localStorage.getItem('tavro_temporal_workflows');
+            if (raw !== null) {
+                const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
+                const agentId = agent.identification.agent_id;
+                const agentName = agent.name ?? '';
+                const workflows = JSON.parse(raw) as Array<{
+                    status: string;
+                    agent_id?: string;
+                    agent_internal_id?: string;
+                    name?: string;
+                }>;
+                const hasRunning = workflows.some(
+                    w =>
+                        w.status === 'running' &&
+                        (norm(w.agent_id) === norm(agentId) ||
+                            norm(w.agent_internal_id) === norm(agentId) ||
+                            norm(w.name) === norm(agentName)),
+                );
+                if (!hasRunning) {
+                    mcpClient.invalidateCache();
+                    fetchAgent();
+                }
+            }
+        } catch { /* ignore */ }
+
         return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);

@@ -600,6 +600,33 @@ const IdeaModal: React.FC<{
           const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
           if (agentId) {
             await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
+
+            // Register the agent as locally pending so CatalogContext can track
+            // the workflow completion and clear the badge on the agent detail page.
+            // Without this, mcpClient.createAgent() does not fire tavro:agent-created,
+            // so the workflow completion event would be missed by AgentViewPage.
+            try {
+              const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+              const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+              localStorage.setItem(
+                'tavro_pending_assessment_agents',
+                JSON.stringify(Array.from(new Set([...pending, agentId]))),
+              );
+              const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+              const meta = metaRaw
+                ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>)
+                : [];
+              const filtered = meta.filter(item => item.agent_id !== agentId);
+              filtered.unshift({
+                agent_id: agentId,
+                name: agentName,
+                description: asNonEmptyString(agentRec?.description) ?? agentName,
+                created_at: new Date().toISOString(),
+              });
+              localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+            } catch {
+              // localStorage writes are best-effort
+            }
           }
         } catch {
           // Agent creation is best-effort; use case was created successfully
