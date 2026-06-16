@@ -151,6 +151,13 @@ class AgentApiService {
         return req(`/agents/?${params}`);
     }
 
+    async countAgents(companyId?: string): Promise<number> {
+        const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
+        if (companyId) params.set('company_id', companyId);
+        const data = await req<AgentCatalogResponse>(`/agents/?${params}`);
+        return data?.total_records ?? 0;
+    }
+
     async getAgentCard(agentId: string): Promise<any> {
         return req(`/agents/${encodeURIComponent(agentId)}`);
     }

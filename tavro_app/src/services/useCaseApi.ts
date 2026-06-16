@@ -105,6 +105,13 @@ class UseCaseApiService {
         return req(`/use-cases/?${params}`);
     }
 
+    async countUseCases(companyId?: string): Promise<number> {
+        const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
+        if (companyId) params.set('company_id', companyId);
+        const data = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        return data?.total_records ?? 0;
+    }
+
     async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
     }

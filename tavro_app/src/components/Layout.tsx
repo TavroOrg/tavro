@@ -17,6 +17,8 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
+import { agentApi } from '../services/agentApi';
+import { useCaseApi } from '../services/useCaseApi';
 import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
@@ -61,6 +63,8 @@ const Layout: React.FC = () => {
     const [processCount, setProcessCount] = useState(0);
     const [integrationCount, setIntegrationCount] = useState(0);
     const [aiModelCount, setAiModelCount] = useState(0);
+    const [agentCount, setAgentCount] = useState(0);
+    const [useCaseCount, setUseCaseCount] = useState(0);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;
@@ -69,11 +73,15 @@ const Layout: React.FC = () => {
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
             aiModelApi.listModels(),
-        ]).then(([apps, processes, integrations, models]) => {
+            agentApi.countAgents(companyId),
+            useCaseApi.countUseCases(companyId),
+        ]).then(([apps, processes, integrations, models, agents, useCases]) => {
             if (apps.status === 'fulfilled') setAppCount(apps.value);
             if (processes.status === 'fulfilled') setProcessCount(processes.value);
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
             if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+            if (agents.status === 'fulfilled') setAgentCount(agents.value);
+            if (useCases.status === 'fulfilled') setUseCaseCount(useCases.value);
         });
     }, [activeCompany]);
 
@@ -280,8 +288,8 @@ const Layout: React.FC = () => {
                             >
                                 <ClipboardList size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI use cases</span>
-                                {isLeftPanelOpen && useCases.length > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCases.length} {useCases.length === 1 ? 'case' : 'cases'}</span>
+                                {isLeftPanelOpen && useCaseCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCaseCount} {useCaseCount === 1 ? 'case' : 'cases'}</span>
                                 )}
                             </button>
                             <button
@@ -293,8 +301,8 @@ const Layout: React.FC = () => {
                             >
                                 <Bot size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
-                                {isLeftPanelOpen && agents.length > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</span>
+                                {isLeftPanelOpen && agentCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agentCount} {agentCount === 1 ? 'agent' : 'agents'}</span>
                                 )}
                             </button>
                             <button
