@@ -23,6 +23,8 @@ export interface SparkIdea {
   estimated_impact: 'Low' | 'Medium' | 'High';
   similar_agents: SparkSimilarAgent[];
   saved?: boolean;
+  user_reaction?: 'like' | 'dislike' | null;
+  popularity_score?: number;
 }
 
 export interface SparkConvertRequest {
