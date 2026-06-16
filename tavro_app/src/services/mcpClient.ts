@@ -1236,6 +1236,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
         return data;
     }
 
