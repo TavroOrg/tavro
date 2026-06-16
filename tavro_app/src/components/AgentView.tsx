@@ -133,7 +133,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                 )}
 
                 {activeTab === 'LINEAGE' && (
-                    <div><AgentLineage agent={agent} /></div>
+                    <div><AgentLineage agent={agent} agentId={agentId} /></div>
                 )}
 
                 {activeTab === 'RISK' && agentId && (

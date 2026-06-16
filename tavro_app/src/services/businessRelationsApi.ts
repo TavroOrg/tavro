@@ -8,6 +8,32 @@ import type {
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
 
+export interface AgentTableRecord {
+  table_id: string;
+  table_name: string;
+  country_of_provenance: string | null;
+  is_linked: boolean;
+}
+
+export interface AgentToolRecord {
+  effective_tool_id: string;   // always non-null: tool_id if set, else tool_name
+  tool_id: string | null;
+  tool_name: string;
+  tool_description: string | null;
+  is_linked: boolean;
+}
+
+export interface AgentColumnRecord {
+  column_id: string;
+  column_name: string;
+  table_name: string;
+  table_id: string;
+  uses_pii: boolean;
+  uses_phi: boolean;
+  uses_pci: boolean;
+  is_linked: boolean;
+}
+
 export interface AgentAttachmentRecord {
   id: string;
   agent_id: string;
@@ -285,6 +311,59 @@ class BusinessRelationsApi {
 
   async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
     await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listAgentTables(agentId: string, search?: string): Promise<{ items: AgentTableRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/tables${suffix}`);
+  }
+
+  async linkAgentToTable(agentId: string, tableId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tables/${encodeURIComponent(tableId)}`, { method: 'PUT' });
+  }
+
+  async unlinkAgentFromTable(agentId: string, tableId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tables/${encodeURIComponent(tableId)}`, { method: 'DELETE' });
+  }
+
+  async listAgentColumns(agentId: string, search?: string): Promise<{ items: AgentColumnRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/columns${suffix}`);
+  }
+
+  async linkAgentToColumn(agentId: string, columnId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/columns/${encodeURIComponent(columnId)}`, { method: 'PUT' });
+  }
+
+  async unlinkAgentFromColumn(agentId: string, columnId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/columns/${encodeURIComponent(columnId)}`, { method: 'DELETE' });
+  }
+
+  async ensureAgentToolUuids(agentId: string): Promise<{ fixed: number }> {
+    return req(`/agents/${encodeURIComponent(agentId)}/tools/ensure-uuids`, { method: 'POST' });
+  }
+
+  async listAgentTools(agentId: string, search?: string): Promise<{ items: AgentToolRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/tools${suffix}`);
+  }
+
+  async linkAgentToTool(agentId: string, toolId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tools/${encodeURIComponent(toolId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromTool(agentId: string, toolId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tools/${encodeURIComponent(toolId)}`, {
       method: 'DELETE',
     });
   }

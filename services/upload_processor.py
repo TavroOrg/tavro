@@ -14,6 +14,7 @@ import os
 import json
 import hashlib
 import tempfile
+import uuid as _uuid_mod
 from datetime import datetime
 from typing import Optional
 
@@ -278,6 +279,7 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         return
     tenant_id = ident.get("tenant_id")
     agent_id = ident.get("agent_id")
+    agent_name = card.get("name") or ""
     if tenant_id is None:
         rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
         if rows and rows[0].get("tenant_id"):
@@ -286,13 +288,17 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
     tools_master_rows = []
     relation_rows = []
     for tool in tools:
+        tool_name = (tool.get("name") or "").strip()
+        if not tool_name:
+            continue
+        tool_id = (tool.get("identifier") or "").strip() or str(_uuid_mod.uuid4())
         delegation_possible = (
             str(tool.get("delegation_possible")).lower() == "true"
             if tool.get("delegation_possible") is not None else None
         )
         tools_master_rows.append(f"""
             SELECT {_sq(tenant_id)} AS tenant_id,
-                   {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
+                   {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name,
                    {_sq(tool.get('description'))} AS tool_description,
                    {_bool(delegation_possible)}::boolean AS delegation_possible,
                    {_sq(tool.get('allowed_delegates'))} AS allowed_delegates,
@@ -304,9 +310,13 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         relation_rows.append(f"""
             SELECT {_sq(tenant_id)} AS tenant_id,
                    {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
-                   {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
+                   {_sq(agent_name)} AS agent_name,
+                   {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name,
                    TIMESTAMP '{now_str}' AS now_ts
         """.strip())
+
+    if not tools_master_rows:
+        return
 
     tools_union = "\nUNION ALL\n".join(tools_master_rows)
     _exec(conn, f"""
@@ -331,24 +341,25 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
-    """, f"tools upsert ({len(tools)} tools)")
+    """, f"tools upsert ({len(tools_master_rows)} tools)")
 
     relation_union = "\nUNION ALL\n".join(relation_rows)
     _exec(conn, f"""
         INSERT INTO {CORE}.agent_tools (
-            tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+            tenant_id, agent_internal_id, agent_id, agent_name, tool_id, tool_name,
             created_ts, updated_ts
         )
-        SELECT tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+        SELECT tenant_id, agent_internal_id, agent_id, agent_name, tool_id, tool_name,
                now_ts, now_ts
         FROM ({relation_union}) AS s
         ON CONFLICT (agent_internal_id, tool_id)
         DO UPDATE SET
             tenant_id  = EXCLUDED.tenant_id,
             agent_id   = EXCLUDED.agent_id,
+            agent_name = EXCLUDED.agent_name,
             tool_name  = EXCLUDED.tool_name,
             updated_ts = EXCLUDED.updated_ts
-    """, f"agent_tools upsert ({len(tools)} tools)")
+    """, f"agent_tools upsert ({len(relation_rows)} tools)")
 
 
 # ---------------------------------------------------------------------------
