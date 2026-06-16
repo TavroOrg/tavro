@@ -98,6 +98,9 @@ ON core.table_columns (tenant_id, table_id, column_name);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_skills
 ON core.skills (tenant_id, skill_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_issues
+ON core.issues (tenant_id, issue_id);
+
 DO $$
 BEGIN
     IF to_regclass('core.tables') IS NOT NULL THEN

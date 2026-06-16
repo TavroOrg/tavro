@@ -158,7 +158,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
             const resp = await fetch(`${API_BASE}/api/v1/claude-run/save-to-db`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ agent_id: agentId, filename: activeFile, code: fileContent, tenant_id: tenantId, tavro_internal_id: tavroInternalId }),
+                body: JSON.stringify({ agent_id: agentId, filename: activeFile, code: fileContent, tenant_id: tenantId, agent_internal_id: tavroInternalId }),
             });
             if (resp.ok) {
                 pushLines([{ kind: 'success', text: `✓ Saved to database: ${activeFile}` }]);
