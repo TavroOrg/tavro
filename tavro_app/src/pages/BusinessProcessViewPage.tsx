@@ -200,6 +200,21 @@ const buildProcessPayload = (form: ProcessFormState): BusinessProcessUpsertPaylo
   process_health_state: toNullable(form.process_health_state),
 });
 
+const changedProcessPayload = (
+  current: ProcessFormState,
+  next: ProcessFormState,
+): BusinessProcessUpsertPayload => {
+  const currentPayload = buildProcessPayload(current);
+  const nextPayload = buildProcessPayload(next);
+  const changed: BusinessProcessUpsertPayload = {};
+  (Object.keys(nextPayload) as Array<keyof BusinessProcessUpsertPayload>).forEach(key => {
+    if (nextPayload[key] !== currentPayload[key]) {
+      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+    }
+  });
+  return changed;
+};
+
 const labelFromOptions = (value: string, options: Option[]): string => {
   if (!value) return 'N/A';
   const found = options.find(o => o.value === value);
@@ -519,9 +534,15 @@ const BusinessProcessViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
+      const changedPayload = changedProcessPayload(formFromProcess(process), nextForm);
+      if (Object.keys(changedPayload).length === 0) {
+        setInlineEdit(null);
+        setAttemptedSave(false);
+        return;
+      }
       const updated = await businessRelationsApi.updateProcess(
         process.business_process_id,
-        buildProcessPayload(nextForm),
+        changedPayload,
       );
       setProcess(updated);
       setForm(formFromProcess(updated));
@@ -672,7 +693,14 @@ const BusinessProcessViewPage: React.FC = () => {
         return;
       }
       if (!process) return;
-      const updated = await businessRelationsApi.updateProcess(process.business_process_id, payload);
+      const changedPayload = changedProcessPayload(formFromProcess(process), form);
+      if (Object.keys(changedPayload).length === 0) {
+        setAttemptedSave(false);
+        setInlineEdit(null);
+        setEditing(false);
+        return;
+      }
+      const updated = await businessRelationsApi.updateProcess(process.business_process_id, changedPayload);
       setProcess(updated);
       setForm(formFromProcess(updated));
       setAttemptedSave(false);

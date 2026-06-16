@@ -226,7 +226,6 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                     </div>
                 </div>
             </div>
-        </div>
     );
 };
 
