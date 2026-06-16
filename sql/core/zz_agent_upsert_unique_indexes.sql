@@ -510,6 +510,17 @@ BEGIN
         END IF;
     END IF;
 
+    -- Drop and recreate unique indexes with new column name
+        IF to_regclass('core.issues') IS NOT NULL THEN
+            DROP INDEX IF EXISTS core.ux_core_issues;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_issues ON core.issues (tenant_id, issue_id);
+        END IF;
+
+        IF to_regclass('core.agent_issues') IS NOT NULL THEN
+            DROP INDEX IF EXISTS core.ux_core_agent_issues;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_issues ON core.agent_issues (tenant_id, issue_id, agent_id);
+        END IF;
+
     IF to_regclass('core.table_columns') IS NOT NULL
        AND NOT EXISTS (
             SELECT 1 FROM information_schema.columns
@@ -698,6 +709,67 @@ BEGIN
 
         CREATE INDEX IF NOT EXISTS ix_core_agents_parent_internal_id
         ON core.agents (parent_agent_internal_id);
+    END IF;
+    IF to_regclass('core.spark_ideas') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'chk_spark_ideas_user_reaction'
+        ) THEN
+            ALTER TABLE core.spark_ideas
+            ADD CONSTRAINT chk_spark_ideas_user_reaction
+            CHECK (user_reaction IS NULL OR user_reaction IN ('like', 'dislike'));
+        END IF;
+
+        CREATE INDEX IF NOT EXISTS idx_spark_ideas_company_id
+        ON core.spark_ideas (company_id);
+    END IF;
+
+    -- company_id / company_name on core.agents
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN company_name TEXT;
+        END IF;
+    END IF;
+
+    -- company_id / company_name on core.ai_use_cases
+    IF to_regclass('core.ai_use_cases') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_use_cases' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE core.ai_use_cases ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_use_cases' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE core.ai_use_cases ADD COLUMN company_name TEXT;
+        END IF;
+    END IF;
+
+    -- company_id / company_name on curated.agent_360
+    IF to_regclass('curated.agent_360') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'curated' AND table_name = 'agent_360' AND column_name = 'company_id'
+        ) THEN
+            ALTER TABLE curated.agent_360 ADD COLUMN company_id TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'curated' AND table_name = 'agent_360' AND column_name = 'company_name'
+        ) THEN
+            ALTER TABLE curated.agent_360 ADD COLUMN company_name TEXT;
+        END IF;
     END IF;
 
 END $$;
