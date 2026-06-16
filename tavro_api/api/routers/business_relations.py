@@ -3747,6 +3747,625 @@ async def add_child_agent_relation(
     }
 
 
+@router.post(
+    "/agents/{agent_id}/tools/ensure-uuids",
+    tags=["Agents"],
+    summary="Assign real UUIDs to agent_tools rows that have null tool_id",
+)
+async def ensure_agent_tool_uuids(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    agent_name_val = agent.get("agent_name") or ""
+
+    # Delete fully-null rows (no tool_name, no tool_id) — nothing to fix there
+    await db.execute(
+        text(
+            """
+            DELETE FROM core.agent_tools
+            WHERE agent_internal_id = :agent_internal_id
+              AND (tool_id IS NULL OR tool_id = '')
+              AND (tool_name IS NULL OR tool_name = '')
+            """
+        ),
+        {"agent_internal_id": agent_internal_id},
+    )
+
+    # Find agent_tools rows with null tool_id but a known tool_name
+    rows = await db.execute(
+        text(
+            """
+            SELECT at2.tool_name,
+                   (SELECT t.tool_id FROM core.tools t
+                    WHERE LOWER(t.tool_name) = LOWER(at2.tool_name)
+                      AND t.tool_id IS NOT NULL AND t.tool_id != ''
+                    ORDER BY t.updated_ts DESC NULLS LAST
+                    LIMIT 1) AS existing_tool_id
+            FROM core.agent_tools at2
+            WHERE at2.agent_internal_id = :agent_internal_id
+              AND (at2.tool_id IS NULL OR at2.tool_id = '')
+              AND at2.tool_name IS NOT NULL AND at2.tool_name != ''
+            """
+        ),
+        {"agent_internal_id": agent_internal_id},
+    )
+    tools_to_fix = [dict(r) for r in rows.mappings()]
+    fixed = 0
+
+    for tool in tools_to_fix:
+        tool_name = tool.get("tool_name")
+        if not tool_name:
+            continue
+        resolved_id = tool.get("existing_tool_id")
+        if not resolved_id:
+            resolved_id = str(uuid4())
+            await db.execute(
+                text(
+                    """
+                    UPDATE core.tools
+                    SET tool_id = :new_id, updated_ts = CURRENT_TIMESTAMP
+                    WHERE (tool_id IS NULL OR tool_id = '')
+                      AND LOWER(tool_name) = LOWER(:name)
+                    """
+                ),
+                {"new_id": resolved_id, "name": tool_name},
+            )
+        await db.execute(
+            text(
+                """
+                UPDATE core.agent_tools
+                SET tool_id = :new_id,
+                    agent_name = CASE WHEN (agent_name IS NULL OR agent_name = '') THEN :aname ELSE agent_name END,
+                    updated_ts = CURRENT_TIMESTAMP
+                WHERE (tool_id IS NULL OR tool_id = '')
+                  AND LOWER(tool_name) = LOWER(:name)
+                  AND agent_internal_id = :agent_internal_id
+                """
+            ),
+            {"new_id": resolved_id, "name": tool_name,
+             "agent_internal_id": agent_internal_id, "aname": agent_name_val},
+        )
+        fixed += 1
+
+    if fixed or True:
+        await db.commit()
+    return {"fixed": fixed}
+
+
+@router.get(
+    "/agents/{agent_id}/tools",
+    tags=["Agents"],
+    summary="List all tools with link status for an agent",
+)
+async def list_agent_tools(
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+
+    params: dict[str, Any] = {"agent_internal_id": agent_internal_id}
+    search_catalog = ""
+    search_orphan = ""
+    if q and q.strip():
+        search_catalog = "AND (t.tool_name ILIKE :q OR t.tool_description ILIKE :q)"
+        search_orphan = "AND lk2.tool_name ILIKE :q"
+        params["q"] = f"%{q.strip()}%"
+
+    rows = await db.execute(
+        text(
+            f"""
+            WITH catalog AS (
+                -- Deduplicate core.tools by name, preferring rows that have a real UUID tool_id
+                SELECT DISTINCT ON (LOWER(COALESCE(t.tool_name, '')))
+                    COALESCE(t.tool_id, t.tool_name) AS effective_tool_id,
+                    t.tool_id,
+                    t.tool_name,
+                    t.tool_description
+                FROM core.tools t
+                WHERE 1=1 {search_catalog}
+                ORDER BY
+                    LOWER(COALESCE(t.tool_name, '')),
+                    (t.tool_id IS NOT NULL AND t.tool_id != '') DESC,
+                    t.updated_ts DESC NULLS LAST
+            ),
+            linked AS (
+                SELECT tool_id, tool_name
+                FROM core.agent_tools
+                WHERE agent_internal_id = :agent_internal_id
+            )
+            SELECT
+                c.effective_tool_id,
+                c.tool_id,
+                c.tool_name,
+                c.tool_description,
+                (
+                    lk_id.tool_id IS NOT NULL
+                    OR lk_nm.tool_name IS NOT NULL
+                ) AS is_linked
+            FROM catalog c
+            LEFT JOIN linked lk_id
+                ON lk_id.tool_id = c.tool_id
+                AND c.tool_id IS NOT NULL AND c.tool_id != ''
+            LEFT JOIN linked lk_nm
+                ON LOWER(lk_nm.tool_name) = LOWER(c.tool_name)
+
+            UNION ALL
+
+            -- Agent's linked tools that have no match in core.tools at all
+            SELECT
+                COALESCE(lk2.tool_id, lk2.tool_name) AS effective_tool_id,
+                lk2.tool_id,
+                lk2.tool_name,
+                NULL AS tool_description,
+                TRUE AS is_linked
+            FROM core.agent_tools lk2
+            WHERE lk2.agent_internal_id = :agent_internal_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.tools t5
+                  WHERE (lk2.tool_id IS NOT NULL AND t5.tool_id = lk2.tool_id)
+                     OR LOWER(t5.tool_name) = LOWER(lk2.tool_name)
+              )
+              {search_orphan}
+
+            ORDER BY is_linked DESC, tool_name ASC NULLS LAST
+            """
+        ),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/tools/{tool_id}",
+    tags=["Agents"],
+    summary="Link a tool to an agent",
+)
+async def add_agent_tool_relation(
+    agent_id: str,
+    tool_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    # Look up by UUID tool_id first; fall back to matching by tool_name (for null-tool_id rows)
+    tool_row = await db.execute(
+        text(
+            """
+            SELECT tool_id, tool_name
+            FROM core.tools
+            WHERE tool_id = :val
+               OR ((tool_id IS NULL OR tool_id = '') AND tool_name = :val)
+            ORDER BY (tool_id IS NOT NULL AND tool_id != '') DESC
+            LIMIT 1
+            """
+        ),
+        {"val": tool_id},
+    )
+    tool = tool_row.mappings().first()
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+
+    tool_name_val = tool.get("tool_name") or tool_id
+    actual_tool_id = tool.get("tool_id") or None
+
+    # If the matched row has no real tool_id, assign a UUID now and persist it
+    # so the agent_tools record always stores a proper UUID, never a tool_name string
+    if not actual_tool_id or actual_tool_id.strip() == "":
+        actual_tool_id = str(uuid4())
+        await db.execute(
+            text(
+                """
+                UPDATE core.tools
+                SET tool_id = :new_id, updated_ts = CURRENT_TIMESTAMP
+                WHERE (tool_id IS NULL OR tool_id = '')
+                  AND tool_name = :name
+                """
+            ),
+            {"new_id": actual_tool_id, "name": tool_name_val},
+        )
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO core.agent_tools
+                (tenant_id, agent_internal_id, tool_id, agent_id, tool_name,
+                 created_ts, updated_ts)
+            VALUES
+                (:tenant_id, :agent_internal_id, :tool_id, :agent_id, :tool_name,
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                agent_id = EXCLUDED.agent_id,
+                tool_name = EXCLUDED.tool_name,
+                updated_ts = EXCLUDED.updated_ts
+            """
+        ),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "tool_id": actual_tool_id,
+            "agent_id": agent.get("agent_id"),
+            "tool_name": tool_name_val,
+        },
+    )
+    await db.commit()
+
+    return {"status": "linked", "agent_id": agent_id, "tool_id": actual_tool_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/tools/{tool_id}",
+    tags=["Agents"],
+    summary="Unlink a tool from an agent",
+)
+async def remove_agent_tool_relation(
+    agent_id: str,
+    tool_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.agent_tools
+            WHERE tool_id = :tool_id
+              AND (
+                    agent_internal_id = :agent_internal_id
+                    OR agent_id = :agent_id
+                  )
+            """
+        ),
+        {
+            "tool_id": tool_id,
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_id": agent.get("agent_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "tool_id": tool_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
+@router.get(
+    "/agents/{agent_id}/tables",
+    tags=["Agents"],
+    summary="List all tables with link status for an agent",
+)
+async def list_agent_tables(
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    params: dict[str, Any] = {
+        "agent_id": agent.get("agent_id"),
+        "agent_internal_id": agent.get("agent_internal_id"),
+    }
+    search_clause = ""
+    if q and q.strip():
+        search_clause = "AND (t.name ILIKE :q OR t.country_of_provenance ILIKE :q)"
+        params["q"] = f"%{q.strip()}%"
+
+    rows = await db.execute(
+        text(
+            f"""
+            SELECT
+                t.table_id,
+                t.name AS table_name,
+                t.country_of_provenance,
+                (agt.table_id IS NOT NULL) AS is_linked
+            FROM core.tables t
+            LEFT JOIN core.agent_tables agt
+                ON agt.table_id = t.table_id
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            WHERE 1=1 {search_clause}
+            ORDER BY is_linked DESC, t.name ASC NULLS LAST
+            """
+        ),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/tables/{table_id}",
+    tags=["Agents"],
+    summary="Link a table to an agent",
+)
+async def add_agent_table_relation(
+    agent_id: str,
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    table_row = await db.execute(
+        text("SELECT table_id, name FROM core.tables WHERE table_id = :table_id LIMIT 1"),
+        {"table_id": table_id},
+    )
+    table = table_row.mappings().first()
+    if not table:
+        raise HTTPException(status_code=404, detail=f"Table '{table_id}' not found")
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO core.agent_tables
+                (tenant_id, agent_id, agent_name, agent_internal_id,
+                 table_id, table_name, created_ts, updated_ts)
+            VALUES
+                (:tenant_id, :agent_id, :agent_name, :agent_internal_id,
+                 :table_id, :table_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                agent_name = EXCLUDED.agent_name,
+                table_name = EXCLUDED.table_name,
+                updated_ts = EXCLUDED.updated_ts
+            """
+        ),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "agent_id": agent.get("agent_id"),
+            "agent_name": agent.get("agent_name"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "table_id": table_id,
+            "table_name": table.get("name") or table_id,
+        },
+    )
+    # Auto-link all columns that exist in table_columns for this table
+    await db.execute(
+        text("""
+            INSERT INTO core.agent_data_sources (
+                tenant_id, agent_internal_id, agent_id,
+                source_object_type, source_object_id, source_object_name,
+                target_object_type, target_object_id, target_object_name,
+                created_ts, updated_ts
+            )
+            SELECT
+                :tenant_id, :agent_internal_id, :agent_id,
+                'Table', tc.table_id, :table_name,
+                'Column', tc.column_id, tc.column_name,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            FROM core.table_columns tc
+            WHERE tc.table_id = :table_id
+              AND tc.column_name IS NOT NULL AND tc.column_name != ''
+              AND tc.column_id IS NOT NULL AND tc.column_id != ''
+            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO NOTHING
+        """),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_id": agent.get("agent_id"),
+            "table_id": table_id,
+            "table_name": table.get("name") or table_id,
+        },
+    )
+    await db.commit()
+
+    return {"status": "linked", "agent_id": agent_id, "table_id": table_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/tables/{table_id}",
+    tags=["Agents"],
+    summary="Unlink a table from an agent",
+)
+async def remove_agent_table_relation(
+    agent_id: str,
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    result = await db.execute(
+        text("""
+            DELETE FROM core.agent_tables
+            WHERE table_id = :table_id
+              AND (agent_id = :agent_id OR agent_internal_id = :agent_internal_id)
+        """),
+        {
+            "table_id": table_id,
+            "agent_id": agent.get("agent_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "table_id": table_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
+@router.get(
+    "/agents/{agent_id}/columns",
+    tags=["Agents"],
+    summary="List all columns with link status for an agent",
+)
+async def list_agent_columns(
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+
+    search_clause_linked = ""
+    search_clause_avail = ""
+    params: dict = {"agent_id": real_agent_id, "agent_internal_id": agent_internal_id}
+    if q and q.strip():
+        search_clause_linked = "AND (LOWER(ads.target_object_name) LIKE :q OR LOWER(ads.source_object_name) LIKE :q)"
+        search_clause_avail = "AND (LOWER(tc.column_name) LIKE :q OR LOWER(tc.table_name) LIKE :q)"
+        params["q"] = f"%{q.strip().lower()}%"
+
+    rows = await db.execute(
+        text(f"""
+            -- Linked columns: in agent_data_sources AND parent table is still in agent_tables
+            SELECT
+                COALESCE(ads.target_object_id, ads.target_object_name) AS column_id,
+                ads.target_object_name AS column_name,
+                ads.source_object_name AS table_name,
+                ads.source_object_id AS table_id,
+                false AS uses_pii,
+                false AS uses_phi,
+                false AS uses_pci,
+                true AS is_linked
+            FROM core.agent_data_sources ads
+            JOIN core.agent_tables agt
+                ON (agt.table_id = ads.source_object_id
+                    OR LOWER(agt.table_name) = LOWER(ads.source_object_name))
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            WHERE (ads.agent_internal_id = :agent_internal_id OR ads.agent_id = :agent_id)
+              AND LOWER(ads.target_object_type) = 'column'
+              AND ads.target_object_name IS NOT NULL AND ads.target_object_name != ''
+              {search_clause_linked}
+
+            UNION
+
+            -- Available columns: in table_columns for linked tables, NOT yet in agent_data_sources
+            SELECT
+                tc.column_id,
+                tc.column_name,
+                COALESCE(t.name, tc.table_name) AS table_name,
+                tc.table_id,
+                false AS uses_pii,
+                false AS uses_phi,
+                false AS uses_pci,
+                false AS is_linked
+            FROM core.table_columns tc
+            JOIN core.agent_tables agt
+                ON agt.table_id = tc.table_id
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            LEFT JOIN core.tables t ON t.table_id = tc.table_id
+            WHERE tc.column_name IS NOT NULL AND tc.column_name != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.agent_data_sources ads2
+                  WHERE (ads2.agent_internal_id = :agent_internal_id OR ads2.agent_id = :agent_id)
+                    AND LOWER(ads2.target_object_type) = 'column'
+                    AND (ads2.target_object_id = tc.column_id
+                         OR LOWER(ads2.target_object_name) = LOWER(tc.column_name))
+              )
+              {search_clause_avail}
+        """),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/columns/{column_id}",
+    tags=["Agents"],
+    summary="Link a column to an agent",
+)
+async def add_agent_column_relation(
+    agent_id: str,
+    column_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+    tenant_id = agent.get("tenant_id")
+
+    col_row = await db.execute(
+        text("""
+            SELECT tc.column_id, tc.column_name, tc.table_id,
+                   COALESCE(t.name, tc.table_name) AS table_name
+            FROM core.table_columns tc
+            LEFT JOIN core.tables t ON t.table_id = tc.table_id
+            WHERE tc.column_id = :column_id
+            LIMIT 1
+        """),
+        {"column_id": column_id},
+    )
+    col = col_row.mappings().first()
+    if not col:
+        raise HTTPException(status_code=404, detail=f"Column '{column_id}' not found")
+
+    await db.execute(
+        text("""
+            INSERT INTO core.agent_data_sources (
+                tenant_id, agent_internal_id, agent_id,
+                source_object_type, source_object_id, source_object_name,
+                target_object_type, target_object_id, target_object_name,
+                created_ts, updated_ts
+            )
+            VALUES (
+                :tid, :aiid, :agent_id,
+                'Table', :table_id, :table_name,
+                'Column', :col_id, :col_name,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET
+                source_object_name = EXCLUDED.source_object_name,
+                target_object_name = EXCLUDED.target_object_name,
+                updated_ts = EXCLUDED.updated_ts
+        """),
+        {
+            "tid": tenant_id,
+            "aiid": agent_internal_id,
+            "agent_id": real_agent_id,
+            "table_id": col.get("table_id"),
+            "table_name": col.get("table_name"),
+            "col_id": col.get("column_id"),
+            "col_name": col.get("column_name"),
+        },
+    )
+    await db.commit()
+    return {"status": "linked", "agent_id": agent_id, "column_id": column_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/columns/{column_id}",
+    tags=["Agents"],
+    summary="Unlink a column from an agent",
+)
+async def remove_agent_column_relation(
+    agent_id: str,
+    column_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+
+    result = await db.execute(
+        text("""
+            DELETE FROM core.agent_data_sources
+            WHERE (agent_internal_id = :agent_internal_id OR agent_id = :agent_id)
+              AND LOWER(target_object_type) = 'column'
+              AND (target_object_id = :col_id OR LOWER(target_object_name) = LOWER(:col_id))
+        """),
+        {
+            "agent_internal_id": agent_internal_id,
+            "agent_id": real_agent_id,
+            "col_id": column_id,
+        },
+    )
+    await db.commit()
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "column_id": column_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
 @router.delete(
     "/agents/{agent_id}/child-agents/{child_agent_id}",
     tags=["Agents"],

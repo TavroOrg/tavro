@@ -1349,6 +1349,7 @@ class AgentMetadataExporter:
                     '{agent_internal_id}',
                     '{tool_id}',
                     '{agent_id}',
+                    '{cls.sanitize(agent_name)}',
                     '{name}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1393,6 +1394,7 @@ class AgentMetadataExporter:
                 agent_internal_id,
                 tool_id,
                 agent_id,
+                agent_name,
                 tool_name,
                 created_ts,
                 updated_ts
@@ -1401,6 +1403,7 @@ class AgentMetadataExporter:
             {",".join(relation_values)}
             ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                 agent_id   = EXCLUDED.agent_id,
+                agent_name = EXCLUDED.agent_name,
                 tool_name  = EXCLUDED.tool_name,
                 updated_ts = EXCLUDED.updated_ts
             """)

@@ -901,11 +901,12 @@ async def create_agent(
         tool_name_to_id: Dict[str, str] = {}
         tools_for_card: List[Dict[str, Any]] = []
         for tool in (body.tools or []):
-            tool_id = str(uuid.uuid4())
             tool_name = tool.get("name", "")
             tool_name_key = str(tool_name).strip().lower()
-            if tool_name_key:
-                tool_name_to_id[tool_name_key] = tool_id
+            if not tool_name_key:
+                continue
+            tool_id = str(uuid.uuid4())
+            tool_name_to_id[tool_name_key] = tool_id
             tools_for_card.append({**tool, "identifier": tool_id})
             await db.execute(
                 text(f"""
@@ -927,17 +928,18 @@ async def create_agent(
                 text(f"""
                     INSERT INTO {CORE}.agent_tools
                         (tenant_id, agent_internal_id, tool_id, agent_id,
-                         tool_name, created_ts, updated_ts)
+                         agent_name, tool_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :iid, :tool_id, :aid,
-                         :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :aname, :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                         agent_id   = EXCLUDED.agent_id,
+                        agent_name = EXCLUDED.agent_name,
                         tool_name  = EXCLUDED.tool_name,
                         updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
-                 "aid": agent_id, "tname": tool_name},
+                 "aid": agent_id, "aname": body.agent_name, "tname": tool_name},
             )
 
         tables_payload = _normalize_tables_payload(body.tables, body.tools, body.data_source)
