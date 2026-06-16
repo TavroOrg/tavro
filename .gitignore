@@ -224,3 +224,8 @@ config.yaml
 
 .claude/
 agent_cards/
+
+# Node.js / Frontend
+node_modules/
+tavro_admin/dist/
+tavro_admin/.vite/
