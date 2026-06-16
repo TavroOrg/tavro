@@ -1017,8 +1017,22 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
-            if (agent) this._agentDetailCache.set(id, agent);
-            return agent;
+            // Apply the same normalization as getCatalogPage so risk fields are
+            // consistent regardless of whether the catalog has loaded yet.
+            const normalized = {
+                ...agent,
+                risk_assessment: normalizeRiskAssessment(agent),
+                latest_risk_class:
+                    agent.latest_risk_class ??
+                    agent.risk_assessment?.blended_risk_class ??
+                    agent.risk_assessment?.blended_risk_classification ??
+                    normalizeRiskAssessment(agent).blended_risk_classification,
+                latest_risk_score:
+                    agent.latest_risk_score ??
+                    agent.risk_assessment?.blended_risk_score,
+            };
+            this._agentDetailCache.set(id, normalized);
+            return normalized;
         } catch { return undefined; }
     }
 
@@ -1241,12 +1255,15 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.skills ? { skills: args.skills } : {}),
             ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.skills ? { skills: args.skills } : {}),
+            ...(args?.issues ? { issues: args.issues } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
             ...(companyId ? { company_id: companyId } : {}),
             ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
         return data;
     }
 

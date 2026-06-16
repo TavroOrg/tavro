@@ -54,15 +54,35 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
         setSaving(true);
         setError(null);
         try {
-            await useCaseApi.updateUseCase(useCaseId, {
-                title: title.trim() || undefined,
-                description: description.trim() || undefined,
-                business_problem_statement: problemStatement.trim() || undefined,
-                expected_benefits: expectedBenefits.trim() || undefined,
-                priority: priority || undefined,
-                solution_approach: solutionApproach.trim(),
-                use_case_owner: owner.trim() || undefined,
-            });
+            const payload: any = {
+                __activityName: uc.name ?? uc.title ?? useCaseId,
+            };
+            const currentTitle = String(uc.name ?? uc.title ?? '').trim();
+            const currentDescription = String(uc.description ?? '').trim();
+            const currentProblemStatement = String(uc.problem_statement ?? uc.business_problem_statement ?? '').trim();
+            const currentExpectedBenefits = String(uc.expected_benefits ?? '').trim();
+            const currentPriority = String(uc.priority ?? '3 - Moderate');
+            const currentSolutionApproach = String(uc.solution_approach ?? '').trim();
+            const currentOwner = String(uc.owner ?? uc.use_case_owner ?? '').trim();
+
+            const nextTitle = title.trim();
+            const nextDescription = description.trim();
+            const nextProblemStatement = problemStatement.trim();
+            const nextExpectedBenefits = expectedBenefits.trim();
+            const nextSolutionApproach = solutionApproach.trim();
+            const nextOwner = owner.trim();
+
+            if (nextTitle !== currentTitle) payload.title = nextTitle || undefined;
+            if (nextDescription !== currentDescription) payload.description = nextDescription || undefined;
+            if (nextProblemStatement !== currentProblemStatement) payload.business_problem_statement = nextProblemStatement || undefined;
+            if (nextExpectedBenefits !== currentExpectedBenefits) payload.expected_benefits = nextExpectedBenefits || undefined;
+            if (priority !== currentPriority) payload.priority = priority || undefined;
+            if (nextSolutionApproach !== currentSolutionApproach) payload.solution_approach = nextSolutionApproach || undefined;
+            if (nextOwner !== currentOwner) payload.use_case_owner = nextOwner || undefined;
+
+            if (Object.keys(payload).length > 1) {
+                await useCaseApi.updateUseCase(useCaseId, payload);
+            }
             const updated = {
                 title: title.trim(),
                 description: description.trim(),

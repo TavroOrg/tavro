@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
@@ -321,6 +321,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            issues: [],
             skills: [],
             application: [],
             business_process: [],
@@ -392,6 +393,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    issues: apiData?.issues ?? mcpData.issues ?? existingCatalog?.issues ?? [],
                     skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
@@ -418,6 +420,7 @@ const AgentViewPage: React.FC = () => {
                     skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
+                    issues: apiData.issues ?? apiCatalog?.issues ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
@@ -563,11 +566,14 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: editName.trim() || undefined,
-                description: editDescription.trim() || undefined,
-                instruction: editInstruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const payload: import('../services/agentApi').AgentUpdatePayload = {};
+            if (editName.trim() !== currentName) payload.agent_name = editName.trim() || undefined;
+            if (editDescription.trim() !== currentDescription) payload.description = editDescription.trim() || undefined;
+            if (editInstruction.trim() !== currentInstruction) payload.instruction = editInstruction.trim() || undefined;
+            await agentApi.updateAgent(agentId, payload, currentName);
             handleAgentSaved({
                 name: editName.trim(),
                 description: editDescription.trim(),
@@ -614,11 +620,12 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: nextName || undefined,
-                description: nextDescription || undefined,
-                instruction: nextInstruction || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const inlinePayload: import('../services/agentApi').AgentUpdatePayload =
+                inlineEdit.field === 'name' ? { agent_name: nextName || undefined }
+                : inlineEdit.field === 'description' ? { description: nextDescription || undefined }
+                : { instruction: nextInstruction || undefined };
+            await agentApi.updateAgent(agentId, inlinePayload, currentName);
             handleAgentSaved({
                 name: nextName,
                 description: nextDescription,
@@ -659,6 +666,16 @@ const AgentViewPage: React.FC = () => {
             fetchAgent();
             refreshCatalog();
         }, 500);
+    };
+
+    const handleIssuesChange = (issues: AgentIssue[]) => {
+        mcpClient.invalidateCache();
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = { ...prev, issues };
+            upsertAgent(next);
+            return next;
+        });
     };
 
     if (loading && !agent) {
@@ -776,6 +793,7 @@ const AgentViewPage: React.FC = () => {
             <AgentView
                 agent={agent}
                 onBusinessImpactChange={handleBusinessImpactChange}
+                onIssuesChange={handleIssuesChange}
                 isEditing={isEditing}
                 editName={editName}
                 onEditNameChange={setEditName}
