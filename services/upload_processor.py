@@ -14,6 +14,7 @@ import os
 import json
 import hashlib
 import tempfile
+import uuid as _uuid_mod
 from datetime import datetime
 from typing import Optional
 
@@ -128,6 +129,8 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
     ident = card.get("identification", {})
     agent_id = ident.get("agent_id")
     incoming_internal_id = ident.get("agent_internal_id")
+    company_id = ident.get("company_id")
+    company_name = ident.get("company_name")
 
     row = {
         "agent_name":             card.get("name"),
@@ -148,6 +151,7 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             tenant_id, agent_id, agent_internal_id, agent_name, agent_description,
             protocol_version, preferred_transport, supports_auth_ext_card,
             card_version, source_hash, source_system, record_hash,
+            company_id, company_name,
             valid_from_ts, valid_to_ts, is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(tenant_id)}, {_sq(agent_id)}, {_sq(agent_internal_id)},
@@ -155,6 +159,7 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             {_sq(row['protocol_version'])}, {_sq(row['preferred_transport'])},
             {_bool(row['supports_auth_ext_card'])}, {_sq(row['card_version'])},
             {_sq(source_hash)}, {_sq(row['source_system'])}, {_sq(record_hash)},
+            {_sq(company_id)}, {_sq(company_name)},
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
@@ -170,6 +175,8 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             source_hash            = EXCLUDED.source_hash,
             source_system          = EXCLUDED.source_system,
             record_hash            = EXCLUDED.record_hash,
+            company_id             = EXCLUDED.company_id,
+            company_name           = EXCLUDED.company_name,
             updated_ts             = EXCLUDED.updated_ts
     """, "agents upsert")
     return agent_internal_id
@@ -278,6 +285,7 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         return
     tenant_id = ident.get("tenant_id")
     agent_id = ident.get("agent_id")
+    agent_name = card.get("name") or ""
     if tenant_id is None:
         rows = _query(conn, f"SELECT tenant_id FROM {CORE}.agents WHERE agent_internal_id = {_sq(agent_internal_id)} LIMIT 1")
         if rows and rows[0].get("tenant_id"):
@@ -286,13 +294,17 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
     tools_master_rows = []
     relation_rows = []
     for tool in tools:
+        tool_name = (tool.get("name") or "").strip()
+        if not tool_name:
+            continue
+        tool_id = (tool.get("identifier") or "").strip() or str(_uuid_mod.uuid4())
         delegation_possible = (
             str(tool.get("delegation_possible")).lower() == "true"
             if tool.get("delegation_possible") is not None else None
         )
         tools_master_rows.append(f"""
             SELECT {_sq(tenant_id)} AS tenant_id,
-                   {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
+                   {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name,
                    {_sq(tool.get('description'))} AS tool_description,
                    {_bool(delegation_possible)}::boolean AS delegation_possible,
                    {_sq(tool.get('allowed_delegates'))} AS allowed_delegates,
@@ -304,9 +316,13 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
         relation_rows.append(f"""
             SELECT {_sq(tenant_id)} AS tenant_id,
                    {_sq(agent_internal_id)} AS agent_internal_id, {_sq(agent_id)} AS agent_id,
-                   {_sq(tool.get('identifier'))} AS tool_id, {_sq(tool.get('name'))} AS tool_name,
+                   {_sq(agent_name)} AS agent_name,
+                   {_sq(tool_id)} AS tool_id, {_sq(tool_name)} AS tool_name,
                    TIMESTAMP '{now_str}' AS now_ts
         """.strip())
+
+    if not tools_master_rows:
+        return
 
     tools_union = "\nUNION ALL\n".join(tools_master_rows)
     _exec(conn, f"""
@@ -331,24 +347,25 @@ def _upsert_agent_tools(conn, card: dict, agent_internal_id: str, now_str: str):
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
             updated_ts               = EXCLUDED.updated_ts
-    """, f"tools upsert ({len(tools)} tools)")
+    """, f"tools upsert ({len(tools_master_rows)} tools)")
 
     relation_union = "\nUNION ALL\n".join(relation_rows)
     _exec(conn, f"""
         INSERT INTO {CORE}.agent_tools (
-            tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+            tenant_id, agent_internal_id, agent_id, agent_name, tool_id, tool_name,
             created_ts, updated_ts
         )
-        SELECT tenant_id, agent_internal_id, agent_id, tool_id, tool_name,
+        SELECT tenant_id, agent_internal_id, agent_id, agent_name, tool_id, tool_name,
                now_ts, now_ts
         FROM ({relation_union}) AS s
         ON CONFLICT (agent_internal_id, tool_id)
         DO UPDATE SET
             tenant_id  = EXCLUDED.tenant_id,
             agent_id   = EXCLUDED.agent_id,
+            agent_name = EXCLUDED.agent_name,
             tool_name  = EXCLUDED.tool_name,
             updated_ts = EXCLUDED.updated_ts
-    """, f"agent_tools upsert ({len(tools)} tools)")
+    """, f"agent_tools upsert ({len(relation_rows)} tools)")
 
 
 # ---------------------------------------------------------------------------
@@ -1398,7 +1415,7 @@ def _validate_agent_card(card_dict: dict) -> tuple:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) -> bool:
+def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None, company_id: Optional[str] = None, company_name: Optional[str] = None) -> bool:
     """
     Process a single agent card from an uploaded JSON file.
 
@@ -1438,12 +1455,16 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None) ->
 
     try:
         with _db() as conn:
+            # Inject tenant_id, company_id, company_name into the card before any upsert reads them
+            if tenant_id is not None:
+                card_dict.setdefault("identification", {})["tenant_id"] = tenant_id
+            if company_id is not None:
+                card_dict.setdefault("identification", {})["company_id"] = company_id
+            if company_name is not None:
+                card_dict.setdefault("identification", {})["company_name"] = company_name
+
             print("[INFO] Step  1/20 - agents")
             agent_internal_id = _upsert_agent(conn, card_dict, now_str, incoming_source_hash, tenant_id)
-            # Propagate tenant_id into the card's identification so downstream upserts can read it
-            if tenant_id is not None:
-                ident = card_dict.setdefault("identification", {})
-                ident["tenant_id"] = tenant_id
 
             steps = [
                 (" 2/20 - agent_configurations",            _upsert_agent_configuration),

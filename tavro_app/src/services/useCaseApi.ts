@@ -1,4 +1,5 @@
 import { getValidToken } from './auth';
+import { portalActivity } from './portalActivity';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -54,6 +55,7 @@ export interface UseCaseCreatePayload {
 }
 
 export interface UseCaseUpdatePayload {
+    __activityName?: string;
     title?: string;
     description?: string;
     business_problem_statement?: string;
@@ -61,6 +63,18 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+}
+
+function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
+    const fields: string[] = [];
+    if (payload.title !== undefined) fields.push('title');
+    if (payload.description !== undefined) fields.push('description');
+    if (payload.business_problem_statement !== undefined) fields.push('problem statement');
+    if (payload.expected_benefits !== undefined) fields.push('expected benefits');
+    if (payload.priority !== undefined) fields.push('priority');
+    if (payload.solution_approach !== undefined) fields.push('solution approach');
+    if (payload.use_case_owner !== undefined) fields.push('owner');
+    return fields.length > 0 ? fields.join(', ') : 'details';
 }
 
 export interface UseCaseListResponse {
@@ -82,23 +96,30 @@ export interface UseCaseAttachmentRecord {
 }
 
 class UseCaseApiService {
-    async listUseCases(opts?: { title?: string; startRecord?: number; recordRange?: string }): Promise<UseCaseListResponse> {
+    async listUseCases(opts?: { title?: string; startRecord?: number; recordRange?: string; companyId?: string }): Promise<UseCaseListResponse> {
         const params = new URLSearchParams();
         if (opts?.title) params.set('title', opts.title);
         if (opts?.startRecord) params.set('start_record', String(opts.startRecord));
         if (opts?.recordRange) params.set('record_range', opts.recordRange);
-        return req(`/use-cases?${params}`);
+        if (opts?.companyId) params.set('company_id', opts.companyId);
+        return req(`/use-cases/?${params}`);
     }
 
     async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
         return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
     }
 
-    async createUseCase(payload: UseCaseCreatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req('/use-cases', {
+    async createUseCase(payload: UseCaseCreatePayload, companyId?: string, companyName?: string): Promise<{ message: string; use_case_id: string }> {
+        const qs = new URLSearchParams();
+        if (companyId) qs.set('company_id', companyId);
+        if (companyName) qs.set('company_name', companyName);
+        const params = qs.toString() ? `?${qs}` : '';
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${params}`, {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+        portalActivity.record(`Created AI use case: ${payload.title}`, 'emerald');
+        return result;
     }
 
     async suggestDescription(title: string): Promise<{ description: string }> {
@@ -109,16 +130,22 @@ class UseCaseApiService {
     }
 
     async updateUseCase(useCaseId: string, payload: UseCaseUpdatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const { __activityName, ...body } = payload;
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'PUT',
-            body: JSON.stringify(payload),
+            body: JSON.stringify(body),
         });
+        const displayName = payload.title || __activityName || useCaseId;
+        portalActivity.record(`AI use case "${displayName}" — ${changedUseCaseFields(payload)} updated`, 'violet');
+        return result;
     }
 
     async deleteUseCase(useCaseId: string): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'DELETE',
         });
+        portalActivity.record(`Deleted AI use case: ${useCaseId}`, 'amber');
+        return result;
     }
 
     async linkAgent(useCaseId: string, agentId: string): Promise<{ message: string; associated_count: number }> {
@@ -174,12 +201,19 @@ class UseCaseApiService {
         });
     }
 
-    async uploadUseCases(files: File[]): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
+    async uploadUseCases(files: File[], companyId?: string, companyName?: string): Promise<{ uploaded_count: number; total_submitted: number; message: string }> {
         const formData = new FormData();
         for (const file of files) {
             formData.append('files', file, file.name);
         }
-        return reqFormData('/use-cases/upload', formData);
+        const qp = new URLSearchParams();
+        if (companyId) qp.set('company_id', companyId);
+        if (companyName) qp.set('company_name', companyName);
+        const qs = qp.toString() ? `?${qp}` : '';
+        const result = await reqFormData<{ uploaded_count: number; total_submitted: number; message: string }>(`/use-cases/upload${qs}`, formData);
+        const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
+        portalActivity.record(`Loaded ${result.uploaded_count} AI use case${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        return result;
     }
 
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {

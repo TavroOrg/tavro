@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
-import { useUseCases } from '../context/UseCaseContext';
 import UseCaseCatalog from '../components/UseCaseCatalog';
 import LoadAIUseCaseModal from '../components/LoadAIUseCaseModal';
 import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
+import { useBlueprint } from '../context/BlueprintContext';
+import { useCaseApi } from '../services/useCaseApi';
 
 const PAGE_SIZE = 10;
 
@@ -15,10 +16,38 @@ const UseCasePage: React.FC = () => {
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [showLoadModal, setShowLoadModal] = useState(false);
-    const { useCases: allUseCases, loading, error, refresh } = useUseCases();
+    const { activeCompany } = useBlueprint();
+    const [allUseCases, setAllUseCases] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const navigate = useNavigate();
     const location = useLocation();
+
+    const loadUseCases = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const response = await useCaseApi.listUseCases({ recordRange: '1-500', companyId: activeCompany?.id });
+            setAllUseCases((response.data ?? []).map((item: any) => ({
+                ...item,
+                id: item.id ?? item.use_case_id,
+                identifier: item.identifier ?? item.use_case_id,
+                name: item.name ?? item.title ?? item.use_case_name,
+                description: item.description ?? item.short_description,
+                status: item.status ?? item.state,
+                owner: item.owner ?? item.use_case_owner,
+                function: item['function'] ?? item.business_function,
+                priority: item.priority,
+            })));
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to load use case catalog');
+        } finally {
+            setLoading(false);
+        }
+    }, [activeCompany?.id]);
+
+    useEffect(() => { loadUseCases(); }, [loadUseCases]);
 
     useEffect(() => {
         const incomingPage = Number((location.state as any)?.page);
@@ -122,7 +151,7 @@ const UseCasePage: React.FC = () => {
                         </div>
                     </div>
                     <button
-                        onClick={refresh}
+                        onClick={loadUseCases}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-all"
                     >
                         <RefreshCw size={14} /> Retry
@@ -157,8 +186,10 @@ const UseCasePage: React.FC = () => {
         {showLoadModal && (
             <LoadAIUseCaseModal
                 onClose={() => setShowLoadModal(false)}
+                companyId={activeCompany?.id}
+                companyName={activeCompany?.name}
                 onSuccess={() => {
-                    refresh();
+                    loadUseCases();
                     setTimeout(() => setShowLoadModal(false), 3000);
                 }}
             />

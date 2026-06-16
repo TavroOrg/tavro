@@ -5,6 +5,7 @@ import { mcpClient } from '../services/mcpClient';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 import { AgentData } from '../types/agent';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
 
@@ -16,6 +17,7 @@ type AgentForm = {
 const CreateAgentPage: React.FC = () => {
   const navigate = useNavigate();
   const { refresh, upsertAgent } = useCatalog();
+  const { activeCompany } = useBlueprint();
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
@@ -83,7 +85,7 @@ const CreateAgentPage: React.FC = () => {
           ...(form.role.trim() && { role: form.role.trim() }),
           ...(form.environment.trim() && { environment: form.environment.trim() }),
           ...(form.owner.trim() && { owner: form.owner.trim() }),
-        });
+        }, activeCompany?.id, activeCompany?.name);
         createdAgentId = createResult.agent_id;
       } catch {
         const mcpResult = await mcpClient.createAgent({

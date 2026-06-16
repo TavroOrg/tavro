@@ -17,6 +17,7 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
+import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
@@ -62,24 +63,55 @@ const Layout: React.FC = () => {
     const [aiModelCount, setAiModelCount] = useState(0);
 
     const fetchCatalogCounts = useCallback(() => {
+        const companyId = activeCompany?.id;
         Promise.allSettled([
-            businessRelationsApi.listApplications(),
-            businessRelationsApi.listProcesses(),
-            businessRelationsApi.listIntegrations(),
+            businessRelationsApi.countApplications(companyId),
+            businessRelationsApi.countProcesses(companyId),
+            businessRelationsApi.countIntegrations(companyId),
             aiModelApi.listModels(),
         ]).then(([apps, processes, integrations, models]) => {
-            if (apps.status === 'fulfilled') setAppCount(apps.value.length);
-            if (processes.status === 'fulfilled') setProcessCount(processes.value.length);
-            if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value.length);
+            if (apps.status === 'fulfilled') setAppCount(apps.value);
+            if (processes.status === 'fulfilled') setProcessCount(processes.value);
+            if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
             if (models.status === 'fulfilled') setAiModelCount(models.value.length);
         });
-    }, []);
+    }, [activeCompany]);
 
     useEffect(() => {
         fetchCatalogCounts();
         window.addEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
         return () => window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
     }, [fetchCatalogCounts]);
+
+    useEffect(() => {
+        const useCaseCreated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const name = detail.name || detail.title || detail.use_case_name || detail.use_case_id || 'AI use case';
+            portalActivity.record(`Created AI use case: ${name}`, 'emerald');
+        };
+        const agentCreated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const agent = detail.agent ?? detail.result ?? detail;
+            const args = detail.args ?? {};
+            const name = args.agent_name || agent.agent_name || agent.name || agent.agent_id || 'agent';
+            portalActivity.record(`Created agent: ${name}`, 'emerald');
+        };
+        const agentArtifactsGenerated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const agent = detail.agent ?? detail;
+            const name = agent.agent_name || agent.name || agent.agent_id || 'agent';
+            portalActivity.record(`Generated artifacts for ${name}`, 'amber');
+        };
+
+        window.addEventListener('tavro:usecase-created', useCaseCreated);
+        window.addEventListener('tavro:agent-created', agentCreated);
+        window.addEventListener('tavro:agent-artifacts-generated', agentArtifactsGenerated);
+        return () => {
+            window.removeEventListener('tavro:usecase-created', useCaseCreated);
+            window.removeEventListener('tavro:agent-created', agentCreated);
+            window.removeEventListener('tavro:agent-artifacts-generated', agentArtifactsGenerated);
+        };
+    }, []);
 
     // ── Right panel state ────────────────────────────────────────────────────
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);

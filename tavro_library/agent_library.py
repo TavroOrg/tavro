@@ -16,11 +16,11 @@ from dotenv import load_dotenv
 
 load_dotenv(override=False)
 
-COMPANY_API_BASE_URL = "http://tavro-api:8000/api/v1/companies"
+COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", os.getenv("RISK_MANAGEMENT_DB_NAME"))
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
 
     @classmethod
     @contextmanager
@@ -451,6 +451,74 @@ class AgentMetadataExporter:
                 except Exception as ra_overlay_err:
                     print(f"[get_agent_card] Risk assessment overlay failed (returning card as-is): {ra_overlay_err}")
 
+                # Overlay linked issues from DB so issue tab/card views reflect
+                # records created through the Agent Details UI.
+                try:
+                    issue_params: list[Any] = [agent_id_clean]
+                    issue_tenant_where = ""
+                    if tenant_mode == "TENANT":
+                        issue_tenant_where = """
+                        AND (
+                            rel.tenant_id = %s
+                            OR rel.tenant_id IS NULL
+                            OR rel.tenant_id = ''
+                            OR rel.tenant_id = 'None'
+                        )
+                        """
+                        issue_params.append(tenant_id)
+
+                    issue_rows = cls.execute_select(
+                        f"""
+                        SELECT DISTINCT ON (rel.issue_id)
+                            rel.issue_id AS identifier,
+                            COALESCE(i.title, rel.title, rel.issue_id) AS title,
+                            i.description,
+                            i.issue_type,
+                            i.severity,
+                            i.source,
+                            i.detected_at,
+                            i.resolved_at,
+                            i.status,
+                            i.resolution_notes,
+                            i.assignee,
+                            i.owner,
+                            COALESCE(i.updated_ts, rel.updated_ts) AS updated_ts,
+                            COALESCE(i.created_ts, rel.created_ts) AS created_ts
+                        FROM {cls.CORE_DB_NAME}.agent_issues rel
+                        LEFT JOIN {cls.CORE_DB_NAME}.issues i
+                          ON i.issue_id = rel.issue_id
+                         AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                        WHERE rel.agent_id = %s
+                          {issue_tenant_where}
+                          AND rel.issue_id IS NOT NULL
+                          AND rel.issue_id <> ''
+                        ORDER BY rel.issue_id, COALESCE(i.updated_ts, rel.updated_ts) DESC NULLS LAST
+                        """,
+                        tuple(issue_params),
+                    )
+                    local_card["issues"] = [
+                        {
+                            "identifier": r.get("identifier"),
+                            "title": r.get("title"),
+                            "description": r.get("description"),
+                            "issue_type": r.get("issue_type"),
+                            "severity": r.get("severity"),
+                            "source": r.get("source"),
+                            "detected_at": str(r.get("detected_at")) if r.get("detected_at") else None,
+                            "resolved_at": str(r.get("resolved_at")) if r.get("resolved_at") else None,
+                            "status": r.get("status"),
+                            "resolution_notes": r.get("resolution_notes"),
+                            "assignee": r.get("assignee"),
+                            "owner": r.get("owner"),
+                            "created_ts": str(r.get("created_ts")) if r.get("created_ts") else None,
+                            "updated_ts": str(r.get("updated_ts")) if r.get("updated_ts") else None,
+                        }
+                        for r in issue_rows
+                        if r.get("identifier")
+                    ]
+                except Exception as issue_overlay_err:
+                    print(f"[get_agent_card] Issues overlay failed: {issue_overlay_err}")
+
                 # Overlay data_source from DB so renames and new relationships are
                 # immediately visible in the UI lineage without regenerating the card file.
                 try:
@@ -632,8 +700,8 @@ class AgentMetadataExporter:
     
     @staticmethod
     def send_payload_async(payload: Dict[str, Any]) -> None:
-        primary_url = os.getenv("RISK_CLASSIFY_URL", "http://tavro-api:8000/api/v1/risk/classify-risk")
-        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL", "http://localhost:8000/api/v1/risk/classify-risk")
+        primary_url = os.getenv("RISK_CLASSIFY_URL")
+        fallback_url = os.getenv("RISK_CLASSIFY_FALLBACK_URL")
 
         def _send():
             try:
@@ -897,7 +965,7 @@ class AgentMetadataExporter:
                 columns_by_table.setdefault(matched_index, []).append(col_name)
 
         return columns_by_table
-    
+
     @staticmethod
     def _normalize_tenant_id(value: Optional[Any]) -> Optional[str]:
         if value is None:
@@ -1030,6 +1098,7 @@ class AgentMetadataExporter:
         tools: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
+        issues: Optional[List[Dict]] = None,
         tables: Optional[List[Dict[str, Any]]] = None,
         columns_by_table: Optional[Dict[int, List[str]]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
@@ -1145,6 +1214,7 @@ class AgentMetadataExporter:
                 "protocol_version": None,
                 "instruction_sets": [],
                 "skills": skill_entries,
+                "issues": issues or [],
                 "provider": {"organization": None, "url": ""},
                 "url": "",
                 "documentation_url": None,
@@ -1190,6 +1260,26 @@ class AgentMetadataExporter:
                 "memory": {"identifier": None, "name": None, "type": None},
                 "regulation_or_framework": {"name": None, "type": None, "regulatory_authority": None, "jurisdiction": None, "requirement": None},
                 "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
+                "issues": [
+                    {
+                        "identifier": iss.get("identifier"),
+                        "title": iss.get("title"),
+                        "description": iss.get("description"),
+                        "issue_type": iss.get("issue_type"),
+                        "severity": iss.get("severity"),
+                        "source": iss.get("source"),
+                        "detected_at": str(iss.get("detected_at")) if iss.get("detected_at") else None,
+                        "resolved_at": str(iss.get("resolved_at")) if iss.get("resolved_at") else None,
+                        "status": iss.get("status"),
+                        "resolution_notes": iss.get("resolution_notes"),
+                        "assignee": iss.get("assignee"),
+                        "owner": iss.get("owner"),
+                        "created_ts": None,
+                        "updated_ts": None,
+                    }
+                    for iss in (issues or [])
+                    if str(iss.get("title", "")).strip()
+                ],
                 "risk_assessment": None,
             }
 
@@ -1214,6 +1304,9 @@ class AgentMetadataExporter:
         knowledge_source: Optional[Dict[str, str]] = None,
         skills: Optional[List[Dict[str, Any]]] = None,
         tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        company_name: Optional[str] = None,
+        issues: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """
         Create a new agent.
@@ -1246,6 +1339,8 @@ class AgentMetadataExporter:
         description = cls.sanitize(raw_description)
         instruction = cls.sanitize(raw_instruction)
         tenant_id = cls.sanitize(str(tenant_id).strip()) if tenant_id else None
+        company_id = cls.sanitize(str(company_id).strip()) if company_id else None
+        company_name = cls.sanitize(str(company_name).strip()) if company_name else None
 
         agent_id = str(uuid.uuid4())
         agent_internal_id = str(uuid.uuid4())
@@ -1266,6 +1361,8 @@ class AgentMetadataExporter:
         # 1. agents table
         tenant_id_value = f"'{tenant_id}'," if tenant_id else ""
         tenant_id_column = "tenant_id," if tenant_id else ""
+        company_id_value = f"'{company_id}'," if company_id else "NULL,"
+        company_name_value = f"'{company_name}'," if company_name else "NULL,"
         queries.append(f"""
         INSERT INTO {cls.CORE_DB_NAME}.agents (
             {tenant_id_column}
@@ -1273,6 +1370,8 @@ class AgentMetadataExporter:
             agent_id,
             agent_name,
             agent_description,
+            company_id,
+            company_name,
             created_ts,
             updated_ts,
             is_current
@@ -1283,6 +1382,8 @@ class AgentMetadataExporter:
             '{agent_id}',
             '{agent_name}',
             '{description}',
+            {company_id_value}
+            {company_name_value}
             TIMESTAMP '{now}',
             TIMESTAMP '{now}',
             true
@@ -1339,6 +1440,7 @@ class AgentMetadataExporter:
                     '{agent_internal_id}',
                     '{tool_id}',
                     '{agent_id}',
+                    '{cls.sanitize(agent_name)}',
                     '{name}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1383,6 +1485,7 @@ class AgentMetadataExporter:
                 agent_internal_id,
                 tool_id,
                 agent_id,
+                agent_name,
                 tool_name,
                 created_ts,
                 updated_ts
@@ -1391,6 +1494,7 @@ class AgentMetadataExporter:
             {",".join(relation_values)}
             ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                 agent_id   = EXCLUDED.agent_id,
+                agent_name = EXCLUDED.agent_name,
                 tool_name  = EXCLUDED.tool_name,
                 updated_ts = EXCLUDED.updated_ts
             """)
@@ -1416,6 +1520,7 @@ class AgentMetadataExporter:
             )
             """)
 
+        # 3.5 issues — insert into core.issues + core.agent_issues
             # agent_tables relationship
             agent_table_values.append(f"""
             (
@@ -1517,6 +1622,78 @@ class AgentMetadataExporter:
                 )
                 """)
 
+        issue_entries_for_card: List[Dict] = []
+        if issues:
+            issue_rows_i: List[str] = []
+            issue_rows_ai: List[str] = []
+            for issue in issues:
+                title_raw = str(issue.get("title", "")).strip()
+                if not title_raw:
+                    continue
+                identifier = str(uuid.uuid4())
+                i_title           = cls.sanitize(title_raw)
+                i_description     = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
+                i_issue_type      = f"'{cls.sanitize(str(issue['issue_type']))}'" if issue.get("issue_type") else "NULL"
+                i_severity        = f"'{cls.sanitize(str(issue['severity']))}'" if issue.get("severity") else "NULL"
+                i_source          = f"'{cls.sanitize(str(issue['source']))}'" if issue.get("source") else "NULL"
+                i_detected_at     = f"TIMESTAMP '{cls.sanitize(str(issue['detected_at']))}'" if issue.get("detected_at") else "NULL"
+                i_resolved_at     = f"TIMESTAMP '{cls.sanitize(str(issue['resolved_at']))}'" if issue.get("resolved_at") else "NULL"
+                i_status          = f"'{cls.sanitize(str(issue['status']))}'" if issue.get("status") else "NULL"
+                i_resolution_notes = f"'{cls.sanitize(str(issue['resolution_notes']))}'" if issue.get("resolution_notes") else "NULL"
+                i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
+                i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
+                issue_rows_i.append(
+                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"{i_description}, {i_issue_type}, {i_severity}, "
+                    f"{i_source}, {i_detected_at}, {i_resolved_at}, "
+                    f"{i_status}, {i_resolution_notes}, "
+                    f"{i_assignee}, {i_owner}, "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                )
+                issue_rows_ai.append(
+                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"'{agent_id}', '{agent_name}', "
+                    f"'{agent_internal_id}', "
+                    f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                )
+                issue_entries_for_card.append({
+                    "identifier": identifier,
+                    "title": title_raw,
+                    "description": issue.get("description"),
+                    "issue_type": issue.get("issue_type"),
+                    "severity": issue.get("severity"),
+                    "source": issue.get("source"),
+                    "detected_at": issue.get("detected_at"),
+                    "resolved_at": issue.get("resolved_at"),
+                    "status": issue.get("status"),
+                    "resolution_notes": issue.get("resolution_notes"),
+                    "assignee": issue.get("assignee"),
+                    "owner": issue.get("owner"),
+                })
+            if issue_rows_i:
+                queries.append(f"""
+                INSERT INTO {cls.CORE_DB_NAME}.issues (
+                    {tenant_id_column}issue_id, title,
+                    description, issue_type, severity,
+                    source, detected_at, resolved_at,
+                    status, resolution_notes,
+                    assignee, owner,
+                    created_ts, updated_ts
+                )
+                VALUES {','.join(issue_rows_i)}
+                """)
+                queries.append(f"""
+                INSERT INTO {cls.CORE_DB_NAME}.agent_issues (
+                    {tenant_id_column}issue_id, title,
+                    agent_id, agent_name,
+                    agent_internal_id,
+                    created_ts, updated_ts
+                )
+                VALUES {','.join(issue_rows_ai)}
+                """)
+
+        # 4. table and column inserts
+
         if table_values:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.tables (
@@ -1575,7 +1752,7 @@ class AgentMetadataExporter:
             {",".join(table_column_values)}
             """)
 
-        # 4. knowledge sources (ONLY name + description)
+        # 5. knowledge sources (ONLY name + description)
         if knowledge_source:
             ks_name = cls.sanitize(knowledge_source.get("name"))
             ks_desc = cls.sanitize(knowledge_source.get("description"))
@@ -1599,7 +1776,6 @@ class AgentMetadataExporter:
                 TIMESTAMP '{now}'
             )
             """)
-        
         # 5. data source insert
         if data_source_values:
             queries.append(f"""
@@ -1708,6 +1884,7 @@ class AgentMetadataExporter:
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
+            issues=issue_entries_for_card,
             tables=tables_payload,
             columns_by_table=columns_by_table,
             skills=skills,
@@ -2446,6 +2623,7 @@ class AgentMetadataExporter:
         data_source: Optional[List[Dict[str, Any]]] = None,
         skills: Optional[List[Any]] = None,
         tenant_id: Optional[str] = None,
+        issues: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """
         Update existing agent with minimal query overhead.
@@ -2579,7 +2757,7 @@ class AgentMetadataExporter:
                     f"VALUES {','.join(tool_ds_rows)}"
                 )
 
-                # Re-link Tool→Table entries using positional matching (old[i] → new[i])
+                # Re-link Tool->Table entries using positional matching (old[i] -> new[i])
                 relink_ds_rows: List[str] = []
                 for i, (new_tool_id, new_tool_name) in enumerate(new_tool_ids):
                     if i >= len(existing_tools_rows):
@@ -2609,6 +2787,102 @@ class AgentMetadataExporter:
                         f"VALUES {','.join(relink_ds_rows)}"
                     )
 
+        # Update issues — None means "leave unchanged"; [] means "clear all issues"
+        if issues is not None:
+            cls.execute_dml(
+                f"WITH removed AS ("
+                f"  DELETE FROM {cls.CORE_DB_NAME}.agent_issues "
+                f"  WHERE agent_id = '{agent_id}' {tenant_where} "
+                f"  RETURNING issue_id"
+                f") "
+                f"DELETE FROM {cls.CORE_DB_NAME}.issues i "
+                f"WHERE i.issue_id IN (SELECT issue_id FROM removed) "
+                f"{tenant_where.replace('tenant_id', 'i.tenant_id')} "
+                f"AND NOT EXISTS ("
+                f"  SELECT 1 FROM {cls.CORE_DB_NAME}.agent_issues rel "
+                f"  WHERE rel.issue_id = i.issue_id "
+                f"  {'AND rel.tenant_id = i.tenant_id' if is_tenant else ''}"
+                f")"
+            )
+            if issues:
+                u_issue_rows_i: List[str] = []
+                u_issue_rows_ai: List[str] = []
+                for issue in issues:
+                    title_raw = str(issue.get("title", "")).strip()
+                    if not title_raw:
+                        continue
+                    identifier = str(issue.get("identifier") or "").strip() or str(uuid.uuid4())
+                    i_title           = cls.sanitize(title_raw)
+                    i_description     = f"'{cls.sanitize(str(issue['description']))}'" if issue.get("description") else "NULL"
+                    i_issue_type      = f"'{cls.sanitize(str(issue['issue_type']))}'" if issue.get("issue_type") else "NULL"
+                    i_severity        = f"'{cls.sanitize(str(issue['severity']))}'" if issue.get("severity") else "NULL"
+                    i_source          = f"'{cls.sanitize(str(issue['source']))}'" if issue.get("source") else "NULL"
+                    i_detected_at     = f"TIMESTAMP '{cls.sanitize(str(issue['detected_at']))}'" if issue.get("detected_at") else "NULL"
+                    i_resolved_at     = f"TIMESTAMP '{cls.sanitize(str(issue['resolved_at']))}'" if issue.get("resolved_at") else "NULL"
+                    i_status          = f"'{cls.sanitize(str(issue['status']))}'" if issue.get("status") else "NULL"
+                    i_resolution_notes = f"'{cls.sanitize(str(issue['resolution_notes']))}'" if issue.get("resolution_notes") else "NULL"
+                    i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
+                    i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
+                    u_issue_rows_i.append(
+                        f"({tenant_val}'{identifier}', '{i_title}', "
+                        f"{i_description}, {i_issue_type}, {i_severity}, "
+                        f"{i_source}, {i_detected_at}, {i_resolved_at}, "
+                        f"{i_status}, {i_resolution_notes}, "
+                        f"{i_assignee}, {i_owner}, "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                    )
+                    u_issue_rows_ai.append(
+                        f"({tenant_val}'{identifier}', '{i_title}', "
+                        f"'{agent_id}', '{cls.sanitize(effective_agent_name)}', "
+                        f"'{agent_internal_id}', "
+                        f"TIMESTAMP '{now}', TIMESTAMP '{now}')"
+                    )
+                if u_issue_rows_i:
+                    issue_conflict = (
+                        " ON CONFLICT (tenant_id, issue_id) DO UPDATE SET "
+                        "title = EXCLUDED.title, "
+                        "description = EXCLUDED.description, "
+                        "issue_type = EXCLUDED.issue_type, "
+                        "severity = EXCLUDED.severity, "
+                        "source = EXCLUDED.source, "
+                        "detected_at = EXCLUDED.detected_at, "
+                        "resolved_at = EXCLUDED.resolved_at, "
+                        "status = EXCLUDED.status, "
+                        "resolution_notes = EXCLUDED.resolution_notes, "
+                        "assignee = EXCLUDED.assignee, "
+                        "owner = EXCLUDED.owner, "
+                        "updated_ts = EXCLUDED.updated_ts"
+                    ) if is_tenant else ""
+                    agent_issue_conflict = (
+                        " ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET "
+                        "title = EXCLUDED.title, "
+                        "agent_name = EXCLUDED.agent_name, "
+                        "agent_internal_id = EXCLUDED.agent_internal_id, "
+                        "updated_ts = EXCLUDED.updated_ts"
+                    ) if is_tenant else ""
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.issues "
+                        f"({tenant_col}issue_id, title, "
+                        f"description, issue_type, severity, "
+                        f"source, detected_at, resolved_at, "
+                        f"status, resolution_notes, "
+                        f"assignee, owner, "
+                        f"created_ts, updated_ts) "
+                        f"VALUES {','.join(u_issue_rows_i)}"
+                        f"{issue_conflict}"
+                    )
+                    cls.execute_dml(
+                        f"INSERT INTO {cls.CORE_DB_NAME}.agent_issues "
+                        f"({tenant_col}issue_id, title, "
+                        f"agent_id, agent_name, "
+                        f"agent_internal_id, "
+                        f"created_ts, updated_ts) "
+                        f"VALUES {','.join(u_issue_rows_ai)}"
+                        f"{agent_issue_conflict}"
+                    )
+
+        # Update knowledge source — when provided, replace existing
+                # Re-link Tool→Table entries using positional matching (old[i] → new[i])
         if knowledge_source:
             cls.execute_dml(f"DELETE FROM {cls.CORE_DB_NAME}.agent_knowledge_sources WHERE agent_id = '{agent_id}' {tenant_where}")
             ks_name = cls.sanitize(knowledge_source.get("name", ""))
@@ -3065,7 +3339,7 @@ class AgentMetadataExporter:
         """)
 
         # 2. Core tables — all keyed on agent_id or agent_internal_id
-        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
+        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications", "agent_issues"):
             cls.execute_dml(
                 f"DELETE FROM {cls.CORE_DB_NAME}.{table} WHERE agent_id = '{agent_id}'"
             )
