@@ -348,13 +348,14 @@ async def create_agent(
     skills: Optional[List[Dict[str, Any]]] = None,
     company_id: Optional[str] = None,
     company_name: Optional[str] = None,
+    issues: Optional[List[Dict]] = None
 ) -> Dict[str, Any]:
     """
     Create and register a new AI agent with defined identity, behavior, and optional integrations.
 
     This function initializes an agent by capturing its core configuration, including its
     name, purpose, and operational instructions. The agent can optionally be extended with
-    external tools, knowledge sources, skills, and data source definitions.
+    external tools, knowledge sources, skills, and data source definitions and associated issues.
 
     The `instruction` parameter defines the agent's behavior and decision-making logic,
     guiding how it processes inputs and generates responses.
@@ -435,6 +436,21 @@ async def create_agent(
     standardized response containing the agent’s metadata. In case of validation or
     runtime errors, an appropriate error response is returned.
 
+    - `issues`: A list of issues associated with the agent. Each issue supports:
+        {
+            "title":            str,            (required) — short human-readable summary of the issue
+            "description":      str | null,     (optional) — detailed explanation of what was observed and why it was flagged
+            "issue_type":       str | null,     (optional) — category: "Hallucination", "Tool Failure", "Latency Breach", "Drift Violation", "Guardrail Trigger", "Data Quality", "Authorization Failure", "Output Policy Violation", "Risk Management", "Fraud Detection", "Customer Engagement"
+            "severity":         str | null,     (optional) — impact level: "Critical", "High", "Medium", "Low", "Informational"
+            "source":           str | null,     (optional) — detection mechanism: "Evaluation Framework", "Alert Monitor", "Drift Detector", "Manual Review"
+            "detected_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was first detected
+            "resolved_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was resolved or closed
+            "status":           str | null,     (optional) — current state: "Open", "In Progress", "Resolved", "Dismissed", "Escalated"
+            "resolution_notes": str | null,     (optional) — action taken to resolve or reason for dismissal
+            "assignee":         str | null,     (optional) — team member or team responsible for investigating and resolving
+            "owner":            str | null,     (optional) — team or individual accountable for the agent where the issue occurred
+        }
+
     Args:
         original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
                                Do NOT leave empty, summarize, or paraphrase.
@@ -453,6 +469,7 @@ async def create_agent(
         knowledge_source (Optional[Dict[str, str]]): Optional knowledge source definition.
         skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
             Each skill can include name, description, tags, inputModes/input_modes, and outputModes/output_modes.
+        issues (Optional[List[Dict]]): Optional list of issues to associate with the agent.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
@@ -475,6 +492,7 @@ async def create_agent(
                 "data_source": data_source,
                 "knowledge_source": knowledge_source,
                 "skills": skills,
+                "issues": issues,
             },
             tenant_id,
         )
@@ -489,6 +507,7 @@ async def create_agent(
             data_source=data_source,
             knowledge_source=knowledge_source,
             skills=skills,
+            issues=issues,
             tenant_id=tenant_id,
             company_id=company_id,
             company_name=company_name,
@@ -818,6 +837,7 @@ async def update_agent(
     columns: Optional[List[Dict[str, Any]]] = None,
     data_source: Optional[List[Dict[str, Any]]] = None,
     skills: Optional[List[Any]] = None,
+    issues: Optional[List[Dict]] = None
 ) -> Dict[str, Any]:
     """
     Update an existing AI agent's configuration.
@@ -837,6 +857,24 @@ async def update_agent(
         }
       The keys "identifier"/"skill_id", "input_modes", and "output_modes" are also accepted.
 
+    - `issues`: When provided, **replaces** all existing issues for this agent.
+      Pass an empty list [] to clear all issues. Each entry supports:
+        {
+            "identifier":       str | null,     (optional) — preserve existing UUID to keep detail-page URLs stable
+            "title":            str,            (required) — short human-readable summary of the issue
+            "description":      str | null,     (optional) — detailed explanation of what was observed and why it was flagged
+            "issue_type":       str | null,     (optional) — category: "Hallucination", "Tool Failure", "Latency Breach", "Drift Violation", "Guardrail Trigger", "Data Quality", "Authorization Failure", "Output Policy Violation", "Risk Management", "Fraud Detection", "Customer Engagement"
+            "severity":         str | null,     (optional) — impact level: "Critical", "High", "Medium", "Low", "Informational"
+            "source":           str | null,     (optional) — detection mechanism: "Evaluation Framework", "Alert Monitor", "Drift Detector", "Manual Review"
+            "detected_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was first detected
+            "resolved_at":      str | null,     (optional) — ISO 8601 UTC timestamp when the issue was resolved or closed
+            "status":           str | null,     (optional) — current state: "Open", "In Progress", "Resolved", "Dismissed", "Escalated"
+            "resolution_notes": str | null,     (optional) — action taken to resolve or reason for dismissal
+            "assignee":         str | null,     (optional) — team member or team responsible for investigating and resolving
+            "owner":            str | null,     (optional) — team or individual accountable for the agent where the issue occurred
+        }
+      Omit to leave existing issues unchanged.
+
     Args:
         original_prompt (str): REQUIRED. Exact user message verbatim.
         agent_id (Optional[str]): Unique identifier of the agent to update.
@@ -845,7 +883,7 @@ async def update_agent(
         instruction (Optional[str]): Updated behavior instructions. Do NOT invent or reference
                            other agent names unless the user has explicitly named them or they are
                            confirmed to exist. Describe inter-agent dependencies generically if unknown.
-        tools (Optional[List[Dict[str, str]]]): Updated tool list.
+        tools (Optional[List[Dict[str, str]]]): Updated tool list. When provided, replaces all existing tools.
         knowledge_source (Optional[Dict[str, str]]): Updated knowledge source.
         tables (Optional[List[Dict[str, Any]]]): Tables to rename or update. Each entry must include
                            the new name and a way to identify the existing table:
@@ -867,6 +905,8 @@ async def update_agent(
                            Provide "table_id" when the same column name exists in multiple tables.
         data_source (Optional[List[Dict[str, Any]]]): Data-source relationships or table/column definitions.
         skills (Optional[List[Any]]): Updated skill list for this agent.
+        issues (Optional[List[Dict]]): Replacement issue list. When provided, replaces all existing issues.
+                                       Omit to leave existing issues unchanged.
 
     Returns:
         Dict[str, Any]: Updated agent metadata or error response.
@@ -891,6 +931,7 @@ async def update_agent(
                 "columns": columns,
                 "data_source": data_source,
                 "skills": skills,
+                "issues": issues
             },
             tenant_id,
         )
@@ -906,7 +947,8 @@ async def update_agent(
             columns=columns,
             data_source=data_source,
             skills=skills,
-            tenant_id=str(tenant_id),
+            issues=issues,
+            tenant_id=str(tenant_id)
         )
 
         return result

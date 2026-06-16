@@ -1,5 +1,6 @@
 import type { SparkIdea, SparkConvertRequest } from '../types/spark';
 import { appLogger } from './logger';
+import { portalActivity } from './portalActivity';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -187,6 +188,7 @@ class SparkApi {
     const t0 = Date.now();
     await req<void>(`/spark/ideas?${params.toString()}`, { method: 'DELETE' });
     appLogger.res('Spark deleteIdeas', { deleted: ideaIds.length }, Date.now() - t0);
+    portalActivity.record(`Deleted ${ideaIds.length} Spark idea${ideaIds.length === 1 ? '' : 's'}`, 'amber');
   }
 
   /** Delete all stored ideas for a company. */
@@ -195,6 +197,7 @@ class SparkApi {
     appLogger.req('Spark resetIdeas', { companyId });
     await req<void>(`/spark/ideas?${params.toString()}`, { method: 'DELETE' });
     appLogger.res('Spark resetIdeas', {});
+    portalActivity.record('Reset Spark ideas', 'amber');
   }
 
   /** Expand a Spark idea into full AI use case fields + agent recommendation via Claude. */
