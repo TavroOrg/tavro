@@ -221,7 +221,7 @@ async def get_agent_catalog(
 
     tenant_id = _require_tenant(request)
     params: Dict[str, Any] = {"tid": tenant_id}
-    where_parts = ["(a.tenant_id = :tid OR a.tenant_id IS NULL)"]
+    where_parts = ["(a360.tenant_id = :tid OR a360.tenant_id IS NULL)"]
 
     cid = company_id.strip() if company_id and company_id.strip() else None
     if cid:
@@ -235,7 +235,7 @@ async def get_agent_catalog(
                 {"schema": CURATED, "tbl": "agent_360"},
             )
             if col_check.first():
-                where_parts.append("(CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL OR CAST(a.company_id AS text) = '')")
+                where_parts.append("(CAST(a360.company_id AS text) = :company_id OR a360.company_id IS NULL OR CAST(a360.company_id AS text) = '')")
                 params["company_id"] = cid
         except Exception:
             pass
@@ -247,7 +247,15 @@ async def get_agent_catalog(
             text(f"""
                 SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
                 FROM (
-                    SELECT * FROM {CURATED}.agent_360 a
+                    SELECT
+                        a360.*,
+                        ag.source_system
+                    FROM {CURATED}.agent_360 a360
+                    LEFT JOIN {CORE}.agents ag
+                      ON ag.agent_internal_id = a360.agent_internal_id
+                     AND ag.agent_id = a360.agent_id
+                     AND COALESCE(ag.is_current, true) = true
+                     AND (ag.tenant_id = a360.tenant_id OR ag.tenant_id IS NULL OR a360.tenant_id IS NULL)
                     {where}
                 ) t
             """),
@@ -292,9 +300,16 @@ async def get_agent_catalog(
         # Combine curated rows with any unsynchronised core rows
         all_raw = [dict(r) for r in rows] + extra_rows
         total = len(all_raw)
-        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")}
-                for i, r in enumerate(all_raw, start=1)
-                if start <= i <= end]
+        data = []
+        for i, r in enumerate(all_raw, start=1):
+            if not (start <= i <= end):
+                continue
+
+            item = {k: v for k, v in r.items() if k not in ("rn", "total_records")}
+            provider = _clean_text(item.get("source_system")) or "Tavro Internal"
+            item["source_system"] = provider
+            item["provider"] = {"organization": provider, "url": ""}
+            data.append(item)
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
     except Exception:
@@ -695,6 +710,7 @@ def _write_agent_card(
     agent_name: str,
     description: str,
     instruction: str,
+    provider: str = "Portal",
     tools: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     tables: Optional[List[Dict[str, Any]]] = None,
@@ -813,7 +829,7 @@ def _write_agent_card(
             "protocol_version": None,
             "instruction_sets": [],
             "skills": skill_entries,
-            "provider": {"organization": None, "url": ""},
+            "provider": {"organization": provider, "url": ""},
             "url": "",
             "documentation_url": None,
             "icon_url": None,
@@ -924,6 +940,7 @@ async def create_agent(
     agent_id = str(uuid.uuid4())
     agent_internal_id = str(uuid.uuid4())
     tenant_id = _require_tenant(request)
+    provider = "Portal"
     cid = company_id.strip() if company_id and company_id.strip() else None
     cname = company_name.strip() if company_name and company_name.strip() else None
 
@@ -932,13 +949,14 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agents
                     (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
-                     created_ts, updated_ts, is_current, company_id, company_name)
+                     source_system, created_ts, updated_ts, is_current, company_id, company_name)
                 VALUES
                     (:tid, :iid, :aid, :name, :desc,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
+                     :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname},
+             "name": body.agent_name, "desc": body.description,
+             "source_system": provider, "cid": cid, "cname": cname},
         )
 
         await db.execute(
