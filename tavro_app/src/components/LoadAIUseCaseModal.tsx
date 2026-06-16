@@ -2,10 +2,13 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Upload, X, FileJson, AlertCircle, CheckCircle2, Loader2, Trash2, FolderOpen, Link2 } from 'lucide-react';
 import { useCaseApi } from '../services/useCaseApi';
 import { driveApi } from '../services/driveApi';
+import { portalActivity } from '../services/portalActivity';
 
 interface LoadAIUseCaseModalProps {
     onClose: () => void;
     onSuccess: () => void;
+    companyId?: string;
+    companyName?: string;
 }
 
 interface FileEntry {
@@ -15,7 +18,7 @@ interface FileEntry {
 
 type Tab = 'files' | 'drive';
 
-const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSuccess }) => {
+const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSuccess, companyId, companyName }) => {
     const [activeTab, setActiveTab] = useState<Tab>('files');
 
     // ── File upload state ──────────────────────────────────────────────────────
@@ -78,7 +81,7 @@ const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSucc
         setErrorMessage(null);
         setSuccessMessage(null);
         try {
-            const result = await useCaseApi.uploadUseCases(validFiles);
+            const result = await useCaseApi.uploadUseCases(validFiles, companyId, companyName);
             setSuccessMessage(result.message);
             setFileEntries([]);
             onSuccess();
@@ -99,6 +102,12 @@ const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSucc
         try {
             const result = await driveApi.importFromDrive(url);
             setDriveSuccess(result.message);
+            if (result.use_cases_imported > 0) {
+                portalActivity.record(
+                    `Loaded ${result.use_cases_imported} AI use case${result.use_cases_imported === 1 ? '' : 's'} from Google Drive`,
+                    'emerald',
+                );
+            }
             onSuccess();
         } catch (err: any) {
             setDriveError(err?.message ?? 'Drive import failed. Please try again.');

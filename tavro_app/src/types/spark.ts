@@ -23,6 +23,8 @@ export interface SparkIdea {
   estimated_impact: 'Low' | 'Medium' | 'High';
   similar_agents: SparkSimilarAgent[];
   saved?: boolean;
+  user_reaction?: 'like' | 'dislike' | null;
+  popularity_score?: number;
 }
 
 export interface SparkConvertRequest {
@@ -35,6 +37,8 @@ export interface SparkConvertRequest {
   signal_label?: string;
   complexity?: string;
   estimated_impact?: string;
+  blueprint_dimensions?: { label: string; category: string; summary?: string }[];
+  blueprint_edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
 }
 
 export const SPARK_DIMENSIONS = [

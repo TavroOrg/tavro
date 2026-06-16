@@ -7,6 +7,33 @@ import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import { portalActivity } from './portalActivity';
+
+export interface AgentTableRecord {
+  table_id: string;
+  table_name: string;
+  country_of_provenance: string | null;
+  is_linked: boolean;
+}
+
+export interface AgentToolRecord {
+  effective_tool_id: string;   // always non-null: tool_id if set, else tool_name
+  tool_id: string | null;
+  tool_name: string;
+  tool_description: string | null;
+  is_linked: boolean;
+}
+
+export interface AgentColumnRecord {
+  column_id: string;
+  column_name: string;
+  table_name: string;
+  table_id: string;
+  uses_pii: boolean;
+  uses_phi: boolean;
+  uses_pci: boolean;
+  is_linked: boolean;
+}
 
 export interface AgentAttachmentRecord {
   id: string;
@@ -61,6 +88,78 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+function changedApplicationFields(payload: BusinessApplicationUpsertPayload): string {
+  const labels: Partial<Record<keyof BusinessApplicationUpsertPayload, string>> = {
+    application_name: 'name',
+    emergency_tier: 'emergency tier',
+    business_owner: 'business owner',
+    application_portfolio_manager: 'portfolio manager',
+    vendor_name: 'vendor',
+    business_criticality: 'business criticality',
+    it_application_owner: 'IT owner',
+    application_description: 'description',
+    embedded_ai: 'embedded AI',
+    opt_out_option: 'opt-out option',
+    privacy_policy_url: 'privacy policy URL',
+    data_excluded_from_ai_training: 'AI training exclusion',
+    vendor_description: 'vendor description',
+    current_installed_version: 'installed version',
+    is_current_version_supported: 'version support',
+    latest_released_version: 'latest released version',
+    latest_release_date: 'latest release date',
+    latest_release_documentation_link: 'release documentation link',
+  };
+  const fields = (Object.keys(payload) as Array<keyof BusinessApplicationUpsertPayload>)
+    .map(key => labels[key])
+    .filter(Boolean);
+  return fields.length > 0 ? `${fields.join(', ')} updated` : 'details updated';
+}
+
+function changedProcessFields(payload: BusinessProcessUpsertPayload): string {
+  const labels: Partial<Record<keyof BusinessProcessUpsertPayload, string>> = {
+    process_number: 'process number',
+    process_name: 'name',
+    process_description: 'description',
+    parent_process_id: 'parent process',
+    stakeholders: 'stakeholders',
+    owner: 'owner',
+    operators: 'operators',
+    business_criticality: 'business criticality',
+    reputational_impact: 'reputational impact',
+    financial_impact: 'financial impact',
+    regulatory_impact: 'regulatory impact',
+    sla: 'SLA',
+    process_health_state: 'health state',
+  };
+  const fields = (Object.keys(payload) as Array<keyof BusinessProcessUpsertPayload>)
+    .map(key => labels[key])
+    .filter(Boolean);
+  return fields.length > 0 ? `${fields.join(', ')} updated` : 'details updated';
+}
+
+function changedIntegrationFields(payload: IntegrationUpsertPayload): string {
+  const labels: Partial<Record<keyof IntegrationUpsertPayload, string>> = {
+    integration_name: 'name',
+    integration_description: 'description',
+    capabilities: 'capabilities',
+    protocol: 'protocol',
+    endpoint_url: 'endpoint URL',
+    authentication_method: 'authentication method',
+    owner: 'owner',
+    documentation_url: 'documentation URL',
+    data_sensitivity: 'data sensitivity',
+    rate_limit: 'rate limit',
+    availability_status: 'availability status',
+    sla: 'SLA',
+    version: 'version',
+    parent_application_id: 'parent application',
+  };
+  const fields = (Object.keys(payload) as Array<keyof IntegrationUpsertPayload>)
+    .map(key => labels[key])
+    .filter(Boolean);
+  return fields.length > 0 ? `${fields.join(', ')} updated` : 'details updated';
+}
+
 class BusinessRelationsApi {
   async listApplications(search?: string, companyId?: string): Promise<BusinessApplicationRecord[]> {
     const params = new URLSearchParams();
@@ -74,16 +173,26 @@ class BusinessRelationsApi {
     return (data?.items ?? []) as BusinessApplicationRecord[];
   }
 
+  async countApplications(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/applications?${params.toString()}`);
+    return (data?.total ?? 0) as number;
+  }
+
   async getApplication(applicationId: string): Promise<BusinessApplicationRecord> {
     return req(`/applications/${encodeURIComponent(applicationId)}`);
   }
 
   async createApplication(payload: BusinessApplicationUpsertPayload, companyId?: string): Promise<BusinessApplicationRecord> {
     const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-    return req(`/applications${qs}`, {
+    const result = await req<BusinessApplicationRecord>(`/applications${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    portalActivity.record(`Added application: ${result.application_name || payload.application_name || 'Untitled application'}`, 'emerald');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async suggestApplicationDescription(applicationName: string): Promise<{ description: string }> {
@@ -97,10 +206,14 @@ class BusinessRelationsApi {
     applicationId: string,
     payload: BusinessApplicationUpsertPayload,
   ): Promise<BusinessApplicationRecord> {
-    return req(`/applications/${encodeURIComponent(applicationId)}`, {
+    const result = await req<BusinessApplicationRecord>(`/applications/${encodeURIComponent(applicationId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+    const displayName = result.application_name || payload.application_name || applicationId;
+    portalActivity.record(`Application "${displayName}" — ${changedApplicationFields(payload)}`, 'violet');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async deleteApplication(applicationId: string): Promise<void> {
@@ -121,16 +234,26 @@ class BusinessRelationsApi {
     return (data?.items ?? []) as BusinessProcessRecord[];
   }
 
+  async countProcesses(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/processes?${params.toString()}`);
+    return (data?.total ?? 0) as number;
+  }
+
   async getProcess(processId: string): Promise<BusinessProcessRecord> {
     return req(`/processes/${encodeURIComponent(processId)}`);
   }
 
   async createProcess(payload: BusinessProcessUpsertPayload, companyId?: string): Promise<BusinessProcessRecord> {
     const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-    return req(`/processes${qs}`, {
+    const result = await req<BusinessProcessRecord>(`/processes${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    portalActivity.record(`Added process: ${result.process_name || payload.process_name || 'Untitled process'}`, 'emerald');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async suggestProcessDescription(processName: string): Promise<{ description: string }> {
@@ -144,10 +267,14 @@ class BusinessRelationsApi {
     processId: string,
     payload: BusinessProcessUpsertPayload,
   ): Promise<BusinessProcessRecord> {
-    return req(`/processes/${encodeURIComponent(processId)}`, {
+    const result = await req<BusinessProcessRecord>(`/processes/${encodeURIComponent(processId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+    const displayName = result.process_name || payload.process_name || processId;
+    portalActivity.record(`Process "${displayName}" — ${changedProcessFields(payload)}`, 'violet');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async deleteProcess(processId: string): Promise<void> {
@@ -289,6 +416,59 @@ class BusinessRelationsApi {
     });
   }
 
+  async listAgentTables(agentId: string, search?: string): Promise<{ items: AgentTableRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/tables${suffix}`);
+  }
+
+  async linkAgentToTable(agentId: string, tableId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tables/${encodeURIComponent(tableId)}`, { method: 'PUT' });
+  }
+
+  async unlinkAgentFromTable(agentId: string, tableId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tables/${encodeURIComponent(tableId)}`, { method: 'DELETE' });
+  }
+
+  async listAgentColumns(agentId: string, search?: string): Promise<{ items: AgentColumnRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/columns${suffix}`);
+  }
+
+  async linkAgentToColumn(agentId: string, columnId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/columns/${encodeURIComponent(columnId)}`, { method: 'PUT' });
+  }
+
+  async unlinkAgentFromColumn(agentId: string, columnId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/columns/${encodeURIComponent(columnId)}`, { method: 'DELETE' });
+  }
+
+  async ensureAgentToolUuids(agentId: string): Promise<{ fixed: number }> {
+    return req(`/agents/${encodeURIComponent(agentId)}/tools/ensure-uuids`, { method: 'POST' });
+  }
+
+  async listAgentTools(agentId: string, search?: string): Promise<{ items: AgentToolRecord[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search?.trim()) params.set('q', search.trim());
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}/tools${suffix}`);
+  }
+
+  async linkAgentToTool(agentId: string, toolId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tools/${encodeURIComponent(toolId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromTool(agentId: string, toolId: string): Promise<void> {
+    await req(`/agents/${encodeURIComponent(agentId)}/tools/${encodeURIComponent(toolId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async linkAgentToChildAgent(parentAgentId: string, childAgentId: string): Promise<void> {
     await req(`/agents/${encodeURIComponent(parentAgentId)}/child-agents/${encodeURIComponent(childAgentId)}`, {
       method: 'PUT',
@@ -313,16 +493,26 @@ class BusinessRelationsApi {
     return ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
   }
 
+  async countIntegrations(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/integrations?${params.toString()}`);
+    return (data?.total ?? 0) as number;
+  }
+
   async getIntegration(integrationId: string): Promise<IntegrationRecord> {
     return req(`/integrations/${encodeURIComponent(integrationId)}`);
   }
 
   async createIntegration(payload: IntegrationUpsertPayload, companyId?: string): Promise<IntegrationRecord> {
     const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-    return req(`/integrations${qs}`, {
+    const result = await req<IntegrationRecord>(`/integrations${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    portalActivity.record(`Added integration: ${result.integration_name || payload.integration_name || 'Untitled integration'}`, 'emerald');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async updateIntegration(
@@ -331,10 +521,14 @@ class BusinessRelationsApi {
     companyId?: string,
   ): Promise<IntegrationRecord> {
     const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-    return req(`/integrations/${encodeURIComponent(integrationId)}${qs}`, {
+    const result = await req<IntegrationRecord>(`/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+    const displayName = result.integration_name || payload.integration_name || integrationId;
+    portalActivity.record(`Integration "${displayName}" — ${changedIntegrationFields(payload)}`, 'violet');
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 
   async deleteIntegration(integrationId: string): Promise<void> {
