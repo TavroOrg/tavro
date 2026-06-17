@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import AgentHeader from './AgentHeader';
 import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
@@ -10,7 +10,7 @@ import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
 import AgentIssuesTab from './AgentIssuesTab';
-import type { AgentIssue } from '../types/agent';
+import AgentClaudeSupportTab from './AgentClaudeSupportTab';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -40,7 +40,8 @@ type TabType =
     | 'LINEAGE'
     | 'ISSUES'
     | 'RISK'
-    | 'CONTEXT';
+    | 'CONTEXT'
+    | 'CLAUDE_SUPPORT';
 
 const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
@@ -50,10 +51,11 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
     { id: 'ISSUES', label: 'Issues' },
+    { id: 'CLAUDE_SUPPORT', label: 'Claude Support' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({
-    agent, onBusinessImpactChange,onIssuesChange,
+    agent, onBusinessImpactChange, onIssuesChange,
     isEditing, editName, onEditNameChange,
     editDescription, onEditDescriptionChange,
     editInstruction, onEditInstructionChange,
@@ -156,6 +158,9 @@ const AgentView: React.FC<AgentViewProps> = ({
 
                 {activeTab === 'CONTEXT' && (
                     <div><AgentContextGraph agent={agent} /></div>
+                )}
+                {activeTab === 'CLAUDE_SUPPORT' && (
+                    <div><AgentClaudeSupportTab agent={agent} /></div>
                 )}
             </div>
         </div>

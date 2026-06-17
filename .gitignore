@@ -222,7 +222,7 @@ __marimo__/
 # Local app config
 config.yaml
 
-.claude/
+
 agent_cards/
 
 # Node.js / Frontend
