@@ -26,6 +26,7 @@ import { aiModelApi } from '../services/aiModelApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
 
@@ -237,6 +238,7 @@ const AiModelViewPage: React.FC = () => {
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
   const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
+  const { activeCompany } = useBlueprint();
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [model, setModel] = useState<AiModelRecord | null>(null);
@@ -270,7 +272,7 @@ const AiModelViewPage: React.FC = () => {
   const editableActive = editing || isCreateMode;
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
     businessRelationsApi.listApplications().then(setAllApplications).catch(() => setAllApplications([]));
     businessRelationsApi.listProcesses().then(setAllProcesses).catch(() => setAllProcesses([]));
   }, []);
@@ -329,7 +331,7 @@ const AiModelViewPage: React.FC = () => {
     try {
       const payload = buildPayload(form);
       if (isCreateMode) {
-        const created = await aiModelApi.createModel(payload);
+        const created = await aiModelApi.createModel(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
             await aiModelApi.linkAgent(created.ai_model_id, linkAgentId);
@@ -361,7 +363,7 @@ const AiModelViewPage: React.FC = () => {
         setInlineEdit(null);
         return;
       }
-      await aiModelApi.updateModel(model!.ai_model_id, changed, model!.model_name ?? undefined);
+      await aiModelApi.updateModel(model!.ai_model_id, changed, model!.model_name ?? undefined, activeCompany?.id);
       const fresh = await aiModelApi.getModel(model!.ai_model_id);
       setModel(fresh);
       setForm(formFromModel(fresh));

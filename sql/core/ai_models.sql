@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS core.ai_models (
 	-- Meta / rollup
 	no_of_associated_agents INTEGER,
 	agent_internal_id TEXT,
+	company_id TEXT,
+	company_name TEXT,
 	created_ts TIMESTAMP,
 	updated_ts TIMESTAMP
 );

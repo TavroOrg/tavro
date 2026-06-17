@@ -5,7 +5,7 @@ import base64
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +52,18 @@ def _tenant(request: Request) -> Optional[str]:
 
 def _norm_id(value: str) -> str:
     return (value or "").strip()
+
+
+async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
+    try:
+        row = await db.execute(
+            text("SELECT name FROM twin.company WHERE id = :cid LIMIT 1"),
+            {"cid": company_id},
+        )
+        result = row.mappings().first()
+        return result["name"] if result else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +224,7 @@ async def list_ai_models(
     q: Optional[str] = None,
     start_record: int = 1,
     record_range: str = "1-500",
+    company_id: Optional[str] = Query(None, description="Filter by company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -228,6 +241,9 @@ async def list_ai_models(
             "(m.tenant_id = :tid OR m.tenant_id IS NULL OR m.tenant_id = '' OR m.tenant_id = 'None')"
         )
         params["tid"] = tenant_id
+    if company_id:
+        where_clauses.append("m.company_id = :cid")
+        params["cid"] = company_id
     if q and q.strip():
         where_clauses.append(
             "(LOWER(m.model_name) LIKE LOWER(:q) OR LOWER(m.ai_model_id) LIKE LOWER(:q) OR LOWER(COALESCE(m.description,'')) LIKE LOWER(:q))"
@@ -279,14 +295,25 @@ async def list_ai_models(
 # ---------------------------------------------------------------------------
 
 @router.post("/", summary="Create AI Model", status_code=201)
-async def create_ai_model(body: AiModelCreate, request: Request, db: AsyncSession = Depends(get_db)):
+async def create_ai_model(
+    body: AiModelCreate,
+    request: Request,
+    company_id: Optional[str] = Query(None, description="Company UUID — stores company_id/company_name on the record"),
+    db: AsyncSession = Depends(get_db),
+):
     ai_model_id = str(uuid.uuid4())
     tenant_id = _tenant(request)
+    company_name = await _get_company_name(db, company_id) if company_id else None
 
     payload = body.model_dump(exclude_none=True)
     columns = ["tenant_id", "ai_model_id", "no_of_associated_agents", "created_ts", "updated_ts"]
     placeholders = [":tid", ":mid", "0", "CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP"]
     params: Dict[str, Any] = {"tid": tenant_id, "mid": ai_model_id}
+    if company_id:
+        columns += ["company_id", "company_name"]
+        placeholders += [":cid", ":cname"]
+        params["cid"] = company_id
+        params["cname"] = company_name
     for col in _AI_MODEL_EDITABLE_COLUMNS:
         if col in payload:
             columns.append(col)
@@ -415,7 +442,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
 # ---------------------------------------------------------------------------
 
 @router.put("/{ai_model_id}", summary="Update AI Model")
-async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSession = Depends(get_db)):
+async def update_ai_model(
+    ai_model_id: str,
+    body: AiModelUpdate,
+    company_id: Optional[str] = Query(None, description="Company UUID — updates company_id/company_name on the record"),
+    db: AsyncSession = Depends(get_db),
+):
     mid = _norm_id(ai_model_id)
     try:
         exists = await db.execute(
@@ -425,9 +457,14 @@ async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSessio
         if not exists.first():
             raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
+        company_name = await _get_company_name(db, company_id) if company_id else None
         payload = body.model_dump(exclude_none=True)
         sets: List[str] = ["updated_ts = CURRENT_TIMESTAMP"]
         params: Dict[str, Any] = {"mid": mid}
+        if company_id:
+            sets += ["company_id = :cid", "company_name = :cname"]
+            params["cid"] = company_id
+            params["cname"] = company_name
         for col in _AI_MODEL_EDITABLE_COLUMNS:
             if col in payload:
                 sets.append(f"{col} = :{col}")
