@@ -277,6 +277,9 @@ const mergeUseCaseWithRestDetail = (
   if (base) {
     return {
       ...base,
+      solution_approach: row.solution_approach ?? (base as any).solution_approach ?? null,
+      created_ts: row.created_ts ?? (base as any).created_ts ?? null,
+      updated_ts: row.updated_ts ?? (base as any).updated_ts ?? null,
       applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
@@ -292,6 +295,9 @@ const mergeUseCaseWithRestDetail = (
     status: row.status ?? null,
     problem_statement: row.problem_statement ?? row.business_problem_statement ?? null,
     expected_benefits: row.expected_benefits ?? null,
+    solution_approach: row.solution_approach ?? null,
+    created_ts: row.created_ts ?? null,
+    updated_ts: row.updated_ts ?? null,
     function: row.function ?? null,
     agents: linkedAgents,
     applications: linkedApplications,

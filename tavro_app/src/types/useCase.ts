@@ -10,6 +10,9 @@ export interface UseCaseSummary {
     function?: string | null;
     problem_statement?: string | null;
     expected_benefits?: string | null;
+    solution_approach?: string | null;
+    created_ts?: string | null;
+    updated_ts?: string | null;
     /** e.g. "High" | "Medium" | "Low" */
     priority?: string | null;
     /** e.g. "Active" | "Proposed" | "In Review" | "Deprecated" */
