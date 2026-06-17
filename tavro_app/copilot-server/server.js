@@ -5,6 +5,7 @@ import { CopilotClient, approveAll } from '@github/copilot-sdk';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = join(__dirname, 'skills');
@@ -909,6 +910,347 @@ app.get('/chat/resume/:requestId', (req, res) => {
         entry.emitter.off('done',  onDone);
         entry.emitter.off('error', onError);
     });
+});
+
+// ── Spark idea generation ─────────────────────────────────────────────────────
+//
+// POST /spark/generate/stream
+//
+// Routes Spark idea generation through the same Anthropic infrastructure used
+// by the AI Assistant, ensuring consistent model config and skill injection.
+//
+// Body:
+//   mode          'gap' | 'direction'
+//   candidates    [{node_id, label, category, summary, signal_type, signal_label, similar_agents?}]  (gap mode)
+//   companyNodes  [{node_id, label, category, summary}]  (direction mode)
+//   direction     string  (direction mode)
+//   companyName   string
+//   industry      string
+//   region        string
+//   edges         [{source_label, target_label, rel_type}]
+//   ideaCount     number
+//   similarAgents [{agent_id, agent_name}]  (included in gap-mode ideas)
+
+function sparkIdeaId(nodeId, signalType, direction) {
+    let raw = `${nodeId}:${signalType}`;
+    if (direction) raw += `:${String(direction).trim().toLowerCase()}`;
+    return createHash('sha256').update(raw).digest('hex').slice(0, 16);
+}
+
+function buildSparkGapPrompt(candidates, direction, companyName, industry, region, edges) {
+    const companyLabel = companyName || 'the company';
+    const industryLabel = industry || 'enterprise operations';
+    const regionClause = region ? ` (${region})` : '';
+    const currentYear = new Date().getFullYear();
+
+    const signals = candidates.map((c, i) => ({
+        index: i,
+        label: c.label,
+        category: c.category,
+        summary: c.summary || '',
+        signal_label: c.signal_label,
+    }));
+
+    const directionClause = direction && direction.trim()
+        ? `\n\nFOCUS DIRECTION (user-specified): "${direction}"\nAll ideas MUST be relevant to this focus area. If a signal is not naturally connected to it, find the angle that links it — do not generate an off-topic idea just to fill the slot.`
+        : '';
+
+    const edgeContext = edges && edges.length > 0
+        ? '\n\nDimension relationships (how the company\'s systems and processes connect — use these to ground ideas in real dependencies and integration surfaces):\n' +
+          edges.slice(0, 30).map(e => `  ${e.source_label} —[${e.rel_type}]→ ${e.target_label}`).join('\n')
+        : '';
+
+    const system = [
+        `You are a senior AI implementation consultant specialising in ${industryLabel}.`,
+        `You are analysing ${companyLabel}${regionClause}, a ${industryLabel} company.`,
+        'Your job is to identify specific, high-ROI AI use case ideas that can realistically be implemented in 3–18 months.',
+        `Today's year is ${currentYear}.`,
+        `NEVER reference goals, targets, revenue plans, or milestones tied to years before ${currentYear}.`,
+        'If a signal mentions a past-year goal (e.g. FY2024, FY2025), ignore the goal framing and focus on the underlying system or process instead.',
+        directionClause,
+        '\n\nA GOOD idea:\n  • Names one specific AI capability — anomaly detection, document extraction, predictive classification, NLP triage, demand forecasting, quality inspection, work order routing, root-cause analysis, etc.\n  • References the exact system or process in the context (use its label and category)\n  • Describes concretely what input data flows in and what specific output or decision is produced\n  • States a measurable ROI hook: hours saved per week, defect rate reduction, cost avoidance, decision speed-up\n  • Is achievable by a small team (2–5 engineers) using current AI APIs and tools\n\nA BAD idea (never generate these):\n  • Vague: \'leverage AI\', \'harness machine learning\', \'build an AI platform\', \'explore opportunities\'\n  • Time-expired: references FY2024, FY2025, or any past-year target\n  • Scope-inflated: describes a full enterprise programme with no specific agent\n  • Disconnected: idea has no real link to the specific system named in the context signal',
+    ].join(' ');
+
+    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}${region ? ` | Region: ${region}` : ''}\n\n`;
+    const user = [
+        companyHeader,
+        'For each signal below, generate ONE specific AI use case idea as a JSON object with exactly these fields:\n',
+        '- title: formal AI use case title, max 8 words. Do NOT include the word \'Agent\'. Do NOT write an agent name. (good: \'MES Downtime Root-Cause Classification\'; bad: \'MES Downtime Agent\')\n',
+        '- description: exactly 2 sentences — sentence 1: what the agent does and which specific system/process it connects to; sentence 2: what output it produces and how a user or downstream system acts on it\n',
+        '- rationale: 1 sentence — the specific ROI or risk reduction, quantified where possible (e.g. \'saves ~6 hrs/week of manual triage\', \'reduces scrap rate by ~15%\', \'cuts invoice processing from 3 days to 4 hours\')\n',
+        '- complexity: exactly one of \'Low\', \'Medium\', or \'High\'\n',
+        '  Low = uses existing AI APIs with no custom training, deployable in <8 weeks\n',
+        '  Medium = requires fine-tuning, custom pipeline, or multi-system integration, 2–6 months\n',
+        '  High = real-time ML, on-premise OT integration, or significant data engineering, 6–18 months\n',
+        '- estimated_impact: exactly one of \'Low\', \'Medium\', or \'High\'\n',
+        '  High = saves >$50K/yr or prevents critical production or compliance risk\n',
+        '  Medium = saves $10–50K/yr or eliminates significant manual work\n',
+        '  Low = incremental improvement, <$10K/yr\n\n',
+        `Signals:\n${JSON.stringify(signals, null, 2)}`,
+        edgeContext,
+        '\n\nReturn ONLY a JSON array with one object per signal, same order. No prose, no markdown fences.',
+    ].join('');
+
+    return [system, user];
+}
+
+function buildSparkDirectionPrompt(companyNodes, direction, count, companyName, industry, region, edges) {
+    const companyLabel = companyName || 'the company';
+    const industryLabel = industry || 'enterprise operations';
+    const regionClause = region ? ` (${region})` : '';
+    const currentYear = new Date().getFullYear();
+
+    const contextLines = (companyNodes || []).map(c =>
+        `  [${String(c.category).toUpperCase()}] ${c.label}${c.summary ? ': ' + c.summary : ''}`
+    ).join('\n');
+
+    const edgeLines = edges && edges.length > 0
+        ? '\n\nDimension relationships (how systems and processes connect):\n' +
+          edges.slice(0, 30).map(e => `  ${e.source_label} —[${e.rel_type}]→ ${e.target_label}`).join('\n')
+        : '';
+
+    const system = [
+        `You are a senior AI implementation consultant specialising in ${industryLabel}.`,
+        `You are analysing ${companyLabel}${regionClause}, a ${industryLabel} company.`,
+        `Today's year is ${currentYear}. Never reference past-year goals or stale targets.`,
+        'Generate specific, concrete, buildable AI use case ideas with measurable ROI.',
+        'Do not generate agents here. Do not include agent names in titles.',
+        'Each idea must name one specific AI capability — not vague phrases like \'leverage AI\'.',
+    ].join(' ');
+
+    const companyHeader = `Company: ${companyLabel} | Industry: ${industryLabel}${region ? ` | Region: ${region}` : ''}\n\n`;
+    const user = [
+        `FOCUS: Generate exactly ${count} distinct AI use case ideas, ALL specifically about: "${direction}"\n\n`,
+        companyHeader,
+        'Company context — you MUST ground each idea in one specific system or process listed below. ',
+        'Name it explicitly in the description and in the source_node field:\n',
+        contextLines,
+        edgeLines,
+        '\n\nFor each idea return a JSON object with:\n',
+        '- title: formal AI use case title, max 8 words. Do NOT include the word \'Agent\'. Do NOT write an agent name. (good: \'OData Quality Gate Anomaly Detection\'; bad: \'OData Quality Gate Agent\')\n',
+        '- description: exactly 2 sentences — sentence 1: what the agent does and which SPECIFIC system or process from the context above it connects to (name it exactly); sentence 2: what output it produces and how it is acted on\n',
+        '- rationale: 1 sentence — specific ROI, quantified where possible (e.g. \'reduces manual data reconciliation by ~4 hrs/week\')\n',
+        '- complexity: exactly \'Low\', \'Medium\', or \'High\'\n',
+        '- estimated_impact: exactly \'Low\', \'Medium\', or \'High\'\n',
+        '- category: one of: process, integration, application, risk, strategy, technology\n',
+        '- source_node: the EXACT label of the company system or process this idea is grounded in (must match one of the labels in the context above)\n\n',
+        `ALL ${count} ideas MUST be about "${direction}" AND grounded in a specific company system or process. `,
+        'Return ONLY a JSON array. No prose, no markdown fences.',
+    ].join('');
+
+    return [system, user];
+}
+
+function extractCompleteSparkObjects(buffer) {
+    const objects = [];
+    let i = 0;
+    const n = buffer.length;
+
+    while (i < n && buffer[i] !== '[' && buffer[i] !== '{') i++;
+    if (i >= n) return [objects, buffer];
+    if (buffer[i] === '[') i++;
+
+    while (i < n) {
+        while (i < n && ' \t\n\r,'.includes(buffer[i])) i++;
+        if (i >= n) break;
+        if (buffer[i] === ']') return [objects, ''];
+        if (buffer[i] !== '{') break;
+
+        let depth = 0;
+        let inString = false;
+        let escapeNext = false;
+        const objStart = i;
+        let j = i;
+
+        while (j < n) {
+            const c = buffer[j];
+            if (escapeNext) { escapeNext = false; }
+            else if (c === '\\' && inString) { escapeNext = true; }
+            else if (c === '"') { inString = !inString; }
+            else if (!inString) {
+                if (c === '{') depth++;
+                else if (c === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        try { objects.push(JSON.parse(buffer.slice(objStart, j + 1))); } catch {}
+                        i = j + 1;
+                        break;
+                    }
+                }
+            }
+            j++;
+        }
+
+        if (j >= n) return [objects, buffer.slice(objStart)];
+    }
+
+    return [objects, i < n ? buffer.slice(i) : ''];
+}
+
+app.post('/spark/generate/stream', async (req, res) => {
+    const {
+        mode,
+        candidates,
+        companyNodes,
+        direction,
+        companyName,
+        industry,
+        region,
+        edges,
+        ideaCount,
+        similarAgents,
+    } = req.body ?? {};
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+        res.status(500).json({ error: 'No Anthropic API key configured on server' });
+        return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const safeWrite = (payload) => { try { if (!res.destroyed) res.write(payload); } catch {} };
+    const count = Math.min(Number(ideaCount) || 5, 16);
+    const isDirection = mode === 'direction' && direction && String(direction).trim();
+
+    try {
+        let system, user;
+        let nodeMap = {};
+
+        if (isDirection) {
+            nodeMap = Object.fromEntries((companyNodes || []).map(n => [String(n.label).toLowerCase(), n]));
+            [system, user] = buildSparkDirectionPrompt(companyNodes || [], direction, count, companyName, industry, region, edges);
+        } else {
+            [system, user] = buildSparkGapPrompt(candidates || [], direction, companyName, industry, region, edges);
+        }
+
+        console.log(`[spark] /spark/generate/stream mode=${mode || 'gap'} count=${count}`);
+
+        const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: buildUpstreamHeaders('anthropic', apiKey),
+            body: JSON.stringify({
+                model: 'claude-sonnet-4-6',
+                max_tokens: isDirection ? 4000 : 2000,
+                system,
+                messages: [{ role: 'user', content: user }],
+                stream: true,
+            }),
+        });
+
+        if (!upstream.ok) {
+            const err = await upstream.json().catch(() => ({}));
+            const msg = err?.error?.message ?? `Anthropic error ${upstream.status}`;
+            safeWrite(`event: error\ndata: ${JSON.stringify({ message: msg })}\n\n`);
+            res.end();
+            return;
+        }
+
+        const reader = upstream.body.getReader();
+        const decoder = new TextDecoder();
+        let rawBuffer = '';
+        let objBuffer = '';
+        let emitted = 0;
+        const sharedAgents = (similarAgents || []).slice(0, 2);
+
+        outer: while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            rawBuffer += decoder.decode(value, { stream: true });
+            const lines = rawBuffer.split('\n');
+            rawBuffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data:')) continue;
+                const raw = trimmed.slice(5).trim();
+                if (raw === '[DONE]') break outer;
+                try {
+                    const parsed = JSON.parse(raw);
+                    const delta = parsed?.delta?.text ?? '';
+                    if (!delta) continue;
+                    objBuffer += delta;
+
+                    const [objects, remaining] = extractCompleteSparkObjects(objBuffer);
+                    objBuffer = remaining;
+
+                    for (const obj of objects) {
+                        if (emitted >= count) break outer;
+
+                        let idea;
+                        if (isDirection) {
+                            const category = obj.category || 'process';
+                            const signalType = ['integration', 'application'].includes(category)
+                                ? 'integration_surface' : 'gap_coverage';
+                            const innerHash = createHash('sha256')
+                                .update(`${direction}:${emitted}`).digest('hex').slice(0, 8);
+                            const nodeId = `dir:${innerHash}`;
+                            const ideaId = sparkIdeaId(nodeId, signalType, direction);
+                            const sourceLabel = String(obj.source_node || '').toLowerCase().trim();
+                            const matchedNode = nodeMap[sourceLabel];
+                            const targetNodes = matchedNode ? [{
+                                id: matchedNode.node_id,
+                                label: matchedNode.label,
+                                category: matchedNode.category,
+                                summary: matchedNode.summary || null,
+                            }] : [];
+
+                            idea = {
+                                idea_id: ideaId,
+                                title: obj.title || `AI for ${direction}`,
+                                description: obj.description || '',
+                                rationale: obj.rationale || '',
+                                signal_type: signalType,
+                                signal_label: `Focus: ${String(direction).trim()}`,
+                                target_dimensions: [category],
+                                target_nodes: targetNodes,
+                                complexity: obj.complexity || 'Medium',
+                                estimated_impact: obj.estimated_impact || 'Medium',
+                                similar_agents: [],
+                            };
+                        } else {
+                            const candidate = (candidates || [])[emitted];
+                            if (!candidate) { emitted++; continue; }
+
+                            idea = {
+                                idea_id: sparkIdeaId(candidate.node_id, candidate.signal_type),
+                                title: obj.title || `AI automation for ${candidate.label}`,
+                                description: obj.description || '',
+                                rationale: obj.rationale || candidate.signal_label,
+                                signal_type: candidate.signal_type,
+                                signal_label: candidate.signal_label,
+                                target_dimensions: [candidate.category],
+                                target_nodes: [{
+                                    id: candidate.node_id,
+                                    label: candidate.label,
+                                    category: candidate.category,
+                                    summary: candidate.summary || null,
+                                }],
+                                complexity: obj.complexity || 'Medium',
+                                estimated_impact: obj.estimated_impact || 'Medium',
+                                similar_agents: sharedAgents,
+                            };
+                        }
+
+                        emitted++;
+                        safeWrite(`event: idea\ndata: ${JSON.stringify(idea)}\n\n`);
+                    }
+                } catch { /* skip malformed SSE chunks */ }
+            }
+        }
+
+        safeWrite('event: done\ndata: {}\n\n');
+        res.end();
+    } catch (err) {
+        console.error('[spark] /spark/generate/stream failed', { error: err.message });
+        safeWrite(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
+        res.end();
+    }
 });
 
 // ── GET /health ────────────────────────────────────────────────────────────────
