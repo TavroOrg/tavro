@@ -15,8 +15,6 @@ from api.routers.dim_types import seed_system_dim_types
 from api.routers.spark import ensure_spark_table
 from api.routers import blueprint
 from api.routers import playground
-from api.routers import compliance, compliance_research
-from api.routers import audit
 from api.routers import risk
 from api.routers import business_relations
 from api.routers import agents
@@ -119,9 +117,14 @@ app.include_router(source_refs.router, prefix="/api/v1/source-refs", tags=["Sour
 app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Graph"])
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
-app.include_router(compliance.router,          prefix="/api/v1/compliance", tags=["Compliance"])
-app.include_router(compliance_research.router, prefix="/api/v1/compliance", tags=["Compliance Research"])
-app.include_router(audit.router,       prefix="/api/v1/audit",       tags=["Audit"])
+# ── Govern module (enterprise-only) ──────────────────────────────────────────
+_ENTERPRISE_URL = os.getenv("ENTERPRISE_URL", "").strip()
+if _ENTERPRISE_URL:
+    from api.enterprise_proxy import make_govern_proxy
+    app.include_router(make_govern_proxy(_ENTERPRISE_URL), prefix="/api/v1", tags=["Govern"])
+else:
+    from api.govern_stub import router as _govern_stub
+    app.include_router(_govern_stub, prefix="/api/v1", tags=["Govern"])
 app.include_router(business_relations.router, prefix="/api/v1")
 app.include_router(agents.router,    prefix="/api/v1/agents",     tags=["Agents"])
 app.include_router(agent_upload.router,  prefix="/api/v1/agents",     tags=["Agents"])
@@ -140,3 +143,16 @@ app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/enterprise/status")
+async def enterprise_status():
+    if not _ENTERPRISE_URL:
+        return {"enabled": False}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{_ENTERPRISE_URL}/health")
+            return {"enabled": resp.status_code == 200}
+    except Exception:
+        return {"enabled": False}

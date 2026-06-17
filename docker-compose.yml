@@ -96,6 +96,8 @@ services:
       PLAYGROUND_BEDROCK_REGION:     '${PLAYGROUND_BEDROCK_REGION:-us-east-2}'
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
+      # Enterprise module — set to http://tavro-enterprise:8001 to enable Govern features
+      ENTERPRISE_URL: '${ENTERPRISE_URL:-}'
       # Risk schema names
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated

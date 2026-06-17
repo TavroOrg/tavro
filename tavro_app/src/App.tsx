@@ -29,6 +29,8 @@ import CompliancePage from './pages/CompliancePage';
 import ComplianceItemPage from './pages/ComplianceItemPage';
 import ComplianceSetupPage from './pages/ComplianceSetupPage';
 import { ComplianceProvider } from './context/ComplianceContext';
+import { EnterpriseProvider } from './context/EnterpriseContext';
+import EnterpriseGate from './components/EnterpriseGate';
 
 import AuditCenterPage from './pages/AuditCenterPage';
 import AuditRunDetailPage from './pages/AuditRunDetailPage';
@@ -128,17 +130,19 @@ function App() {
                 path="/"
                 element={
                   <PrivateRoute>
-                    <CatalogProvider>
-                      <UseCaseProvider>
-                        <PlaygroundProvider>
-                          <BlueprintProvider>
-                            <ComplianceProvider>
-                              <Layout />
-                            </ComplianceProvider>
-                          </BlueprintProvider>
-                        </PlaygroundProvider>
-                      </UseCaseProvider>
-                    </CatalogProvider>
+                    <EnterpriseProvider>
+                      <CatalogProvider>
+                        <UseCaseProvider>
+                          <PlaygroundProvider>
+                            <BlueprintProvider>
+                              <ComplianceProvider>
+                                <Layout />
+                              </ComplianceProvider>
+                            </BlueprintProvider>
+                          </PlaygroundProvider>
+                        </UseCaseProvider>
+                      </CatalogProvider>
+                    </EnterpriseProvider>
                   </PrivateRoute>
                 }
               >
@@ -158,13 +162,13 @@ function App() {
                 {/* ── Playground routes ── */}
                 <Route path="playground" element={<PlaygroundPage />} />
 
-                {/* ── Compliance routes (ADD THESE) ── */}
-                <Route path="compliance" element={<CompliancePage />} />
-                <Route path="compliance/new" element={<ComplianceSetupPage />} />
-                <Route path="compliance/:id" element={<ComplianceItemPage />} />
+                {/* ── Compliance routes — enterprise gated ── */}
+                <Route path="compliance" element={<EnterpriseGate><CompliancePage /></EnterpriseGate>} />
+                <Route path="compliance/new" element={<EnterpriseGate><ComplianceSetupPage /></EnterpriseGate>} />
+                <Route path="compliance/:id" element={<EnterpriseGate><ComplianceItemPage /></EnterpriseGate>} />
 
-                <Route path="audit" element={<AuditCenterPage />} />
-                <Route path="audit/:runId" element={<AuditRunDetailPage />} />
+                <Route path="audit" element={<EnterpriseGate><AuditCenterPage /></EnterpriseGate>} />
+                <Route path="audit/:runId" element={<EnterpriseGate><AuditRunDetailPage /></EnterpriseGate>} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />
                 <Route path="applications/new" element={<BusinessApplicationViewPage />} />
                 <Route path="applications/:id" element={<BusinessApplicationViewPage />} />
