@@ -894,6 +894,10 @@ const SparkPage: React.FC = () => {
 
   // Load stored ideas from DB on mount / when companyId changes
   useEffect(() => {
+    window.dispatchEvent(new CustomEvent('tavro:spark-ideas-changed', { detail: { count: ideas.length } }));
+  }, [ideas.length]);
+
+  useEffect(() => {
     if (!companyId) return;
     setReactions({});
     setPopularity({});
