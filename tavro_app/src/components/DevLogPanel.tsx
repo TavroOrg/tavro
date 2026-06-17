@@ -9,8 +9,8 @@ const LEVEL_CONFIG: Record<LogLevel, { label: string; color: string; bg: string;
     warn: { label: 'WARN', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', dot: 'bg-amber-400' },
     error: { label: 'ERROR', color: 'text-red-700', bg: 'bg-red-50 border-red-200', dot: 'bg-red-500' },
     tool_call: { label: 'TOOL', color: 'text-violet-700', bg: 'bg-violet-50 border-violet-200', dot: 'bg-violet-500' },
-    request: { label: 'REQUEST', color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200', dot: 'bg-blue-500' },
-    response: { label: 'RESPONSE', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-500' },
+    request: { label: 'REQUEST →', color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200', dot: 'bg-blue-500' },
+    response: { label: 'RESPONSE ←', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-500' },
 };
 
 const ALL_LEVELS: LogLevel[] = ['info', 'warn', 'error', 'tool_call', 'request', 'response'];
