@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -22,10 +23,27 @@ from api.routers.blueprint import (
 
 router = APIRouter()
 
+CORE    = os.getenv("CORE_DB_NAME",       "core")
+CURATED = os.getenv("CURATED_DB_NAME",    "curated")
+RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME",  os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management"))
+_RISK_URL = os.getenv("RISK_CLASSIFY_URL", "http://localhost:8000/api/v1/risk/classify-risk")
 CORE    = os.getenv("CORE_DB_NAME")
 CURATED = os.getenv("CURATED_DB_NAME")
 RISK    = os.getenv("RISK_MANAGEMENT_DB_NAME")
 _RISK_URL = os.getenv("RISK_CLASSIFY_URL")
+
+
+def _coerce_dt(value: Any) -> Optional[datetime]:
+    """Convert a value to datetime or None. Handles Python datetime, ISO strings, and None."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -104,12 +122,14 @@ class AgentCreateRequest(BaseModel):
     data_source: Optional[List[Dict[str, Any]]] = None
     knowledge_source: Optional[Dict[str, str]] = None
     skills: Optional[List[Dict[str, Any]]] = None
+    issues: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = None
     description: Optional[str] = None
     instruction: Optional[str] = None
+    issues: Optional[List[Dict[str, Any]]] = None
     skills: Optional[List[Any]] = None
 
 
@@ -201,7 +221,7 @@ async def get_agent_catalog(
 
     tenant_id = _require_tenant(request)
     params: Dict[str, Any] = {"tid": tenant_id}
-    where_parts = ["(a.tenant_id = :tid OR a.tenant_id IS NULL)"]
+    where_parts = ["(a360.tenant_id = :tid OR a360.tenant_id IS NULL)"]
 
     cid = company_id.strip() if company_id and company_id.strip() else None
     if cid:
@@ -215,7 +235,7 @@ async def get_agent_catalog(
                 {"schema": CURATED, "tbl": "agent_360"},
             )
             if col_check.first():
-                where_parts.append("CAST(a.company_id AS text) = :company_id")
+                where_parts.append("(CAST(a360.company_id AS text) = :company_id OR a360.company_id IS NULL OR CAST(a360.company_id AS text) = '')")
                 params["company_id"] = cid
         except Exception:
             pass
@@ -227,7 +247,15 @@ async def get_agent_catalog(
             text(f"""
                 SELECT *, ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
                 FROM (
-                    SELECT * FROM {CURATED}.agent_360 a
+                    SELECT
+                        a360.*,
+                        ag.source_system
+                    FROM {CURATED}.agent_360 a360
+                    LEFT JOIN {CORE}.agents ag
+                      ON ag.agent_internal_id = a360.agent_internal_id
+                     AND ag.agent_id = a360.agent_id
+                     AND COALESCE(ag.is_current, true) = true
+                     AND (ag.tenant_id = a360.tenant_id OR ag.tenant_id IS NULL OR a360.tenant_id IS NULL)
                     {where}
                 ) t
             """),
@@ -272,9 +300,16 @@ async def get_agent_catalog(
         # Combine curated rows with any unsynchronised core rows
         all_raw = [dict(r) for r in rows] + extra_rows
         total = len(all_raw)
-        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")}
-                for i, r in enumerate(all_raw, start=1)
-                if start <= i <= end]
+        data = []
+        for i, r in enumerate(all_raw, start=1):
+            if not (start <= i <= end):
+                continue
+
+            item = {k: v for k, v in r.items() if k not in ("rn", "total_records")}
+            provider = _clean_text(item.get("source_system")) or "Tavro Internal"
+            item["source_system"] = provider
+            item["provider"] = {"organization": provider, "url": ""}
+            data.append(item)
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
     except Exception:
@@ -675,10 +710,12 @@ def _write_agent_card(
     agent_name: str,
     description: str,
     instruction: str,
+    provider: str = "Portal",
     tools: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     tables: Optional[List[Dict[str, Any]]] = None,
     skills: Optional[List[Dict[str, Any]]] = None,
+    issues: Optional[List[Dict[str, Any]]] = None
 ) -> None:
     """Write a full agent card JSON file immediately after creation so get_agent_card returns complete details."""
     try:
@@ -792,7 +829,7 @@ def _write_agent_card(
             "protocol_version": None,
             "instruction_sets": [],
             "skills": skill_entries,
-            "provider": {"organization": None, "url": ""},
+            "provider": {"organization": provider, "url": ""},
             "url": "",
             "documentation_url": None,
             "icon_url": None,
@@ -837,6 +874,26 @@ def _write_agent_card(
             "memory": {"identifier": None, "name": None, "type": None},
             "regulation_or_framework": {"name": None, "type": None, "regulatory_authority": None, "jurisdiction": None, "requirement": None},
             "control": [{"identifier": None, "name": None, "objective": None, "domain": None}],
+            "issues": [
+                {
+                    "identifier": iss.get("identifier"),
+                    "title": iss.get("title"),
+                    "description": iss.get("description"),
+                    "issue_type": iss.get("issue_type"),
+                    "severity": iss.get("severity"),
+                    "source": iss.get("source"),
+                    "detected_at": iss.get("detected_at"),
+                    "resolved_at": iss.get("resolved_at"),
+                    "status": iss.get("status"),
+                    "resolution_notes": iss.get("resolution_notes"),
+                    "assignee": iss.get("assignee"),
+                    "owner": iss.get("owner"),
+                    "created_ts": None,
+                    "updated_ts": None,
+                }
+                for iss in (issues or [])
+                if str(iss.get("title", "")).strip()
+            ],
             "risk_assessment": None,
         }
 
@@ -847,6 +904,24 @@ def _write_agent_card(
 
     except Exception as e:
         print(f"[create_agent] Warning: failed to write agent card file: {e}")
+
+
+async def _get_agent_identity(db: AsyncSession, agent_id: str, tenant_id: str):
+    result = await db.execute(
+        text(f"""
+            SELECT agent_id, agent_name, agent_internal_id
+            FROM {CORE}.agents
+            WHERE agent_id = :aid
+              AND tenant_id = :tid
+              AND COALESCE(is_current, true) = true
+            LIMIT 1
+        """),
+        {"aid": agent_id, "tid": tenant_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +940,7 @@ async def create_agent(
     agent_id = str(uuid.uuid4())
     agent_internal_id = str(uuid.uuid4())
     tenant_id = _require_tenant(request)
+    provider = "Portal"
     cid = company_id.strip() if company_id and company_id.strip() else None
     cname = company_name.strip() if company_name and company_name.strip() else None
 
@@ -873,13 +949,14 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agents
                     (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
-                     created_ts, updated_ts, is_current, company_id, company_name)
+                     source_system, created_ts, updated_ts, is_current, company_id, company_name)
                 VALUES
                     (:tid, :iid, :aid, :name, :desc,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
+                     :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
-             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname},
+             "name": body.agent_name, "desc": body.description,
+             "source_system": provider, "cid": cid, "cname": cname},
         )
 
         await db.execute(
@@ -901,11 +978,12 @@ async def create_agent(
         tool_name_to_id: Dict[str, str] = {}
         tools_for_card: List[Dict[str, Any]] = []
         for tool in (body.tools or []):
-            tool_id = str(uuid.uuid4())
             tool_name = tool.get("name", "")
             tool_name_key = str(tool_name).strip().lower()
-            if tool_name_key:
-                tool_name_to_id[tool_name_key] = tool_id
+            if not tool_name_key:
+                continue
+            tool_id = str(uuid.uuid4())
+            tool_name_to_id[tool_name_key] = tool_id
             tools_for_card.append({**tool, "identifier": tool_id})
             await db.execute(
                 text(f"""
@@ -927,17 +1005,18 @@ async def create_agent(
                 text(f"""
                     INSERT INTO {CORE}.agent_tools
                         (tenant_id, agent_internal_id, tool_id, agent_id,
-                         tool_name, created_ts, updated_ts)
+                         agent_name, tool_name, created_ts, updated_ts)
                     VALUES
                         (:tid, :iid, :tool_id, :aid,
-                         :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                         :aname, :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                         agent_id   = EXCLUDED.agent_id,
+                        agent_name = EXCLUDED.agent_name,
                         tool_name  = EXCLUDED.tool_name,
                         updated_ts = EXCLUDED.updated_ts
                 """),
                 {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
-                 "aid": agent_id, "tname": tool_name},
+                 "aid": agent_id, "aname": body.agent_name, "tname": tool_name},
             )
 
         tables_payload = _normalize_tables_payload(body.tables, body.tools, body.data_source)
@@ -1139,6 +1218,57 @@ async def create_agent(
                  "desc": body.knowledge_source.get("description", "")},
             )
 
+
+        issue_entries_for_card: List[Dict[str, Any]] = []
+        for issue in (body.issues or []):
+            title = str(issue.get("title", "")).strip()
+            if not title:
+                continue
+            identifier = str(uuid.uuid4())
+            issue_entries_for_card.append({"identifier": identifier, **issue, "title": title})
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.issues (
+                        tenant_id, issue_id, title, description, issue_type, severity,
+                        source, detected_at, resolved_at, status, resolution_notes,
+                        assignee, owner, created_ts, updated_ts
+                    ) VALUES (
+                        :tid, :identifier, :title, :description, :issue_type, :severity,
+                        :source, :detected_at, :resolved_at, :status, :resolution_notes,
+                        :assignee, :owner,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """),
+                {
+                    "tid": tenant_id, "identifier": identifier, "title": title,
+                    "description": issue.get("description"),
+                    "issue_type": issue.get("issue_type"),
+                    "severity": issue.get("severity"),
+                    "source": issue.get("source"),
+                    "detected_at": _coerce_dt(issue.get("detected_at")),
+                    "resolved_at": _coerce_dt(issue.get("resolved_at")),
+                    "status": issue.get("status"),
+                    "resolution_notes": issue.get("resolution_notes"),
+                    "assignee": issue.get("assignee"),
+                    "owner": issue.get("owner"),
+                },
+            )
+            await db.execute(
+                text(f"""
+                    INSERT INTO {CORE}.agent_issues (
+                        tenant_id, issue_id, title, agent_id, agent_name,
+                        agent_internal_id, created_ts, updated_ts
+                    ) VALUES (
+                        :tid, :identifier, :title, :agent_id, :agent_name,
+                        :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """),
+                {
+                    "tid": tenant_id, "identifier": identifier, "title": title,
+                    "agent_id": agent_id, "agent_name": body.agent_name,
+                    "agent_internal_id": agent_internal_id,
+                },
+            )
         for skill in _normalize_skill_entries(body.skills):
             await db.execute(
                 text(f"""
@@ -1213,6 +1343,7 @@ async def create_agent(
         knowledge_source=body.knowledge_source,
         tables=tables_payload,
         skills=body.skills,
+        issues=issue_entries_for_card
     )
 
     background_tasks.add_task(
@@ -1307,7 +1438,26 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
         row = result.mappings().first()
         if not row:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+
+        issues_result = await db.execute(
+            text(f"""
+                SELECT i.issue_id AS identifier, i.title, i.description, i.issue_type, i.severity,
+                       i.source, i.detected_at, i.resolved_at, i.status,
+                       i.resolution_notes, i.assignee, i.owner,
+                       i.created_ts, i.updated_ts
+                FROM {CORE}.agent_issues rel
+                JOIN {CORE}.issues i
+                  ON i.issue_id = rel.issue_id
+                 AND COALESCE(i.tenant_id, '') = COALESCE(rel.tenant_id, '')
+                WHERE rel.agent_id = :aid
+                  AND rel.tenant_id = :tid
+                ORDER BY COALESCE(i.updated_ts, i.created_ts) DESC NULLS LAST,
+                         i.title ASC
+            """),
+            {"aid": agent_id, "tid": tenant_id},
+        )
         data = dict(row)
+        data["issues"] = [dict(r) for r in issues_result.mappings().all()]
 
         skill_result = await db.execute(
             text(f"""
@@ -1341,6 +1491,50 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
 # ---------------------------------------------------------------------------
 # POST /{agent_id}/risk-assessment  — trigger risk assessment
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# GET /issues/{identifier}  — fetch a single issue by its identifier
+# ---------------------------------------------------------------------------
+
+@router.get("/issues/{identifier}", summary="Get Issue by ID")
+async def get_issue(identifier: str, request: Request, db: AsyncSession = Depends(get_db)):
+    tenant_id = _require_tenant(request)
+    try:
+
+        result = await db.execute(
+            text(f"""
+                SELECT issue_id AS identifier, title, description, issue_type, severity,
+                       source, detected_at, resolved_at, status,
+                       resolution_notes, assignee, owner,
+                       created_ts, updated_ts
+                FROM {CORE}.issues
+                WHERE issue_id = :iid
+                  AND tenant_id = :tid
+                LIMIT 1
+            """),
+            {"iid": identifier, "tid": tenant_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Issue '{identifier}' not found.")
+        agents_result = await db.execute(
+            text(f"""
+                SELECT agent_id, agent_name
+                FROM {CORE}.agent_issues
+                WHERE issue_id = :iid
+                  AND tenant_id = :tid
+            """),
+            {"iid": identifier, "tid": tenant_id},
+        )
+        issue = dict(row)
+        issue["linked_agents"] = [dict(r) for r in agents_result.mappings().all()]
+        return issue
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/{agent_id}/risk-assessment", summary="Trigger Risk Assessment")
 async def trigger_risk_assessment(
@@ -1456,6 +1650,111 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid AND tenant_id = :tid"),
                 curated_params,
             )
+
+        if body.issues is not None:
+            # Collect current identifiers before deleting links
+            old_ids_result = await db.execute(
+                text(f"SELECT issue_id AS identifier FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            old_identifiers = [r["identifier"] for r in old_ids_result.mappings().all()]
+
+            # Remove all current agent-issue links for this agent
+            await db.execute(
+                text(f"DELETE FROM {CORE}.agent_issues WHERE agent_id = :aid AND tenant_id = :tid"),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+
+            # Now remove issue records that are no longer linked to any agent.
+            # This runs as a separate query so NOT EXISTS sees the post-delete state.
+            if old_identifiers:
+                await db.execute(
+                    text(f"""
+                        DELETE FROM {CORE}.issues i
+                        WHERE i.tenant_id = :tid
+                          AND i.issue_id = ANY(:ids)
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM {CORE}.agent_issues rel
+                              WHERE rel.tenant_id = :tid
+                                AND rel.issue_id = i.issue_id
+                          )
+                    """),
+                    {"tid": tenant_id, "ids": old_identifiers},
+                )
+            agent_row = await db.execute(
+                text(f"SELECT agent_name, agent_internal_id FROM {CORE}.agents WHERE agent_id = :aid AND tenant_id = :tid LIMIT 1"),
+                {"aid": agent_id, "tid": tenant_id},
+            )
+            agent_info = agent_row.mappings().first() or {}
+            for issue in body.issues:
+                title = str(issue.get("title", "")).strip()
+                if not title:
+                    continue
+                # Preserve existing identifier so detail-page URLs remain stable
+                identifier = str(issue.get("identifier") or "").strip() or str(uuid.uuid4())
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.issues (
+                            tenant_id, issue_id, title, description, issue_type, severity,
+                            source, detected_at, resolved_at, status, resolution_notes,
+                            assignee, owner, created_ts, updated_ts
+                        ) VALUES (
+                            :tid, :identifier, :title, :description, :issue_type, :severity,
+                            :source, :detected_at, :resolved_at, :status, :resolution_notes,
+                            :assignee, :owner,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        ON CONFLICT (tenant_id, issue_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            description = EXCLUDED.description,
+                            issue_type = EXCLUDED.issue_type,
+                            severity = EXCLUDED.severity,
+                            source = EXCLUDED.source,
+                            detected_at = EXCLUDED.detected_at,
+                            resolved_at = EXCLUDED.resolved_at,
+                            status = EXCLUDED.status,
+                            resolution_notes = EXCLUDED.resolution_notes,
+                            assignee = EXCLUDED.assignee,
+                            owner = EXCLUDED.owner,
+                            updated_ts = CURRENT_TIMESTAMP
+                    """),
+                    {
+                        "tid": tenant_id, "identifier": identifier, "title": title,
+                        "description": issue.get("description"),
+                        "issue_type": issue.get("issue_type"),
+                        "severity": issue.get("severity"),
+                        "source": issue.get("source"),
+                        "detected_at": _coerce_dt(issue.get("detected_at")),
+                        "resolved_at": _coerce_dt(issue.get("resolved_at")),
+                        "status": issue.get("status"),
+                        "resolution_notes": issue.get("resolution_notes"),
+                        "assignee": issue.get("assignee"),
+                        "owner": issue.get("owner"),
+                    },
+                )
+                await db.execute(
+                    text(f"""
+                        INSERT INTO {CORE}.agent_issues (
+                            tenant_id, issue_id, title, agent_id, agent_name,
+                            agent_internal_id, created_ts, updated_ts
+                        ) VALUES (
+                            :tid, :identifier, :title, :agent_id, :agent_name,
+                            :agent_internal_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        ON CONFLICT (tenant_id, issue_id, agent_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            agent_name = EXCLUDED.agent_name,
+                            agent_internal_id = EXCLUDED.agent_internal_id,
+                            updated_ts = CURRENT_TIMESTAMP
+                    """),
+                    {
+                        "tid": tenant_id, "identifier": identifier, "title": title,
+                        "agent_id": agent_id,
+                        "agent_name": agent_info.get("agent_name", ""),
+                        "agent_internal_id": agent_info.get("agent_internal_id", ""),
+                    },
+                )
 
         if body.skills is not None:
             existing_skill_result = await db.execute(
@@ -1576,7 +1875,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
             {"aid": agent_id, "tid": tenant_id},
         )
 
-        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications"):
+        for table in ("agent_tools", "agent_knowledge_sources", "agent_data_sources", "agent_identifications", "agent_issues"):
             await db.execute(
                 text(f"DELETE FROM {CORE}.{table} WHERE agent_id = :aid AND tenant_id = :tid"),
                 {"aid": agent_id, "tid": tenant_id},

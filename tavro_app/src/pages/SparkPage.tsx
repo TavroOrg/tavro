@@ -12,12 +12,12 @@ import {
   Bot,
   ArrowRight,
   Lightbulb,
-  BookmarkPlus,
-  BookmarkCheck,
   AlertCircle,
   SlidersHorizontal,
   Search,
   Trash2,
+  ThumbsUp,
+  ThumbsDown,
   Check,
   CheckSquare,
   Target,
@@ -27,6 +27,7 @@ import {
 import { useBlueprint } from '../context/BlueprintContext';
 import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
+import { portalActivity } from '../services/portalActivity';
 import type { SparkIdea } from '../types/spark';
 import {
   SPARK_DIMENSIONS,
@@ -37,6 +38,7 @@ import {
 
 type AgentTool = { name: string; description: string };
 type AgentKnowledgeSource = { name: string; description: string };
+type IdeaReaction = 'like' | 'dislike';
 type SparkBlueprintCtx = {
   dimensions: { label: string; category: string; summary?: string }[];
   edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
@@ -242,13 +244,15 @@ function normalizeAgentColumns(value: unknown, tables: AgentTable[]): AgentColum
 
 const IdeaCard: React.FC<{
   idea: SparkIdea;
-  saved: boolean;
-  onSave: () => void;
+  reaction?: IdeaReaction;
+  deleting?: boolean;
+  onDelete: () => void;
+  onReact: (reaction: IdeaReaction) => void;
   onClick: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
-}> = ({ idea, saved, onSave, onClick, selectMode = false, selected = false, onSelect }) => {
+}> = ({ idea, reaction, deleting = false, onDelete, onReact, onClick, selectMode = false, selected = false, onSelect }) => {
   const signal = SIGNAL_META[idea.signal_type] ?? SIGNAL_META['gap_coverage'];
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
@@ -276,13 +280,33 @@ const IdeaCard: React.FC<{
               {selected && <Check size={11} className="text-white" />}
             </div>
           ) : (
-            <button
-              onClick={(e) => { e.stopPropagation(); onSave(); }}
-              className={`p-1.5 rounded-lg transition-colors ${saved ? 'text-violet-600 dark:text-violet-400' : 'text-slate-300 hover:text-violet-500'}`}
-              title={saved ? 'Saved' : 'Save idea'}
-            >
-              {saved ? <BookmarkCheck size={16} /> : <BookmarkPlus size={16} />}
-            </button>
+            <div className="flex items-center gap-1">           
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReact('like'); }}
+                className={`p-1.5 rounded-lg transition-colors ${reaction === 'like' ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20' : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'}`}
+                title="Like idea"
+              >
+                <ThumbsUp size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReact('dislike'); }}
+                className={`p-1.5 rounded-lg transition-colors ${reaction === 'dislike' ? 'text-amber-600 bg-amber-50 dark:bg-amber-900/20' : 'text-slate-300 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'}`}
+                title="Dislike idea"
+              >
+                <ThumbsDown size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                disabled={deleting}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Remove idea"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           )}
         </div>
 
@@ -330,7 +354,7 @@ const IdeaCard: React.FC<{
 
 // ── Idea List Row (list-view variant) ────────────────────────────────────────
 
-const LIST_GRID = 'grid-cols-[32px_1fr_160px_180px_100px_80px_32px]';
+const LIST_GRID = 'grid-cols-[84px_1fr_160px_180px_100px_80px_32px]';
 const PAGE_SIZE = 10;
 const DEFAULT_IDEA_COUNT = 5;
 const MIN_IDEA_COUNT = 1;
@@ -338,13 +362,15 @@ const MAX_IDEA_COUNT = 16;
 
 const IdeaListRow: React.FC<{
   idea: SparkIdea;
-  saved: boolean;
-  onSave: () => void;
+  reaction?: IdeaReaction;
+  deleting?: boolean;
+  onDelete: () => void;
+  onReact: (reaction: IdeaReaction) => void;
   onClick: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
-}> = ({ idea, saved, onSave, onClick, selectMode = false, selected = false, onSelect }) => {
+}> = ({ idea, reaction, deleting = false, onDelete, onReact, onClick, selectMode = false, selected = false, onSelect }) => {
   const signal = SIGNAL_META[idea.signal_type] ?? SIGNAL_META['gap_coverage'];
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
@@ -357,18 +383,39 @@ const IdeaListRow: React.FC<{
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'
         }`}
     >
-      {/* Col 1: bookmark / checkbox */}
+      {/* Col 1: delete / reaction / checkbox */}
       {selectMode ? (
         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${selected ? 'bg-violet-600 border-violet-600' : 'border-slate-300 dark:border-slate-600'}`}>
           {selected && <Check size={10} className="text-white" />}
         </div>
       ) : (
-        <button
-          onClick={e => { e.stopPropagation(); onSave(); }}
-          className={`p-1 rounded transition-colors ${saved ? 'text-violet-600 dark:text-violet-400' : 'text-slate-300 hover:text-violet-500'}`}
-        >
-          {saved ? <BookmarkCheck size={14} /> : <BookmarkPlus size={14} />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onDelete(); }}
+            disabled={deleting}
+            className="p-1 rounded text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Remove idea"
+          >
+            <Trash2 size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onReact('like'); }}
+            className={`p-1 rounded transition-colors ${reaction === 'like' ? 'text-emerald-600' : 'text-slate-300 hover:text-emerald-500'}`}
+            title="Like idea"
+          >
+            <ThumbsUp size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onReact('dislike'); }}
+            className={`p-1 rounded transition-colors ${reaction === 'dislike' ? 'text-amber-600' : 'text-slate-300 hover:text-amber-500'}`}
+            title="Dislike idea"
+          >
+            <ThumbsDown size={14} />
+          </button>
+        </div>
       )}
 
       {/* Col 2: Title + description */}
@@ -553,6 +600,33 @@ const IdeaModal: React.FC<{
           const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
           if (agentId) {
             await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
+
+            // Register the agent as locally pending so CatalogContext can track
+            // the workflow completion and clear the badge on the agent detail page.
+            // Without this, mcpClient.createAgent() does not fire tavro:agent-created,
+            // so the workflow completion event would be missed by AgentViewPage.
+            try {
+              const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+              const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+              localStorage.setItem(
+                'tavro_pending_assessment_agents',
+                JSON.stringify(Array.from(new Set([...pending, agentId]))),
+              );
+              const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+              const meta = metaRaw
+                ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>)
+                : [];
+              const filtered = meta.filter(item => item.agent_id !== agentId);
+              filtered.unshift({
+                agent_id: agentId,
+                name: agentName,
+                description: asNonEmptyString(agentRec?.description) ?? agentName,
+                created_at: new Date().toISOString(),
+              });
+              localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+            } catch {
+              // localStorage writes are best-effort
+            }
           }
         } catch {
           // Agent creation is best-effort; use case was created successfully
@@ -714,13 +788,15 @@ const SparkPage: React.FC = () => {
     };
   }, [activeCompany, nodes, graph]);
   const [ideas, setIdeas] = useState<SparkIdea[]>([]);
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [reactions, setReactions] = useState<Record<string, IdeaReaction>>({});
+  const [popularity, setPopularity] = useState<Record<string, number>>({});
   const [selectedIdea, setSelectedIdea] = useState<SparkIdea | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(true);
   const [activeDimensions, setActiveDimensions] = useState<Set<string>>(new Set());
+  const [showMostLiked, setShowMostLiked] = useState(false);
   const [search, setSearch] = useState('');
   const [hasLibrary, setHasLibrary] = useState(false);
   const [direction, setDirection] = useState('');
@@ -730,11 +806,30 @@ const SparkPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   const companyId = activeCompany?.id ?? null;
   const companyName = activeCompany?.name;
   const industry = activeCompany?.industry;
   const region = activeCompany?.region;
+
+  const syncPersistedMetrics = useCallback((nextIdeas: SparkIdea[], replace = false) => {
+    setReactions(prev => {
+      const next = replace ? {} : { ...prev };
+      for (const idea of nextIdeas) {
+        if (idea.user_reaction) next[idea.idea_id] = idea.user_reaction;
+        else delete next[idea.idea_id];
+      }
+      return next;
+    });
+    setPopularity(prev => {
+      const next = replace ? {} : { ...prev };
+      for (const idea of nextIdeas) {
+        next[idea.idea_id] = idea.popularity_score ?? 0;
+      }
+      return next;
+    });
+  }, []);
 
   const toggleDimension = (key: string) => {
     setActiveDimensions(prev => {
@@ -745,49 +840,101 @@ const SparkPage: React.FC = () => {
     });
   };
 
-  const toggleSave = (ideaId: string) => {
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(ideaId)) next.delete(ideaId);
-      else next.add(ideaId);
+  const handleReact = async (ideaId: string, reaction: IdeaReaction) => {
+    if (!companyId) return;
+
+    const previousReaction = reactions[ideaId] ?? null;
+    const nextReaction = previousReaction === reaction ? null : reaction;
+    const previousValue = previousReaction === 'like' ? 1 : previousReaction === 'dislike' ? -1 : 0;
+    const nextValue = nextReaction === 'like' ? 1 : nextReaction === 'dislike' ? -1 : 0;
+    const previousPopularity = popularity[ideaId] ?? 0;
+    const optimisticPopularity = previousPopularity - previousValue + nextValue;
+
+    setError(null);
+    setReactions(prev => {
+      const next = { ...prev };
+      if (nextReaction) next[ideaId] = nextReaction;
+      else delete next[ideaId];
       return next;
     });
+    setPopularity(prev => ({ ...prev, [ideaId]: optimisticPopularity }));
+    setIdeas(prev => prev.map(idea => idea.idea_id === ideaId
+      ? { ...idea, user_reaction: nextReaction, popularity_score: optimisticPopularity }
+      : idea
+    ));
+
+    try {
+      const saved = await sparkApi.updateIdeaReaction(companyId, ideaId, nextReaction);
+      setReactions(prev => {
+        const next = { ...prev };
+        if (saved.user_reaction) next[ideaId] = saved.user_reaction;
+        else delete next[ideaId];
+        return next;
+      });
+      setPopularity(prev => ({ ...prev, [ideaId]: saved.popularity_score }));
+      setIdeas(prev => prev.map(idea => idea.idea_id === ideaId
+        ? { ...idea, user_reaction: saved.user_reaction, popularity_score: saved.popularity_score }
+        : idea
+      ));
+    } catch (err) {
+      setReactions(prev => {
+        const next = { ...prev };
+        if (previousReaction) next[ideaId] = previousReaction;
+        else delete next[ideaId];
+        return next;
+      });
+      setPopularity(prev => ({ ...prev, [ideaId]: previousPopularity }));
+      setIdeas(prev => prev.map(idea => idea.idea_id === ideaId
+        ? { ...idea, user_reaction: previousReaction, popularity_score: previousPopularity }
+        : idea
+      ));
+      setError(err instanceof Error ? err.message : 'Failed to save idea reaction');
+    }
   };
 
   // Load stored ideas from DB on mount / when companyId changes
   useEffect(() => {
     if (!companyId) return;
+    setReactions({});
+    setPopularity({});
+    setShowMostLiked(false);
     setLoading(true);
     setError(null);
     sparkApi.getIdeas(companyId)
       .then(data => {
         setIdeas(data);
+        syncPersistedMetrics(data, true);
         setHasLibrary(data.length > 0);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ideas'))
       .finally(() => setLoading(false));
-  }, [companyId]);
+  }, [companyId, syncPersistedMetrics]);
 
   // Search against DB as user types (debounced)
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId || generating) return;
     const timer = setTimeout(() => {
       sparkApi.getIdeas(companyId, search || undefined)
-        .then(setIdeas)
+        .then(data => {
+          setIdeas(data);
+          syncPersistedMetrics(data);
+        })
         .catch(() => { });
     }, 300);
     return () => clearTimeout(timer);
-  }, [companyId, search]);
+  }, [companyId, generating, search, syncPersistedMetrics]);
 
   // Generate fresh ideas via SSE — ideas appear progressively as they stream in
   const inspire = useCallback(async () => {
     if (!companyId) return;
     setIdeas([]);
+    setShowMostLiked(false);
     setGenerating(true);
     setError(null);
     setSearch('');
     try {
       const dims = activeDimensions.size > 0 ? [...activeDimensions] : undefined;
+      let generatedCount = 0;
       for await (const idea of sparkApi.generateIdeasStream(
         companyId,
         dims,
@@ -797,15 +944,29 @@ const SparkPage: React.FC = () => {
         industry,
         region,
       )) {
-        setIdeas(prev => prev.some(i => i.idea_id === idea.idea_id) ? prev : [...prev, idea]);
+        generatedCount += 1;
+        setIdeas(prev => {
+          const existing = prev.find(i => i.idea_id === idea.idea_id);
+          const enrichedIdea = {
+            ...idea,
+            user_reaction: reactions[idea.idea_id] ?? existing?.user_reaction ?? idea.user_reaction ?? null,
+            popularity_score: popularity[idea.idea_id] ?? existing?.popularity_score ?? idea.popularity_score ?? 0,
+          };
+          return existing
+            ? prev.map(i => i.idea_id === idea.idea_id ? enrichedIdea : i)
+            : [...prev, enrichedIdea];
+        });
         setHasLibrary(true);
+      }
+      if (generatedCount > 0) {
+        portalActivity.record(`Generated ${generatedCount} Spark idea${generatedCount === 1 ? '' : 's'}`, 'emerald');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate ideas');
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region]);
+  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region, popularity, reactions]);
 
   const enterSelectMode = () => {
     setSelectMode(true);
@@ -833,9 +994,14 @@ const SparkPage: React.FC = () => {
       await sparkApi.deleteIdeas(companyId, [...selectedForDelete]);
       const remaining = ideas.filter(i => !selectedForDelete.has(i.idea_id));
       setIdeas(remaining);
-      setSavedIds(prev => {
-        const next = new Set(prev);
-        selectedForDelete.forEach(id => next.delete(id));
+      setReactions(prev => {
+        const next = { ...prev };
+        selectedForDelete.forEach(id => delete next[id]);
+        return next;
+      });
+      setPopularity(prev => {
+        const next = { ...prev };
+        selectedForDelete.forEach(id => delete next[id]);
         return next;
       });
       setHasLibrary(remaining.length > 0);
@@ -847,12 +1013,54 @@ const SparkPage: React.FC = () => {
     }
   }, [companyId, selectedForDelete, ideas]);
 
-  const savedIdeas = ideas.filter(i => savedIds.has(i.idea_id));
+  const handleDeleteIdea = useCallback(async (ideaId: string) => {
+    if (!companyId || deletingIds.has(ideaId)) return;
+    setDeletingIds(prev => new Set(prev).add(ideaId));
+    setError(null);
+    try {
+      await sparkApi.deleteIdeas(companyId, [ideaId]);
+      const remaining = ideas.filter(i => i.idea_id !== ideaId);
+      setIdeas(remaining);
+      setReactions(prev => {
+        const next = { ...prev };
+        delete next[ideaId];
+        return next;
+      });
+      setPopularity(prev => {
+        const next = { ...prev };
+        delete next[ideaId];
+        return next;
+      });
+      setSelectedForDelete(prev => {
+        const next = new Set(prev);
+        next.delete(ideaId);
+        return next;
+      });
+      setSelectedIdea(prev => prev?.idea_id === ideaId ? null : prev);
+      setHasLibrary(remaining.length > 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete idea');
+    } finally {
+      setDeletingIds(prev => {
+        const next = new Set(prev);
+        next.delete(ideaId);
+        return next;
+      });
+    }
+  }, [companyId, deletingIds, ideas]);
 
-  // Client-side dimension filter applied to whatever is currently loaded
-  const filteredIdeas = activeDimensions.size > 0
-    ? ideas.filter(i => i.target_dimensions.some(d => activeDimensions.has(d)))
-    : ideas;
+  // Client-side filters applied to whatever is currently loaded
+  const filteredIdeas = useMemo(() => {
+    const dimensionFiltered = activeDimensions.size > 0
+      ? ideas.filter(i => i.target_dimensions.some(d => activeDimensions.has(d)))
+      : ideas;
+
+    if (!showMostLiked) return dimensionFiltered;
+
+    return dimensionFiltered
+      .filter(i => (popularity[i.idea_id] ?? 0) > 0)
+      .sort((a, b) => (popularity[b.idea_id] ?? 0) - (popularity[a.idea_id] ?? 0));
+  }, [activeDimensions, ideas, popularity, showMostLiked]);
 
   const isSearching = search.trim().length > 0;
   const totalPages = Math.max(1, Math.ceil(filteredIdeas.length / PAGE_SIZE));
@@ -1060,16 +1268,16 @@ const SparkPage: React.FC = () => {
           </p>
         <button
           onClick={() => setContextOpen(o => !o)}
-          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all flex-shrink-0 ${contextOpen || activeDimensions.size > 0
+          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all flex-shrink-0 ${contextOpen || activeDimensions.size > 0 || showMostLiked
               ? 'bg-violet-600 text-white border-violet-600'
               : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400'
             }`}
         >
           <SlidersHorizontal size={15} />
           <span className="hidden sm:inline">Filters</span>
-          {activeDimensions.size > 0 && (
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${contextOpen || activeDimensions.size > 0 ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'}`}>
-              {activeDimensions.size}
+          {(activeDimensions.size > 0 || showMostLiked) && (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${contextOpen || activeDimensions.size > 0 || showMostLiked ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'}`}>
+              {activeDimensions.size + (showMostLiked ? 1 : 0)}
             </span>
           )}
           {contextOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1115,10 +1323,16 @@ const SparkPage: React.FC = () => {
       {/* ── Context filters panel (collapsible) ── */}
       {contextOpen && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-5 py-4 flex flex-col gap-3">
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            Select dimensions to focus Spark on — leave all off to scan everything.
-          </p>
           <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setShowMostLiked(v => !v)}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${showMostLiked
+                  ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400'
+                }`}
+            >
+              Most Liked
+            </button>
             {SPARK_DIMENSIONS.map(({ key, label }) => {
               const active = activeDimensions.has(key);
               return (
@@ -1134,8 +1348,14 @@ const SparkPage: React.FC = () => {
                 </button>
               );
             })}
-            {activeDimensions.size > 0 && (
-              <button onClick={() => setActiveDimensions(new Set())} className="text-xs text-slate-400 hover:text-slate-600 underline">
+            {(activeDimensions.size > 0 || showMostLiked) && (
+              <button
+                onClick={() => {
+                  setActiveDimensions(new Set());
+                  setShowMostLiked(false);
+                }}
+                className="text-xs text-slate-400 hover:text-slate-600 underline"
+              >
                 Clear all
               </button>
             )}
@@ -1148,26 +1368,6 @@ const SparkPage: React.FC = () => {
         <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-5 py-4 text-red-600 dark:text-red-300">
           <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
           <p className="text-sm">{error}</p>
-        </div>
-      )}
-
-      {/* ── Saved ideas strip ── */}
-      {savedIdeas.length > 0 && (
-        <div className="bg-violet-50 dark:bg-violet-900/10 border border-violet-200 dark:border-violet-800 rounded-2xl p-4">
-          <p className="text-xs font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider mb-3 flex items-center gap-2">
-            <BookmarkCheck size={14} /> Saved ideas ({savedIdeas.length})
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {savedIdeas.map(idea => (
-              <button
-                key={idea.idea_id}
-                onClick={() => setSelectedIdea(idea)}
-                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors"
-              >
-                {idea.title}
-              </button>
-            ))}
-          </div>
         </div>
       )}
 
@@ -1228,8 +1428,10 @@ const SparkPage: React.FC = () => {
               <IdeaListRow
                 key={idea.idea_id}
                 idea={idea}
-                saved={savedIds.has(idea.idea_id)}
-                onSave={() => toggleSave(idea.idea_id)}
+                reaction={reactions[idea.idea_id]}
+                deleting={deletingIds.has(idea.idea_id)}
+                onDelete={() => handleDeleteIdea(idea.idea_id)}
+                onReact={(reaction) => { void handleReact(idea.idea_id, reaction); }}
                 onClick={() => setSelectedIdea(idea)}
                 selectMode={selectMode}
                 selected={selectedForDelete.has(idea.idea_id)}
@@ -1243,8 +1445,10 @@ const SparkPage: React.FC = () => {
               <IdeaCard
                 key={idea.idea_id}
                 idea={idea}
-                saved={savedIds.has(idea.idea_id)}
-                onSave={() => toggleSave(idea.idea_id)}
+                reaction={reactions[idea.idea_id]}
+                deleting={deletingIds.has(idea.idea_id)}
+                onDelete={() => handleDeleteIdea(idea.idea_id)}
+                onReact={(reaction) => { void handleReact(idea.idea_id, reaction); }}
                 onClick={() => setSelectedIdea(idea)}
                 selectMode={selectMode}
                 selected={selectedForDelete.has(idea.idea_id)}
@@ -1297,11 +1501,23 @@ const SparkPage: React.FC = () => {
           <Search size={28} className="text-slate-300" />
           {search
             ? <p className="text-sm">No ideas match &ldquo;{search}&rdquo;</p>
-            : <p className="text-sm">No ideas match the selected dimension filters</p>
+            : showMostLiked
+              ? <p className="text-sm">No liked ideas yet</p>
+              : <p className="text-sm">No ideas match the selected dimension filters</p>
           }
           <div className="flex gap-3">
             {search && <button onClick={() => setSearch('')} className="text-xs text-violet-500 hover:underline">Clear search</button>}
-            {activeDimensions.size > 0 && <button onClick={() => setActiveDimensions(new Set())} className="text-xs text-violet-500 hover:underline">Clear filters</button>}
+            {(activeDimensions.size > 0 || showMostLiked) && (
+              <button
+                onClick={() => {
+                  setActiveDimensions(new Set());
+                  setShowMostLiked(false);
+                }}
+                className="text-xs text-violet-500 hover:underline"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         </div>
       )}

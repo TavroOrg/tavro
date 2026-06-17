@@ -35,11 +35,14 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
         setSaving(true);
         setError(null);
         try {
-            await agentApi.updateAgent(agentId, {
-                agent_name: name.trim() || undefined,
-                description: description.trim() || undefined,
-                instruction: instruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const payload: { agent_name?: string; description?: string; instruction?: string } = {};
+            if (name.trim() !== currentName) payload.agent_name = name.trim() || undefined;
+            if (description.trim() !== currentDescription) payload.description = description.trim() || undefined;
+            if (instruction.trim() !== currentInstruction) payload.instruction = instruction.trim() || undefined;
+            await agentApi.updateAgent(agentId, payload, currentName);
             const updated = {
                 name: name.trim(),
                 description: description.trim(),

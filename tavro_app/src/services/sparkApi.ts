@@ -1,5 +1,6 @@
 import type { SparkIdea, SparkConvertRequest } from '../types/spark';
 import { appLogger } from './logger';
+import { portalActivity } from './portalActivity';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -147,6 +148,7 @@ class SparkApi {
         direction: direction ?? '(none)',
         titles: result.slice(0, 3).map(i => i.title),
       }, Date.now() - t0);
+      portalActivity.record(`Generated ${result.length} Spark idea${result.length === 1 ? '' : 's'}`, 'emerald');
       return result;
     } catch (err) {
       appLogger.error('Spark generateIdeas failed', { error: (err as Error).message, direction });
@@ -161,6 +163,27 @@ class SparkApi {
     const t0 = Date.now();
     await req<void>(`/spark/ideas?${params.toString()}`, { method: 'DELETE' });
     appLogger.res('Spark deleteIdeas', { deleted: ideaIds.length }, Date.now() - t0);
+    portalActivity.record(`Deleted ${ideaIds.length} Spark idea${ideaIds.length === 1 ? '' : 's'}`, 'amber');
+  }
+
+  /** Persist a user's reaction and updated popularity score for an idea. */
+  async updateIdeaReaction(
+    companyId: string,
+    ideaId: string,
+    reaction: 'like' | 'dislike' | null,
+  ): Promise<{ idea_id: string; user_reaction: 'like' | 'dislike' | null; popularity_score: number }> {
+    const params = new URLSearchParams({ company_id: companyId });
+    appLogger.req('Spark updateIdeaReaction', { companyId, ideaId, reaction });
+    const t0 = Date.now();
+    const result = await req<{ idea_id: string; user_reaction: 'like' | 'dislike' | null; popularity_score: number }>(
+      `/spark/ideas/${encodeURIComponent(ideaId)}/reaction?${params.toString()}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ reaction }),
+      },
+    );
+    appLogger.res('Spark updateIdeaReaction', { ideaId, reaction: result.user_reaction }, Date.now() - t0);
+    return result;
   }
 
   /** Delete all stored ideas for a company. */
@@ -169,6 +192,7 @@ class SparkApi {
     appLogger.req('Spark resetIdeas', { companyId });
     await req<void>(`/spark/ideas?${params.toString()}`, { method: 'DELETE' });
     appLogger.res('Spark resetIdeas', {});
+    portalActivity.record('Reset Spark ideas', 'amber');
   }
 
   /** Expand a Spark idea into full AI use case fields + agent recommendation via Claude. */

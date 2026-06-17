@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
@@ -321,6 +321,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            issues: [],
             skills: [],
             application: [],
             business_process: [],
@@ -392,6 +393,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    issues: apiData?.issues ?? mcpData.issues ?? existingCatalog?.issues ?? [],
                     skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
@@ -418,6 +420,7 @@ const AgentViewPage: React.FC = () => {
                     skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
+                    issues: apiData.issues ?? apiCatalog?.issues ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
@@ -459,8 +462,45 @@ const AgentViewPage: React.FC = () => {
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
         if (agent.identification.governance_status !== 'Risk Assessment is running') return;
-        const handleWorkflowUpdate = () => { fetchAgent(); };
+
+        const handleWorkflowUpdate = () => {
+            // Invalidate the MCP detail cache so fetchAgent() always gets fresh
+            // governance_status from the server rather than a stale cached response.
+            mcpClient.invalidateCache();
+            fetchAgent();
+        };
         window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+
+        // If the workflow already completed before the user navigated to this page,
+        // the tavro_temporal_workflow_update event may never fire again (snapshot is
+        // stable). Check the current snapshot now and proactively re-fetch if there
+        // is no running workflow for this agent.
+        try {
+            const raw = localStorage.getItem('tavro_temporal_workflows');
+            if (raw !== null) {
+                const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
+                const agentId = agent.identification.agent_id;
+                const agentName = agent.name ?? '';
+                const workflows = JSON.parse(raw) as Array<{
+                    status: string;
+                    agent_id?: string;
+                    agent_internal_id?: string;
+                    name?: string;
+                }>;
+                const hasRunning = workflows.some(
+                    w =>
+                        w.status === 'running' &&
+                        (norm(w.agent_id) === norm(agentId) ||
+                            norm(w.agent_internal_id) === norm(agentId) ||
+                            norm(w.name) === norm(agentName)),
+                );
+                if (!hasRunning) {
+                    mcpClient.invalidateCache();
+                    fetchAgent();
+                }
+            }
+        } catch { /* ignore */ }
+
         return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);
@@ -563,11 +603,14 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: editName.trim() || undefined,
-                description: editDescription.trim() || undefined,
-                instruction: editInstruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const payload: import('../services/agentApi').AgentUpdatePayload = {};
+            if (editName.trim() !== currentName) payload.agent_name = editName.trim() || undefined;
+            if (editDescription.trim() !== currentDescription) payload.description = editDescription.trim() || undefined;
+            if (editInstruction.trim() !== currentInstruction) payload.instruction = editInstruction.trim() || undefined;
+            await agentApi.updateAgent(agentId, payload, currentName);
             handleAgentSaved({
                 name: editName.trim(),
                 description: editDescription.trim(),
@@ -614,11 +657,12 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: nextName || undefined,
-                description: nextDescription || undefined,
-                instruction: nextInstruction || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const inlinePayload: import('../services/agentApi').AgentUpdatePayload =
+                inlineEdit.field === 'name' ? { agent_name: nextName || undefined }
+                : inlineEdit.field === 'description' ? { description: nextDescription || undefined }
+                : { instruction: nextInstruction || undefined };
+            await agentApi.updateAgent(agentId, inlinePayload, currentName);
             handleAgentSaved({
                 name: nextName,
                 description: nextDescription,
@@ -659,6 +703,16 @@ const AgentViewPage: React.FC = () => {
             fetchAgent();
             refreshCatalog();
         }, 500);
+    };
+
+    const handleIssuesChange = (issues: AgentIssue[]) => {
+        mcpClient.invalidateCache();
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = { ...prev, issues };
+            upsertAgent(next);
+            return next;
+        });
     };
 
     if (loading && !agent) {
@@ -776,6 +830,7 @@ const AgentViewPage: React.FC = () => {
             <AgentView
                 agent={agent}
                 onBusinessImpactChange={handleBusinessImpactChange}
+                onIssuesChange={handleIssuesChange}
                 isEditing={isEditing}
                 editName={editName}
                 onEditNameChange={setEditName}

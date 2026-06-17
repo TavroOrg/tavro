@@ -7,6 +7,7 @@ import type {
   ComplianceDocument,
   ComplianceItemType,
 } from '../types/compliance';
+import { portalActivity } from './portalActivity';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1   = `${BASE}/api/v1/compliance`;
@@ -32,6 +33,29 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 interface Page<T> { total: number; offset: number; limit: number; items: T[] }
+
+const complianceTypeLabel = (type?: ComplianceItemType) => type === 'policy' ? 'policy' : 'regulation';
+
+function changedComplianceItemFields(body: Partial<ComplianceItemCreate>): string {
+  const labels: Partial<Record<keyof ComplianceItemCreate, string>> = {
+    item_type: 'type',
+    scope: 'scope',
+    name: 'name',
+    short_name: 'short name',
+    description: 'description',
+    issuing_body: 'issuing body',
+    jurisdiction: 'jurisdiction',
+    industry_tags: 'industry tags',
+    company_id: 'company',
+    effective_date: 'effective date',
+    review_date: 'review date',
+    status: 'status',
+  };
+  const fields = (Object.keys(body) as Array<keyof ComplianceItemCreate>)
+    .map(key => labels[key])
+    .filter(Boolean);
+  return fields.length > 0 ? `${fields.join(', ')} updated` : 'details updated';
+}
 
 class ComplianceApiService {
 
@@ -60,7 +84,9 @@ class ComplianceApiService {
   }
 
   async createItem(body: ComplianceItemCreate): Promise<ComplianceItem> {
-    return req('/items', { method: 'POST', body: JSON.stringify(body) });
+    const result = await req<ComplianceItem>('/items', { method: 'POST', body: JSON.stringify(body) });
+    portalActivity.record(`Created ${complianceTypeLabel(result.item_type)}: ${result.name || body.name}`, 'emerald');
+    return result;
   }
 
   async suggestDescription(body: {
@@ -73,7 +99,9 @@ class ComplianceApiService {
   }
   
   async updateItem(id: string, body: Partial<ComplianceItemCreate>): Promise<ComplianceItem> {
-    return req(`/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    const result = await req<ComplianceItem>(`/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    portalActivity.record(`${complianceTypeLabel(result.item_type)} "${result.name || body.name || id}" — ${changedComplianceItemFields(body)}`, 'violet');
+    return result;
   }
 
   async deleteItem(id: string): Promise<{ deleted: string }> {
@@ -103,7 +131,9 @@ class ComplianceApiService {
     sensitive?:         boolean;
     sort_order?:        number;
   }): Promise<ComplianceDimension> {
-    return req('/dimensions', { method: 'POST', body: JSON.stringify(body) });
+    const result = await req<ComplianceDimension>('/dimensions', { method: 'POST', body: JSON.stringify(body) });
+    portalActivity.record(`Added compliance dimension: ${result.label || body.label}`, 'emerald');
+    return result;
   }
 
   async updateDimension(id: string, body: {
@@ -113,7 +143,9 @@ class ComplianceApiService {
     visibility?: string;
     sensitive?:  boolean;
   }): Promise<ComplianceDimension> {
-    return req(`/dimensions/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    const result = await req<ComplianceDimension>(`/dimensions/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    portalActivity.record(`Compliance dimension "${result.label || body.label || id}" updated`, 'violet');
+    return result;
   }
 
   async deleteDimension(id: string): Promise<void> {
@@ -128,11 +160,15 @@ class ComplianceApiService {
   }
 
   async createImpact(body: ComplianceImpactCreate): Promise<ComplianceImpact> {
-    return req('/impacts', { method: 'POST', body: JSON.stringify(body) });
+    const result = await req<ComplianceImpact>('/impacts', { method: 'POST', body: JSON.stringify(body) });
+    portalActivity.record(`Added compliance impact mapping`, 'emerald');
+    return result;
   }
 
   async updateImpact(id: string, body: Partial<ComplianceImpactCreate>): Promise<ComplianceImpact> {
-    return req(`/impacts/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    const result = await req<ComplianceImpact>(`/impacts/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    portalActivity.record(`Updated compliance impact mapping`, 'violet');
+    return result;
   }
 
   async deleteImpact(id: string): Promise<void> {
@@ -155,7 +191,9 @@ class ComplianceApiService {
     source_url?:        string;
     version?:           string;
   }): Promise<ComplianceDocument> {
-    return req('/documents', { method: 'POST', body: JSON.stringify(body) });
+    const result = await req<ComplianceDocument>('/documents', { method: 'POST', body: JSON.stringify(body) });
+    portalActivity.record(`Added compliance document: ${result.title || body.title}`, 'emerald');
+    return result;
   }
 
   async deleteDocument(id: string): Promise<void> {
@@ -200,7 +238,11 @@ class ComplianceApiService {
   }
 
   async saveDimensions(compliance_item_id: string, dimensions: any[]): Promise<{ saved: number; skipped: number }> {
-    return req('/save-dimensions', { method: 'POST', body: JSON.stringify({ compliance_item_id, dimensions }) });
+    const result = await req<{ saved: number; skipped: number }>('/save-dimensions', { method: 'POST', body: JSON.stringify({ compliance_item_id, dimensions }) });
+    if (result.saved > 0) {
+      portalActivity.record(`Added ${result.saved} researched compliance dimension${result.saved === 1 ? '' : 's'}`, 'emerald');
+    }
+    return result;
   }
 
   // ── Company summary ───────────────────────────────────────────────────────
