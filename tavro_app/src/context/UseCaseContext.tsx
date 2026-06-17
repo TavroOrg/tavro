@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { UseCaseSummary } from '../types/useCase';
-import { mcpClient } from '../services/mcpClient';
+import { useCaseApi } from '../services/useCaseApi';
 
 const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache_v2';
 const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts_v2';
@@ -64,10 +64,18 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Only block the UI if there is no data yet or the user explicitly synced.
         const hasExistingData = Boolean(sessionStorage.getItem(USECASE_CACHE_KEY));
         if (!hasExistingData || shouldInvalidate) setLoading(true);
-        if (shouldInvalidate) mcpClient.invalidateCache();
 
         try {
-            const fresh = await mcpClient.getAllUseCases();
+            const response = await useCaseApi.listUseCases({ recordRange: '1-500' });
+            const fresh: UseCaseSummary[] = (response.data ?? []).map((item: any) => ({
+                ...item,
+                identifier: item.identifier ?? item.use_case_id ?? item.id,
+                name: item.name ?? item.title ?? item.use_case_name,
+                description: item.description ?? item.short_description ?? item.summary,
+                status: item.status ?? item.state,
+                owner: item.owner ?? item.use_case_owner,
+                overall_risk: item.overall_risk ?? item.overall_risk_classification ?? item.risk_classification,
+            }));
             const freshIds = new Set(fresh.map((uc: UseCaseSummary) => uc.identifier));
             const freshNames = new Set(
                 fresh.map((uc: UseCaseSummary) => (uc.name ?? '').toLowerCase().trim())

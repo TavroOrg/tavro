@@ -263,39 +263,46 @@ async def get_agent_catalog(
         )
         rows = result.mappings().all()
 
-        # When a company_id filter is active, supplement curated results with any
-        # matching agents from core.agents not yet synced to the curated table.
-        curated_agent_ids: set = {r["agent_id"] for r in rows} if cid else set()
+        # Supplement curated results with agents from core.agents that have not
+        # reached the curated view yet. MCP-created agents are written to core
+        # immediately, so this keeps them visible before the curated sync runs.
+        curated_agent_ids: set = {r["agent_id"] for r in rows}
         extra_rows: list = []
-        if cid and curated_agent_ids is not None:
-            try:
-                core_col = await db.execute(
-                    text("""
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
-                        LIMIT 1
-                    """),
-                    {"schema": CORE, "tbl": "agents"},
-                )
-                if core_col.first():
-                    extra_result = await db.execute(
-                        text(f"""
-                            SELECT
-                                a.agent_id, a.agent_internal_id, a.agent_name AS agent_name,
-                                a.agent_description, a.tenant_id, a.company_id,
-                                a.created_ts, a.updated_ts
-                            FROM {CORE}.agents a
-                            WHERE (a.tenant_id = :tid OR a.tenant_id IS NULL)
-                              AND a.is_current = true
-                              AND CAST(a.company_id AS text) = :company_id
-                        """),
-                        {"tid": tenant_id, "company_id": cid},
-                    )
-                    for r in extra_result.mappings().all():
-                        if r["agent_id"] not in curated_agent_ids:
-                            extra_rows.append(dict(r))
-            except Exception:
-                pass
+        try:
+            core_col = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                    LIMIT 1
+                """),
+                {"schema": CORE, "tbl": "agents"},
+            )
+            has_core_company_id = bool(core_col.first())
+            core_company_filter = ""
+            extra_params: Dict[str, Any] = {"tid": tenant_id}
+            if cid and has_core_company_id:
+                core_company_filter = "AND (CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL)"
+                extra_params["company_id"] = cid
+
+            extra_result = await db.execute(
+                text(f"""
+                    SELECT
+                        a.agent_id, a.agent_internal_id, a.agent_name AS agent_name,
+                        a.agent_description, a.tenant_id,
+                        {("a.company_id," if has_core_company_id else "NULL AS company_id,")}
+                        a.created_ts, a.updated_ts
+                    FROM {CORE}.agents a
+                    WHERE (a.tenant_id = :tid OR a.tenant_id IS NULL)
+                      AND a.is_current = true
+                      {core_company_filter}
+                """),
+                extra_params,
+            )
+            for r in extra_result.mappings().all():
+                if r["agent_id"] not in curated_agent_ids:
+                    extra_rows.append(dict(r))
+        except Exception:
+            pass
 
         # Combine curated rows with any unsynchronised core rows
         all_raw = [dict(r) for r in rows] + extra_rows
@@ -330,7 +337,7 @@ async def get_agent_catalog(
                     {"schema": CORE, "tbl": "agents"},
                 )
                 if col_check2.first():
-                    core_where_parts.append("CAST(a.company_id AS text) = :company_id")
+                    core_where_parts.append("(CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL)")
                     core_params["company_id"] = cid
             except Exception:
                 pass

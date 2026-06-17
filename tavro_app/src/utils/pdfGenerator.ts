@@ -5,17 +5,33 @@
  * Handles: H1–H4 headings, inline bold, bullet/numbered lists,
  *          markdown tables, code blocks, horizontal rules.
  *
+ * Visual format matches the AI Risk Assessment report:
+ *   - Dark header (navy) with Tavro logo and document title
+ *   - Blue accent stripe at top of header
+ *   - Page footer with platform name and page numbers
+ *
  * No-op when content is empty — callers must only invoke after a
  * successful API response.
  */
 // @ts-ignore — jspdf is installed in the Docker container; no local node_modules
 import { jsPDF } from 'jspdf';
+import tavrLogoUrl from '../assets/travo_logo.png';
+
+// Pre-load logo at module init so it is ready when the first PDF is generated.
+let _logoImg: HTMLImageElement | null = null;
+(function () {
+  const img = new Image();
+  img.onload = () => { _logoImg = img; };
+  img.onerror = () => { /* graceful — will use fallback box */ };
+  img.src = tavrLogoUrl;
+}());
 
 // ── Page geometry (A4 mm) ─────────────────────────────────────────────────────
+const PAGE_W = 210;
 const PAGE_H = 297;
 const MX     = 20;   // left/right margin
-const MT     = 22;   // top margin (first page content start)
-const MB     = 20;   // bottom margin
+const MT     = 22;   // top margin for pages 2+ (after header)
+const MB     = 16;   // bottom guard — keeps content above the 12mm footer
 const CW     = 170;  // content width (210 - 2*MX)
 
 // ── Font sizes (pt) ───────────────────────────────────────────────────────────
@@ -400,26 +416,67 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
 
   const doc   = new jsPDF({ unit: 'mm', format: 'a4' });
   const nodes = parseMarkdown(markdown);
-  let   y     = MT;
 
-  // ── Document header ────────────────────────────────────────────────────────
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.setTextColor(20, 50, 130);
-  for (const tl of doc.splitTextToSize(sanitize(title), CW)) {
-    doc.text(tl, MX, y); y += 8;
+  // ── Header banner (matches AI Risk Assessment report visual style) ─────────
+  // Dark navy background
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, PAGE_W, 44, 'F');
+  // Blue accent stripe at very top
+  doc.setFillColor(59, 130, 246);
+  doc.rect(0, 0, PAGE_W, 3, 'F');
+  // Darker strip at bottom of header
+  doc.setFillColor(30, 41, 59);
+  doc.rect(0, 41, PAGE_W, 3, 'F');
+
+  // Logo or fallback "AI" box
+  const LOGO_H = 11;
+  const LOGO_Y = (44 - LOGO_H) / 2;   // vertically centred in 44mm header
+  let titleX   = MX;
+
+  if (_logoImg) {
+    const ratio = _logoImg.naturalWidth / _logoImg.naturalHeight;
+    const logoW = Math.min(LOGO_H * ratio, 38);
+    try {
+      doc.addImage(_logoImg, 'PNG', MX, LOGO_Y, logoW, LOGO_H);
+      titleX = MX + logoW + 5;
+    } catch {
+      titleX = MX;
+    }
   }
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(130, 130, 130);
-  doc.text(`Generated: ${new Date().toLocaleString()}`, MX, y);
-  y += 3;
+  if (!_logoImg || titleX === MX) {
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(MX, LOGO_Y + 0.5, 10, 10, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(5.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('AI', MX + 5, LOGO_Y + 7, { align: 'center' });
+    titleX = MX + 14;
+  }
 
-  doc.setLineWidth(0.6);
-  doc.setDrawColor(40, 90, 200);
-  doc.line(MX, y, MX + CW, y);
-  y += 7;
+  // Document title (white, bold) — truncated to one line
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  const titleLines = doc.splitTextToSize(sanitize(title), PAGE_W - titleX - MX) as string[];
+  doc.text(titleLines[0] ?? '', titleX, 19);
+
+  // Subtitle: platform name
+  doc.setTextColor(148, 163, 184);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Tavro AI Governance Platform', titleX, 27);
+
+  // Date — right-aligned
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+  doc.setTextColor(100, 116, 139);
+  doc.setFontSize(7);
+  doc.text(dateStr, PAGE_W - MX, 27, { align: 'right' });
+
+  // Content starts below the header
+  let y = 50;
 
   // Reset colours for body content
   doc.setTextColor(0, 0, 0);
@@ -564,6 +621,22 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
         y += node.mm;
         break;
     }
+  }
+
+  // ── Footer — every page (matches AI Risk Assessment report) ──────────────
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, PAGE_H - 12, PAGE_W, 12, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(0, PAGE_H - 12, PAGE_W, PAGE_H - 12);
+    doc.setTextColor(148, 163, 184);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Tavro AI Governance Platform  ·  Confidential', MX, PAGE_H - 5.5);
+    doc.text(`Page ${p} of ${totalPages}`, PAGE_W - MX, PAGE_H - 5.5, { align: 'right' });
   }
 
   doc.save(filename);
