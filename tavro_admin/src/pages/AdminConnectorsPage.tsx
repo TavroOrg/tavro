@@ -298,7 +298,7 @@ const AdminConnectorsPage: React.FC = () => {
     // Render
     // ---------------------------------------------------------------------------
     return (
-        <div className="flex gap-6 h-full animate-fade-in">
+        <div className="flex gap-6 h-full animate-fade-in p-6 overflow-hidden">
 
             {/* ── LEFT: connector list ─────────────────────────────────────── */}
             <div className="w-72 shrink-0 space-y-2">
