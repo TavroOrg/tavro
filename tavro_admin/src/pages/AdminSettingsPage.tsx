@@ -170,7 +170,7 @@ const ChatAiSection: React.FC = () => {
 const AdminSettingsPage: React.FC = () => {
     const { theme, setTheme } = useTheme();
     return (
-        <div className="space-y-6 animate-fade-in max-w-2xl mx-auto">
+        <div className="overflow-auto flex-1 p-6"><div className="space-y-6 animate-fade-in max-w-2xl mx-auto">
             <div>
                 <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Settings</h1>
                 <p className="text-slate-500 dark:text-slate-500 text-sm mt-1">Platform configuration and preferences</p>
@@ -198,7 +198,7 @@ const AdminSettingsPage: React.FC = () => {
                     </div>
                 </div>
             </div>
-        </div>
+        </div></div>
     );
 };
 
