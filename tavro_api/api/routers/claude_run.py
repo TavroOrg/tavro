@@ -152,7 +152,7 @@ def _build_generation_prompt(card: dict, agent_id: str) -> tuple[str, str]:
 
 Agent: {name}
 Tavro ID: {agent_id}
-File: generated_agents/{filename}
+File: {filename}
 
 ## Context
 Role: {role}
@@ -266,9 +266,10 @@ async def _stream_anthropic(system: str, user: str) -> AsyncGenerator[str, None]
     client = anthropic.AsyncAnthropic(api_key=api_key)
     async with client.messages.stream(
         model="claude-sonnet-4-6",
-        max_tokens=8096,
+        max_tokens=16000,
         system=system,
         messages=[{"role": "user", "content": user}],
+        extra_headers={"anthropic-beta": "output-128k-2025-02-19"},
     ) as stream:
         async for text in stream.text_stream:
             yield text
@@ -311,7 +312,6 @@ async def _handle_update(filename: str, instruction: str, current_code: str) -> 
         return
 
     yield _out(f"Applying instruction: {instruction}")
-    yield _out("Calling Anthropic API...")
 
     system = (
         "You are a senior Python engineer. Apply the requested change precisely and return "
@@ -350,7 +350,6 @@ async def _handle_generate(agent_id: str) -> AsyncGenerator[str, None]:
     yield _out(f"Agent: {name}")
     yield _out("Loaded agent card.")
     yield _out("Building generation prompt...")
-    yield _out("Calling Anthropic API...")
     system, user = _build_generation_prompt(card, agent_id)
 
     slugify  = lambda s: re.sub(r'[^a-z0-9]+', '_', s.lower()).strip('_') or 'agent'
@@ -386,7 +385,7 @@ async def _handle_python_run(filepath: str) -> AsyncGenerator[str, None]:
         yield _done()
         return
 
-    yield _sys(f"Running: python generated_agents/{requested.name}")
+    yield _sys(f"Running: python {requested.name}")
 
     if not requested.exists():
         yield _err("File not found. Generate or save the file first.")
