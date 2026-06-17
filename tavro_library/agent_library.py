@@ -844,6 +844,15 @@ class AgentMetadataExporter:
         for entry in data_sources or []:
             if not isinstance(entry, dict):
                 continue
+
+            # Simple format: {"table_name": str, "columns": [...]}
+            simple_table_name = cls._clean_text(entry.get("table_name") or entry.get("name"))
+            if simple_table_name and not entry.get("source_object_type") and not entry.get("target_object_type"):
+                key = f"name:{simple_table_name.lower()}"
+                table_map.setdefault(key, {"table_id": None, "name": simple_table_name, "tool_name": None, "tool_id": None})
+                continue
+
+            # Relationship format: {"source_object_type": ..., "target_object_type": ...}
             src_type = str(entry.get("source_object_type") or "").lower()
             tgt_type = str(entry.get("target_object_type") or "").lower()
             if src_type == "table" and tgt_type == "column":
@@ -882,6 +891,22 @@ class AgentMetadataExporter:
         for entry in data_sources or []:
             if not isinstance(entry, dict):
                 continue
+
+            # Simple format: {"table_name": str, "columns": [{"column_name": str}, ...]}
+            simple_table_name = cls._clean_text(entry.get("table_name") or entry.get("name"))
+            if simple_table_name and not entry.get("source_object_type") and not entry.get("target_object_type"):
+                for col in entry.get("columns") or []:
+                    if isinstance(col, str):
+                        col_name = cls._clean_text(col)
+                    elif isinstance(col, dict):
+                        col_name = cls._clean_text(col.get("column_name") or col.get("name"))
+                    else:
+                        continue
+                    if col_name:
+                        columns.append({"name": col_name, "table_id": None, "table_name": simple_table_name})
+                continue
+
+            # Relationship format
             src_type = str(entry.get("source_object_type") or "").lower()
             tgt_type = str(entry.get("target_object_type") or "").lower()
             if src_type != "table" or tgt_type != "column":
@@ -1446,6 +1471,7 @@ class AgentMetadataExporter:
                 (
                     {tenant_id_value}
                     '{tool_id}',
+                    {company_id_value}
                     '{name}',
                     '{desc}',
                     TIMESTAMP '{now}',
@@ -1485,6 +1511,7 @@ class AgentMetadataExporter:
             INSERT INTO {cls.CORE_DB_NAME}.tools (
                 {tenant_id_column}
                 tool_id,
+                company_id,
                 tool_name,
                 tool_description,
                 created_ts,
@@ -1531,6 +1558,7 @@ class AgentMetadataExporter:
             table_values.append(f"""
             (
                 {tenant_id_value}
+                {company_id_value}
                 '{table_id}',
                 '{table_name}',
                 TIMESTAMP '{now}',
@@ -1607,6 +1635,7 @@ class AgentMetadataExporter:
                 (
                     '{column_id}',
                     {tenant_id_value}
+                    {company_id_value}
                     '{clean_column}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1661,7 +1690,7 @@ class AgentMetadataExporter:
                 i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
                 i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
                 issue_rows_i.append(
-                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"({tenant_id_value}{company_id_value}'{identifier}', '{i_title}', "
                     f"{i_description}, {i_issue_type}, {i_severity}, "
                     f"{i_source}, {i_detected_at}, {i_resolved_at}, "
                     f"{i_status}, {i_resolution_notes}, "
@@ -1691,7 +1720,7 @@ class AgentMetadataExporter:
             if issue_rows_i:
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.issues (
-                    {tenant_id_column}issue_id, title,
+                    {tenant_id_column}company_id, issue_id, title,
                     description, issue_type, severity,
                     source, detected_at, resolved_at,
                     status, resolution_notes,
@@ -1716,6 +1745,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.tables (
                 {tenant_id_column}
+                company_id,
                 table_id,
                 name,
                 created_ts,
@@ -1730,6 +1760,7 @@ class AgentMetadataExporter:
             INSERT INTO {cls.CORE_DB_NAME}.columns (
                 column_id,
                 {tenant_id_column}
+                company_id,
                 name,
                 created_ts,
                 updated_ts
@@ -1823,6 +1854,7 @@ class AgentMetadataExporter:
                 return f"ARRAY[{', '.join(escaped)}]" if escaped else "ARRAY[]::TEXT[]"
 
             tenant_id_lit = f"'{tenant_id}'" if tenant_id else "NULL"
+            company_id_lit = f"'{company_id}'" if company_id else "NULL"
             seen_skill_ids: set = set()
             for skill in skills:
                 if isinstance(skill, str):
@@ -1864,12 +1896,12 @@ class AgentMetadataExporter:
 
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.skills (
-                    tenant_id, skill_id, name, description,
+                    tenant_id, company_id, skill_id, name, description,
                     tags, input_modes, output_modes,
                     created_ts, updated_ts
                 )
                 VALUES (
-                    {tenant_id_lit}, '{sid}', '{sname}', '{sdesc}',
+                    {tenant_id_lit}, {company_id_lit}, '{sid}', '{sname}', '{sdesc}',
                     {_pg_array(tags)}, {_pg_array(input_modes)}, {_pg_array(output_modes)},
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
                 )

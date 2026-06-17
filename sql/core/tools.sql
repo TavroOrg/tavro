@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS core.tools (
 	tenant_id TEXT,
 	tool_id TEXT,
+	company_id TEXT,
 	tool_name TEXT,
 	tool_description TEXT,
 	delegation_possible boolean,
