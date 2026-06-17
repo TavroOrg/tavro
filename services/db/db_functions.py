@@ -1075,6 +1075,171 @@ def get_assessment_name(risk_assessment_id: str) -> str:
 # Core risk assessment  (core.agent_risk_assessments  – SCD-2 table)
 # ---------------------------------------------------------------------------
 
+def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant_id: str) -> None:
+    """Recalculate ARE/ART/blended_risk_score for every application and process linked to this agent."""
+
+    def _art_from_are(are: float) -> str:
+        if are >= 9.0:
+            return "Critical"
+        if are >= 7.0:
+            return "High"
+        if are >= 3.0:
+            return "Medium"
+        return "Low"
+
+    # ── Applications ──────────────────────────────────────────────────────────
+    cursor.execute(
+        sql.SQL("""
+            SELECT DISTINCT ba.business_application_id,
+                   ba.business_criticality,
+                   ba.emergency_tier
+            FROM {link} lnk
+            JOIN {ba} ba USING (business_application_id)
+            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+        """).format(
+            link=sql.Identifier(CORE_SCHEMA, "agent_business_applications"),
+            ba=sql.Identifier(CORE_SCHEMA, "business_applications"),
+        ),
+        (agent_id, agent_internal_id),
+    )
+    for row in cursor.fetchall():
+        app_id, bc_raw, et_raw = row
+
+        bc = (bc_raw or "").strip().lower()
+        bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+        et = (et_raw or "").strip().lower()
+        et_score = {"mission critical": 1.0, "business critical": 0.4,
+                    "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0)
+                FROM {link} lnk
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM {ara} ara
+                    WHERE ara.agent_id = lnk.agent_id
+                      AND ara.blended_risk_score IS NOT NULL
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE lnk.business_application_id = %s
+            """).format(
+                link=sql.Identifier(CORE_SCHEMA, "agent_business_applications"),
+                ara=sql.Identifier(CORE_SCHEMA, "agent_risk_assessments"),
+            ),
+            (app_id,),
+        )
+        max_brs = float((cursor.fetchone() or [0.0])[0] or 0.0)
+        are = round(max_brs * (bc_score + et_score) / 2.0, 2)
+        art = _art_from_are(are)
+
+        cursor.execute(
+            sql.SQL("""
+                UPDATE {ba}
+                SET blended_risk_score = %s,
+                    agent_risk_exposure = %s,
+                    agent_risk_tier     = %s,
+                    updated_ts          = NOW()
+                WHERE business_application_id = %s
+            """).format(ba=sql.Identifier(CORE_SCHEMA, "business_applications")),
+            (max_brs, are, art, app_id),
+        )
+
+    # ── Processes ─────────────────────────────────────────────────────────────
+    cursor.execute(
+        sql.SQL("""
+            SELECT DISTINCT bp.business_process_id,
+                   bp.business_criticality,
+                   bp.financial_impact,
+                   bp.reputational_impact,
+                   bp.regulatory_impact
+            FROM {link} lnk
+            JOIN {bp} bp USING (business_process_id)
+            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+        """).format(
+            link=sql.Identifier(CORE_SCHEMA, "agent_business_processes"),
+            bp=sql.Identifier(CORE_SCHEMA, "business_processes"),
+        ),
+        (agent_id, agent_internal_id),
+    )
+    for row in cursor.fetchall():
+        proc_id, bc_raw, fi_raw, ri_raw, rgi_raw = row
+
+        bc = (bc_raw or "").strip().lower()
+        bc_score = {
+            "tier 1 (systemic)": 1.0, "tier 2 (core)": 0.7,
+            "tier 3 (operational)": 0.4, "tier 4 (experimental)": 0.1,
+            "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+        }.get(bc, 0.0)
+
+        fi = (fi_raw or "").strip().lower()
+        fi_score = {
+            "systemic": 1.0, "1": 1.0,
+            "material": 0.7, "0.7": 0.7,
+            "absorbable": 0.4, "0.4": 0.4,
+            "immaterial": 0.1, "0.1": 0.1,
+        }.get(fi, 0.0)
+
+        ri = (ri_raw or "").strip().lower()
+        ri_score = {
+            "toxic": 1.0, "1": 1.0,
+            "adverse": 0.7, "0.7": 0.7,
+            "private": 0.4, "0.4": 0.4,
+            "contained": 0.1, "0.1": 0.1,
+        }.get(ri, 0.0)
+
+        rgi = (rgi_raw or "").strip().lower()
+        rgi_score = {
+            "restricted": 1.0, "1": 1.0,
+            "statutory": 0.7, "0.7": 0.7,
+            "governed": 0.4, "0.4": 0.4,
+            "unregulated": 0.1, "0.1": 0.1,
+        }.get(rgi, 0.0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0)
+                FROM {link} lnk
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM {ara} ara
+                    WHERE ara.agent_id = lnk.agent_id
+                      AND ara.blended_risk_score IS NOT NULL
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE lnk.business_process_id = %s
+            """).format(
+                link=sql.Identifier(CORE_SCHEMA, "agent_business_processes"),
+                ara=sql.Identifier(CORE_SCHEMA, "agent_risk_assessments"),
+            ),
+            (proc_id,),
+        )
+        max_brs = float((cursor.fetchone() or [0.0])[0] or 0.0)
+        are = round(max_brs * (bc_score + fi_score + ri_score + rgi_score) / 4.0, 2)
+        art = _art_from_are(are)
+
+        cursor.execute(
+            sql.SQL("""
+                UPDATE {bp}
+                SET blended_risk_score = %s,
+                    agent_risk_exposure = %s,
+                    agent_risk_tier     = %s,
+                    updated_ts          = NOW()
+                WHERE business_process_id = %s
+            """).format(bp=sql.Identifier(CORE_SCHEMA, "business_processes")),
+            (max_brs, are, art, proc_id),
+        )
+
+
 def insert_core_risk_assessment(
     agent_internal_id: str,
     agent_id:          str,
@@ -1182,37 +1347,43 @@ def insert_core_risk_assessment(
             )
             print(cursor.mogrify(update_query, update_values).decode())
             cursor.execute(update_query, update_values)
-            if cursor.rowcount:
+            updated = bool(cursor.rowcount)
+            if updated:
                 print(f"[{CORE_SCHEMA}] Updated existing risk_assessment_id={risk_assessment_id}")
-                return
 
-            query = sql.SQL(
-                """
-                INSERT INTO {core_table} (
-                    risk_assessment_id,
-                    agent_internal_id,
-                    agent_id,
-                    tenant_id,
-                    assessment_name,
-                    assessor_name,
-                    assessment_ts,
-                    blended_risk_score,
-                    blended_risk_class,
-                    aivss_score,
-                    aivss_class,
-                    regulatory_risk_score,
-                    regulatory_risk_class,
-                    state_name,
-                    is_current,
-                    created_ts,
-                    updated_ts
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-            ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
+            if not updated:
+                query = sql.SQL(
+                    """
+                    INSERT INTO {core_table} (
+                        risk_assessment_id,
+                        agent_internal_id,
+                        agent_id,
+                        tenant_id,
+                        assessment_name,
+                        assessor_name,
+                        assessment_ts,
+                        blended_risk_score,
+                        blended_risk_class,
+                        aivss_score,
+                        aivss_class,
+                        regulatory_risk_score,
+                        regulatory_risk_class,
+                        state_name,
+                        is_current,
+                        created_ts,
+                        updated_ts
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
 
-            print(cursor.mogrify(query, values).decode())
-            cursor.execute(query, values)
+                print(cursor.mogrify(query, values).decode())
+                cursor.execute(query, values)
+
+            try:
+                _refresh_are_for_agent(cursor, agent_id, agent_internal_id, tenant_id)
+            except Exception as exc:
+                print(f"[{CORE_SCHEMA}] WARNING: ARE rollup failed for agent {agent_id}: {exc}")
 
 
 # ---------------------------------------------------------------------------

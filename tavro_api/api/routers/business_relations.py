@@ -1098,6 +1098,93 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
         {"business_application_id": business_application_id},
     )
 
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    app_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, emergency_tier
+            FROM core.business_applications
+            WHERE business_application_id = :business_application_id
+            LIMIT 1
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )
+    app = app_row.mappings().first()
+    if not app:
+        return
+
+    bc = (app.get("business_criticality") or "").strip().lower()
+    bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+    et = (app.get("emergency_tier") or "").strip().lower()
+    et_score = {"mission critical": 1.0, "business critical": 0.4, "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+    max_brs_row = await db.execute(
+        text(
+            """
+            SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+            FROM core.agent_business_applications aba
+            JOIN LATERAL (
+                SELECT blended_risk_score
+                FROM core.agent_risk_assessments ara
+                WHERE ara.agent_id = aba.agent_id
+                  AND ara.blended_risk_score IS NOT NULL
+                ORDER BY
+                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                    ara.assessment_ts DESC NULLS LAST,
+                    ara.updated_ts DESC NULLS LAST
+                LIMIT 1
+            ) brs ON TRUE
+            WHERE aba.business_application_id = :business_application_id
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )
+    max_brs_result = max_brs_row.mappings().first()
+    max_brs = float(max_brs_result.get("max_blended_risk_score") or 0.0)
+
+    criticality_avg = (bc_score + et_score) / 2.0
+    are = round(max_brs * criticality_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    app_cols = await _table_columns(db, "core", "business_applications")
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"business_application_id": business_application_id}
+
+    if "blended_risk_score" in app_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in app_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in app_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_applications
+                SET {', '.join(set_parts)}
+                WHERE business_application_id = :business_application_id
+                """
+            ),
+            update_params,
+        )
+
 
 async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) -> None:
     await db.execute(
@@ -1118,6 +1205,120 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         ),
         {"business_process_id": business_process_id},
     )
+
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    proc_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, financial_impact, reputational_impact, regulatory_impact
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    proc = proc_row.mappings().first()
+    if not proc:
+        return
+
+    bc = (proc.get("business_criticality") or "").strip().lower()
+    bc_score = {
+        "tier 1 (systemic)": 1.0,
+        "tier 2 (core)": 0.7,
+        "tier 3 (operational)": 0.4,
+        "tier 4 (experimental)": 0.1,
+        "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+    }.get(bc, 0.0)
+
+    fi = (proc.get("financial_impact") or "").strip().lower()
+    fi_score = {
+        "systemic": 1.0, "1": 1.0,
+        "material": 0.7, "0.7": 0.7,
+        "absorbable": 0.4, "0.4": 0.4,
+        "immaterial": 0.1, "0.1": 0.1,
+    }.get(fi, 0.0)
+
+    ri = (proc.get("reputational_impact") or "").strip().lower()
+    ri_score = {
+        "toxic": 1.0, "1": 1.0,
+        "adverse": 0.7, "0.7": 0.7,
+        "private": 0.4, "0.4": 0.4,
+        "contained": 0.1, "0.1": 0.1,
+    }.get(ri, 0.0)
+
+    rgi = (proc.get("regulatory_impact") or "").strip().lower()
+    rgi_score = {
+        "restricted": 1.0, "1": 1.0,
+        "statutory": 0.7, "0.7": 0.7,
+        "governed": 0.4, "0.4": 0.4,
+        "unregulated": 0.1, "0.1": 0.1,
+    }.get(rgi, 0.0)
+
+    max_brs_row = await db.execute(
+        text(
+            """
+            SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+            FROM core.agent_business_processes abp
+            JOIN LATERAL (
+                SELECT blended_risk_score
+                FROM core.agent_risk_assessments ara
+                WHERE ara.agent_id = abp.agent_id
+                  AND ara.blended_risk_score IS NOT NULL
+                ORDER BY
+                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                    ara.assessment_ts DESC NULLS LAST,
+                    ara.updated_ts DESC NULLS LAST
+                LIMIT 1
+            ) brs ON TRUE
+            WHERE abp.business_process_id = :business_process_id
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    max_brs_result = max_brs_row.mappings().first()
+    max_brs = float(max_brs_result.get("max_blended_risk_score") or 0.0)
+
+    impact_avg = (bc_score + fi_score + ri_score + rgi_score) / 4.0
+    are = round(max_brs * impact_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    proc_cols = await _table_columns(db, "core", "business_processes")
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"business_process_id": business_process_id}
+
+    if "blended_risk_score" in proc_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in proc_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in proc_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_processes
+                SET {', '.join(set_parts)}
+                WHERE business_process_id = :business_process_id
+                """
+            ),
+            update_params,
+        )
 
 
 async def _fetch_integrations(
@@ -2261,6 +2462,10 @@ async def update_application(
         updates,
     )
     await db.commit()
+    are_trigger_fields = {"business_criticality", "emergency_tier"}
+    if are_trigger_fields & set(updates.keys()):
+        await _refresh_application_rollup(db, application_id)
+        await db.commit()
     rows = await _fetch_applications(db, application_id=application_id)
     return rows[0]
 
@@ -2517,6 +2722,10 @@ async def update_process(
         updates,
     )
     await db.commit()
+    are_trigger_fields = {"business_criticality", "financial_impact", "reputational_impact", "regulatory_impact"}
+    if are_trigger_fields & set(updates.keys()):
+        await _refresh_process_rollup(db, process_id)
+        await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
     return rows[0]
 
