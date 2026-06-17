@@ -5,7 +5,7 @@ import json
 from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,13 @@ _AGENT_ATTACHMENTS_READY = False
 _APPLICATION_ATTACHMENTS_READY = False
 _PROCESS_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
+_APPLICATIONS_READY = False
+_PROCESSES_READY = False
+
+
+def _tenant(request: Request) -> Optional[str]:
+    val = request.headers.get("x-tenant-id", "")
+    return val.strip() or None
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -633,7 +640,11 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
             """
         )
     )
+    await db.execute(text(
+        "ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS tenant_id TEXT"
+    ))
     await db.commit()
+    _TABLE_COLUMNS_CACHE.pop(("core", "business_integrations"), None)
     _INTEGRATIONS_READY = True
 
 
@@ -1871,6 +1882,7 @@ async def get_integration(
 
 @router.post("/integrations", status_code=201, tags=["Integrations"], summary="Create Integration")
 async def create_integration(
+    request: Request,
     body: IntegrationCreate = Body(default_factory=IntegrationCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs integration to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -1888,6 +1900,9 @@ async def create_integration(
 
     canonical = body.model_dump(exclude_unset=True)
     insert_values: dict[str, Any] = {"integration_id": integration_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in int_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,
@@ -2159,6 +2174,7 @@ async def suggest_application_description(body: SuggestApplicationDescriptionReq
 
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
 async def create_application(
+    request: Request,
     body: ApplicationCreate = Body(default_factory=ApplicationCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs application to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -2175,6 +2191,9 @@ async def create_application(
         )
 
     insert_values: dict[str, Any] = {"business_application_id": app_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in app_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,
@@ -2388,6 +2407,7 @@ async def suggest_process_description(body: SuggestProcessDescriptionRequest):
 
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
 async def create_process(
+    request: Request,
     body: ProcessCreate = Body(default_factory=ProcessCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs process to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -2417,6 +2437,9 @@ async def create_process(
         canonical["parent_process_id"] = parent_process_id
 
     insert_values: dict[str, Any] = {"business_process_id": process_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in process_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,

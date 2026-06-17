@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 CURRENT_YEAR = datetime.datetime.now().year
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -23,6 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db, AsyncSessionLocal
 
 router = APIRouter()
+
+
+def _tenant(request: Request) -> str | None:
+    val = request.headers.get("x-tenant-id", "")
+    return val.strip() or None
+
 
 ANTHROPIC_API_URL       = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL         = "claude-sonnet-4-6"
@@ -1083,23 +1089,24 @@ async def _collect_candidates(db: AsyncSession, company_id: str, dim_filter: lis
     return unique[:count]
 
 
-async def _upsert_ideas(company_id: str, ideas: list[SparkIdea]) -> None:
+async def _upsert_ideas(company_id: str, ideas: list[SparkIdea], tenant_id: str | None = None) -> None:
     """Persist ideas in an isolated session so read-query failures can't poison the write."""
     async with AsyncSessionLocal() as db:
         try:
             for idea in ideas:
                 await db.execute(text("""
                     INSERT INTO core.spark_ideas (
-                        idea_id, company_id, title, description, rationale,
+                        idea_id, company_id, tenant_id, title, description, rationale,
                         signal_type, signal_label, target_dimensions,
                         target_nodes, complexity, estimated_impact, similar_agents, updated_at
                     ) VALUES (
-                        :idea_id, :company_id, :title, :description, :rationale,
+                        :idea_id, :company_id, :tenant_id, :title, :description, :rationale,
                         :signal_type, :signal_label, :target_dimensions,
                         CAST(:target_nodes AS jsonb), :complexity, :estimated_impact, CAST(:similar_agents AS jsonb), NOW()
                     )
                     ON CONFLICT (idea_id) DO UPDATE SET
                         company_id        = EXCLUDED.company_id,
+                        tenant_id         = EXCLUDED.tenant_id,
                         title             = EXCLUDED.title,
                         description       = EXCLUDED.description,
                         rationale         = EXCLUDED.rationale,
@@ -1114,6 +1121,7 @@ async def _upsert_ideas(company_id: str, ideas: list[SparkIdea]) -> None:
                 """), {
                     "idea_id":           idea.idea_id,
                     "company_id":        company_id,
+                    "tenant_id":         tenant_id,
                     "title":             idea.title,
                     "description":       idea.description,
                     "rationale":         idea.rationale,
@@ -1245,6 +1253,7 @@ async def reset_spark_ideas(
 
 @router.post("/generate", response_model=list[SparkIdea])
 async def generate_spark_ideas(
+    request: Request,
     company_id: str = Query(..., description="Company UUID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area (e.g. 'Quality management')"),
@@ -1255,6 +1264,7 @@ async def generate_spark_ideas(
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Generate fresh ideas from company context, persist to DB, return them."""
+    tenant_id = _tenant(request)
     dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
     direction_clean = direction.strip() if direction and direction.strip() else None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -1296,12 +1306,13 @@ async def generate_spark_ideas(
             )
             await clear_db.commit()
 
-    await _upsert_ideas(company_id, ideas)
+    await _upsert_ideas(company_id, ideas, tenant_id)
     return ideas
 
 
 @router.post("/generate/stream")
 async def generate_spark_ideas_stream(
+    request: Request,
     company_id: str = Query(..., description="Company UUID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area"),
@@ -1317,6 +1328,7 @@ async def generate_spark_ideas_stream(
     as each object is parsed from the Anthropic token stream.
     Always ends with a 'done' event (or 'error' on failure).
     """
+    tenant_id = _tenant(request)
     dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
     direction_clean = direction.strip() if direction and direction.strip() else None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -1457,7 +1469,7 @@ async def generate_spark_ideas_stream(
                             {"company_id": company_id},
                         )
                         await clear_db.commit()
-                await _upsert_ideas(company_id, collected)
+                await _upsert_ideas(company_id, collected, tenant_id)
 
             yield "event: done\ndata: {}\n\n"
 
