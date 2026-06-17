@@ -1,5 +1,6 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -148,7 +149,11 @@ class AgentApiService {
     async getAgentCatalog(startRecord = 1, recordRange = '1-50', companyId?: string): Promise<AgentCatalogResponse> {
         const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
         if (companyId) params.set('company_id', companyId);
-        return req(`/agents/?${params}`);
+        appLogger.req('GET /api/v1/agents/', { startRecord, recordRange, companyId });
+        const t0 = Date.now();
+        const result = await req<AgentCatalogResponse>(`/agents/?${params}`);
+        appLogger.res('GET /api/v1/agents/', { totalRecords: result.total_records, count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
     async countAgents(companyId?: string): Promise<number> {
@@ -159,7 +164,11 @@ class AgentApiService {
     }
 
     async getAgentCard(agentId: string): Promise<any> {
-        return req(`/agents/${encodeURIComponent(agentId)}`);
+        appLogger.req(`GET /api/v1/agents/${agentId}`);
+        const t0 = Date.now();
+        const result = await req<any>(`/agents/${encodeURIComponent(agentId)}`);
+        appLogger.res(`GET /api/v1/agents/${agentId}`, { name: result?.name }, Date.now() - t0);
+        return result;
     }
 
     async createAgent(payload: AgentCreatePayload, companyId?: string, companyName?: string): Promise<{ agent_id: string; agent_name: string; message: string }> {
