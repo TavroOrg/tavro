@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -86,9 +86,9 @@ function LockedNavItem({
                 {label}
             </span>
             {isOpen && (
-                <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                    {badge}
-                </span>
+                showTooltip
+                    ? <Lock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />
+                    : <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{badge}</span>
             )}
             {tooltipPos && createPortal(
                 <div
