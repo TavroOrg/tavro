@@ -660,20 +660,30 @@ class AgentMetadataExporter:
         if tenant_mode == "TENANT":
             where_clause = f"""
             WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
+                a360.tenant_id = '{tenant_id}'
+                OR a360.tenant_id IS NULL
+                OR a360.tenant_id = ''
+                OR a360.tenant_id = 'None'
             )
             """
         query = f"""
             SELECT *
             FROM (
                 SELECT 
-                    *,
+                    a360.*,
+                    ag.source_system,
                     ROW_NUMBER() OVER () AS rn,
                     COUNT(*) OVER () AS total_records
-                FROM {cls.CURATED_DB_NAME}.agent_360
+                FROM {cls.CURATED_DB_NAME}.agent_360 a360
+                LEFT JOIN {cls.CORE_DB_NAME}.agents ag
+                    ON ag.agent_internal_id = a360.agent_internal_id
+                    AND ag.agent_id = a360.agent_id
+                    AND COALESCE(ag.is_current, TRUE) = TRUE
+                    AND (
+                        ag.tenant_id = a360.tenant_id
+                        OR ag.tenant_id IS NULL
+                        OR a360.tenant_id IS NULL
+                    )
                 {where_clause}
             ) AS catalog_page
             WHERE rn BETWEEN {start} AND {end}
@@ -688,6 +698,10 @@ class AgentMetadataExporter:
                 total_records = int(row_dict["total_records"])
             row_dict.pop("rn", None)
             row_dict.pop("total_records", None)
+            provider_name = str(row_dict.get("source_system") or "").strip() or "Tavro Internal"
+
+            row_dict["source_system"] = provider_name
+            row_dict["provider"] = {"organization": provider_name, "url": ""}
             rows.append(row_dict)
 
         return {
@@ -1095,6 +1109,7 @@ class AgentMetadataExporter:
         agent_name: str,
         description: str,
         instruction: str,
+        provider: str = "MCP Server",
         tools: Optional[List[Dict[str, Any]]] = None,
         knowledge_source: Optional[Dict[str, str]] = None,
         tool_ids: Optional[List[str]] = None,
@@ -1215,7 +1230,7 @@ class AgentMetadataExporter:
                 "instruction_sets": [],
                 "skills": skill_entries,
                 "issues": issues or [],
-                "provider": {"organization": None, "url": ""},
+                "provider": {"organization": provider, "url": ""},
                 "url": "",
                 "documentation_url": None,
                 "icon_url": None,
@@ -1345,6 +1360,7 @@ class AgentMetadataExporter:
         agent_id = str(uuid.uuid4())
         agent_internal_id = str(uuid.uuid4())
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        provider = "MCP Server"
 
         queries = []
         data_source_values = []
@@ -1370,6 +1386,7 @@ class AgentMetadataExporter:
             agent_id,
             agent_name,
             agent_description,
+            source_system,
             company_id,
             company_name,
             created_ts,
@@ -1382,6 +1399,7 @@ class AgentMetadataExporter:
             '{agent_id}',
             '{agent_name}',
             '{description}',
+            '{provider}',
             {company_id_value}
             {company_name_value}
             TIMESTAMP '{now}',
@@ -1881,6 +1899,7 @@ class AgentMetadataExporter:
             agent_name=raw_agent_name,
             description=raw_description,
             instruction=raw_instruction,
+            provider=provider,
             tools=tools,
             knowledge_source=knowledge_source,
             tool_ids=tool_ids_for_card,
@@ -1897,7 +1916,7 @@ class AgentMetadataExporter:
             "agent_description": raw_description,
             "agent_instructions": raw_instruction,
             "agent_role": "",
-            "provider": "MCP Server",
+            "provider": provider,
             "agent_platform": "",
             "tenant_id": tenant_id,
             "attack_vector_av": "N",

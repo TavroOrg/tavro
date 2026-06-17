@@ -191,6 +191,26 @@ class SparkApi {
     portalActivity.record(`Deleted ${ideaIds.length} Spark idea${ideaIds.length === 1 ? '' : 's'}`, 'amber');
   }
 
+  /** Persist a user's reaction and updated popularity score for an idea. */
+  async updateIdeaReaction(
+    companyId: string,
+    ideaId: string,
+    reaction: 'like' | 'dislike' | null,
+  ): Promise<{ idea_id: string; user_reaction: 'like' | 'dislike' | null; popularity_score: number }> {
+    const params = new URLSearchParams({ company_id: companyId });
+    appLogger.req('Spark updateIdeaReaction', { companyId, ideaId, reaction });
+    const t0 = Date.now();
+    const result = await req<{ idea_id: string; user_reaction: 'like' | 'dislike' | null; popularity_score: number }>(
+      `/spark/ideas/${encodeURIComponent(ideaId)}/reaction?${params.toString()}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ reaction }),
+      },
+    );
+    appLogger.res('Spark updateIdeaReaction', { ideaId, reaction: result.user_reaction }, Date.now() - t0);
+    return result;
+  }
+
   /** Delete all stored ideas for a company. */
   async resetIdeas(companyId: string): Promise<void> {
     const params = new URLSearchParams({ company_id: companyId });

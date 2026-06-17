@@ -166,6 +166,30 @@ function normalizeRiskAssessment(item: any): any {
     };
 }
 
+function normalizeProvider(item: any): { organization: string; url: string } {
+    const rawProvider = item?.provider;
+    if (rawProvider && typeof rawProvider === 'object') {
+        const organization = String(
+            rawProvider.organization ??
+            item.source_system ??
+            item.provider_name ??
+            'Tavro Internal'
+        ).trim() || 'Tavro Internal';
+        const url = String(rawProvider.url ?? '').trim();
+        return { organization, url };
+    }
+
+    const organization = String(
+        rawProvider ??
+        item?.source_system ??
+        item?.provider_name ??
+        item?.primary_ai_model_provider ??
+        'Tavro Internal'
+    ).trim() || 'Tavro Internal';
+
+    return { organization, url: '' };
+}
+
 function normaliseUseCase(raw: any): any {
     if (!raw) return raw;
     return Object.assign({}, raw, {
@@ -981,6 +1005,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
                 description: item.description || item.agent_description || item.summary || '',
+                provider: normalizeProvider(item),
                 identification: {
                     ...item.identification,
                     agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
