@@ -9,17 +9,41 @@ import { createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = join(__dirname, 'skills');
+const TEMPLATES_DIR = join(__dirname, 'templates');
 
-// Strip YAML frontmatter (--- ... ---) from a SKILL.md file.
+// Strip YAML frontmatter (--- ... ---) from a markdown file.
 function stripSkillFrontmatter(markdown) {
     return markdown.replace(/^---[\s\S]*?---\n*/, '').trim();
 }
 
+// Read all *.md files from a directory, strip frontmatter, and join them.
+// Returns empty string when the directory does not exist or has no .md files.
+function loadTemplatesFromDir(dir) {
+    if (!existsSync(dir)) return '';
+    try {
+        return readdirSync(dir, { withFileTypes: true })
+            .filter(t => t.isFile() && t.name.endsWith('.md'))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(t => {
+                try { return stripSkillFrontmatter(readFileSync(join(dir, t.name), 'utf-8')); }
+                catch { return null; }
+            })
+            .filter(Boolean)
+            .join('\n\n');
+    } catch { return ''; }
+}
+
 // Load and concatenate all SKILL.md files found in immediate subdirectories of SKILLS_DIR.
+// Prepends the root-level PDF document template so every AI session knows the
+// master formatting rules before any skill-specific instructions.
 function loadSkillsContent() {
     try {
         if (!existsSync(SKILLS_DIR)) return null;
-        const parts = readdirSync(SKILLS_DIR, { withFileTypes: true })
+
+        // Master PDF template — applies to all document generation
+        const masterTemplate = loadTemplatesFromDir(TEMPLATES_DIR);
+
+        const skillParts = readdirSync(SKILLS_DIR, { withFileTypes: true })
             .filter(e => e.isDirectory())
             .map(e => {
                 try {
@@ -29,7 +53,13 @@ function loadSkillsContent() {
                 } catch { return null; }
             })
             .filter(Boolean);
-        return parts.length ? parts.join('\n\n') : null;
+
+        if (!skillParts.length && !masterTemplate) return null;
+
+        const parts = [];
+        if (masterTemplate) parts.push(masterTemplate);
+        parts.push(...skillParts);
+        return parts.join('\n\n');
     } catch {
         return null;
     }

@@ -13,6 +13,7 @@ const Login: React.FC = () => {
 
     useEffect(() => {
         const redirectToZitadel = async () => {
+            const isTimeoutRedirect = new URLSearchParams(window.location.search).get('reason') === 'timeout';
             const authConfig = await loadAuthConfig();
             const issuer = authConfig.zitadelIssuer;
             const clientId = authConfig.zitadelClientId;
@@ -30,6 +31,7 @@ const Login: React.FC = () => {
                 'tavro_access_token',
                 'tavro_id_token',
                 'tavro_raw_access_token',
+                'tavro_mcp_access_token',
                 'tavro_mcp_refresh_token',
                 'tavro_pkce_verifier',
                 'tavro_dcr_client_id',
@@ -40,6 +42,7 @@ const Login: React.FC = () => {
                 'tavro_auth_redirect_uri',
                 'tavro_oidc_state',
                 'tavro_tenant_id',
+                'tavro_last_activity_at',
             ];
             staleKeys.forEach((key) => localStorage.removeItem(key));
 
@@ -62,6 +65,9 @@ const Login: React.FC = () => {
             authUrl.searchParams.set('code_challenge', challenge);
             authUrl.searchParams.set('code_challenge_method', 'S256');
             authUrl.searchParams.set('state', state);
+            if (isTimeoutRedirect) {
+                authUrl.searchParams.set('prompt', 'login');
+            }
 
             window.location.href = authUrl.toString();
         };
@@ -80,6 +86,9 @@ const Login: React.FC = () => {
                     <div className="flex flex-col items-center gap-4">
                         <Loader2 size={36} className="animate-spin text-blue-500" />
                         <p className="text-sm font-semibold text-slate-300">Redirecting to ZITADEL...</p>
+                        {new URLSearchParams(window.location.search).get('reason') === 'timeout' && (
+                            <p className="text-xs leading-5 text-slate-500">Your session expired due to inactivity. Please log in again.</p>
+                        )}
                     </div>
                 ) : (
                     <div className="flex flex-col items-center gap-4">

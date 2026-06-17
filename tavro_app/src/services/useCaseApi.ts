@@ -1,5 +1,6 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -102,11 +103,19 @@ class UseCaseApiService {
         if (opts?.startRecord) params.set('start_record', String(opts.startRecord));
         if (opts?.recordRange) params.set('record_range', opts.recordRange);
         if (opts?.companyId) params.set('company_id', opts.companyId);
-        return req(`/use-cases/?${params}`);
+        appLogger.req('GET /api/v1/use-cases/', opts ?? {});
+        const t0 = Date.now();
+        const result = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        appLogger.res('GET /api/v1/use-cases/', { totalRecords: result.total_records, count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
     async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
+        appLogger.req(`GET /api/v1/use-cases/${useCaseId}`);
+        const t0 = Date.now();
+        const result = await req<UseCaseListResponse>(`/use-cases/${encodeURIComponent(useCaseId)}`);
+        appLogger.res(`GET /api/v1/use-cases/${useCaseId}`, { count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
     async createUseCase(payload: UseCaseCreatePayload, companyId?: string, companyName?: string): Promise<{ message: string; use_case_id: string }> {
