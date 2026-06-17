@@ -27,7 +27,8 @@ const AUTH_KEYS = [
     'tavro_last_activity_at',
 ];
 
-export const SESSION_TIMEOUT_MS =  30 * 60 * 1000;
+export const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+export const SESSION_WARNING_MS = 5 * 60 * 1000;
 export const LAST_ACTIVITY_KEY = 'tavro_last_activity_at';
 
 export type SessionExpiredReason = 'expired' | 'inactive';

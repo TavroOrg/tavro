@@ -4,6 +4,7 @@ import { Loader2, X } from 'lucide-react';
 import {
   LAST_ACTIVITY_KEY,
   SESSION_TIMEOUT_MS,
+  SESSION_WARNING_MS,
   clearAuth,
   getLastSessionActivity,
   isAccessTokenExpired,
@@ -110,22 +111,18 @@ const PrivateRoute = ({ children }: { children: JSX.Element }) => {
 function SessionTimeoutHandler() {
   useEffect(() => {
     let timeoutId: number | undefined;
+    let warningId: number | undefined;
     let lastRecordedAt = 0;
 
     const isLoggedIn = () => localStorage.getItem('tavro_auth') === 'true';
 
     const clearExistingTimer = () => {
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-        timeoutId = undefined;
-      }
+      if (timeoutId !== undefined) { window.clearTimeout(timeoutId); timeoutId = undefined; }
+      if (warningId !== undefined) { window.clearTimeout(warningId); warningId = undefined; }
     };
 
     const expireIfInactive = () => {
-      if (!isLoggedIn()) {
-        clearExistingTimer();
-        return;
-      }
+      if (!isLoggedIn()) { clearExistingTimer(); return; }
       if (isSessionInactive()) {
         signalSessionExpired('inactive');
         clearExistingTimer();
@@ -139,7 +136,13 @@ function SessionTimeoutHandler() {
       if (!isLoggedIn()) return;
       const elapsed = Date.now() - getLastSessionActivity();
       const remaining = Math.max(0, SESSION_TIMEOUT_MS - elapsed);
+      const warningIn = Math.max(0, SESSION_TIMEOUT_MS - SESSION_WARNING_MS - elapsed);
       timeoutId = window.setTimeout(expireIfInactive, remaining);
+      warningId = window.setTimeout(() => {
+        if (isLoggedIn() && !isSessionInactive()) {
+          window.dispatchEvent(new CustomEvent('tavro:session_warning'));
+        }
+      }, warningIn);
     };
 
     const recordActivity = () => {
@@ -149,7 +152,6 @@ function SessionTimeoutHandler() {
         clearExistingTimer();
         return;
       }
-
       const now = Date.now();
       if (now - lastRecordedAt < 1000) return;
       lastRecordedAt = now;
@@ -158,38 +160,106 @@ function SessionTimeoutHandler() {
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        expireIfInactive();
-      }
+      if (document.visibilityState === 'visible') expireIfInactive();
     };
 
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === LAST_ACTIVITY_KEY || event.key === 'tavro_auth') {
-        scheduleTimeout();
-      }
+      if (event.key === LAST_ACTIVITY_KEY || event.key === 'tavro_auth') scheduleTimeout();
     };
 
-    if (isLoggedIn() && !localStorage.getItem(LAST_ACTIVITY_KEY)) {
-      recordSessionActivity();
-    }
+    if (isLoggedIn() && !localStorage.getItem(LAST_ACTIVITY_KEY)) recordSessionActivity();
     scheduleTimeout();
 
     const activityEvents = ['keydown', 'mousedown', 'mousemove', 'pointerdown', 'scroll', 'touchstart', 'wheel'] as const;
-    activityEvents.forEach(eventName => window.addEventListener(eventName, recordActivity, { passive: true }));
+    activityEvents.forEach(e => window.addEventListener(e, recordActivity, { passive: true }));
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('storage', handleStorage);
-    window.addEventListener('tavro:session_activity', scheduleTimeout);
+    window.addEventListener('tavro:session_activity', recordActivity);
 
     return () => {
       clearExistingTimer();
-      activityEvents.forEach(eventName => window.removeEventListener(eventName, recordActivity));
+      activityEvents.forEach(e => window.removeEventListener(e, recordActivity));
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('tavro:session_activity', scheduleTimeout);
+      window.removeEventListener('tavro:session_activity', recordActivity);
     };
   }, []);
 
   return null;
+}
+
+function SessionWarningHandler() {
+  const [show, setShow] = useState(false);
+  const [remaining, setRemaining] = useState(SESSION_WARNING_MS);
+
+  useEffect(() => {
+    let countdownId: number | undefined;
+
+    const onWarning = () => {
+      setRemaining(SESSION_WARNING_MS);
+      setShow(true);
+      countdownId = window.setInterval(() => {
+        setRemaining((prev: number) => {
+          if (prev <= 1000) { clearInterval(countdownId); return 0; }
+          return prev - 1000;
+        });
+      }, 1000);
+    };
+
+    const onDismiss = () => {
+      setShow(false);
+      if (countdownId) clearInterval(countdownId);
+    };
+
+    window.addEventListener('tavro:session_warning', onWarning);
+    window.addEventListener('tavro:session_warning_dismiss', onDismiss);
+    window.addEventListener('tavro:session_expired', onDismiss);
+    return () => {
+      window.removeEventListener('tavro:session_warning', onWarning);
+      window.removeEventListener('tavro:session_warning_dismiss', onDismiss);
+      window.removeEventListener('tavro:session_expired', onDismiss);
+      if (countdownId) clearInterval(countdownId);
+    };
+  }, []);
+
+  const extendSession = () => {
+    recordSessionActivity();
+    window.dispatchEvent(new CustomEvent('tavro:session_activity'));
+    setShow(false);
+  };
+
+  const minutes = Math.ceil(remaining / 60000);
+
+  if (!show) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4">
+      <div className="w-full max-w-[420px] border-2 border-amber-500 bg-white p-6 shadow-2xl rounded-lg">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <h2 className="text-lg font-bold text-slate-900">Session Expiring Soon</h2>
+          <button
+            type="button"
+            onClick={extendSession}
+            className="flex h-7 w-7 items-center justify-center border border-slate-300 text-slate-500 hover:bg-slate-50 rounded"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <p className="mb-6 text-sm text-slate-700">
+          Your session will expire in <span className="font-semibold text-amber-600">{minutes} minute{minutes !== 1 ? 's' : ''}</span> due to inactivity.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={extendSession}
+            className="rounded bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            Extend Session
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -335,6 +405,7 @@ function App() {
         <ChatProvider>
           <SessionExpiredHandler />
           <SessionTimeoutHandler />
+          <SessionWarningHandler />
           <div className="App">
             <Routes>
               {/* Public routes */}
