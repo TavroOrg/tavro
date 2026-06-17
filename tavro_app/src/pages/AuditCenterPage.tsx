@@ -5,13 +5,13 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ShieldCheck, RefreshCw, ChevronRight, AlertTriangle, CheckCircle2,
-  Clock, XCircle, Loader2, TrendingUp, BarChart3, FileText, Scale, LayoutGrid, List,
+  Clock, XCircle, Loader2, TrendingUp, BarChart3, LayoutGrid, List,
 } from 'lucide-react';
 import { auditApi } from '../services/auditApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import AuditInitModal from '../components/audit/AuditInitModal';
 import type { AuditRun, AuditFinding, AuditSSEEvent, RiskLevel, AuditStatus } from '../types/audit';
-import { RISK_META, SCOPE_LABELS } from '../types/audit';
+import { RISK_META } from '../types/audit';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ const AuditCenterPage: React.FC = () => {
   const { activeCompany } = useBlueprint();
 
   const [runs,        setRuns]        = useState<AuditRun[]>([]);
-  const [loading,     setLoading]     = useState(true);
+  const [loading,     setLoading]     = useState(false);
   const [modalOpen,   setModalOpen]   = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [viewMode,    setViewMode]    = useState<'grid' | 'list'>('list');

@@ -169,6 +169,8 @@ function App() {
 
                 <Route path="audit" element={<EnterpriseGate><AuditCenterPage /></EnterpriseGate>} />
                 <Route path="audit/:runId" element={<EnterpriseGate><AuditRunDetailPage /></EnterpriseGate>} />
+                <Route path="guardrails" element={<EnterpriseGate><div /></EnterpriseGate>} />
+                <Route path="issues" element={<EnterpriseGate><div /></EnterpriseGate>} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />
                 <Route path="applications/new" element={<BusinessApplicationViewPage />} />
                 <Route path="applications/:id" element={<BusinessApplicationViewPage />} />

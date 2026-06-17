@@ -435,13 +435,26 @@ const Layout: React.FC = () => {
                             {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Govern</p>}
 
                             {/* Guardrails */}
-                            <LockedNavItem
-                                icon={<Shield size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
-                                label="Guardrails"
-                                badge={enterpriseEnabled ? 'Coming soon' : 'Enterprise'}
-                                isOpen={isLeftPanelOpen}
-                                showTooltip={!enterpriseEnabled}
-                            />
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/guardrails')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/guardrails')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Guardrails' : undefined}
+                                >
+                                    <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<Shield size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Guardrails"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
 
                             {/* Compliance */}
                             {enterpriseEnabled ? (
@@ -488,13 +501,26 @@ const Layout: React.FC = () => {
                             )}
 
                             {/* Issues */}
-                            <LockedNavItem
-                                icon={<AlertTriangle size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
-                                label="Issues"
-                                badge={enterpriseEnabled ? 'Coming soon' : 'Enterprise'}
-                                isOpen={isLeftPanelOpen}
-                                showTooltip={!enterpriseEnabled}
-                            />
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/issues')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/issues')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Issues' : undefined}
+                                >
+                                    <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<AlertTriangle size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Issues"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
 
                         </div>
                     </div>{/* end scrollable nav */}

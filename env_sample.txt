@@ -10,6 +10,12 @@ POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
 DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 
+# ── Tavro Enterprise ──────────────────────────────────────────────────────────
+# URL of the enterprise service (TavroOrg/tavro-enterprise repo).
+# When set, Governance routes (Compliance, Audit, Guardrails, Issues) are
+# proxied to the enterprise service. Leave blank to serve 402 stubs instead.
+ENTERPRISE_URL=
+
 # ── AI Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
