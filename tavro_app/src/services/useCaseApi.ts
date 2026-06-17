@@ -126,6 +126,7 @@ class UseCaseApiService {
             body: JSON.stringify(payload),
         });
         portalActivity.record(`Created AI use case: ${payload.title}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -152,6 +153,7 @@ class UseCaseApiService {
             method: 'DELETE',
         });
         portalActivity.record(`Deleted AI use case: ${useCaseId}`, 'amber');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -220,6 +222,7 @@ class UseCaseApiService {
         const result = await reqFormData<{ uploaded_count: number; total_submitted: number; message: string }>(`/use-cases/upload${qs}`, formData);
         const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
         portalActivity.record(`Loaded ${result.uploaded_count} AI use case${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 

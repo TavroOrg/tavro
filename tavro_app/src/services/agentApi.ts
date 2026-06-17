@@ -172,6 +172,7 @@ class AgentApiService {
             body: JSON.stringify(payload),
         });
         portalActivity.record(`Created agent: ${result.agent_name || payload.agent_name}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -201,6 +202,7 @@ class AgentApiService {
             method: 'DELETE',
         });
         portalActivity.record(`Deleted agent: ${agentId}`, 'amber');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -234,6 +236,7 @@ class AgentApiService {
         }>(`/agents/upload${qs}`, formData);
         const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
         portalActivity.record(`Uploaded ${result.uploaded_count} agent${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
