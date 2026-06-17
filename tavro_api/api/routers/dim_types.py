@@ -20,7 +20,6 @@ _SYSTEM_DIM_TYPES = [
     ("Application",   "application",  True,  2),
     ("Integration",   "integration",  True,  2),
     ("Organisation",  "organisation", True,  2),
-    ("Technology",    "technology",   True,  2),
     ("Risk",          "risk",         True,  3),
     ("Finance",       "finance",      True,  2),
     ("Custom",        "custom",       False, 2),
