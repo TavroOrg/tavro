@@ -12,6 +12,24 @@ import { agentApi } from '../services/agentApi';
 
 const PAGE_SIZE = 10;
 
+const getAgentProviderSearchText = (agent: AgentData): string => {
+  const rawProvider = (agent as any).provider;
+
+  if (typeof rawProvider === 'string') return rawProvider;
+
+  return [
+    rawProvider?.organization,
+    rawProvider?.name,
+    rawProvider?.url,
+    (agent as any).source_system,
+    (agent as any).provider_name,
+    (agent as any).primary_ai_model_provider,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+};
+
 const normalizeAgent = (item: any): AgentData => ({
     ...item,
     name: item.name || item.agent_name || 'Unnamed Agent',
@@ -91,13 +109,16 @@ const Dashboard: React.FC = () => {
         return allAgents.slice(start, start + PAGE_SIZE);
     }, [allAgents, page]);
 
+    const query = searchTerm.trim().toLowerCase();
+
     const displayedAgents = isSearching
-        ? allAgents.filter(a =>
-            a.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            a.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            a.identification?.agent_id?.toLowerCase().includes(searchTerm.toLowerCase())
+    ? allAgents.filter((a) =>
+        a.name?.toLowerCase().includes(query) ||
+        a.description?.toLowerCase().includes(query) ||
+        getAgentProviderSearchText(a).includes(query) ||
+        a.identification?.agent_id?.toLowerCase().includes(query)
         )
-        : pagedAgents;
+    : pagedAgents;
 
     return (
         <>
