@@ -55,6 +55,9 @@ AZURE_AI_FOUNDRY_DEPLOYMENT=
 AZURE_AI_FOUNDRY_CLIENT_ID=
 AZURE_AI_FOUNDRY_TENANT_ID=
 AZURE_AI_FOUNDRY_CLIENT_SECRET=
+# Hosted-agent deployments — set to the resource/project that has Hosted Agents enabled.
+# If omitted, AZURE_AI_FOUNDRY_ENDPOINT is used as the fallback.
+AZURE_AI_FOUNDRY_HOSTED_ENDPOINT=
 
 # ── Agent Playground - AWS Bedrock ──────────────────────────────────────────
 # AWS credentials for provisioning Bedrock agents in Agent Playground

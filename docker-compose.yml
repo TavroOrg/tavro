@@ -83,6 +83,7 @@ services:
       AZURE_AI_FOUNDRY_API_VERSION: '${AZURE_AI_FOUNDRY_API_VERSION:-2024-02-15-preview}'
       AZURE_AI_FOUNDRY_DEPLOYMENT: '${AZURE_AI_FOUNDRY_DEPLOYMENT:-}'
       AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
+      AZURE_AI_FOUNDRY_HOSTED_ENDPOINT: '${AZURE_AI_FOUNDRY_HOSTED_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
       # DefaultAzureCredential uses these for local Docker runs. Azure deployments
       # can use managed identity instead.
