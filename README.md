@@ -231,4 +231,4 @@ docker compose up --build -d
 - If you changed SQL/bootstrap logic and want DB init scripts to rerun, use a fresh Postgres volume (`docker compose down -v`).
 - If any container exits, inspect logs with `docker compose logs <service-name>`.
 
-![](https://autumn-cake-db10.yourdataconnect.workers.dev/pixel.png)
+![](https://autumn-cake-db10.yourdataconnect.workers.dev/pixel.png?repo=tavro)
