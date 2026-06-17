@@ -5,7 +5,7 @@
 # ==========================================================================
 
 # ── Stage 1: React build ───────────────────────────────────────────────────────
-FROM node:20-alpine AS frontend
+FROM node:24-alpine AS frontend
 WORKDIR /frontend
 
 COPY tavro_admin/package*.json ./
