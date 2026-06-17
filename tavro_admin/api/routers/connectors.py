@@ -86,7 +86,16 @@ _REFRESH_INSERT_SQL = """
     LEFT JOIN (SELECT agent_internal_id, COUNT(*)::bigint AS app_count FROM core.agent_business_applications GROUP BY agent_internal_id) ap ON ap.agent_internal_id = a.agent_internal_id
     LEFT JOIN (SELECT agent_internal_id, COUNT(*)::bigint AS proc_count FROM core.agent_business_processes GROUP BY agent_internal_id) pr ON pr.agent_internal_id = a.agent_internal_id
     LEFT JOIN (SELECT agent_internal_id, COUNT(*)::bigint AS model_count FROM core.agent_ai_models GROUP BY agent_internal_id) mo ON mo.agent_internal_id = a.agent_internal_id
-    LEFT JOIN LATERAL (SELECT model_name, model_provider FROM core.agent_ai_models m WHERE m.agent_internal_id = a.agent_internal_id ORDER BY COALESCE(m.is_primary_model, FALSE) DESC, m.created_ts DESC NULLS LAST LIMIT 1) pm ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(cat.model_name, rel.model_name) AS model_name,
+               cat.provider                             AS model_provider
+        FROM   core.agent_ai_models rel
+        LEFT JOIN core.ai_models cat
+            ON LOWER(TRIM(cat.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))
+        WHERE  rel.agent_internal_id = a.agent_internal_id
+        ORDER  BY rel.created_ts DESC NULLS LAST
+        LIMIT  1
+    ) pm ON TRUE
     WHERE a.agent_internal_id = :ai_id AND COALESCE(a.is_current, TRUE) = TRUE AND (:tid IS NULL OR a.tenant_id = :tid)
 """
 

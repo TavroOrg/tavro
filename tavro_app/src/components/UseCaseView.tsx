@@ -217,12 +217,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     const owner = uc.owner ?? (uc as any).use_case_owner ?? null;
     const proposedBy = uc.proposed_by ?? (uc as any).proposed_by ?? null;
-    const createdAt = (uc as any).created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
-    const updatedAt = (uc as any).updated_ts ?? (uc as any).updated_at ?? (uc as any).sys_updated_on ?? null;
+    const createdAt = uc.created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
+    const updatedAt = uc.updated_ts ?? (uc as any).updated_at ?? (uc as any).sys_updated_on ?? null;
     const description = uc.description ?? (uc as any).description ?? null;
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
-    const solutionApproach = (uc as any).solution_approach ?? null;
+    const solutionApproach = uc.solution_approach ?? (uc as any).solution_approach ?? null;
 
     const REQUIRED_INLINE_FIELDS = new Set(['title', 'description']);
     const renderInlineActions = (field: string) => {

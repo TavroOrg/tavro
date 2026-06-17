@@ -1,10 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ClipboardList, Map, Layers, Cpu, Zap, Activity, ArrowRight,
   TrendingUp, AlertCircle, Bot, X, ArrowUpRight,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useChatContext } from '../context/ChatContext';
+import { useBlueprint } from '../context/BlueprintContext';
+import {
+  insightsApi,
+  type HomeAttentionItem,
+  type InsightsTotals,
+} from '../services/insightsApi';
+import { portalActivity, type PortalActivityItem } from '../services/portalActivity';
 import travoLogo from '../assets/travo_logo.png';
 
 const STAGES = [
@@ -16,95 +23,159 @@ const STAGES = [
   { id: 'govern', label: 'Govern', Icon: Activity, route: '/compliance' },
 ];
 
-const STATS = [
+const STAT_CARDS = [
   {
+    key: 'sparkIdeas',
     label: 'Spark Ideas',
-    value: 84,
-    sub: '+12 this week',
     subColor: 'text-emerald-600 dark:text-emerald-400',
     Icon: Zap,
     iconColor: 'text-violet-600 dark:text-violet-400',
     iconBg: 'bg-violet-50 dark:bg-violet-900/20',
+    route: '/spark',
   },
   {
+    key: 'useCases',
     label: 'AI Use Cases',
-    value: 52,
-    sub: '8 in progress',
     subColor: 'text-slate-500 dark:text-slate-400',
     Icon: ClipboardList,
     iconColor: 'text-blue-600 dark:text-blue-400',
     iconBg: 'bg-blue-50 dark:bg-blue-900/20',
+    route: '/use-cases',
   },
   {
+    key: 'agents',
     label: 'Active Agents',
-    value: 84,
-    sub: '6 live in prod',
     subColor: 'text-emerald-600 dark:text-emerald-400',
     Icon: Bot,
     iconColor: 'text-purple-600 dark:text-purple-400',
     iconBg: 'bg-purple-50 dark:bg-purple-900/20',
+    route: '/catalog',
   },
   {
+    key: 'issues',
     label: 'Open Issues',
-    value: 3,
-    sub: '2 need review',
     subColor: 'text-rose-600 dark:text-rose-400',
     Icon: AlertCircle,
     iconColor: 'text-rose-600 dark:text-rose-400',
     iconBg: 'bg-rose-50 dark:bg-rose-900/20',
+    route: null,
   },
 ];
 
-const RECENT_ACTIVITY = [
-  { id: 1, text: 'Invoice automation moved to Design stage', time: '2h ago', dot: 'bg-violet-500' },
-  { id: 2, text: '3 new Spark ideas generated', time: '5h ago', dot: 'bg-emerald-500' },
-  { id: 3, text: 'HR onboarding agent - risk flag raised', time: 'Yesterday', dot: 'bg-amber-500' },
-  { id: 4, text: 'Procurement agent deployed to production', time: '2 days ago', dot: 'bg-emerald-500' },
-];
+const EMPTY_TOTALS: InsightsTotals = {
+  sparkIdeas: 0,
+  sparkIdeasThisWeek: 0,
+  totalAgents: 0,
+  liveAgents: 0,
+  totalUseCases: 0,
+  useCasesInProgress: 0,
+  criticalCount: 0,
+  highRiskCount: 0,
+  hitlOpen: 0,
+  openIssues: 0,
+  needReview: 0,
+};
 
-const ATTENTION_ITEMS = [
-  {
-    id: 1,
-    badge: 'Risk',
-    badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-    text: 'HR onboarding agent - autonomy level review required',
-    action: 'Review',
-    route: '/catalog',
-  },
-  {
-    id: 2,
-    badge: 'Approval',
-    badgeClass: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
-    text: 'Invoice automation - stakeholder sign-off pending',
-    action: 'Review',
-    route: '/use-cases',
-  },
-  {
-    id: 3,
-    badge: 'Issue',
-    badgeClass: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
-    text: 'Procurement agent - behavioral drift detected',
-    action: 'Review',
-    route: '/catalog',
-  },
-  {
-    id: 4,
-    badge: 'Incomplete',
-    badgeClass: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
-    text: 'Blueprint - financials section not yet populated',
-    action: 'Complete',
-    route: '/blueprint',
-  },
-];
+const plural = (count: number, singular: string, pluralLabel = `${singular}s`) =>
+  `${count} ${count === 1 ? singular : pluralLabel}`;
+
+const dotClass = (dot: string) => {
+  const map: Record<string, string> = {
+    violet: 'bg-violet-500',
+    emerald: 'bg-emerald-500',
+    amber: 'bg-amber-500',
+  };
+  return map[dot] ?? 'bg-slate-400';
+};
+
+const badgeClass = (badge: string) => {
+  const map: Record<string, string> = {
+    Risk: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    Approval: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+    Issue: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+    Incomplete: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  };
+  return map[badge] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+};
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { setViewContext } = useChatContext();
+  const { activeCompany } = useBlueprint();
   const [showDeployMessage, setShowDeployMessage] = useState(false);
+  const [totals, setTotals] = useState<InsightsTotals>(EMPTY_TOTALS);
+  const [recentActivity, setRecentActivity] = useState<PortalActivityItem[]>(() => portalActivity.list(4));
+  const [attentionItems, setAttentionItems] = useState<HomeAttentionItem[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   useEffect(() => {
     setViewContext('home');
   }, [setViewContext]);
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const companyId = activeCompany?.id ?? localStorage.getItem('tavro_active_company_id') ?? undefined;
+      const summary = await insightsApi.getSummary(companyId);
+      setTotals({ ...EMPTY_TOTALS, ...summary.totals });
+      setAttentionItems(summary.homeAttentionItems ?? []);
+    } catch (err) {
+      console.warn('[HomePage] Failed to load dashboard metrics:', err);
+      setTotals(EMPTY_TOTALS);
+      setAttentionItems([]);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  useEffect(() => {
+    const syncActivity = () => setRecentActivity(portalActivity.list(4));
+    syncActivity();
+    window.addEventListener('tavro:portal-activity-changed', syncActivity);
+    const timer = window.setInterval(syncActivity, 60_000);
+    return () => {
+      window.removeEventListener('tavro:portal-activity-changed', syncActivity);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    const openIssues = totals.openIssues ?? totals.hitlOpen;
+    return STAT_CARDS.map(card => {
+      if (card.key === 'sparkIdeas') {
+        return {
+          ...card,
+          value: totals.sparkIdeas,
+          sub: totals.sparkIdeasThisWeek > 0
+            ? `+${totals.sparkIdeasThisWeek} this week`
+            : '0 this week',
+        };
+      }
+      if (card.key === 'useCases') {
+        return {
+          ...card,
+          value: totals.totalUseCases,
+          sub: plural(totals.useCasesInProgress, 'in progress', 'in progress'),
+        };
+      }
+      if (card.key === 'agents') {
+        return {
+          ...card,
+          value: totals.totalAgents,
+          sub: `${totals.liveAgents} live in prod`,
+        };
+      }
+      return {
+        ...card,
+        value: openIssues,
+        sub: `${totals.needReview} need review`,
+      };
+    });
+  }, [totals]);
 
   const handleStageClick = (id: string, route: string | null) => {
     if (id === 'deploy') {
@@ -136,10 +207,11 @@ const HomePage: React.FC = () => {
 
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        {STATS.map(({ label, value, sub, subColor, Icon, iconColor, iconBg }) => (
+        {stats.map(({ label, value, sub, subColor, Icon, iconColor, iconBg, route }) => (
           <div
             key={label}
-            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm"
+            onClick={() => route && navigate(route)}
+            className={`bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm transition-all ${route ? 'cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 hover:shadow-md hover:bg-purple-50 dark:hover:bg-purple-900/10' : ''}`}
           >
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
@@ -149,7 +221,9 @@ const HomePage: React.FC = () => {
                 <Icon size={14} className={iconColor} />
               </div>
             </div>
-            <p className="text-3xl font-bold text-slate-800 dark:text-white mb-1">{value}</p>
+            <p className="text-3xl font-bold text-slate-800 dark:text-white mb-1">
+              {statsLoading ? '...' : value}
+            </p>
             <p className={`text-xs font-medium ${subColor}`}>{sub}</p>
           </div>
         ))}
@@ -206,13 +280,19 @@ const HomePage: React.FC = () => {
             Recent Activity
           </h2>
           <div className="space-y-4">
-            {RECENT_ACTIVITY.map(({ id, text, time, dot }) => (
-              <div key={id} className="flex items-start gap-3">
-                <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
-                <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
-                <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap flex-shrink-0">{time}</span>
-              </div>
-            ))}
+            {recentActivity.length > 0 ? (
+              recentActivity.map(({ id, text, timestamp, dot }) => (
+                <div key={id} className="flex items-start gap-3">
+                  <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotClass(dot)}`} />
+                  <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
+                  <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap flex-shrink-0">
+                    {portalActivity.formatTime(timestamp)}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-slate-400 dark:text-slate-500">No recent activity yet</p>
+            )}
           </div>
         </div>
 
@@ -222,20 +302,26 @@ const HomePage: React.FC = () => {
             Needs Your Attention
           </h2>
           <div className="space-y-4">
-            {ATTENTION_ITEMS.map(({ id, badge, badgeClass, text, action, route }) => (
-              <div key={id} className="flex items-start gap-3">
-                <span className={`mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${badgeClass}`}>
-                  {badge}
-                </span>
-                <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
-                <button
-                  onClick={() => navigate(route)}
-                  className="flex items-center gap-0.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300 whitespace-nowrap flex-shrink-0"
-                >
-                  {action} <ArrowUpRight size={12} />
-                </button>
-              </div>
-            ))}
+            {statsLoading && attentionItems.length === 0 ? (
+              <p className="text-sm text-slate-400 dark:text-slate-500">Loading attention items...</p>
+            ) : attentionItems.length > 0 ? (
+              attentionItems.map(({ id, badge, text, action, route }) => (
+                <div key={id} className="flex items-start gap-3">
+                  <span className={`mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${badgeClass(badge)}`}>
+                    {badge}
+                  </span>
+                  <p className="text-sm text-slate-700 dark:text-slate-300 flex-1 leading-snug">{text}</p>
+                  <button
+                    onClick={() => navigate(route)}
+                    className="flex items-center gap-0.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300 whitespace-nowrap flex-shrink-0"
+                  >
+                    {action} <ArrowUpRight size={12} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-slate-400 dark:text-slate-500">Nothing needs attention right now</p>
+            )}
           </div>
         </div>
 

@@ -17,6 +17,8 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
+import { sparkApi } from '../services/sparkApi';
+import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
@@ -60,6 +62,7 @@ const Layout: React.FC = () => {
     const [processCount, setProcessCount] = useState(0);
     const [integrationCount, setIntegrationCount] = useState(0);
     const [aiModelCount, setAiModelCount] = useState(0);
+    const [sparkCount, setSparkCount] = useState(0);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;
@@ -74,13 +77,51 @@ const Layout: React.FC = () => {
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
             if (models.status === 'fulfilled') setAiModelCount(models.value.length);
         });
+        if (companyId) {
+            sparkApi.getIdeas(companyId).then(ideas => setSparkCount(ideas.length)).catch(() => {});
+        }
     }, [activeCompany]);
 
     useEffect(() => {
         fetchCatalogCounts();
+        const onSparkChanged = (e: Event) => setSparkCount((e as CustomEvent).detail?.count ?? 0);
         window.addEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
-        return () => window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+        window.addEventListener('tavro:spark-ideas-changed', onSparkChanged);
+        return () => {
+            window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+            window.removeEventListener('tavro:spark-ideas-changed', onSparkChanged);
+        };
     }, [fetchCatalogCounts]);
+
+    useEffect(() => {
+        const useCaseCreated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const name = detail.name || detail.title || detail.use_case_name || detail.use_case_id || 'AI use case';
+            portalActivity.record(`Created AI use case: ${name}`, 'emerald');
+        };
+        const agentCreated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const agent = detail.agent ?? detail.result ?? detail;
+            const args = detail.args ?? {};
+            const name = args.agent_name || agent.agent_name || agent.name || agent.agent_id || 'agent';
+            portalActivity.record(`Created agent: ${name}`, 'emerald');
+        };
+        const agentArtifactsGenerated = (event: Event) => {
+            const detail = (event as CustomEvent).detail ?? {};
+            const agent = detail.agent ?? detail;
+            const name = agent.agent_name || agent.name || agent.agent_id || 'agent';
+            portalActivity.record(`Generated artifacts for ${name}`, 'amber');
+        };
+
+        window.addEventListener('tavro:usecase-created', useCaseCreated);
+        window.addEventListener('tavro:agent-created', agentCreated);
+        window.addEventListener('tavro:agent-artifacts-generated', agentArtifactsGenerated);
+        return () => {
+            window.removeEventListener('tavro:usecase-created', useCaseCreated);
+            window.removeEventListener('tavro:agent-created', agentCreated);
+            window.removeEventListener('tavro:agent-artifacts-generated', agentArtifactsGenerated);
+        };
+    }, []);
 
     // ── Right panel state ────────────────────────────────────────────────────
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -130,7 +171,7 @@ const Layout: React.FC = () => {
             'tavro_mcp_refresh_token', 'tavro_mcp_access_token', 'tavro_tenant_id',
             'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
-            'tavro_oidc_state'
+            'tavro_oidc_state', 'tavro_last_activity_at'
         ].forEach(k => localStorage.removeItem(k));
         // Clear persisted chat sessions and reset MCP client
         clearAllSessions();
@@ -239,6 +280,9 @@ const Layout: React.FC = () => {
                             >
                                 <Zap size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
+                                {isLeftPanelOpen && sparkCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{sparkCount} {sparkCount === 1 ? 'idea' : 'ideas'}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => navigate('/use-cases')}
