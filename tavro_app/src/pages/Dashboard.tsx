@@ -9,6 +9,7 @@ import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
+import { fetchPagesProgressive } from '../utils/fetchAllPages';
 
 const PAGE_SIZE = 10;
 
@@ -70,8 +71,22 @@ const Dashboard: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await agentApi.getAgentCatalog(1, '1-500', activeCompany?.id);
-            setAllAgents((response.data ?? []).map(normalizeAgent));
+            await fetchPagesProgressive(
+                (start, range) => agentApi.getAgentCatalog(start, range, activeCompany?.id),
+                (batch, isFirstPage) => {
+                    const normalized = batch.map(normalizeAgent);
+                    if (isFirstPage) {
+                        setAllAgents(normalized);
+                        setLoading(false);
+                    } else {
+                        setAllAgents(prev => {
+                            const ids = new Set(prev.map((a: AgentData) => a.identification?.agent_id).filter(Boolean));
+                            return [...prev, ...normalized.filter((a: AgentData) => !ids.has(a.identification?.agent_id))];
+                        });
+                    }
+                },
+                100,
+            );
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Failed to load agent catalog');
         } finally {
@@ -82,6 +97,48 @@ const Dashboard: React.FC = () => {
     useEffect(() => {
         loadAgents();
     }, [loadAgents]);
+
+    // When the AI assistant creates an agent, add it to the list immediately
+    // so the user sees it with "Risk Assessment is running" without waiting for
+    // the next full reload. Dashboard owns its own allAgents state (it isn't
+    // driven by CatalogContext) so it must handle this event itself.
+    useEffect(() => {
+        const handleAgentCreated = (event: Event) => {
+            const { result, args } = (event as CustomEvent).detail ?? {};
+            const agentId: string | undefined =
+                result?.agent_id ||
+                result?.identification?.agent_id ||
+                result?.agent_card?.agent_id ||
+                result?.agent_card?.identification?.agent_id;
+            if (!agentId) return;
+            const agentName: string = args?.agent_name || result?.agent_name || result?.name || agentId;
+            const optimistic: AgentData = {
+                name: agentName,
+                description: args?.description || result?.description || agentName,
+                version: '1.0',
+                identification: {
+                    agent_id: agentId,
+                    role: null,
+                    instruction: args?.instruction || null,
+                    governance_status: 'Risk Assessment is running',
+                },
+                configuration: { autonomy_level: null },
+                tool: [],
+                data_source: [],
+                application: [],
+                business_process: [],
+                risk_assessment: null,
+            };
+            setAllAgents(prev => {
+                const ids = new Set(prev.map((a: AgentData) => a.identification?.agent_id).filter(Boolean));
+                if (ids.has(agentId)) return prev;
+                return [optimistic, ...prev];
+            });
+            setPage(1); // Jump to page 1 so the new agent is visible at the top
+        };
+        window.addEventListener('tavro:agent-created', handleAgentCreated);
+        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+    }, []);
 
     const totalPages = Math.max(1, Math.ceil(allAgents.length / PAGE_SIZE));
     const hasMore = page < totalPages;
