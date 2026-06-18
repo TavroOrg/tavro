@@ -9,7 +9,6 @@ import {
     Loader2,
     Play,
     RefreshCw,
-    Rocket,
     Sparkles,
     Terminal,
     X,
@@ -46,7 +45,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
     // ── Terminal state ──────────────────────────────────────────────────────
     const initialLines = useMemo<TerminalLine[]>(() => [
         { id: 1, kind: 'system',  text: '╔══════════════════════════════════╗' },
-        { id: 2, kind: 'system',  text: '║  Claude Code  ·  Tavro Agent CLI ║' },
+        { id: 2, kind: 'system',  text: '║  Claude Code  ·  Tavro Agent CLI  ║' },
         { id: 3, kind: 'system',  text: '╚══════════════════════════════════╝' },
         { id: 4, kind: 'output',  text: '' },
         { id: 5, kind: 'output',  text: `Agent: ${agent.name}` },
@@ -76,7 +75,6 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
     const [activeTab,     setActiveTab]     = useState<PanelTab>('terminal');
     const [copied,        setCopied]        = useState(false);
     const [sidebarOpen,   setSidebarOpen]   = useState(true);
-    const [deploying,     setDeploying]     = useState(false);
 
     // ── Helpers ─────────────────────────────────────────────────────────────
     const pushLines = (items: Omit<TerminalLine, 'id'>[]) => {
@@ -279,99 +277,6 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
         }
     };
 
-    // ── Azure Foundry deploy ─────────────────────────────────────────────────
-    const deployAgent = async () => {
-        if (running || deploying || fileContent === null) return;
-
-        setRunning(true);
-        setDeploying(true);
-        setActiveTab('terminal');
-
-        // Slugify for Azure: alphanumeric + hyphens, max 63 chars, prefer human name over ID
-        const azureName = (agent.name || agentId)
-            .toLowerCase()
-            .replace(/[^a-z0-9-]+/g, '-')
-            .replace(/-{2,}/g, '-')
-            .replace(/^-+|-+$/g, '')
-            .slice(0, 63);
-
-        const systemPrompt = [
-            `You are ${agent.name}.`,
-            agent.identification?.role ?? '',
-            agent.identification?.instruction ?? '',
-        ].filter(Boolean).join('\n\n');
-
-        pushLines([{ kind: 'command', text: `tavro@claude-support> /deploy-to-azure ${agentId}` }]);
-        scrollTerminal();
-
-        try {
-            const response = await fetch(`${API_BASE}/api/v1/azure-deploy/stream`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    agent_name:       azureName,
-                    code:             fileContent ?? '',
-                    system_prompt:    systemPrompt,
-                    model_deployment: 'gpt-4.1-mini',
-                }),
-            });
-
-            if (!response.ok || !response.body) {
-                pushLines([{ kind: 'error', text: `Deploy request failed (${response.status})` }]);
-                return;
-            }
-
-            const reader  = response.body.getReader();
-            const decoder = new TextDecoder();
-            let   buffer  = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const parts = buffer.split('\n');
-                buffer = parts.pop() ?? '';
-
-                for (const part of parts) {
-                    const trimmedPart = part.trim();
-                    if (!trimmedPart.startsWith('data:')) continue;
-                    const data = trimmedPart.slice(5).trim();
-                    if (data === '[DONE]') break;
-
-                    let parsed: Record<string, unknown> | undefined;
-                    try { parsed = JSON.parse(data); } catch { continue; }
-                    if (!parsed) continue;
-
-                    if (parsed.kind === 'deploy_complete') {
-                        pushLines([
-                            { kind: 'success', text: `✓ Deployed to Azure Foundry (v${parsed.version})` },
-                            { kind: 'output',  text: `Invoke URL: ${parsed.invoke_url}` },
-                        ]);
-                        scrollTerminal();
-                        continue;
-                    }
-
-                    const text = (parsed.text as string) ?? '';
-                    if (!text) continue;
-
-                    const kind: TerminalLine['kind'] =
-                        parsed.kind === 'success' ? 'success' :
-                        parsed.kind === 'error'   ? 'error'   :
-                        parsed.kind === 'system'  ? 'system'  : 'output';
-
-                    pushLines([{ kind, text }]);
-                    scrollTerminal();
-                }
-            }
-        } catch (err) {
-            pushLines([{ kind: 'error', text: `Deploy error: ${err}` }]);
-        } finally {
-            setRunning(false);
-            setDeploying(false);
-            scrollTerminal();
-        }
-    };
-
     // ── Style helpers ────────────────────────────────────────────────────────
     const lineClass = (kind: TerminalLine['kind']) => {
         switch (kind) {
@@ -431,18 +336,6 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
                         className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-bold bg-[#3c3c3c] hover:bg-[#4c4c4c] text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                         <FileCode2 size={11} /> Save
-                    </button>
-                    <span className="w-px h-4 bg-[#3c3c3c] mx-0.5 inline-block" />
-                    <button
-                        disabled={running || deploying || fileContent === null}
-                        onClick={deployAgent}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        title="Deploy as Azure Foundry hosted agent"
-                    >
-                        {deploying
-                            ? <><Loader2 size={11} className="animate-spin" /> Deploying…</>
-                            : <><Rocket size={11} /> Deploy</>
-                        }
                     </button>
                 </div>
             </div>
