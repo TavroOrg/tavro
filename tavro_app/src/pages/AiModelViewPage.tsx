@@ -26,6 +26,7 @@ import { aiModelApi } from '../services/aiModelApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { mcpClient } from '../services/mcpClient';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
 
@@ -66,6 +67,21 @@ const FIELD_KEYS: string[] = [
   'recert_outputs_same', 'recert_outputs_changed', 'recert_users_same', 'recert_users_changed',
   'recert_processing_same', 'recert_processing_changed', 'recert_training_completed',
   'recert_risk_assessment_done',
+  'business_criticality', 'emergency_tier',
+];
+
+const MODEL_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
 ];
 
 const inputCls =
@@ -300,6 +316,24 @@ const AiModelViewPage: React.FC = () => {
     };
     load();
   }, [id, isCreateMode]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = async () => {
+      mcpClient.invalidateCache();
+      try {
+        const data = await aiModelApi.getModel(id);
+        setModel(data);
+        setForm(formFromModel(data));
+      } catch {
+        // Keep current UI state on transient refresh failures.
+      }
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing]);
 
   const parentOptions = useMemo(
     () => allModels.filter(m => m.ai_model_id !== id),
@@ -920,6 +954,35 @@ const AiModelViewPage: React.FC = () => {
           <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
           <Field label="Parent Model">{parentField()}</Field>
           <Field label="Version Number">{text('version_number')}</Field>
+        </Section>
+
+        <Section title="Agent Risk Exposure">
+          <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
+          <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
+          <Field label="Agent Risk Exposure (ARE)">
+            <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
+          </Field>
+          <Field label="Agent Risk Tier (ART)">
+            <p className={`${valueBoxCls}`}>{model?.agent_risk_tier ?? 'None'}</p>
+          </Field>
+          <Field label="Blended Risk Score">
+            <p className={`${valueBoxCls}`}>{String(model?.blended_risk_score ?? 0)}</p>
+          </Field>
+          <Field label="# Of Associated Agents">
+            <p className={`${valueBoxCls}`}>{String(model?.no_of_associated_agents ?? 0)}</p>
+          </Field>
+          <Field label="Inherent Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.inherent_risk_classification ?? 'None'}</p>
+          </Field>
+          <Field label="Inherent Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.inherent_risk_classification_score ?? 0)}</p>
+          </Field>
+          <Field label="Residual Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.residual_risk_classification ?? 'None'}</p>
+          </Field>
+          <Field label="Residual Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.residual_risk_classification_score ?? 0)}</p>
+          </Field>
         </Section>
 
         <Section title="Intended Use and Decision Impact">

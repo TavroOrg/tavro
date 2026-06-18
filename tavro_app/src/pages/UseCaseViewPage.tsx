@@ -274,10 +274,21 @@ const mergeUseCaseWithRestDetail = (
   const linkedAgents = normalizeUseCaseAgents(
     row.of_associated_agents ?? row.agents ?? [],
   );
+  const restRiskFields = {
+    agent_risk_exposure_are: row.agent_risk_exposure_are ?? (base as any)?.agent_risk_exposure_are,
+    no_of_associated_agents: row.no_of_associated_agents ?? (base as any)?.no_of_associated_agents,
+    blended_risk_score: row.blended_risk_score ?? (base as any)?.blended_risk_score,
+    inherent_risk_classification: row.inherent_risk_classification ?? (base as any)?.inherent_risk_classification,
+    inherent_risk_classification_score: row.inherent_risk_classification_score ?? (base as any)?.inherent_risk_classification_score,
+    residual_risk_classification: row.residual_risk_classification ?? (base as any)?.residual_risk_classification,
+    residual_risk_classification_score: row.residual_risk_classification_score ?? (base as any)?.residual_risk_classification_score,
+    agent_risk_tier_art: row.agent_risk_tier_art ?? (base as any)?.agent_risk_tier_art,
+  };
 
   if (base) {
     return {
       ...base,
+      ...restRiskFields,
       applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
@@ -297,6 +308,7 @@ const mergeUseCaseWithRestDetail = (
     agents: linkedAgents,
     applications: linkedApplications,
     business_processes: linkedProcesses,
+    ...restRiskFields,
   } as UseCaseDetail;
 };
 
@@ -1340,6 +1352,34 @@ const UseCaseViewPage: React.FC = () => {
   useEffect(() => {
     fetchUseCase();
   }, [id]);
+
+  useEffect(() => {
+    if (!id || isEditing) return;
+
+    const handleWorkflowUpdate = () => {
+      mcpClient.invalidateCache();
+      fetchUseCaseSilently(true);
+      refreshUseCases();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, activeCompany?.id, isEditing, refreshUseCases]);
+
+  useEffect(() => {
+    if (!id || isEditing || loading) return;
+    try {
+      const raw = localStorage.getItem('tavro_temporal_workflows');
+      if (raw !== null) {
+        const workflows = JSON.parse(raw) as Array<{ status?: string }>;
+        const hasRunning = workflows.some(w => String(w.status ?? '').trim().toLowerCase() === 'running');
+        if (!hasRunning) fetchUseCaseSilently(true);
+      }
+    } catch {
+      // Ignore malformed workflow snapshots.
+    }
+  }, [id, activeCompany?.id, isEditing, loading]);
+
 
   useEffect(() => {
     if (!useCase) return;

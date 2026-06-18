@@ -105,6 +105,8 @@ _INTEGRATION_EDITABLE_COLUMNS: set[str] = {
     "sla",
     "version",
     "parent_application_id",
+    "business_criticality",
+    "emergency_tier",
 }
 
 _INTEGRATION_READONLY_DEFAULTS: dict[str, Any] = {}
@@ -221,6 +223,8 @@ class Integration(BaseModel):
     sla: Optional[str] = None
     version: Optional[str] = None
     parent_application_id: Optional[str] = None
+    business_criticality: Optional[str] = None
+    emergency_tier: Optional[str] = None
 
 
 class IntegrationCreate(Integration):
@@ -1321,6 +1325,126 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         )
 
 
+async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> None:
+    int_cols = await _table_columns(db, "core", "business_integrations")
+
+    await db.execute(
+        text(
+            """
+            UPDATE core.business_integrations bi
+            SET
+                num_of_associated_agents = (
+                    SELECT COUNT(DISTINCT abi.agent_id)
+                    FROM core.agent_business_integrations abi
+                    WHERE abi.integration_id = :integration_id
+                      AND abi.agent_id IS NOT NULL AND abi.agent_id <> ''
+                ),
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE bi.integration_id = :integration_id
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    int_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, emergency_tier
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    integration = int_row.mappings().first()
+    if not integration:
+        return
+
+    bc = (integration.get("business_criticality") or "").strip().lower()
+    bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+    et = (integration.get("emergency_tier") or "").strip().lower()
+    et_score = {"mission critical": 1.0, "business critical": 0.4,
+                "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+    has_abi = await _table_exists(db, "core", "agent_business_integrations")
+    if not has_abi:
+        max_brs = 0.0
+    else:
+        max_brs_row = await db.execute(
+            text(
+                """
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+                FROM core.agent_business_integrations abi
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM core.agent_risk_assessments ara
+                    WHERE ara.agent_id = abi.agent_id
+                      AND ara.blended_risk_score IS NOT NULL
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE abi.integration_id = :integration_id
+                """
+            ),
+            {"integration_id": integration_id},
+        )
+        max_brs = float((max_brs_row.mappings().first() or {}).get("max_blended_risk_score") or 0.0)
+
+    criticality_avg = (bc_score + et_score) / 2.0
+    are = round(max_brs * criticality_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"integration_id": integration_id}
+
+    if "blended_risk_score" in int_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in int_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in int_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+    if "inherent_risk_classification" in int_cols:
+        set_parts.append("inherent_risk_classification = 'None'")
+    if "residual_risk_classification" in int_cols:
+        set_parts.append("residual_risk_classification = 'None'")
+    if "inherent_risk_classification_score" in int_cols:
+        set_parts.append("inherent_risk_classification_score = 0")
+    if "residual_risk_classification_score" in int_cols:
+        set_parts.append("residual_risk_classification_score = 0")
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_integrations
+                SET {', '.join(set_parts)}
+                WHERE integration_id = :integration_id
+                """
+            ),
+            update_params,
+        )
+
+
 async def _fetch_integrations(
     db: AsyncSession,
     *,
@@ -1359,6 +1483,16 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "updated_ts"),
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
+        _col_expr("bi", int_cols, "business_criticality"),
+        _col_expr("bi", int_cols, "emergency_tier"),
+        _col_expr("bi", int_cols, "blended_risk_score"),
+        _col_expr("bi", int_cols, "agent_risk_exposure"),
+        _col_expr("bi", int_cols, "agent_risk_tier"),
+        _col_expr("bi", int_cols, "inherent_risk_classification"),
+        _col_expr("bi", int_cols, "residual_risk_classification"),
+        _col_expr("bi", int_cols, "inherent_risk_classification_score"),
+        _col_expr("bi", int_cols, "residual_risk_classification_score"),
+        _col_expr("bi", int_cols, "num_of_associated_agents"),
     ]
 
     where_parts: list[str] = []
@@ -2168,6 +2302,11 @@ async def update_integration(
         updates,
     )
     await db.commit()
+
+    if {"business_criticality", "emergency_tier"} & set(canonical.keys()):
+        await _refresh_integration_rollup(db, integration_id)
+        await db.commit()
+
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
@@ -2255,6 +2394,8 @@ async def add_agent_integration_relation(
         },
     )
     await db.commit()
+    await _refresh_integration_rollup(db, integration_id)
+    await db.commit()
 
     return {
         "status": "linked",
@@ -2293,6 +2434,8 @@ async def remove_agent_integration_relation(
             "agent_id": agent.get("agent_id"),
         },
     )
+    await db.commit()
+    await _refresh_integration_rollup(db, integration_id)
     await db.commit()
 
     return {

@@ -152,6 +152,15 @@ function MetaField({ label, children }: { label: string; children: React.ReactNo
     );
 }
 
+function ReadValue({ label, value }: { label: string; value: React.ReactNode }) {
+    return (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+            <div className="mt-1 text-sm font-semibold text-slate-800">{value ?? 'N/A'}</div>
+        </div>
+    );
+}
+
 function formatDate(raw?: string | null): string {
     if (!raw) return '—';
     try {
@@ -223,6 +232,14 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
     const solutionApproach = (uc as any).solution_approach ?? null;
+    const riskExposure = String((uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0);
+    const associatedAgentCount = String((uc as any).no_of_associated_agents ?? (uc as any).num_of_associated_agents ?? linkedAgentCount ?? 0);
+    const agentRiskTier = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
+    const blendedRiskScore = String((uc as any).blended_risk_score ?? 0);
+    const inherentRiskClassification = 'None';
+    const inherentRiskClassificationScore = '0';
+    const residualRiskClassification = 'None';
+    const residualRiskClassificationScore = '0';
 
     const REQUIRED_INLINE_FIELDS = new Set(['title', 'description']);
     const renderInlineActions = (field: string) => {
@@ -447,6 +464,18 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 No description provided.
                             </div>
                         )}
+                        <SectionCard icon={<ShieldAlert size={16} />} title="Agent Risk Exposure">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <ReadValue label="Agent Risk Exposure (ARE)" value={riskExposure} />
+                                <ReadValue label="Agent Risk Tier (ART)" value={agentRiskTier} />
+                                <ReadValue label="# Of Associated Agents" value={associatedAgentCount} />
+                                <ReadValue label="Blended Risk Score" value={blendedRiskScore} />
+                                <ReadValue label="Inherent Risk Classification" value={inherentRiskClassification} />
+                                <ReadValue label="Inherent Risk Classification Score" value={inherentRiskClassificationScore} />
+                                <ReadValue label="Residual Risk Classification" value={residualRiskClassification} />
+                                <ReadValue label="Residual Risk Classification Score" value={residualRiskClassificationScore} />
+                            </div>
+                        </SectionCard>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                             <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>

@@ -50,7 +50,16 @@ CREATE TABLE IF NOT EXISTS core.ai_models (
 	recert_training_completed TEXT,
 	recert_risk_assessment_done TEXT,
 
-	-- Meta / rollup
+	-- ARE / rollup
+	business_criticality TEXT,
+	emergency_tier TEXT,
+	blended_risk_score NUMERIC,
+	agent_risk_exposure NUMERIC,
+	agent_risk_tier TEXT,
+	inherent_risk_classification TEXT,
+	residual_risk_classification TEXT,
+	inherent_risk_classification_score NUMERIC,
+	residual_risk_classification_score NUMERIC,
 	no_of_associated_agents INTEGER,
 	agent_internal_id TEXT,
 	created_ts TIMESTAMP,

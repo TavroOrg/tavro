@@ -1076,7 +1076,7 @@ def get_assessment_name(risk_assessment_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant_id: str) -> None:
-    """Recalculate ARE/ART/blended_risk_score for every application and process linked to this agent."""
+    """Recalculate ARE/ART/blended_risk_score for every linked application, process, and AI use case."""
 
     def _art_from_are(are: float) -> str:
         if are >= 9.0:
@@ -1237,6 +1237,248 @@ def _refresh_are_for_agent(cursor, agent_id: str, agent_internal_id: str, tenant
                 WHERE business_process_id = %s
             """).format(bp=sql.Identifier(CORE_SCHEMA, "business_processes")),
             (max_brs, are, art, proc_id),
+        )
+
+    # AI use cases
+    cursor.execute(
+        sql.SQL("""
+            SELECT DISTINCT ai_use_case_id
+            FROM {link}
+            WHERE agent_id = %s OR agent_internal_id = %s
+        """).format(link=sql.Identifier(CORE_SCHEMA, "agent_ai_use_cases")),
+        (agent_id, agent_internal_id),
+    )
+    for row in cursor.fetchall():
+        use_case_id = row[0]
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COUNT(DISTINCT lnk.agent_id)
+                FROM {link} lnk
+                WHERE lnk.ai_use_case_id = %s
+                  AND lnk.agent_id IS NOT NULL
+                  AND lnk.agent_id <> ''
+            """).format(link=sql.Identifier(CORE_SCHEMA, "agent_ai_use_cases")),
+            (use_case_id,),
+        )
+        associated_count = int((cursor.fetchone() or [0])[0] or 0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0)
+                FROM {link} lnk
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM {ara} ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = lnk.agent_id
+                        OR (
+                            lnk.agent_internal_id IS NOT NULL
+                            AND lnk.agent_internal_id <> ''
+                            AND ara.agent_internal_id = lnk.agent_internal_id
+                        )
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE lnk.ai_use_case_id = %s
+            """).format(
+                link=sql.Identifier(CORE_SCHEMA, "agent_ai_use_cases"),
+                ara=sql.Identifier(CORE_SCHEMA, "agent_risk_assessments"),
+            ),
+            (use_case_id,),
+        )
+        max_brs = float((cursor.fetchone() or [0.0])[0] or 0.0)
+        are = round(max_brs, 2)
+        art = _art_from_are(are) if associated_count > 0 else "None"
+
+        cursor.execute(
+            sql.SQL("""
+                UPDATE {uc}
+                SET blended_risk_score = %s,
+                    agent_risk_exposure_are = %s,
+                    agent_risk_tier_art = %s,
+                    no_of_associated_agents = %s,
+                    updated_ts = NOW()
+                WHERE ai_use_case_id = %s
+            """).format(uc=sql.Identifier(CORE_SCHEMA, "ai_use_cases")),
+            (max_brs, are, art, associated_count, use_case_id),
+        )
+
+    # AI models
+    cursor.execute(
+        sql.SQL("""
+            SELECT DISTINCT ai_model_id, business_criticality, emergency_tier
+            FROM {link} lnk
+            JOIN {am} am USING (ai_model_id)
+            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+        """).format(
+            link=sql.Identifier(CORE_SCHEMA, "agent_ai_models"),
+            am=sql.Identifier(CORE_SCHEMA, "ai_models"),
+        ),
+        (agent_id, agent_internal_id),
+    )
+    for row in cursor.fetchall():
+        model_id, bc_raw, et_raw = row
+
+        bc = (bc_raw or "").strip().lower()
+        bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+        et = (et_raw or "").strip().lower()
+        et_score = {"mission critical": 1.0, "business critical": 0.4,
+                    "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COUNT(DISTINCT lnk.agent_id)
+                FROM {link} lnk
+                WHERE lnk.ai_model_id = %s
+                  AND lnk.agent_id IS NOT NULL
+                  AND lnk.agent_id <> ''
+            """).format(link=sql.Identifier(CORE_SCHEMA, "agent_ai_models")),
+            (model_id,),
+        )
+        associated_count = int((cursor.fetchone() or [0])[0] or 0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0)
+                FROM {link} lnk
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM {ara} ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = lnk.agent_id
+                        OR (
+                            lnk.agent_internal_id IS NOT NULL
+                            AND lnk.agent_internal_id <> ''
+                            AND ara.agent_internal_id = lnk.agent_internal_id
+                        )
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE lnk.ai_model_id = %s
+            """).format(
+                link=sql.Identifier(CORE_SCHEMA, "agent_ai_models"),
+                ara=sql.Identifier(CORE_SCHEMA, "agent_risk_assessments"),
+            ),
+            (model_id,),
+        )
+        max_brs = float((cursor.fetchone() or [0.0])[0] or 0.0)
+        are = round(max_brs * (bc_score + et_score) / 2.0, 2)
+        art = _art_from_are(are) if associated_count > 0 else "None"
+
+        cursor.execute(
+            sql.SQL("""
+                UPDATE {am}
+                SET blended_risk_score = %s,
+                    agent_risk_exposure = %s,
+                    agent_risk_tier = %s,
+                    no_of_associated_agents = %s,
+                    inherent_risk_classification = 'None',
+                    residual_risk_classification = 'None',
+                    inherent_risk_classification_score = 0,
+                    residual_risk_classification_score = 0,
+                    updated_ts = NOW()
+                WHERE ai_model_id = %s
+            """).format(am=sql.Identifier(CORE_SCHEMA, "ai_models")),
+            (max_brs, are, art, associated_count, model_id),
+        )
+
+    # Integrations
+    cursor.execute(
+        sql.SQL("""
+            SELECT DISTINCT bi.integration_id,
+                   bi.business_criticality,
+                   bi.emergency_tier
+            FROM {link} lnk
+            JOIN {bi} bi USING (integration_id)
+            WHERE lnk.agent_id = %s OR lnk.agent_internal_id = %s
+        """).format(
+            link=sql.Identifier(CORE_SCHEMA, "agent_business_integrations"),
+            bi=sql.Identifier(CORE_SCHEMA, "business_integrations"),
+        ),
+        (agent_id, agent_internal_id),
+    )
+    for row in cursor.fetchall():
+        integration_id, bc_raw, et_raw = row
+
+        bc = (bc_raw or "").strip().lower()
+        bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+        et = (et_raw or "").strip().lower()
+        et_score = {"mission critical": 1.0, "business critical": 0.4,
+                    "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COUNT(DISTINCT lnk.agent_id)
+                FROM {link} lnk
+                WHERE lnk.integration_id = %s
+                  AND lnk.agent_id IS NOT NULL
+                  AND lnk.agent_id <> ''
+            """).format(link=sql.Identifier(CORE_SCHEMA, "agent_business_integrations")),
+            (integration_id,),
+        )
+        associated_count = int((cursor.fetchone() or [0])[0] or 0)
+
+        cursor.execute(
+            sql.SQL("""
+                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0)
+                FROM {link} lnk
+                JOIN LATERAL (
+                    SELECT blended_risk_score
+                    FROM {ara} ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = lnk.agent_id
+                        OR (
+                            lnk.agent_internal_id IS NOT NULL
+                            AND lnk.agent_internal_id <> ''
+                            AND ara.agent_internal_id = lnk.agent_internal_id
+                        )
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE lnk.integration_id = %s
+            """).format(
+                link=sql.Identifier(CORE_SCHEMA, "agent_business_integrations"),
+                ara=sql.Identifier(CORE_SCHEMA, "agent_risk_assessments"),
+            ),
+            (integration_id,),
+        )
+        max_brs = float((cursor.fetchone() or [0.0])[0] or 0.0)
+        are = round(max_brs * (bc_score + et_score) / 2.0, 2)
+        art = _art_from_are(are) if associated_count > 0 else "None"
+
+        cursor.execute(
+            sql.SQL("""
+                UPDATE {bi}
+                SET blended_risk_score = %s,
+                    agent_risk_exposure = %s,
+                    agent_risk_tier = %s,
+                    num_of_associated_agents = %s,
+                    inherent_risk_classification = 'None',
+                    residual_risk_classification = 'None',
+                    inherent_risk_classification_score = 0,
+                    residual_risk_classification_score = 0,
+                    updated_ts = NOW()
+                WHERE integration_id = %s
+            """).format(bi=sql.Identifier(CORE_SCHEMA, "business_integrations")),
+            (max_brs, are, art, associated_count, integration_id),
         )
 
 

@@ -2177,6 +2177,7 @@ class AgentMetadataExporter:
                     u.updated_ts,
                     u.agent_risk_exposure_are,
                     u.no_of_associated_agents,
+                    u.blended_risk_score,
                     u.inherent_risk_classification,
                     u.residual_risk_classification,
                     u.inherent_risk_classification_score,
@@ -2249,6 +2250,7 @@ class AgentMetadataExporter:
                     "updated_ts": row.get("updated_ts"),
                     "agent_risk_exposure_are": row.get("agent_risk_exposure_are"),
                     "no_of_associated_agents": row.get("no_of_associated_agents"),
+                    "blended_risk_score": row.get("blended_risk_score"),
                     "inherent_risk_classification": row.get("inherent_risk_classification"),
                     "residual_risk_classification": row.get("residual_risk_classification"),
                     "inherent_risk_classification_score": row.get("inherent_risk_classification_score"),
@@ -2392,11 +2394,11 @@ class AgentMetadataExporter:
                     agent_risk_exposure_are = 0,
                     blended_risk_score = 0,
                     no_of_associated_agents = 0,
-                    inherent_risk_classification = '',
-                    residual_risk_classification = '',
+                    inherent_risk_classification = 'None',
+                    residual_risk_classification = 'None',
                     inherent_risk_classification_score = 0,
                     residual_risk_classification_score = 0,
-                    agent_risk_tier_art = 'Low',
+                    agent_risk_tier_art = 'None',
                     updated_ts = TIMESTAMP '{now}'
                 WHERE ai_use_case_id = '{ai_use_case_id}'
                   {tenant_uc_where}
@@ -2406,19 +2408,29 @@ class AgentMetadataExporter:
 
         ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
         metrics_q = f"""
-            WITH risk_metrics AS (
+            WITH latest_agent_scores AS (
+                SELECT DISTINCT ON (agent_internal_id)
+                    agent_internal_id,
+                    blended_risk_score
+                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
+                WHERE agent_internal_id IN ({ids_sql})
+                  AND blended_risk_score IS NOT NULL
+                ORDER BY
+                    agent_internal_id,
+                    CASE WHEN is_current = TRUE THEN 0 ELSE 1 END,
+                    assessment_ts DESC NULLS LAST,
+                    updated_ts DESC NULLS LAST
+            ),
+            risk_metrics AS (
                 SELECT
                     MAX(blended_risk_score) AS max_score,
                     (
                         SELECT agent_internal_id
-                        FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                        WHERE agent_internal_id IN ({ids_sql})
-                        ORDER BY blended_risk_score DESC
+                        FROM latest_agent_scores
+                        ORDER BY blended_risk_score DESC NULLS LAST
                         LIMIT 1
                     ) AS worst_agent_id
-                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                WHERE agent_internal_id IN ({ids_sql})
-                  AND is_current = true
+                FROM latest_agent_scores
             )
             SELECT * FROM risk_metrics
         """
