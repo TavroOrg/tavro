@@ -2,9 +2,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
 ON core.agents (agent_id, agent_name)
 WHERE is_current = true;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_generated_code
-ON core.agent_generated_code (agent_id, filename);
-
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_internal_id
 ON core.agents (agent_internal_id);
 

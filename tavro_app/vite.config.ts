@@ -10,11 +10,6 @@ const copilotApiUrl = _penv.VITE_COPILOT_API_URL ?? 'http://localhost:4001'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  build: {
-    rollupOptions: {
-      external: (id) => id.startsWith('core-js/'),
-    },
-  },
   server: {
     port: 9000,
     proxy: {

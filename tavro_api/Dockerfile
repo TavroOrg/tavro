@@ -2,10 +2,7 @@ FROM python:3.12-slim
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends curl libpq-dev gcc && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/* && \
-    npm install -g @anthropic-ai/claude-code
+    rm -rf /var/lib/apt/lists/*
 
 # Install Temporal CLI (used by the embedded worker)
 RUN curl -sSL https://temporal.download/cli.sh | bash

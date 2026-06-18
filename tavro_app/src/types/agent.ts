@@ -2,7 +2,6 @@
 
 export interface AgentIdentification {
   agent_id: string;
-  agent_internal_id?: string | null;
   role: string | null;
   instruction: string | null;
   goal_orientation?: string | null;
@@ -289,7 +288,6 @@ export interface AgentData {
   // Metadata
   sys_id?: string;
   id?: string;
-  tenant_id?: string | null;
   latest_risk_score?: string | number | null;
   latest_risk_class?: string | null;
   latest_event_status?: string | null;
