@@ -45,6 +45,8 @@ import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
 import IssueViewPage from './pages/IssueViewPage';
+import AgentEvalsPage from './pages/AgentEvalsPage';
+import RoadmapPage from './pages/RoadmapPage';
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -171,6 +173,8 @@ function App() {
                 <Route path="audit/:runId" element={<EnterpriseGate><AuditRunDetailPage /></EnterpriseGate>} />
                 <Route path="guardrails" element={<EnterpriseGate><div /></EnterpriseGate>} />
                 <Route path="issues" element={<EnterpriseGate><div /></EnterpriseGate>} />
+                <Route path="agent-evals" element={<EnterpriseGate><AgentEvalsPage /></EnterpriseGate>} />
+                <Route path="roadmap" element={<EnterpriseGate><RoadmapPage /></EnterpriseGate>} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />
                 <Route path="applications/new" element={<BusinessApplicationViewPage />} />
                 <Route path="applications/:id" element={<BusinessApplicationViewPage />} />
