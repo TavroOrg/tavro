@@ -1,6 +1,7 @@
 ﻿import os
 import json
 import time
+import hashlib
 from pathlib import Path
 import uvicorn
 import httpx
@@ -24,6 +25,7 @@ from tavro_library.agent_library import AgentMetadataExporter
 from tavro_library.users import get_approved_user
 
 TAVRO_API_URL = os.getenv("TAVRO_API_URL")
+COPILOT_SERVER_URL = os.getenv("COPILOT_SERVER_URL")
 
 
 def _load_zitadel_client_id_from_runtime_config() -> str:
@@ -210,6 +212,7 @@ def log_tool_call(
     except Exception as e:
         print(f"[LOG ERROR] Failed to write log for {tool_name}: {e}")
 
+
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, agent_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -265,6 +268,7 @@ async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, 
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="get_agent_catalog")
 async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
@@ -332,6 +336,7 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="create_agent")
 async def create_agent(
@@ -436,6 +441,12 @@ async def create_agent(
     standardized response containing the agent’s metadata. In case of validation or
     runtime errors, an appropriate error response is returned.
 
+    IMPORTANT — risk assessment is triggered automatically:
+    This tool always starts a risk assessment in the background immediately after the agent
+    is created. Do NOT call create_risk_assessment after this tool — doing so will cause a
+    duplicate assessment. The risk assessment runs automatically; no separate tool call is
+    needed.
+
     - `issues`: A list of issues associated with the agent. Each issue supports:
         {
             "title":            str,            (required) — short human-readable summary of the issue
@@ -521,15 +532,31 @@ async def create_agent(
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 @core.tool(name="create_risk_assessment")
 async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict[str, Any]:
     """
-    Create a risk assessment for an existing agent by taking input as agent_id.
+    Re-run or regenerate the risk assessment for an agent that already exists in the catalog.
+
+    IMPORTANT — when NOT to call this tool:
+    - Do NOT call this tool after create_agent. The create_agent tool already triggers a risk
+      assessment automatically as part of agent creation. Calling create_risk_assessment
+      immediately after create_agent will cause a duplicate assessment run with no benefit.
+    - Do NOT call this tool proactively or as a "next step" after any agent-creation or
+      idea-conversion flow. Risk assessment is always started automatically by create_agent.
+
+    ONLY call this tool when the user EXPLICITLY asks to re-run, regenerate, refresh, or
+    manually trigger a risk assessment for an agent that already exists — for example:
+      "re-run the risk assessment for agent abc123"
+      "trigger a new risk assessment for the Fraud Detection Agent"
+      "refresh the risk score for agent xyz"
+
     Args:
         original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
                                Do NOT leave empty, summarize, or paraphrase.
                                Example: if the user typed "create risk assessment for agent abc123", set this to "create risk assessment for agent abc123".
-        agent_id (str): The unique identifier of the agent for which the risk assessment is to be created.
+        agent_id (str): The unique identifier of the agent for which the risk assessment is to be re-run.
     This tool fetches the agent's metadata and triggers the risk assessment.
     """
     print(f"Create risk assessment requested for agent_id={agent_id}")
@@ -553,6 +580,7 @@ async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="create_ai_use_case")
 async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str] = None, company_name: Optional[str] = None) -> Dict[str, Any]:
@@ -658,6 +686,7 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
+
 @core.tool(name="get_ai_use_case")
 async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: Optional[str] = None, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
     """
@@ -733,6 +762,7 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
+
 @core.tool(name="create_ai_use_case_agent_relationship")
 async def create_ai_use_case_agent_relationship(original_prompt: str, *, agent_catalog_id: str, ai_use_case_id: str) -> Dict[str, Any]:
     """
@@ -780,6 +810,7 @@ async def create_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
+
 @core.tool(name="remove_ai_use_case_agent_relationship")
 async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_catalog_id: str, ai_use_case_id: str) -> Dict[str, Any]:
     """
@@ -822,6 +853,7 @@ async def remove_ai_use_case_agent_relationship(original_prompt: str, *, agent_c
     except Exception as e:
         print("Unexpected error")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="update_agent")
 async def update_agent(
@@ -957,6 +989,8 @@ async def update_agent(
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 @core.tool(name="update_ai_use_case")
 async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None) -> Dict[str, Any]:
     """
@@ -1020,169 +1054,6 @@ async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str]
         )
 
         return result
-
-    except ValueError as ve:
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-@core.tool(name="get_application_catalog")
-async def get_application_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
-    """
-    Retrieve paginated application catalog.
-
-    Args:
-        original_prompt (str): REQUIRED verbatim user message.
-        start_record (int): Starting index.
-        record_range (str): Range like "1-10".
-
-    Returns:
-        Dict[str, Any]
-    """
-    print("Application catalog requested")
-
-    try:
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-
-        log_tool_call(
-            "get_application_catalog",
-            original_prompt,
-            {
-                "start_record": start_record,
-                "record_range": record_range,
-            },
-            tenant_id,
-        )
-
-        result = AgentMetadataExporter.get_application_catalog(
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
-
-        return result
-
-    except ValueError as ve:
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-@core.tool(name="get_process_catalog")
-async def get_process_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
-    """
-    Retrieve paginated process catalog.
-
-    Args:
-        original_prompt (str): REQUIRED verbatim user message.
-        start_record (int): Start index.
-        record_range (str): Range like "1-10".
-
-    Returns:
-        Dict[str, Any]
-    """
-    print("Process catalog requested")
-
-    try:
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-
-        log_tool_call(
-            "get_process_catalog",
-            original_prompt,
-            {
-                "start_record": start_record,
-                "record_range": record_range,
-            },
-            tenant_id,
-        )
-
-        result = AgentMetadataExporter.get_process_catalog(
-            start_record=start_record,
-            record_range=record_range,
-            tenant_id=str(tenant_id),
-        )
-
-        return result
-
-    except ValueError as ve:
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-@core.tool(name="create_company")
-async def create_company(original_prompt: str, *, name: str, industry: str, region: str, legal_entity: str) -> Dict[str, Any]:
-    """
-    Create a new company entity.
-
-    Args:
-        original_prompt (str): REQUIRED verbatim user message.
-        name (str): Company name.
-        industry (str): Company industry.
-        region (str): Company region.
-        legal_entity (str): Legal entity information.
-
-    Returns:
-        Dict[str, Any]
-    """
-    try:
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-
-        log_tool_call(
-            "create_company",
-            original_prompt,
-            {
-                "name": name,
-                "industry": industry,
-                "region": region,
-                "legal_entity": legal_entity,
-            },
-            tenant_id,
-        )
-
-        result = AgentMetadataExporter.create_company(
-            name=name,
-            industry=industry,
-            region=region,
-            legal_entity=legal_entity,
-            tenant_id=str(tenant_id),
-        )
-
-        return result
-
-    except ValueError as ve:
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-@core.tool(name="get_company")
-async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any]:
-    """
-    Retrieve a company by ID.
-
-    Args:
-        original_prompt (str): REQUIRED verbatim user message.
-        company_id (str): Company identifier.
-
-    Returns:
-        Dict[str, Any]
-    """
-    try:
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-
-        log_tool_call(
-            "get_company",
-            original_prompt,
-            {"company_id": company_id},
-            tenant_id,
-        )
-
-        return AgentMetadataExporter.get_company(
-            company_id=company_id,
-            tenant_id=str(tenant_id),
-        )
 
     except ValueError as ve:
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
@@ -1272,6 +1143,340 @@ async def generate_agent_artifacts(
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 
+@core.tool(name="generate_spark_ideas")
+async def generate_spark_ideas(
+    original_prompt: str,
+    *,
+    company_id: str,
+    dimensions: Optional[List[str]] = None,
+    direction: Optional[str] = None,
+    idea_count: int = 5,
+    company_name: Optional[str] = None,
+    industry: Optional[str] = None,
+    region: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Generate fresh AI use-case ideas ("Spark" ideas) for a company by scanning its blueprint
+    (processes, risks, applications, integrations, strategy) for automation gaps, or by
+    proposing ideas focused on one specific topic the user names.
+
+    Call this tool whenever the user asks to brainstorm, ideate, or get suggestions for new
+    AI use cases, automation opportunities, or agent ideas — e.g. "give me some ideas for...",
+    "what AI opportunities exist for...", "suggest use cases around...", "what could we
+    automate in...", "inspire me". Do NOT call this for a request to create one specific,
+    already-fully-defined use case or agent — use create_ai_use_case or create_agent for that
+    instead.
+
+    Args:
+    original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+    company_id (str): Mandatory. The active company's UUID.
+    dimensions (List[str], optional): Blueprint categories to focus the scan on, e.g.
+                                       ["process", "risk"]. Leave empty to scan the whole
+                                       company blueprint.
+    direction (str, optional): A specific topic or focus area if the user named one, e.g.
+                                "predictive maintenance", "supplier risk". Leave empty for a
+                                general scan across the blueprint.
+    idea_count (int): Number of ideas to generate, between 1 and 16. Defaults to 5.
+    company_name (str, optional): Company display name, used to ground idea language.
+    industry (str, optional): Company industry, used to ground idea language.
+    region (str, optional): Company region, used to ground idea language.
+
+    Returns:
+    Dict[str, Any]: { "ideas": [ { idea_id, title, description, rationale, signal_type,
+    signal_label, target_dimensions, complexity, estimated_impact, target_nodes }, ... ] }.
+    Present 2-3 of the most relevant ideas to the user in natural language, referring to each
+    one by its title. The ideas are already saved to the company's Spark idea library.
+    """
+    print("Generate spark ideas requested")
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "generate_spark_ideas",
+            original_prompt,
+            {
+                "company_id": company_id,
+                "dimensions": dimensions,
+                "direction": direction,
+                "idea_count": idea_count,
+            },
+            tenant_id,
+        )
+
+        if not company_id or not company_id.strip():
+            return {
+                "error": "NO_COMPANY_BLUEPRINT",
+                "message": "Set up your Company Blueprint first — Spark uses your company profile as context for idea generation. Tell the user this in plain language and do not invent a company.",
+            }
+
+        headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        count = max(1, min(int(idea_count or 5), 16))
+        direction_clean = direction.strip() if direction and direction.strip() else None
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            # Step 1: DB context (candidates or company nodes + edges) from the Tavro API.
+            ctx_params: Dict[str, Any] = {"company_id": company_id, "idea_count": count}
+            if dimensions:
+                ctx_params["dimensions"] = ",".join(dimensions)
+            if direction_clean:
+                ctx_params["direction"] = direction_clean
+            ctx_resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/spark/context",
+                params=ctx_params,
+                headers=headers,
+            )
+            ctx_resp.raise_for_status()
+            context = ctx_resp.json()
+
+            # Blueprint is empty for this company — there is nothing to ground ideas in.
+            # Mirror the same gate the Spark UI applies before calling "Inspire Me".
+            is_grounded = bool(context.get("candidates")) or bool(context.get("company_nodes"))
+            if not is_grounded:
+                return {
+                    "error": "EMPTY_COMPANY_BLUEPRINT",
+                    "message": "This company's Blueprint has no processes, risks, applications, or other dimensions yet — Spark needs at least some blueprint context to generate grounded ideas. Tell the user to add to their Company Blueprint first, then try again.",
+                }
+
+            # Step 2: generate ideas through the same Anthropic infrastructure used by the
+            # AI Assistant (copilot server), so idea quality and model config stay unified.
+            stream_resp = await client.post(
+                f"{COPILOT_SERVER_URL}/spark/generate/stream",
+                json={
+                    "mode": context.get("mode"),
+                    "candidates": context.get("candidates"),
+                    "companyNodes": context.get("company_nodes"),
+                    "direction": direction_clean,
+                    "companyName": company_name,
+                    "industry": industry,
+                    "region": region,
+                    "edges": context.get("edges"),
+                    "ideaCount": count,
+                    "similarAgents": context.get("similar_agents"),
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            stream_resp.raise_for_status()
+
+            ideas: List[Dict[str, Any]] = []
+            stream_error: Optional[str] = None
+            event_name = ""
+            for raw_line in stream_resp.text.splitlines():
+                line = raw_line.strip()
+                if line.startswith("event:"):
+                    event_name = line[len("event:"):].strip()
+                elif line.startswith("data:"):
+                    data = line[len("data:"):].strip()
+                    if event_name == "idea" and data and data != "{}":
+                        try:
+                            ideas.append(json.loads(data))
+                        except Exception:
+                            pass
+                    elif event_name == "error" and data:
+                        try:
+                            stream_error = json.loads(data).get("message") or data
+                        except Exception:
+                            stream_error = data
+                    event_name = ""
+
+            if not ideas and stream_error:
+                return {"error": "GENERATION_ERROR", "details": stream_error}
+
+            # Step 3: persist ideas to the company's Spark idea library.
+            if ideas:
+                await client.post(
+                    f"{TAVRO_API_URL}/api/v1/spark/ideas/batch",
+                    json={
+                        "company_id": company_id,
+                        "ideas": ideas,
+                        "clear_existing": direction_clean is None,
+                    },
+                    headers=headers,
+                )
+
+        return {"ideas": ideas, "count": len(ideas)}
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="convert_spark_idea")
+async def convert_spark_idea(
+    original_prompt: str,
+    *,
+    company_id: str,
+    title: str,
+    description: str,
+    rationale: str,
+    target_dimensions: List[str],
+    signal_label: Optional[str] = None,
+    complexity: Optional[str] = None,
+    estimated_impact: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Expand a Spark idea already discussed in this conversation into complete AI use case
+    fields and an agent design recommendation.
+
+    Call this tool when the user asks to convert, develop, expand, or build out an idea that
+    was just suggested in this conversation — e.g. "convert the first idea into a use case",
+    "develop idea 2 further", "build out that idea", "turn this into an agent". Use the exact
+    title, description, and rationale you previously presented for that idea as the arguments
+    here — do not invent a new idea.
+
+    This tool only drafts the structured fields; it does NOT create or save anything by
+    itself. After calling it, call create_ai_use_case with the returned use_case_fields, and —
+    if the user also wants an agent — call create_agent with the returned
+    agent_recommendation, in the same turn, to actually persist them.
+
+    Args:
+    original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
+    company_id (str): Mandatory. The active company's UUID.
+    title (str): Mandatory. The idea's title, exactly as previously presented.
+    description (str): Mandatory. The idea's description, exactly as previously presented.
+    rationale (str): Mandatory. The idea's rationale/ROI, exactly as previously presented.
+    target_dimensions (List[str]): Mandatory. The blueprint dimensions the idea targets.
+    signal_label (str, optional): The signal label originally shown with the idea.
+    complexity (str, optional): 'Low', 'Medium', or 'High', if previously shown.
+    estimated_impact (str, optional): 'Low', 'Medium', or 'High', if previously shown.
+
+    Returns:
+    Dict[str, Any]: { "use_case_fields": {...}, "agent_recommendation": {...} }.
+    """
+    print("Convert spark idea requested")
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "convert_spark_idea",
+            original_prompt,
+            {"company_id": company_id, "title": title},
+            tenant_id,
+        )
+
+        if not company_id or not company_id.strip():
+            return {
+                "error": "NO_COMPANY_BLUEPRINT",
+                "message": "Set up your Company Blueprint first — Spark uses your company profile as context for idea generation. Tell the user this in plain language and do not invent a company.",
+            }
+
+        headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
+        synthetic_idea_id = hashlib.sha256(f"{company_id}:{title}".encode("utf-8")).hexdigest()[:16]
+
+        payload: Dict[str, Any] = {
+            "idea_id": synthetic_idea_id,
+            "company_id": company_id,
+            "title": title,
+            "description": description,
+            "rationale": rationale,
+            "target_dimensions": target_dimensions or [],
+        }
+        if signal_label is not None:
+            payload["signal_label"] = signal_label
+        if complexity is not None:
+            payload["complexity"] = complexity
+        if estimated_impact is not None:
+            payload["estimated_impact"] = estimated_impact
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/spark/convert",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── COMPANY BLUEPRINT: initiate, research, build, update ─────
+# =============================================================
+
+
+@core.tool(name="create_company")
+async def create_company(original_prompt: str, *, name: str, industry: str, region: str, legal_entity: str) -> Dict[str, Any]:
+    """
+    Create a new company entity.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        name (str): Company name.
+        industry (str): Company industry.
+        region (str): Company region.
+        legal_entity (str): Legal entity information.
+
+    Returns:
+        Dict[str, Any]
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "create_company",
+            original_prompt,
+            {
+                "name": name,
+                "industry": industry,
+                "region": region,
+                "legal_entity": legal_entity,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.create_company(
+            name=name,
+            industry=industry,
+            region=region,
+            legal_entity=legal_entity,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_company")
+async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a company by ID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): Company identifier.
+
+    Returns:
+        Dict[str, Any]
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_company",
+            original_prompt,
+            {"company_id": company_id},
+            tenant_id,
+        )
+
+        return AgentMetadataExporter.get_company(
+            company_id=company_id,
+            tenant_id=str(tenant_id),
+        )
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="update_company")
 async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
@@ -1343,9 +1548,6 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
-# =============================================================
-# ── COMPANY BLUEPRINT: initiate, research, build, update ─────
-# =============================================================
 
 @core.tool(name="list_companies")
 async def list_companies(
@@ -2239,6 +2441,50 @@ async def create_dim_type(
 # ── BUSINESS APPLICATIONS: CRUD + blueprint relationship ──────
 # =============================================================
 
+
+@core.tool(name="get_application_catalog")
+async def get_application_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+    """
+    Retrieve paginated application catalog.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        start_record (int): Starting index.
+        record_range (str): Range like "1-10".
+
+    Returns:
+        Dict[str, Any]
+    """
+    print("Application catalog requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_application_catalog",
+            original_prompt,
+            {
+                "start_record": start_record,
+                "record_range": record_range,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.get_application_catalog(
+            start_record=start_record,
+            record_range=record_range,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 @core.tool(name="get_application")
 async def get_application(original_prompt: str, *, application_id: str) -> Dict[str, Any]:
     """
@@ -2513,6 +2759,49 @@ async def delete_application(original_prompt: str, *, application_id: str) -> Di
 # =============================================================
 # ── BUSINESS PROCESSES: CRUD + blueprint relationship ─────────
 # =============================================================
+
+@core.tool(name="get_process_catalog")
+async def get_process_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+    """
+    Retrieve paginated process catalog.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        start_record (int): Start index.
+        record_range (str): Range like "1-10".
+
+    Returns:
+        Dict[str, Any]
+    """
+    print("Process catalog requested")
+
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+
+        log_tool_call(
+            "get_process_catalog",
+            original_prompt,
+            {
+                "start_record": start_record,
+                "record_range": record_range,
+            },
+            tenant_id,
+        )
+
+        result = AgentMetadataExporter.get_process_catalog(
+            start_record=start_record,
+            record_range=record_range,
+            tenant_id=str(tenant_id),
+        )
+
+        return result
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
 
 @core.tool(name="get_process")
 async def get_process(original_prompt: str, *, process_id: str) -> Dict[str, Any]:

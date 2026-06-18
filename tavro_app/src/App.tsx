@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Loader2, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   LAST_ACTIVITY_KEY,
   SESSION_TIMEOUT_MS,
@@ -235,15 +235,8 @@ function SessionWarningHandler() {
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4">
       <div className="w-full max-w-[420px] border-2 border-amber-500 bg-white p-6 shadow-2xl rounded-lg">
-        <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="mb-4">
           <h2 className="text-lg font-bold text-slate-900">Session Expiring Soon</h2>
-          <button
-            type="button"
-            onClick={extendSession}
-            className="flex h-7 w-7 items-center justify-center border border-slate-300 text-slate-500 hover:bg-slate-50 rounded"
-          >
-            <X size={16} />
-          </button>
         </div>
         <p className="mb-6 text-sm text-slate-700">
           Your session will expire in <span className="font-semibold text-amber-600">{minutes} minute{minutes !== 1 ? 's' : ''}</span> due to inactivity.
@@ -365,19 +358,10 @@ function SessionExpiredHandler() {
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4">
       <div className="w-full max-w-[420px] border-2 border-red-500 bg-white p-6 shadow-2xl">
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <h2 className="text-lg font-bold text-slate-900">Session Expired (401)</h2>
-          <button
-            type="button"
-            onClick={goToLogin}
-            className="flex h-7 w-7 items-center justify-center border border-blue-700 text-blue-800"
-          >
-            <X size={20} />
-          </button>
-        </div>
+        <h2 className="mb-4 text-lg font-bold text-slate-900">Your session has timed out</h2>
 
         <p className="mb-10 text-sm text-slate-700">
-          Required to provide Auth information
+          For your security, we've logged you out after a period of inactivity. Please log back in to continue.
         </p>
 
         <div className="flex justify-end">
@@ -386,7 +370,7 @@ function SessionExpiredHandler() {
             onClick={goToLogin}
             className="rounded bg-indigo-600 px-5 py-2 text-sm font-semibold text-white"
           >
-            Log in
+            Log In Again
           </button>
         </div>
       </div>
