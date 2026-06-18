@@ -242,7 +242,7 @@ async def list_ai_models(
         )
         params["tid"] = tenant_id
     if company_id:
-        where_clauses.append("m.company_id = :cid")
+        where_clauses.append("(m.company_id = :cid OR m.company_id IS NULL OR TRIM(CAST(m.company_id AS text)) = '')")
         params["cid"] = company_id
     if q and q.strip():
         where_clauses.append(
