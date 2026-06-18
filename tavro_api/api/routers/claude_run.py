@@ -1,3 +1,7 @@
+"""
+Claude Code integration: generate agent code via Anthropic API, stream output, read files.
+No claude CLI required — all code generation is done natively via the Anthropic API.
+"""
 import asyncio
 import json
 import os
@@ -484,32 +488,6 @@ User Question:
 
     yield _done()
     
-async def _handle_deploy_to_azure(agent_id: str, current_code: str = "") -> AsyncGenerator[str, None]:
-    """Load an agent card and deploy the generated code to Azure Foundry."""
-    from api.routers.azure_deploy import DeployRequest, _handle_deploy
-
-    card = _load_agent_card(agent_id)
-    if not card:
-        yield _err(f"Agent card not found for '{agent_id}'.")
-        yield _done()
-        return
-
-    name  = card.get("name", agent_id)
-    ident = card.get("identification", {})
-    role  = ident.get("role", "")
-    instr = ident.get("instruction", "")
-
-    # Azure agent names: alphanumeric + hyphens, max 63 chars
-    slug = re.sub(r'[^a-z0-9-]+', '-', agent_id.lower()).strip('-')[:63]
-
-    async for chunk in _handle_deploy(DeployRequest(
-        agent_name    = slug,
-        code          = current_code,
-        system_prompt = f"You are {name}. {role}\n\n{instr}".strip(),
-    )):
-        yield chunk
-
-
 async def _dispatch(body: RunRequest) -> AsyncGenerator[str, None]:
     """Route a command string to the appropriate handler."""
     cmd = body.command.strip()
@@ -518,13 +496,6 @@ async def _dispatch(body: RunRequest) -> AsyncGenerator[str, None]:
     m = re.match(r'^/generate-agent-code\s+(\S+)', cmd, re.IGNORECASE)
     if m:
         async for chunk in _handle_generate(m.group(1)):
-            yield chunk
-        return
-
-    # /deploy-to-azure <agent_id>
-    m = re.match(r'^/deploy-to-azure\s+(\S+)', cmd, re.IGNORECASE)
-    if m:
-        async for chunk in _handle_deploy_to_azure(m.group(1), body.current_code):
             yield chunk
         return
 
