@@ -31,6 +31,7 @@ const STAT_CARDS = [
     Icon: Zap,
     iconColor: 'text-violet-600 dark:text-violet-400',
     iconBg: 'bg-violet-50 dark:bg-violet-900/20',
+    route: '/spark',
   },
   {
     key: 'useCases',
@@ -39,6 +40,7 @@ const STAT_CARDS = [
     Icon: ClipboardList,
     iconColor: 'text-blue-600 dark:text-blue-400',
     iconBg: 'bg-blue-50 dark:bg-blue-900/20',
+    route: '/use-cases',
   },
   {
     key: 'agents',
@@ -47,6 +49,7 @@ const STAT_CARDS = [
     Icon: Bot,
     iconColor: 'text-purple-600 dark:text-purple-400',
     iconBg: 'bg-purple-50 dark:bg-purple-900/20',
+    route: '/catalog',
   },
   {
     key: 'issues',
@@ -55,6 +58,7 @@ const STAT_CARDS = [
     Icon: AlertCircle,
     iconColor: 'text-rose-600 dark:text-rose-400',
     iconBg: 'bg-rose-50 dark:bg-rose-900/20',
+    route: null,
   },
 ];
 
@@ -203,10 +207,11 @@ const HomePage: React.FC = () => {
 
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        {stats.map(({ label, value, sub, subColor, Icon, iconColor, iconBg }) => (
+        {stats.map(({ label, value, sub, subColor, Icon, iconColor, iconBg, route }) => (
           <div
             key={label}
-            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm"
+            onClick={() => route && navigate(route)}
+            className={`bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm transition-all ${route ? 'cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 hover:shadow-md hover:bg-purple-50 dark:hover:bg-purple-900/10' : ''}`}
           >
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">

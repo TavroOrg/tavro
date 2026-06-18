@@ -157,6 +157,10 @@ Update an existing company's information.
 
 When a user requests content "as a PDF", "in PDF format", "as a downloadable PDF", "generate a PDF report", "give me this in PDF", or any similar phrasing:
 
+- Use the canonical Tavro PDF Document Template loaded from `copilot-server/templates/pdf-document-template.md`.
+- Use the matching document-specific template when one exists: Requirements Document, Technical Design Document, or Risk Assessment Report.
+- For all other PDFs, use the General Report structure from the same canonical template.
+- Treat visual formatting rules in the template as renderer guidance only. Do not include visual header, logo, banner, footer, margin, page-number, or renderer instructions in the markdown body.
 - **Do NOT say you cannot create, generate, or export PDF files.**
 - **Respond with ONLY the report body — no preamble, no closing remarks.**
   - Start your response directly with a `# Report Title` heading derived from the topic (e.g. `# Critical Data Elements - TAVAC0004582`).

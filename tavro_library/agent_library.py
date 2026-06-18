@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import json
 import math
@@ -3852,6 +3852,7 @@ class AgentMetadataExporter:
     # PDF GENERATION
     # =========================================================
 
+
     _UNICODE_REPLACEMENTS: Dict[str, str] = {
         "—": "--",
         "–": "-",
@@ -3883,22 +3884,92 @@ class AgentMetadataExporter:
             markdown_content = markdown_content.replace(char, replacement)
         markdown_content = markdown_content.encode("latin-1", errors="replace").decode("latin-1")
 
+        import os
+        from datetime import date
         from fpdf import FPDF
 
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../utils/travo_logo.png")
+
+        # Extract the first # heading to use as the header title.
+        _doc_title = ""
+        for _ln in markdown_content.split("\n"):
+            if _ln.strip().startswith("# "):
+                _doc_title = _ln.strip()[2:].strip()
+                break
+
+        _today_str = date.today().strftime("%B %d, %Y")
+
         class _PDF(FPDF):
+            doc_title: str = _doc_title
+            today_str: str = _today_str
+
             def header(self):
-                pass
+                if self.page_no() != 1:
+                    return
+
+                # Dark navy background
+                self.set_fill_color(15, 23, 42)
+                self.rect(0, 0, self.w, 44, "F")
+                # Blue accent stripe
+                self.set_fill_color(59, 130, 246)
+                self.rect(0, 0, self.w, 3, "F")
+                # Darker strip at header bottom
+                self.set_fill_color(30, 41, 59)
+                self.rect(0, 41, self.w, 3, "F")
+
+                # Tavro logo from utils/travo_logo.png (Docker copies utils/)
+                # Logo is 469x463px (ratio ~1:1); with h=11mm, w≈11mm
+                logo_h = 11
+                logo_y = (44 - logo_h) / 2
+                logo_w = min(round(logo_h * (469 / 463)), 38)
+                text_x = 20
+                try:
+                    if os.path.exists(_logo_path):
+                        self.image(_logo_path, x=20, y=logo_y, w=logo_w, h=logo_h, type="PNG")
+                        text_x = 20 + logo_w + 5
+                except Exception:
+                    pass
+
+                # Document title — white bold, Y=19 (matches pdfGenerator.ts)
+                title = self.doc_title[:65] if self.doc_title else "Tavro Report"
+                self.set_font("Helvetica", "B", 13)
+                self.set_text_color(255, 255, 255)
+                self.set_xy(text_x, 19)
+                self.cell(self.w - text_x - 20, 7, title)
+
+                # Subtitle — Y=27, 7.5pt (matches pdfGenerator.ts)
+                self.set_font("Helvetica", "", 7.5)
+                self.set_text_color(148, 163, 184)
+                self.set_xy(text_x, 27)
+                self.cell(self.w - text_x - 20, 5, "Tavro AI Governance Platform")
+
+                # Date right-aligned — same Y=27 as subtitle (matches pdfGenerator.ts)
+                self.set_font("Helvetica", "", 7)
+                self.set_text_color(100, 116, 139)
+                self.set_xy(20, 27)
+                self.cell(self.w - 40, 5, self.today_str, align="R")
 
             def footer(self):
-                self.set_y(-12)
-                self.set_font("Helvetica", "I", 8)
-                self.set_text_color(150, 150, 150)
-                self.cell(0, 8, f"Page {self.page_no()}", align="C")
+                ph = self.h
+                self.set_fill_color(248, 250, 252)
+                self.rect(0, ph - 12, self.w, 12, "F")
+                self.set_draw_color(226, 232, 240)
+                self.set_line_width(0.3)
+                self.line(0, ph - 12, self.w, ph - 12)
+                self.set_font("Helvetica", "", 7)
+                self.set_text_color(148, 163, 184)
+                self.set_xy(15, ph - 8)
+                self.cell(self.w - 30, 5, "Tavro AI Governance Platform  *  Confidential")
+                self.set_xy(15, ph - 8)
+                self.cell(self.w - 30, 5, f"Page {self.page_no()} of {{nb}}", align="R")
 
         pdf = _PDF()
-        pdf.set_margins(20, 20, 20)
+        pdf.alias_nb_pages()
+        pdf.set_margins(20, 50, 20)
+        pdf.set_auto_page_break(auto=True, margin=14)
         pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=18)
+        pdf.set_y(50)       # header() leaves cursor inside the banner; reset to below it
+        pdf.set_top_margin(22)
 
         def _to_latin1(text: str) -> str:
             for char, replacement in AgentMetadataExporter._UNICODE_REPLACEMENTS.items():
@@ -3918,11 +3989,17 @@ class AgentMetadataExporter:
 
         lines = markdown_content.split("\n")
         i = 0
+        _first_h1_skipped = False
         while i < len(lines):
             raw = lines[i]
             stripped = raw.strip()
 
             if stripped.startswith("# "):
+                # Title is already in the dark header — skip the first H1 in body.
+                if not _first_h1_skipped:
+                    _first_h1_skipped = True
+                    i += 1
+                    continue
                 pdf.set_font("Helvetica", "B", 18)
                 pdf.set_text_color(30, 30, 30)
                 pdf.multi_cell(0, 10, _strip_inline(stripped[2:]))

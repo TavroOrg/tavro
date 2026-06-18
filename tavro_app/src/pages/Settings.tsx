@@ -4,7 +4,7 @@ import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Code2,
     BotMessageSquare, Trash2, Terminal,
-    Database, Box, ChevronRight
+    Database
 } from 'lucide-react';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
@@ -337,24 +337,6 @@ const Settings: React.FC = () => {
                         </button>
                     </div>
 
-                    {/* Container Logs navigation */}
-                    <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
-                        <button
-                            onClick={() => navigate('/settings/logs')}
-                            className="flex items-center justify-between w-full group"
-                        >
-                            <div className="text-left">
-                                <p className="text-sm font-bold text-slate-800 dark:text-slate-200 font-sans flex items-center gap-2">
-                                    <Box size={14} className="text-purple-500" />
-                                    Container Logs
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                                    View real-time logs from all running Docker containers
-                                </p>
-                            </div>
-                            <ChevronRight size={16} className="text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 transition-colors shrink-0 ml-4" />
-                        </button>
-                    </div>
                 </div>
             </div>
 

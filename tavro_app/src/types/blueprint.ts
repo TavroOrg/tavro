@@ -3,7 +3,7 @@
 export type DimCategory =
   | 'profile' | 'strategy' | 'process' | 'application'
   | 'organisation' | 'risk' | 'finance' | 'integration'
-  | 'technology' | 'custom';
+  | 'custom';
 
 export type VisibilityLevel = 'public' | 'internal' | 'restricted' | 'confidential';
 
@@ -177,13 +177,11 @@ export const CATEGORY_PALETTE: Record<DimCategory, {
   application:  { bg: '#faf5ff', stroke: '#9333ea', text: '#7e22ce', badge: '#e9d5ff', dot: '#9333ea' },
   process:      { bg: '#fff7ed', stroke: '#ea580c', text: '#c2410c', badge: '#fed7aa', dot: '#ea580c' },
   integration:  { bg: '#f0f9ff', stroke: '#0284c7', text: '#0369a1', badge: '#bae6fd', dot: '#0284c7' },
-  technology:   { bg: '#f8fafc', stroke: '#64748b', text: '#475569', badge: '#e2e8f0', dot: '#64748b' },
   custom:       { bg: '#fafaf9', stroke: '#78716c', text: '#57534e', badge: '#e7e5e4', dot: '#78716c' },
 };
 
 export const CATEGORY_LABELS: Record<DimCategory, string> = {
   profile: 'Profile', strategy: 'Strategy', organisation: 'Organization',
   finance: 'Financials', risk: 'Risks', application: 'Applications',
-  process: 'Processes', integration: 'Integrations',
-  technology: 'Technology', custom: 'Custom',
+  process: 'Processes', integration: 'Integrations', custom: 'Custom',
 };

@@ -443,7 +443,7 @@ _PROFILE_SECTIONS = [
     ("Regulatory Context", ["risk"]),
     ("Financial Profile", ["finance"]),
     ("Competitive Landscape", ["application", "process", "integration"]),
-    ("ESG & Sustainability", ["organisation", "technology"]),
+    ("ESG & Sustainability", ["organisation"]),
 ]
 
 def _profile_dimension_hint(categories: List[str], category_labels: Dict[str, str]) -> str:

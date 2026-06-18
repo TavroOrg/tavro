@@ -60,7 +60,14 @@ class SparkApi {
     return result;
   }
 
-  /** Stream fresh ideas via SSE — yields each SparkIdea as it arrives from the server. */
+  /**
+   * Stream fresh ideas via SSE — yields each SparkIdea as it arrives.
+   *
+   * Flow:
+   *  1. GET /spark/context (Python — DB context: candidates or company nodes + edges)
+   *  2. POST /copilot-api/spark/generate/stream (copilot server — same AI infra as AI Assistant)
+   *  3. POST /spark/ideas/batch (Python — persist ideas to DB)
+   */
   async *generateIdeasStream(
     companyId: string,
     dimensions?: string[],
@@ -70,34 +77,58 @@ class SparkApi {
     industry?: string,
     region?: string,
   ): AsyncGenerator<SparkIdea> {
-    const params = new URLSearchParams({ company_id: companyId });
-    if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
-    if (direction && direction.trim()) params.set('direction', direction.trim());
-    if (ideaCount) params.set('idea_count', String(ideaCount));
-    if (companyName && companyName.trim()) params.set('company_name', companyName.trim());
-    if (industry && industry.trim()) params.set('industry', industry.trim());
-    if (region && region.trim()) params.set('region', region.trim());
+    appLogger.req('Spark generateIdeasStream', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
+    const t0 = Date.now();
 
-    const res = await fetch(`${V1}/spark/generate/stream?${params}`, {
-      method: 'POST',
+    // Step 1: fetch DB context (candidates / company nodes / edges)
+    const ctxParams = new URLSearchParams({ company_id: companyId });
+    if (dimensions && dimensions.length > 0) ctxParams.set('dimensions', dimensions.join(','));
+    if (direction && direction.trim()) ctxParams.set('direction', direction.trim());
+    if (ideaCount) ctxParams.set('idea_count', String(ideaCount));
+
+    const ctxRes = await fetch(`${V1}/spark/context?${ctxParams}`, {
       headers: authHeaders(),
     });
+    if (!ctxRes.ok) {
+      const body = await ctxRes.text();
+      throw new Error(`Spark context fetch failed (${ctxRes.status}): ${body.slice(0, 200)}`);
+    }
+    const context = await ctxRes.json();
 
-    if (!res.ok || !res.body) {
-      const body = await res.text();
+    // Step 2: stream ideas through the copilot server (same AI infrastructure as AI Assistant)
+    const streamRes = await fetch('/copilot-api/spark/generate/stream', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        mode: context.mode,
+        candidates: context.candidates,
+        companyNodes: context.company_nodes,
+        direction: direction?.trim() || null,
+        companyName: companyName?.trim() || null,
+        industry: industry?.trim() || null,
+        region: region?.trim() || null,
+        edges: context.edges,
+        ideaCount: ideaCount ?? 5,
+        similarAgents: context.similar_agents,
+      }),
+    });
+
+    if (!streamRes.ok || !streamRes.body) {
+      const body = await streamRes.text().catch(() => '');
       const isHtml = body.trimStart().startsWith('<');
       const message = isHtml
-        ? res.status === 504
+        ? streamRes.status === 504
           ? 'The request timed out. Please try again.'
-          : `Unexpected error (${res.status}). Please try again.`
+          : `Unexpected error (${streamRes.status}). Please try again.`
         : body.slice(0, 250);
-      throw new Error(`API ${res.status}: ${message}`);
+      throw new Error(`Spark stream failed: ${message}`);
     }
 
-    const reader = res.body.getReader();
+    const reader = streamRes.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let lastEvent = '';
+    const ideas: SparkIdea[] = [];
 
     while (true) {
       const { done, value } = await reader.read();
@@ -123,40 +154,34 @@ class SparkApi {
           }
           if (lastEvent === 'idea' && raw && raw !== '{}') {
             try {
-              yield JSON.parse(raw) as SparkIdea;
+              const idea = JSON.parse(raw) as SparkIdea;
+              ideas.push(idea);
+              yield idea;
             } catch { /* skip malformed */ }
           }
           lastEvent = '';
         }
       }
     }
-  }
 
-  /** Generate fresh ideas, persist to DB, return them. */
-  async generateIdeas(companyId: string, dimensions?: string[], direction?: string, ideaCount?: number, companyName?: string, industry?: string, region?: string): Promise<SparkIdea[]> {
-    const params = new URLSearchParams({ company_id: companyId });
-    if (dimensions && dimensions.length > 0) params.set('dimensions', dimensions.join(','));
-    if (direction && direction.trim()) params.set('direction', direction.trim());
-    if (ideaCount) params.set('idea_count', String(ideaCount));
-    if (companyName && companyName.trim()) params.set('company_name', companyName.trim());
-    if (industry && industry.trim()) params.set('industry', industry.trim());
-    if (region && region.trim()) params.set('region', region.trim());
-    const path = `/spark/generate?${params.toString()}`;
-    appLogger.req('Spark generateIdeas → request', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
-    const t0 = Date.now();
-    try {
-      const result = await req<SparkIdea[]>(path, { method: 'POST' });
-      appLogger.res('Spark generateIdeas ← response', {
-        count: result.length,
-        direction: direction ?? '(none)',
-        titles: result.slice(0, 3).map(i => i.title),
-      }, Date.now() - t0);
-      portalActivity.record(`Generated ${result.length} Spark idea${result.length === 1 ? '' : 's'}`, 'emerald');
-      return result;
-    } catch (err) {
-      appLogger.error('Spark generateIdeas failed', { error: (err as Error).message, direction });
-      throw err;
+    // Step 3: persist ideas to DB
+    if (ideas.length > 0) {
+      try {
+        await fetch(`${V1}/spark/ideas/batch`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            company_id: companyId,
+            ideas,
+            clear_existing: !(direction?.trim()),
+          }),
+        });
+      } catch (err) {
+        appLogger.error('Spark ideas/batch save failed (non-fatal)', { error: (err as Error).message });
+      }
     }
+
+    appLogger.res('Spark generateIdeasStream', { count: ideas.length, direction: direction ?? '(none)' }, Date.now() - t0);
   }
 
   /** Delete specific ideas by ID. */

@@ -1,5 +1,6 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -148,11 +149,26 @@ class AgentApiService {
     async getAgentCatalog(startRecord = 1, recordRange = '1-50', companyId?: string): Promise<AgentCatalogResponse> {
         const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
         if (companyId) params.set('company_id', companyId);
-        return req(`/agents/?${params}`);
+        appLogger.req('GET /api/v1/agents/', { startRecord, recordRange, companyId });
+        const t0 = Date.now();
+        const result = await req<AgentCatalogResponse>(`/agents/?${params}`);
+        appLogger.res('GET /api/v1/agents/', { totalRecords: result.total_records, count: result.data?.length }, Date.now() - t0);
+        return result;
+    }
+
+    async countAgents(companyId?: string): Promise<number> {
+        const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
+        if (companyId) params.set('company_id', companyId);
+        const data = await req<AgentCatalogResponse>(`/agents/?${params}`);
+        return data?.total_records ?? 0;
     }
 
     async getAgentCard(agentId: string): Promise<any> {
-        return req(`/agents/${encodeURIComponent(agentId)}`);
+        appLogger.req(`GET /api/v1/agents/${agentId}`);
+        const t0 = Date.now();
+        const result = await req<any>(`/agents/${encodeURIComponent(agentId)}`);
+        appLogger.res(`GET /api/v1/agents/${agentId}`, { name: result?.name }, Date.now() - t0);
+        return result;
     }
 
     async createAgent(payload: AgentCreatePayload, companyId?: string, companyName?: string): Promise<{ agent_id: string; agent_name: string; message: string }> {
@@ -165,6 +181,7 @@ class AgentApiService {
             body: JSON.stringify(payload),
         });
         portalActivity.record(`Created agent: ${result.agent_name || payload.agent_name}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -194,6 +211,7 @@ class AgentApiService {
             method: 'DELETE',
         });
         portalActivity.record(`Deleted agent: ${agentId}`, 'amber');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -227,6 +245,7 @@ class AgentApiService {
         }>(`/agents/upload${qs}`, formData);
         const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
         portalActivity.record(`Uploaded ${result.uploaded_count} agent${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 

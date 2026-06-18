@@ -17,6 +17,9 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
+import { agentApi } from '../services/agentApi';
+import { useCaseApi } from '../services/useCaseApi';
+import { sparkApi } from '../services/sparkApi';
 import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
@@ -54,13 +57,16 @@ const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [showLogs] = useShowLogs();
-    const { agents } = useCatalog();
-    const { useCases } = useUseCases();
+    useCatalog();
+    useUseCases();
     const { activeCompany } = useBlueprint();
     const [appCount, setAppCount] = useState(0);
     const [processCount, setProcessCount] = useState(0);
     const [integrationCount, setIntegrationCount] = useState(0);
     const [aiModelCount, setAiModelCount] = useState(0);
+    const [agentCount, setAgentCount] = useState(0);
+    const [useCaseCount, setUseCaseCount] = useState(0);
+    const [sparkCount, setSparkCount] = useState(0);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;
@@ -69,18 +75,30 @@ const Layout: React.FC = () => {
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
             aiModelApi.listModels(undefined, companyId),
-        ]).then(([apps, processes, integrations, models]) => {
+            agentApi.countAgents(companyId),
+            useCaseApi.countUseCases(companyId),
+        ]).then(([apps, processes, integrations, models, agents, useCases]) => {
             if (apps.status === 'fulfilled') setAppCount(apps.value);
             if (processes.status === 'fulfilled') setProcessCount(processes.value);
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
             if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+            if (agents.status === 'fulfilled') setAgentCount(agents.value);
+            if (useCases.status === 'fulfilled') setUseCaseCount(useCases.value);
         });
+        if (companyId) {
+            sparkApi.getIdeas(companyId).then(ideas => setSparkCount(ideas.length)).catch(() => {});
+        }
     }, [activeCompany]);
 
     useEffect(() => {
         fetchCatalogCounts();
+        const onSparkChanged = (e: Event) => setSparkCount((e as CustomEvent).detail?.count ?? 0);
         window.addEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
-        return () => window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+        window.addEventListener('tavro:spark-ideas-changed', onSparkChanged);
+        return () => {
+            window.removeEventListener('tavro:catalog-item-changed', fetchCatalogCounts);
+            window.removeEventListener('tavro:spark-ideas-changed', onSparkChanged);
+        };
     }, [fetchCatalogCounts]);
 
     useEffect(() => {
@@ -161,7 +179,7 @@ const Layout: React.FC = () => {
             'tavro_mcp_refresh_token', 'tavro_mcp_access_token', 'tavro_tenant_id',
             'tavro_pkce_verifier', 'tavro_auth_flow_origin', 'tavro_dcr_client_id',
             'tavro_oidc_provider', 'tavro_oidc_issuer', 'tavro_oidc_client_id', 'tavro_auth_redirect_uri',
-            'tavro_oidc_state'
+            'tavro_oidc_state', 'tavro_last_activity_at'
         ].forEach(k => localStorage.removeItem(k));
         // Clear persisted chat sessions and reset MCP client
         clearAllSessions();
@@ -270,6 +288,9 @@ const Layout: React.FC = () => {
                             >
                                 <Zap size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
+                                {isLeftPanelOpen && sparkCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{sparkCount} {sparkCount === 1 ? 'idea' : 'ideas'}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => navigate('/use-cases')}
@@ -280,8 +301,8 @@ const Layout: React.FC = () => {
                             >
                                 <ClipboardList size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI use cases</span>
-                                {isLeftPanelOpen && useCases.length > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCases.length} {useCases.length === 1 ? 'case' : 'cases'}</span>
+                                {isLeftPanelOpen && useCaseCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCaseCount} {useCaseCount === 1 ? 'case' : 'cases'}</span>
                                 )}
                             </button>
                             <button
@@ -293,8 +314,8 @@ const Layout: React.FC = () => {
                             >
                                 <Bot size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
-                                {isLeftPanelOpen && agents.length > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</span>
+                                {isLeftPanelOpen && agentCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agentCount} {agentCount === 1 ? 'agent' : 'agents'}</span>
                                 )}
                             </button>
                             <button
