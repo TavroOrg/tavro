@@ -769,13 +769,14 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
 
             const activeCompanyId = context.blueprintData?.companyId;
             const activeCompanyName = context.blueprintData?.companyName;
+            const hasBlueprintDimensions = (context.blueprintData?.dimensions?.length ?? 0) > 0;
             yield* copilotOrchestrator.run(
                 baseSystemPrompt,
                 history.slice(-10),
                 userMessage,
                 toolDefs,
                 llmCfg,
-                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt, activeCompanyId, activeCompanyName),
+                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt, activeCompanyId, activeCompanyName, hasBlueprintDimensions),
                 requestId,
             );
 
@@ -799,6 +800,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         originalPrompt: string,
         companyId?: string,
         companyName?: string,
+        hasBlueprintDimensions?: boolean,
     ): Promise<any> {
         const toolArgs: Record<string, any> = {
             ...args,
@@ -807,9 +809,29 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
         // Guarantee company_id/company_name are set for write tools — Claude may omit them even when instructed
-        if (name === 'create_agent' || name === 'create_ai_use_case') {
+        if (name === 'create_agent' || name === 'create_ai_use_case' || name === 'generate_spark_ideas' || name === 'convert_spark_idea') {
             if (companyId && !toolArgs.company_id) toolArgs.company_id = companyId;
             if (companyName && !toolArgs.company_name) toolArgs.company_name = companyName;
+        }
+
+        // Spark idea tools need an active company profile as context, exactly like the
+        // Spark page gate ("Set up your Company Blueprint first…"). Short-circuit here
+        // rather than letting the MCP server fail with a generic/internal error.
+        if (name === 'generate_spark_ideas' || name === 'convert_spark_idea') {
+            const effectiveCompanyId = (companyId && companyId.trim())
+                || (toolArgs.company_id && String(toolArgs.company_id).trim());
+            if (!effectiveCompanyId) {
+                return {
+                    error: 'NO_COMPANY_BLUEPRINT',
+                    message: 'Set up your Company Blueprint first — Spark uses your company profile as context for idea generation. Tell the user this in plain language and do not attempt to invent a company.',
+                };
+            }
+            if (name === 'generate_spark_ideas' && hasBlueprintDimensions === false) {
+                return {
+                    error: 'EMPTY_COMPANY_BLUEPRINT',
+                    message: 'This company\'s Blueprint has no processes, risks, applications, or other dimensions yet — Spark needs at least some blueprint context to generate grounded ideas. Tell the user to add to their Company Blueprint first, then try again.',
+                };
+            }
         }
         try {
             const result = await this.callTool(name, toolArgs);
