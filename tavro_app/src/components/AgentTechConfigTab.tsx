@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AgentData } from '../types/agent';
-import { Settings2, Zap, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
+import { Settings2, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
 import AgentCapabilitiesCard from './AgentCapabilitiesCard';
 
 interface AgentTechConfigTabProps { agent: AgentData; }
@@ -28,7 +28,6 @@ export const AgentTechConfigTab: React.FC<AgentTechConfigTabProps> = ({ agent })
     const [instrSetsOpen, setInstrSetsOpen] = useState(false);
 
     const cfg = agent.configuration;
-    const skills = agent.skills ?? [];
     const instrSets = agent.instruction_sets ?? [];
 
     return (
@@ -52,20 +51,6 @@ export const AgentTechConfigTab: React.FC<AgentTechConfigTabProps> = ({ agent })
             {/* ── Capabilities Extracted Document ─────────────────────── */}
             <AgentCapabilitiesCard agent={agent} />
 
-            {/* ── Skills ──────────────────────────────────────────────── */}
-            {skills.length > 0 && (
-                <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden p-6">
-                    <SectionHead icon={<Zap size={16} />} title="Skills" />
-                    <div className="flex flex-wrap gap-2">
-                        {skills.map((s, i) => (
-                            <div key={s.identifier ?? s.id ?? i} className="flex flex-col gap-0.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
-                                <span className="text-xs font-bold text-slate-700">{s.name ?? `Skill ${i + 1}`}</span>
-                                {s.description && <span className="text-[11px] text-slate-500 max-w-[200px]">{s.description}</span>}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* ── Instruction Sets ────────────────────────────────────── */}
             {instrSets.length > 0 && (
