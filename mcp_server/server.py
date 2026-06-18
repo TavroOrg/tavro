@@ -1342,6 +1342,1727 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+# =============================================================
+# ── COMPANY BLUEPRINT: initiate, research, build, update ─────
+# =============================================================
+
+@core.tool(name="list_companies")
+async def list_companies(
+    original_prompt: str,
+    offset: int = 0,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    List all companies with pagination.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        offset (int): Number of records to skip (default 0).
+        limit (int): Max records to return (default 50, max 200).
+
+    Returns:
+        Dict[str, Any]: Paginated list of companies with total, offset, limit, items.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("list_companies", original_prompt, {"offset": offset, "limit": limit}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/companies",
+                params={"offset": offset, "limit": limit},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_company")
+async def delete_company(original_prompt: str, *, company_id: str) -> Dict[str, Any]:
+    """
+    Delete a company and all its associated blueprint data (dim_nodes, dim_edges, source_refs).
+    Audit logs are retained. This action is irreversible.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company to delete.
+
+    Returns:
+        Dict[str, Any]: Summary of deleted records or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_company", original_prompt, {"company_id": company_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/companies/{company_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="research_blueprint")
+async def research_blueprint(
+    original_prompt: str,
+    *,
+    company_id: str,
+    company_name: str,
+    industry: str,
+    region: str = "",
+    ticker: Optional[str] = None,
+    is_public: bool = False,
+) -> Dict[str, Any]:
+    """
+    Initiate AI-powered research to build a Company Blueprint.
+
+    For PUBLIC companies (is_public=True or ticker provided), this fetches SEC EDGAR 10-K
+    filings and performs web search to generate accurate blueprint dimensions.
+    For PRIVATE companies (is_public=False), it uses AI knowledge of the industry.
+
+    The research produces a list of dimension nodes (profile, strategy, organisation,
+    finance, process, application, integration, risk) that populate the company blueprint.
+
+    After research, call save_blueprint_nodes to persist the returned nodes.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company to research.
+        company_name (str): Full name of the company.
+        industry (str): Company industry (e.g. "Financial Services", "Healthcare").
+        region (str): Geographic region (optional).
+        ticker (str, optional): Stock ticker symbol for public companies (e.g. "AAPL").
+        is_public (bool): True if the company is publicly traded.
+
+    Returns:
+        Dict[str, Any]: Research result containing nodes (list of dimension nodes),
+                        sources, notice, turns_used, tokens_cap — or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "research_blueprint",
+            original_prompt,
+            {
+                "company_id": company_id,
+                "company_name": company_name,
+                "industry": industry,
+                "region": region,
+                "ticker": ticker,
+                "is_public": is_public,
+            },
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "company_id": company_id,
+            "company_name": company_name,
+            "industry": industry,
+            "region": region,
+            "is_public": is_public or bool(ticker),
+        }
+        if ticker:
+            payload["ticker"] = ticker
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        # The research endpoint streams SSE events. Consume the stream and return
+        # the final "result" event payload.
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream(
+                "POST",
+                f"{TAVRO_API_URL}/api/v1/blueprint/research",
+                json=payload,
+                headers=headers,
+            ) as resp:
+                resp.raise_for_status()
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    event = json.loads(line[5:].strip())
+                    if event.get("type") == "result":
+                        return event.get("data", {})
+                    if event.get("type") == "error":
+                        return {
+                            "error": "RESEARCH_ERROR",
+                            "details": event.get("message", "Research failed"),
+                        }
+
+        return {"error": "RESEARCH_ERROR", "details": "Stream ended without a result event"}
+
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="save_blueprint_nodes")
+async def save_blueprint_nodes(
+    original_prompt: str,
+    *,
+    company_id: str,
+    nodes: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Persist AI-researched blueprint nodes into the company's blueprint.
+
+    Call this after research_blueprint to save the returned nodes. Each node
+    is deduplicated by label — existing nodes are skipped (not overwritten).
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company the nodes belong to.
+        nodes (List[Dict]): List of dimension node objects, each with:
+            - category (str): One of profile, strategy, process, application,
+                              integration, organisation, risk, finance, custom.
+            - label (str): Short name for the dimension (e.g. "Revenue Strategy").
+            - summary (str): 2-5 sentence description of the dimension.
+            - tags (List[str]): Descriptive keyword tags.
+            - visibility (str): "public" | "internal" | "restricted" | "confidential" (default: "internal").
+            - sensitive (bool): Whether this node contains sensitive data (default: false).
+
+    Returns:
+        Dict[str, Any]: {"saved": int, "skipped": int} counts.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "save_blueprint_nodes",
+            original_prompt,
+            {"company_id": company_id, "node_count": len(nodes)},
+            tenant_id,
+        )
+
+        payload = {"company_id": company_id, "nodes": nodes}
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/blueprint/save-researched-nodes",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="seed_blueprint_template")
+async def seed_blueprint_template(
+    original_prompt: str,
+    *,
+    company_id: str,
+    template: str,
+) -> Dict[str, Any]:
+    """
+    Seed a company blueprint from a predefined industry template.
+
+    Use this to quickly populate a blueprint with standard dimensions for a given
+    industry, rather than running full AI research. Existing nodes are skipped.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company to seed.
+        template (str): Industry template name (e.g. "banking", "insurance",
+                        "healthcare", "manufacturing", "retail", "tech"). Use "blank" for empty.
+
+    Returns:
+        Dict[str, Any]: {"seeded": int, "skipped": int, "message": str}.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "seed_blueprint_template",
+            original_prompt,
+            {"company_id": company_id, "template": template},
+            tenant_id,
+        )
+
+        payload = {"company_id": company_id, "template": template}
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/blueprint/seed-template",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── DIMENSION NODES: CRUD + company relationship ─────────────
+# =============================================================
+
+@core.tool(name="list_dim_nodes")
+async def list_dim_nodes(
+    original_prompt: str,
+    *,
+    company_id: str,
+    dim_type_id: Optional[str] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    active_only: bool = True,
+    offset: int = 0,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """
+    List dimension nodes for a company's blueprint.
+
+    Dimensions are the building blocks of a Company Blueprint. Each node represents
+    one dimension of the company (e.g. a business process, application, risk factor).
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company (required).
+        dim_type_id (str, optional): Filter by dimension type UUID.
+        category (str, optional): Filter by category (profile, strategy, process,
+                                   application, integration, organisation, risk, finance, custom).
+        search (str, optional): Full-text search across label and summary.
+        active_only (bool): If True (default), only return active (non-deleted) nodes.
+        offset (int): Pagination offset (default 0).
+        limit (int): Max records (default 100, max 500).
+
+    Returns:
+        Dict[str, Any]: Paginated list with total, offset, limit, items.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "list_dim_nodes",
+            original_prompt,
+            {"company_id": company_id, "category": category, "search": search},
+            tenant_id,
+        )
+
+        params: Dict[str, Any] = {
+            "company_id": company_id,
+            "active_only": active_only,
+            "offset": offset,
+            "limit": limit,
+        }
+        if dim_type_id:
+            params["dim_type_id"] = dim_type_id
+        if category:
+            params["category"] = category
+        if search:
+            params["search"] = search
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-nodes",
+                params=params,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_dim_node")
+async def get_dim_node(original_prompt: str, *, node_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a single dimension node by its UUID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        node_id (str): UUID of the dimension node.
+
+    Returns:
+        Dict[str, Any]: Full dimension node record including label, summary, tags,
+                        category, visibility, sensitive, valid_from, valid_to.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_dim_node", original_prompt, {"node_id": node_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-nodes/{node_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_dim_node")
+async def create_dim_node(
+    original_prompt: str,
+    *,
+    company_id: str,
+    dim_type_id: str,
+    label: str,
+    summary: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    visibility: str = "internal",
+    sensitive: bool = False,
+) -> Dict[str, Any]:
+    """
+    Create a new dimension node in a company's blueprint.
+
+    A dimension node represents one dimension of the company blueprint (e.g. a business
+    process, application, integration, or strategic element). When the dim_type category
+    is 'application', 'process', or 'integration', a corresponding business entity record
+    is automatically created and linked.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company this node belongs to.
+        dim_type_id (str): UUID of the dimension type. Use list_dim_types to get available types.
+        label (str): Short name for the dimension (e.g. "Customer Onboarding Process").
+        summary (str, optional): 2-5 sentence description of this dimension.
+        tags (List[str], optional): Descriptive tags (e.g. ["onboarding", "customer-facing"]).
+        visibility (str): "public" | "internal" | "restricted" | "confidential" (default: "internal").
+        sensitive (bool): True if this node contains sensitive/confidential data (default: False).
+
+    Returns:
+        Dict[str, Any]: Created dimension node record with id, company_id, dim_type_id,
+                        label, category, valid_from, updated_at.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_dim_node",
+            original_prompt,
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "company_id": company_id,
+            "dim_type_id": dim_type_id,
+            "label": label,
+            "visibility": visibility,
+            "sensitive": sensitive,
+            "tags": tags or [],
+        }
+        if summary is not None:
+            payload["summary"] = summary
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/dim-nodes",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="update_dim_node")
+async def update_dim_node(
+    original_prompt: str,
+    *,
+    node_id: str,
+    label: Optional[str] = None,
+    summary: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
+    dim_type_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Update fields on an existing dimension node. Only provided fields are changed.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        node_id (str): UUID of the dimension node to update.
+        label (str, optional): Updated label/name.
+        summary (str, optional): Updated summary description.
+        tags (List[str], optional): Updated tags list (replaces existing tags).
+        visibility (str, optional): Updated visibility level.
+        sensitive (bool, optional): Updated sensitive flag.
+        dim_type_id (str, optional): Reassign to a different dimension type UUID.
+
+    Returns:
+        Dict[str, Any]: Updated dimension node record or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("update_dim_node", original_prompt, {"node_id": node_id}, tenant_id)
+
+        payload: Dict[str, Any] = {}
+        if label is not None:
+            payload["label"] = label
+        if summary is not None:
+            payload["summary"] = summary
+        if tags is not None:
+            payload["tags"] = tags
+        if visibility is not None:
+            payload["visibility"] = visibility
+        if sensitive is not None:
+            payload["sensitive"] = sensitive
+        if dim_type_id is not None:
+            payload["dim_type_id"] = dim_type_id
+
+        if not payload:
+            return {"error": "VALIDATION_ERROR", "details": "No fields provided to update"}
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                f"{TAVRO_API_URL}/api/v1/dim-nodes/{node_id}",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_dim_node")
+async def delete_dim_node(original_prompt: str, *, node_id: str) -> Dict[str, Any]:
+    """
+    Soft-delete a dimension node (sets valid_to = now). The record is retained for audit.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        node_id (str): UUID of the dimension node to deactivate.
+
+    Returns:
+        Dict[str, Any]: {"status": "deleted", "node_id": str} or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_dim_node", original_prompt, {"node_id": node_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/dim-nodes/{node_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return {"status": "deleted", "node_id": node_id}
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── DIMENSION EDGES: relationship CRUD ───────────────────────
+# =============================================================
+
+@core.tool(name="list_dim_edges")
+async def list_dim_edges(
+    original_prompt: str,
+    *,
+    company_id: str,
+    node_id: Optional[str] = None,
+    rel_type: Optional[str] = None,
+    active_only: bool = True,
+    offset: int = 0,
+    limit: int = 200,
+) -> Dict[str, Any]:
+    """
+    List dimension edges (relationships) for a company's blueprint.
+
+    Edges model how dimensions relate to each other (e.g. a process depends_on
+    an application, or a risk governs a process).
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str): UUID of the company (required).
+        node_id (str, optional): Filter to edges involving this specific node (both directions).
+        rel_type (str, optional): Filter by relationship type:
+            depends_on | owned_by | supports | risks | enables | part_of | governed_by |
+            replaced_by | custom.
+        active_only (bool): Only return active (non-deleted) edges (default True).
+        offset (int): Pagination offset (default 0).
+        limit (int): Max records (default 200, max 1000).
+
+    Returns:
+        Dict[str, Any]: Paginated list with total, offset, limit, items.
+                        Each item includes source_id, target_id, rel_type,
+                        source_label, target_label, weight.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "list_dim_edges",
+            original_prompt,
+            {"company_id": company_id, "node_id": node_id, "rel_type": rel_type},
+            tenant_id,
+        )
+
+        params: Dict[str, Any] = {
+            "company_id": company_id,
+            "active_only": active_only,
+            "offset": offset,
+            "limit": limit,
+        }
+        if node_id:
+            params["node_id"] = node_id
+        if rel_type:
+            params["rel_type"] = rel_type
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-edges",
+                params=params,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_dim_edge")
+async def get_dim_edge(original_prompt: str, *, edge_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a single dimension edge (relationship) by its UUID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        edge_id (str): UUID of the dimension edge.
+
+    Returns:
+        Dict[str, Any]: Edge record including source_id, target_id, source_label,
+                        target_label, rel_type, weight, meta, valid_from.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_dim_edge", original_prompt, {"edge_id": edge_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-edges/{edge_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_dim_edge")
+async def create_dim_edge(
+    original_prompt: str,
+    *,
+    source_id: str,
+    target_id: str,
+    rel_type: str,
+    weight: float = 0.5,
+    meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Create a relationship (edge) between two dimension nodes in the blueprint graph.
+
+    Edges express how blueprint dimensions relate to each other. Both source and
+    target nodes must belong to the same company.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        source_id (str): UUID of the source dimension node.
+        target_id (str): UUID of the target dimension node.
+        rel_type (str): Relationship type. One of:
+            depends_on | owned_by | supports | risks | enables | part_of |
+            governed_by | replaced_by | custom.
+        weight (float): Relationship strength from 0.0 to 1.0 (default 0.5).
+        meta (Dict, optional): Additional key-value metadata about the relationship.
+
+    Returns:
+        Dict[str, Any]: Created edge record with id, source_id, target_id, rel_type,
+                        weight, valid_from — or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_dim_edge",
+            original_prompt,
+            {"source_id": source_id, "target_id": target_id, "rel_type": rel_type},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "source_id": source_id,
+            "target_id": target_id,
+            "rel_type": rel_type,
+            "weight": weight,
+            "meta": meta or {},
+        }
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/dim-edges",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_dim_edge")
+async def delete_dim_edge(original_prompt: str, *, edge_id: str) -> Dict[str, Any]:
+    """
+    Soft-delete a dimension edge (sets valid_to = now). The record is retained for audit.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        edge_id (str): UUID of the dimension edge to deactivate.
+
+    Returns:
+        Dict[str, Any]: {"status": "deleted", "edge_id": str} or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_dim_edge", original_prompt, {"edge_id": edge_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/dim-edges/{edge_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return {"status": "deleted", "edge_id": edge_id}
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── DIMENSION TYPES: catalog of available dimension categories
+# =============================================================
+
+@core.tool(name="list_dim_types")
+async def list_dim_types(original_prompt: str) -> Dict[str, Any]:
+    """
+    List all available dimension types (the taxonomy for blueprint dimensions).
+
+    System-defined types: profile, strategy, process, application, integration,
+    organisation, risk, finance, custom. Custom types can also be created.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+
+    Returns:
+        Dict[str, Any]: List of dimension type records, each with id, name, category,
+                        system_defined, max_hops.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("list_dim_types", original_prompt, {}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-types",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return {"items": resp.json()}
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_dim_type")
+async def get_dim_type(original_prompt: str, *, dim_type_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a dimension type by its UUID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        dim_type_id (str): UUID of the dimension type.
+
+    Returns:
+        Dict[str, Any]: Dimension type record with id, name, category, system_defined,
+                        max_hops, value_schema.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_dim_type", original_prompt, {"dim_type_id": dim_type_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/dim-types/{dim_type_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_dim_type")
+async def create_dim_type(
+    original_prompt: str,
+    *,
+    name: str,
+    category: str,
+    system_defined: bool = False,
+    max_hops: int = 2,
+    value_schema: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Create a custom dimension type to extend the blueprint taxonomy.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        name (str): Unique display name for this dimension type (e.g. "Vendor").
+        category (str): Category must be one of the system-defined values:
+            profile | strategy | process | application | integration |
+            organisation | risk | finance | custom.
+        system_defined (bool): Mark as system-defined (default False for custom types).
+        max_hops (int): Maximum graph traversal hops (1-5, default 2).
+        value_schema (Dict, optional): JSON Schema for validating node values in this type.
+
+    Returns:
+        Dict[str, Any]: Created dimension type record or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_dim_type",
+            original_prompt,
+            {"name": name, "category": category},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "name": name,
+            "category": category,
+            "system_defined": system_defined,
+            "max_hops": max_hops,
+        }
+        if value_schema is not None:
+            payload["value_schema"] = value_schema
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{TAVRO_API_URL}/api/v1/dim-types",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── BUSINESS APPLICATIONS: CRUD + blueprint relationship ──────
+# =============================================================
+
+@core.tool(name="get_application")
+async def get_application(original_prompt: str, *, application_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a business application by its ID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        application_id (str): The business_application_id (hex string).
+
+    Returns:
+        Dict[str, Any]: Full application record including name, description, vendor,
+                        business_criticality, embedded_ai, risk scores, company_id.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_application", original_prompt, {"application_id": application_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/applications/{application_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_application")
+async def create_application(
+    original_prompt: str,
+    *,
+    application_name: str,
+    company_id: Optional[str] = None,
+    application_description: Optional[str] = None,
+    emergency_tier: Optional[str] = None,
+    business_owner: Optional[str] = None,
+    application_portfolio_manager: Optional[str] = None,
+    vendor_name: Optional[str] = None,
+    business_criticality: Optional[str] = None,
+    it_application_owner: Optional[str] = None,
+    embedded_ai: Optional[str] = None,
+    opt_out_option: Optional[str] = None,
+    privacy_policy_url: Optional[str] = None,
+    data_excluded_from_ai_training: Optional[str] = None,
+    vendor_description: Optional[str] = None,
+    current_installed_version: Optional[str] = None,
+    is_current_version_supported: Optional[str] = None,
+    latest_released_version: Optional[str] = None,
+    latest_release_date: Optional[str] = None,
+    latest_release_documentation_link: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Create a new business application and optionally link it to a company's blueprint.
+
+    When company_id is provided, the application is automatically synced to the company's
+    blueprint as an 'application' dimension node.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        application_name (str): Name of the business application (required).
+        company_id (str, optional): UUID of the company — links application to blueprint.
+        application_description (str, optional): Description of the application's purpose.
+        emergency_tier (str, optional): Emergency classification tier.
+        business_owner (str, optional): Business owner name or team.
+        application_portfolio_manager (str, optional): Portfolio manager.
+        vendor_name (str, optional): Software vendor name.
+        business_criticality (str, optional): Criticality level (e.g. "Critical", "High").
+        it_application_owner (str, optional): IT owner.
+        embedded_ai (str, optional): Whether the application has embedded AI ("Yes"/"No").
+        opt_out_option (str, optional): AI opt-out availability.
+        privacy_policy_url (str, optional): URL to the vendor privacy policy.
+        data_excluded_from_ai_training (str, optional): Data exclusion from AI training details.
+        vendor_description (str, optional): Description of the vendor.
+        current_installed_version (str, optional): Version currently deployed.
+        is_current_version_supported (str, optional): Whether current version is supported.
+        latest_released_version (str, optional): Latest vendor release.
+        latest_release_date (str, optional): Date of latest release.
+        latest_release_documentation_link (str, optional): Link to release docs.
+
+    Returns:
+        Dict[str, Any]: Created application record with business_application_id and all fields.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_application",
+            original_prompt,
+            {"application_name": application_name, "company_id": company_id},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {"application_name": application_name}
+        for field, val in [
+            ("application_description", application_description),
+            ("emergency_tier", emergency_tier),
+            ("business_owner", business_owner),
+            ("application_portfolio_manager", application_portfolio_manager),
+            ("vendor_name", vendor_name),
+            ("business_criticality", business_criticality),
+            ("it_application_owner", it_application_owner),
+            ("embedded_ai", embedded_ai),
+            ("opt_out_option", opt_out_option),
+            ("privacy_policy_url", privacy_policy_url),
+            ("data_excluded_from_ai_training", data_excluded_from_ai_training),
+            ("vendor_description", vendor_description),
+            ("current_installed_version", current_installed_version),
+            ("is_current_version_supported", is_current_version_supported),
+            ("latest_released_version", latest_released_version),
+            ("latest_release_date", latest_release_date),
+            ("latest_release_documentation_link", latest_release_documentation_link),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        url = f"{TAVRO_API_URL}/api/v1/applications"
+        if company_id:
+            url += f"?company_id={company_id}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="update_application")
+async def update_application(
+    original_prompt: str,
+    *,
+    application_id: str,
+    application_name: Optional[str] = None,
+    application_description: Optional[str] = None,
+    emergency_tier: Optional[str] = None,
+    business_owner: Optional[str] = None,
+    application_portfolio_manager: Optional[str] = None,
+    vendor_name: Optional[str] = None,
+    business_criticality: Optional[str] = None,
+    it_application_owner: Optional[str] = None,
+    embedded_ai: Optional[str] = None,
+    opt_out_option: Optional[str] = None,
+    privacy_policy_url: Optional[str] = None,
+    data_excluded_from_ai_training: Optional[str] = None,
+    vendor_description: Optional[str] = None,
+    current_installed_version: Optional[str] = None,
+    is_current_version_supported: Optional[str] = None,
+    latest_released_version: Optional[str] = None,
+    latest_release_date: Optional[str] = None,
+    latest_release_documentation_link: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Update fields on an existing business application. Only provided fields are changed.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        application_id (str): The business_application_id to update.
+        application_name (str, optional): Updated application name.
+        application_description (str, optional): Updated description.
+        emergency_tier (str, optional): Updated emergency tier.
+        business_owner (str, optional): Updated business owner.
+        application_portfolio_manager (str, optional): Updated portfolio manager.
+        vendor_name (str, optional): Updated vendor.
+        business_criticality (str, optional): Updated criticality.
+        it_application_owner (str, optional): Updated IT owner.
+        embedded_ai (str, optional): Updated embedded AI flag.
+        opt_out_option (str, optional): Updated opt-out option.
+        privacy_policy_url (str, optional): Updated privacy policy URL.
+        data_excluded_from_ai_training (str, optional): Updated AI training exclusion.
+        vendor_description (str, optional): Updated vendor description.
+        current_installed_version (str, optional): Updated current version.
+        is_current_version_supported (str, optional): Updated support status.
+        latest_released_version (str, optional): Updated latest version.
+        latest_release_date (str, optional): Updated latest release date.
+        latest_release_documentation_link (str, optional): Updated docs link.
+
+    Returns:
+        Dict[str, Any]: Updated application record or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("update_application", original_prompt, {"application_id": application_id}, tenant_id)
+
+        payload: Dict[str, Any] = {}
+        for field, val in [
+            ("application_name", application_name),
+            ("application_description", application_description),
+            ("emergency_tier", emergency_tier),
+            ("business_owner", business_owner),
+            ("application_portfolio_manager", application_portfolio_manager),
+            ("vendor_name", vendor_name),
+            ("business_criticality", business_criticality),
+            ("it_application_owner", it_application_owner),
+            ("embedded_ai", embedded_ai),
+            ("opt_out_option", opt_out_option),
+            ("privacy_policy_url", privacy_policy_url),
+            ("data_excluded_from_ai_training", data_excluded_from_ai_training),
+            ("vendor_description", vendor_description),
+            ("current_installed_version", current_installed_version),
+            ("is_current_version_supported", is_current_version_supported),
+            ("latest_released_version", latest_released_version),
+            ("latest_release_date", latest_release_date),
+            ("latest_release_documentation_link", latest_release_documentation_link),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        if not payload:
+            return {"error": "VALIDATION_ERROR", "details": "No fields provided to update"}
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                f"{TAVRO_API_URL}/api/v1/applications/{application_id}",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_application")
+async def delete_application(original_prompt: str, *, application_id: str) -> Dict[str, Any]:
+    """
+    Delete a business application and its agent/use-case relationships.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        application_id (str): The business_application_id to delete.
+
+    Returns:
+        Dict[str, Any]: {"status": "deleted", "application_id": str} or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_application", original_prompt, {"application_id": application_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/applications/{application_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── BUSINESS PROCESSES: CRUD + blueprint relationship ─────────
+# =============================================================
+
+@core.tool(name="get_process")
+async def get_process(original_prompt: str, *, process_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a business process by its ID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        process_id (str): The business_process_id (hex string).
+
+    Returns:
+        Dict[str, Any]: Full process record including name, description, owner,
+                        stakeholders, criticality, risk scores, company_id.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_process", original_prompt, {"process_id": process_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/processes/{process_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_process")
+async def create_process(
+    original_prompt: str,
+    *,
+    process_name: str,
+    company_id: Optional[str] = None,
+    process_number: Optional[str] = None,
+    process_description: Optional[str] = None,
+    parent_process_id: Optional[str] = None,
+    stakeholders: Optional[str] = None,
+    owner: Optional[str] = None,
+    operators: Optional[str] = None,
+    business_criticality: Optional[str] = None,
+    reputational_impact: Optional[str] = None,
+    financial_impact: Optional[str] = None,
+    regulatory_impact: Optional[str] = None,
+    sla: Optional[str] = None,
+    process_health_state: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Create a new business process and optionally link it to a company's blueprint.
+
+    When company_id is provided, the process is automatically synced to the company's
+    blueprint as a 'process' dimension node.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        process_name (str): Name of the business process (required).
+        company_id (str, optional): UUID of the company — links process to blueprint.
+        process_number (str, optional): Process identifier/number (e.g. "P-001").
+        process_description (str, optional): Description of the process workflow.
+        parent_process_id (str, optional): ID of a parent process for hierarchy.
+        stakeholders (str, optional): Names of process stakeholders.
+        owner (str, optional): Process owner name or team.
+        operators (str, optional): Who operates this process.
+        business_criticality (str, optional): One of: "Tier 1 (Systemic)" | "Tier 2 (Core)"
+                                               | "Tier 3 (Operational)" | "Tier 4 (Experimental)".
+        reputational_impact (str, optional): "Toxic" | "Adverse" | "Private" | "Contained".
+        financial_impact (str, optional): "Systemic" | "Material" | "Absorbable" | "Immaterial".
+        regulatory_impact (str, optional): "Restricted" | "Statutory" | "Governed" | "Unregulated".
+        sla (str, optional): Service Level Agreement description.
+        process_health_state (str, optional): Current health state of the process.
+
+    Returns:
+        Dict[str, Any]: Created process record with business_process_id and all fields.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_process",
+            original_prompt,
+            {"process_name": process_name, "company_id": company_id},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {"process_name": process_name}
+        for field, val in [
+            ("process_number", process_number),
+            ("process_description", process_description),
+            ("parent_process_id", parent_process_id),
+            ("stakeholders", stakeholders),
+            ("owner", owner),
+            ("operators", operators),
+            ("business_criticality", business_criticality),
+            ("reputational_impact", reputational_impact),
+            ("financial_impact", financial_impact),
+            ("regulatory_impact", regulatory_impact),
+            ("sla", sla),
+            ("process_health_state", process_health_state),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        url = f"{TAVRO_API_URL}/api/v1/processes"
+        if company_id:
+            url += f"?company_id={company_id}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="update_process")
+async def update_process(
+    original_prompt: str,
+    *,
+    process_id: str,
+    process_name: Optional[str] = None,
+    process_number: Optional[str] = None,
+    process_description: Optional[str] = None,
+    parent_process_id: Optional[str] = None,
+    stakeholders: Optional[str] = None,
+    owner: Optional[str] = None,
+    operators: Optional[str] = None,
+    business_criticality: Optional[str] = None,
+    reputational_impact: Optional[str] = None,
+    financial_impact: Optional[str] = None,
+    regulatory_impact: Optional[str] = None,
+    sla: Optional[str] = None,
+    process_health_state: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Update fields on an existing business process. Only provided fields are changed.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        process_id (str): The business_process_id to update.
+        process_name (str, optional): Updated process name.
+        process_number (str, optional): Updated process number.
+        process_description (str, optional): Updated description.
+        parent_process_id (str, optional): Updated parent process ID.
+        stakeholders (str, optional): Updated stakeholders.
+        owner (str, optional): Updated owner.
+        operators (str, optional): Updated operators.
+        business_criticality (str, optional): Updated criticality tier.
+        reputational_impact (str, optional): Updated reputational impact.
+        financial_impact (str, optional): Updated financial impact.
+        regulatory_impact (str, optional): Updated regulatory impact.
+        sla (str, optional): Updated SLA.
+        process_health_state (str, optional): Updated health state.
+
+    Returns:
+        Dict[str, Any]: Updated process record or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("update_process", original_prompt, {"process_id": process_id}, tenant_id)
+
+        payload: Dict[str, Any] = {}
+        for field, val in [
+            ("process_name", process_name),
+            ("process_number", process_number),
+            ("process_description", process_description),
+            ("parent_process_id", parent_process_id),
+            ("stakeholders", stakeholders),
+            ("owner", owner),
+            ("operators", operators),
+            ("business_criticality", business_criticality),
+            ("reputational_impact", reputational_impact),
+            ("financial_impact", financial_impact),
+            ("regulatory_impact", regulatory_impact),
+            ("sla", sla),
+            ("process_health_state", process_health_state),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        if not payload:
+            return {"error": "VALIDATION_ERROR", "details": "No fields provided to update"}
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                f"{TAVRO_API_URL}/api/v1/processes/{process_id}",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_process")
+async def delete_process(original_prompt: str, *, process_id: str) -> Dict[str, Any]:
+    """
+    Delete a business process record.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        process_id (str): The business_process_id to delete.
+
+    Returns:
+        Dict[str, Any]: {"status": "deleted", "process_id": str} or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_process", original_prompt, {"process_id": process_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/processes/{process_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# =============================================================
+# ── BUSINESS INTEGRATIONS: CRUD + blueprint relationship ──────
+# =============================================================
+
+@core.tool(name="list_integrations")
+async def list_integrations(
+    original_prompt: str,
+    company_id: Optional[str] = None,
+    search: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    List business integrations, optionally filtered by company or search term.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        company_id (str, optional): Filter by company UUID.
+        search (str, optional): Search by integration name or description.
+        offset (int): Pagination offset (default 0).
+        limit (int): Max records (default 50, max 500).
+
+    Returns:
+        Dict[str, Any]: Paginated list with total, offset, limit, items.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "list_integrations",
+            original_prompt,
+            {"company_id": company_id, "search": search},
+            tenant_id,
+        )
+
+        params: Dict[str, Any] = {"offset": offset, "limit": limit}
+        if company_id:
+            params["company_id"] = company_id
+        if search:
+            params["q"] = search
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/integrations",
+                params=params,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="get_integration")
+async def get_integration(original_prompt: str, *, integration_id: str) -> Dict[str, Any]:
+    """
+    Retrieve a business integration by its ID.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        integration_id (str): The integration_id (hex string).
+
+    Returns:
+        Dict[str, Any]: Full integration record including name, description, protocol,
+                        endpoint_url, capabilities, sla, company_id.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("get_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{TAVRO_API_URL}/api/v1/integrations/{integration_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="create_integration")
+async def create_integration(
+    original_prompt: str,
+    *,
+    integration_name: str,
+    company_id: Optional[str] = None,
+    integration_description: Optional[str] = None,
+    capabilities: Optional[str] = None,
+    protocol: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    authentication_method: Optional[str] = None,
+    owner: Optional[str] = None,
+    documentation_url: Optional[str] = None,
+    data_sensitivity: Optional[str] = None,
+    rate_limit: Optional[str] = None,
+    availability_status: Optional[str] = None,
+    sla: Optional[str] = None,
+    version: Optional[str] = None,
+    parent_application_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Create a new business integration and optionally link it to a company's blueprint.
+
+    When company_id is provided, the integration is automatically synced to the company's
+    blueprint as an 'integration' dimension node.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        integration_name (str): Name of the integration (required).
+        company_id (str, optional): UUID of the company — links integration to blueprint.
+        integration_description (str, optional): What this integration does.
+        capabilities (str, optional): Comma-separated list of capabilities.
+        protocol (str, optional): Communication protocol (e.g. "REST", "SOAP", "gRPC").
+        endpoint_url (str, optional): API endpoint URL.
+        authentication_method (str, optional): Auth type (e.g. "OAuth2", "API Key").
+        owner (str, optional): Team or person responsible for this integration.
+        documentation_url (str, optional): Link to integration documentation.
+        data_sensitivity (str, optional): Sensitivity of data transferred (e.g. "PII", "Public").
+        rate_limit (str, optional): Rate limiting configuration.
+        availability_status (str, optional): Current availability status.
+        sla (str, optional): Service Level Agreement.
+        version (str, optional): Integration version.
+        parent_application_id (str, optional): ID of the parent business application.
+
+    Returns:
+        Dict[str, Any]: Created integration record with integration_id and all fields.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call(
+            "create_integration",
+            original_prompt,
+            {"integration_name": integration_name, "company_id": company_id},
+            tenant_id,
+        )
+
+        payload: Dict[str, Any] = {"integration_name": integration_name}
+        for field, val in [
+            ("integration_description", integration_description),
+            ("capabilities", capabilities),
+            ("protocol", protocol),
+            ("endpoint_url", endpoint_url),
+            ("authentication_method", authentication_method),
+            ("owner", owner),
+            ("documentation_url", documentation_url),
+            ("data_sensitivity", data_sensitivity),
+            ("rate_limit", rate_limit),
+            ("availability_status", availability_status),
+            ("sla", sla),
+            ("version", version),
+            ("parent_application_id", parent_application_id),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        url = f"{TAVRO_API_URL}/api/v1/integrations"
+        if company_id:
+            url += f"?company_id={company_id}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="update_integration")
+async def update_integration(
+    original_prompt: str,
+    *,
+    integration_id: str,
+    company_id: Optional[str] = None,
+    integration_name: Optional[str] = None,
+    integration_description: Optional[str] = None,
+    capabilities: Optional[str] = None,
+    protocol: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    authentication_method: Optional[str] = None,
+    owner: Optional[str] = None,
+    documentation_url: Optional[str] = None,
+    data_sensitivity: Optional[str] = None,
+    rate_limit: Optional[str] = None,
+    availability_status: Optional[str] = None,
+    sla: Optional[str] = None,
+    version: Optional[str] = None,
+    parent_application_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Update fields on an existing business integration. Only provided fields are changed.
+
+    Optionally pass company_id to re-sync the updated integration to the blueprint.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        integration_id (str): The integration_id to update.
+        company_id (str, optional): Company UUID — if provided, re-syncs to blueprint.
+        integration_name (str, optional): Updated name.
+        integration_description (str, optional): Updated description.
+        capabilities (str, optional): Updated capabilities.
+        protocol (str, optional): Updated protocol.
+        endpoint_url (str, optional): Updated endpoint URL.
+        authentication_method (str, optional): Updated auth method.
+        owner (str, optional): Updated owner.
+        documentation_url (str, optional): Updated docs URL.
+        data_sensitivity (str, optional): Updated data sensitivity.
+        rate_limit (str, optional): Updated rate limit.
+        availability_status (str, optional): Updated availability.
+        sla (str, optional): Updated SLA.
+        version (str, optional): Updated version.
+        parent_application_id (str, optional): Updated parent application ID.
+
+    Returns:
+        Dict[str, Any]: Updated integration record or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("update_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
+
+        payload: Dict[str, Any] = {}
+        for field, val in [
+            ("integration_name", integration_name),
+            ("integration_description", integration_description),
+            ("capabilities", capabilities),
+            ("protocol", protocol),
+            ("endpoint_url", endpoint_url),
+            ("authentication_method", authentication_method),
+            ("owner", owner),
+            ("documentation_url", documentation_url),
+            ("data_sensitivity", data_sensitivity),
+            ("rate_limit", rate_limit),
+            ("availability_status", availability_status),
+            ("sla", sla),
+            ("version", version),
+            ("parent_application_id", parent_application_id),
+        ]:
+            if val is not None:
+                payload[field] = val
+
+        if not payload:
+            return {"error": "VALIDATION_ERROR", "details": "No fields provided to update"}
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if tenant_id:
+            headers["x-tenant-id"] = str(tenant_id)
+
+        url = f"{TAVRO_API_URL}/api/v1/integrations/{integration_id}"
+        if company_id:
+            url += f"?company_id={company_id}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+@core.tool(name="delete_integration")
+async def delete_integration(original_prompt: str, *, integration_id: str) -> Dict[str, Any]:
+    """
+    Delete a business integration record.
+
+    Args:
+        original_prompt (str): REQUIRED verbatim user message.
+        integration_id (str): The integration_id to delete.
+
+    Returns:
+        Dict[str, Any]: {"status": "deleted", "integration_id": str} or error details.
+    """
+    try:
+        token = get_access_token()
+        tenant_id = token.claims.get("tenant_id") if token else None
+        log_tool_call("delete_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
+
+        headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{TAVRO_API_URL}/api/v1/integrations/{integration_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except ValueError as ve:
+        return {"error": "VALIDATION_ERROR", "details": str(ve)}
+    except Exception as e:
+        return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
 # ---------------------------
 # Shared JWT verifier
 # ---------------------------
