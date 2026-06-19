@@ -10,6 +10,15 @@ POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
 DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 
+# ── Tavro Enterprise ──────────────────────────────────────────────────────────
+# Set to "enterprise" when the enterprise repo exists as a sibling of tavro/:
+#   parent/
+#   ├── tavro/       ← this repo
+#   └── enterprise/  ← enterprise repo (TavroOrg/tavro-enterprise)
+# Then run: docker compose up --build -d
+# Leave unset (or set to "oss") for open-source mode — shows stub pages.
+BUILD_MODE=
+
 # ── AI Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...

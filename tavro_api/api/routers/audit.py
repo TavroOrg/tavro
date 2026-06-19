@@ -1,7 +1,7 @@
 # =============================================================
 # api/routers/audit.py
 # Compliance audit orchestration.
-# Uses Claude API directly (claude managed) for each assessment agent.
+# Uses Claude API directly for each assessment agent.
 # Streams progress via Server-Sent Events.
 # =============================================================
 
@@ -28,8 +28,8 @@ _background_tasks: set = set()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL   = "claude-sonnet-4-6"
-MAX_TOKENS        = int(os.getenv("AUDIT_MAX_TOKENS",   "4096"))
-MAX_SEARCH_TURNS  = int(os.getenv("AUDIT_MAX_TURNS",    "3"))
+MAX_TOKENS        = int(os.getenv("AUDIT_MAX_TOKENS", "4096"))
+MAX_SEARCH_TURNS  = int(os.getenv("AUDIT_MAX_TURNS",  "3"))
 
 
 # =============================================================
@@ -60,7 +60,6 @@ class AuditRunResponse(BaseModel):
 def _row(r) -> dict:
     if r is None:
         return {}
-    # Handle both raw Row and already-mapped RowMapping objects
     try:
         return dict(r._mapping)
     except AttributeError:
@@ -91,7 +90,6 @@ async def _fetch_compliance_items(
     company_id: str,
     item_id: str | None = None,
 ) -> list[dict]:
-    """Fetch regulations (shared) + policies (for this company)."""
     if item_id:
         rows = await db.execute(
             text("SELECT * FROM twin.compliance_item WHERE id = :id"), {"id": item_id}
@@ -187,7 +185,6 @@ async def _run_assessment_agent(
     blueprint:   list[dict],
     company:     dict,
 ) -> dict:
-    """Run one assessment agent. Returns parsed findings dict."""
     t0 = time.time()
 
     bp_text = "\n".join(
@@ -255,50 +252,37 @@ Return ONLY the JSON assessment object."""
             "summary": f"Assessment could not be fully parsed. Raw: {raw[:200]}"
         }
 
-    parsed["_session_id"] = session_id
-    parsed["_tokens"]     = tokens
-    parsed["_duration_ms"]= elapsed
+    parsed["_session_id"]  = session_id
+    parsed["_tokens"]      = tokens
+    parsed["_duration_ms"] = elapsed
     return parsed
 
 
 # =============================================================
-# Orchestrator — builds the pairs and runs agents
+# Orchestrator
 # =============================================================
 
 async def _run_orchestrator(
     audit_run_id: str,
     request:      AuditInitRequest,
 ) -> None:
-    """
-    Background task: runs all assessment agents for an audit run.
-    Updates audit_run and audit_finding rows as it goes.
-    Uses a fresh session from the shared engine pool.
-    """
     from sqlalchemy.ext.asyncio import AsyncSession as AS
     from sqlalchemy.orm import sessionmaker
 
     Session = sessionmaker(_shared_engine, class_=AS, expire_on_commit=False)
-
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
 
     async with Session() as db:
         try:
-            # Mark running
             await db.execute(text(
                 "UPDATE twin.audit_run SET status='running', updated_at=now() WHERE id=:id"
             ), {"id": audit_run_id})
             await db.commit()
 
-            company  = await _fetch_company(db, request.company_id)
-            blueprint = await _fetch_blueprint_dims(db, request.company_id)
-            comp_items = await _fetch_compliance_items(
-                db, request.company_id,
-                request.compliance_item_id
-            )
+            company    = await _fetch_company(db, request.company_id)
+            blueprint  = await _fetch_blueprint_dims(db, request.company_id)
+            comp_items = await _fetch_compliance_items(db, request.company_id, request.compliance_item_id)
 
-            # Build use case list from MCP or single item
-            # For POC: use_case comes in as name/id strings from the frontend
-            # In production this would query the MCP catalog
             use_cases = []
             if request.use_case_id or request.agent_id:
                 use_cases.append({
@@ -309,8 +293,6 @@ async def _run_orchestrator(
                     "status":     "active",
                 })
             else:
-                # Full catalog — fetch from MCP tool via stored summary
-                # For now use compliance company summary as proxy
                 rows = await db.execute(text("""
                     SELECT DISTINCT use_case_id, use_case_name
                     FROM twin.audit_finding
@@ -319,7 +301,6 @@ async def _run_orchestrator(
                 """), {"cid": request.company_id})
                 seen = {r.use_case_id for r in rows}
                 if not seen:
-                    # No prior findings — use a placeholder for the POC
                     use_cases.append({
                         "identifier": "catalog",
                         "name":       "Full AI Use Case Catalog",
@@ -340,7 +321,6 @@ async def _run_orchestrator(
 
             for uc in use_cases:
                 for ci in comp_items:
-                    # Create finding row
                     finding_id = str(uuid.uuid4())
                     await db.execute(text("""
                         INSERT INTO twin.audit_finding
@@ -362,9 +342,7 @@ async def _run_orchestrator(
 
                     try:
                         comp_dims = await _fetch_compliance_dims(db, str(ci["id"])) if ci.get("id") else []
-                        result    = await _run_assessment_agent(
-                            api_key, uc, ci, comp_dims, blueprint, company or {}
-                        )
+                        result    = await _run_assessment_agent(api_key, uc, ci, comp_dims, blueprint, company or {})
                         await db.execute(text("""
                             UPDATE twin.audit_finding SET
                                 status='completed',
@@ -409,13 +387,12 @@ async def _run_orchestrator(
                     """), {"c": completed, "f": failed, "id": audit_run_id})
                     await db.commit()
 
-            # Determine overall risk from findings
             risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
             risk_rows = await db.execute(text("""
                 SELECT risk_level FROM twin.audit_finding
                 WHERE audit_run_id=:rid AND status='completed' AND risk_level IS NOT NULL
             """), {"rid": audit_run_id})
-            risks = [r['risk_level'] for r in risk_rows.mappings() if r['risk_level']]
+            risks   = [r['risk_level'] for r in risk_rows.mappings() if r['risk_level']]
             overall = min(risks, key=lambda x: risk_order.get(x, 99)) if risks else None
 
             await db.execute(text("""
@@ -436,25 +413,17 @@ async def _run_orchestrator(
             await db.commit()
 
 
-
 # =============================================================
 # POST /audit/runs — initiate an audit
 # =============================================================
 
 @router.post("/runs", response_model=AuditRunResponse, status_code=202)
 async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Initiate a compliance audit run.
-    Returns immediately with audit_run_id.
-    Background task runs the agents and updates the DB.
-    """
-    # Validate scope
     if body.scope_type == "single" and not (body.use_case_id or body.agent_id):
         raise HTTPException(400, "scope_type=single requires use_case_id or agent_id")
     if body.scope_type in ("single","catalog_single") and not body.compliance_item_id:
         raise HTTPException(400, "This scope requires compliance_item_id")
 
-    # Count expected pairs
     comp_items = await _fetch_compliance_items(db, body.company_id, body.compliance_item_id)
     if not comp_items:
         raise HTTPException(400, "No active compliance items found for this scope")
@@ -462,10 +431,8 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
     uc_count = 1 if (body.use_case_id or body.agent_id) else max(1, 1)
     total    = uc_count * len(comp_items)
 
-    # Get compliance item name if scoped
     ci_name = comp_items[0]["name"] if body.compliance_item_id and comp_items else None
 
-    # Create audit run row
     run_id = str(uuid.uuid4())
     await db.execute(text("""
         INSERT INTO twin.audit_run
@@ -491,10 +458,8 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
     })
     await db.commit()
 
-    # Flush connection to ensure row is visible before background task reads it
     await db.close()
 
-    # Launch background task — row is now committed and visible
     task = asyncio.create_task(_run_orchestrator(run_id, body))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -513,14 +478,12 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
 
 @router.get("/runs/{run_id}/stream")
 async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db)):
-    """Stream audit progress via Server-Sent Events."""
 
     async def generate() -> AsyncGenerator[str, None]:
         seen_finding_ids: set[str] = set()
-        max_polls = 300   # 5 minutes max at 1s intervals
+        max_polls = 300
 
         for _ in range(max_polls):
-            # Fetch run status
             run_row = await db.execute(
                 text("SELECT * FROM twin.audit_run WHERE id=:id"), {"id": run_id}
             )
@@ -529,7 +492,6 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
                 yield f"data: {json.dumps({'type':'error','message':'Audit run not found'})}\n\n"
                 return
 
-            # Fetch new findings since last poll
             new_findings_q = await db.execute(text("""
                 SELECT id, use_case_name, compliance_item_name, compliance_item_type,
                        status, risk_level, risk_score, summary, error_message,
@@ -546,7 +508,6 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
                     seen_finding_ids.add(fid)
                     yield f"data: {json.dumps({'type':'finding', 'finding': {**f, 'id': fid, 'updated_at': str(f['updated_at'])}})}\n\n"
 
-            # Run status update
             progress_pct = (
                 int(run["completed_pairs"] / run["total_pairs"] * 100)
                 if run["total_pairs"] > 0 else 0
@@ -557,7 +518,7 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
                 yield f"data: {json.dumps({'type':'done','status':run['status'],'overall_risk':run['overall_risk'],'summary':run['summary_text']})}\n\n"
                 return
 
-            await db.commit()  # end transaction so next poll sees fresh committed data
+            await db.commit()
             await asyncio.sleep(1.5)
 
         yield f"data: {json.dumps({'type':'timeout'})}\n\n"
@@ -566,14 +527,14 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":  "no-cache",
+            "Cache-Control":     "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
 
 
 # =============================================================
-# GET /audit/runs — list audit runs for a company
+# GET /audit/runs
 # =============================================================
 
 @router.get("/runs")
@@ -597,7 +558,7 @@ async def list_runs(
 
 
 # =============================================================
-# GET /audit/runs/{run_id} — single run with findings
+# GET /audit/runs/{run_id}
 # =============================================================
 
 @router.get("/runs/{run_id}")
@@ -619,7 +580,7 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # =============================================================
-# DELETE /audit/runs/{run_id} — cancel/delete a run
+# DELETE /audit/runs/{run_id}
 # =============================================================
 
 @router.delete("/runs/{run_id}", status_code=200)
@@ -632,7 +593,7 @@ async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # =============================================================
-# GET /audit/runs/{run_id}/findings/{finding_id} — full finding detail
+# GET /audit/runs/{run_id}/findings/{finding_id}
 # =============================================================
 
 @router.get("/runs/{run_id}/findings/{finding_id}")

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import { AgentData } from '../types/agent';
@@ -9,6 +9,7 @@ import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
+import { fetchPagesProgressive } from '../utils/fetchAllPages';
 
 const PAGE_SIZE = 10;
 
@@ -66,22 +67,130 @@ const Dashboard: React.FC = () => {
 
     const navigate = useNavigate();
 
+    // Prevents overlapping concurrent fetches (e.g. rapid workflow update events).
+    const isFetchingRef = useRef(false);
+    // Tracks whether any agent is currently showing "Risk Assessment is running" so the
+    // workflow-update listener knows whether a re-fetch is worthwhile.
+    const hasPendingAgentRef = useRef(false);
+
     const loadAgents = useCallback(async () => {
+        if (isFetchingRef.current) return;
+        isFetchingRef.current = true;
         setLoading(true);
         setError(null);
+
+        // Read the set of locally-pending agent IDs once per fetch so the status is
+        // preserved across navigations. CatalogContext maintains this list and removes
+        // entries only when the corresponding Temporal workflow finishes.
+        let locallyPendingIds: Set<string>;
         try {
-            const response = await agentApi.getAgentCatalog(1, '1-500', activeCompany?.id);
-            setAllAgents((response.data ?? []).map(normalizeAgent));
+            const raw = localStorage.getItem('tavro_pending_assessment_agents');
+            locallyPendingIds = new Set(raw ? (JSON.parse(raw) as string[]) : []);
+        } catch {
+            locallyPendingIds = new Set();
+        }
+
+        const applyPendingStatus = (agent: AgentData): AgentData => {
+            const agentId = (agent.identification?.agent_id ?? '').toLowerCase().trim();
+            if (!agentId || !locallyPendingIds.has(agentId)) return agent;
+            return {
+                ...agent,
+                latest_risk_score: null,
+                latest_risk_class: null,
+                risk_assessment: null,
+                identification: { ...agent.identification, governance_status: 'Risk Assessment is running' },
+            };
+        };
+
+        try {
+            await fetchPagesProgressive(
+                (start, range) => agentApi.getAgentCatalog(start, range, activeCompany?.id),
+                (batch, isFirstPage) => {
+                    const normalized = batch.map(normalizeAgent).map(applyPendingStatus);
+                    if (isFirstPage) {
+                        setAllAgents(normalized);
+                        setLoading(false);
+                    } else {
+                        setAllAgents(prev => {
+                            const ids = new Set(prev.map((a: AgentData) => a.identification?.agent_id).filter(Boolean));
+                            return [...prev, ...normalized.filter((a: AgentData) => !ids.has(a.identification?.agent_id))];
+                        });
+                    }
+                },
+                100,
+            );
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Failed to load agent catalog');
         } finally {
             setLoading(false);
+            isFetchingRef.current = false;
         }
     }, [activeCompany?.id]);
 
     useEffect(() => {
         loadAgents();
     }, [loadAgents]);
+
+    // Keep the pending-agent ref in sync so the workflow listener below can cheaply
+    // decide whether a re-fetch is needed without reading state inside the handler.
+    useEffect(() => {
+        hasPendingAgentRef.current = allAgents.some(
+            a => a.identification?.governance_status === 'Risk Assessment is running'
+        );
+    }, [allAgents]);
+
+    // When a Temporal workflow finishes, CatalogContext removes the agent from
+    // tavro_pending_assessment_agents and fires this event. Re-fetch so the grid
+    // picks up the completed risk assessment and clears the "running" badge.
+    useEffect(() => {
+        const handler = () => {
+            if (hasPendingAgentRef.current) loadAgents();
+        };
+        window.addEventListener('tavro_temporal_workflow_update', handler);
+        return () => window.removeEventListener('tavro_temporal_workflow_update', handler);
+    }, [loadAgents]);
+
+    // When the AI assistant creates an agent, add it to the list immediately
+    // so the user sees it with "Risk Assessment is running" without waiting for
+    // the next full reload. Dashboard owns its own allAgents state (it isn't
+    // driven by CatalogContext) so it must handle this event itself.
+    useEffect(() => {
+        const handleAgentCreated = (event: Event) => {
+            const { result, args } = (event as CustomEvent).detail ?? {};
+            const agentId: string | undefined =
+                result?.agent_id ||
+                result?.identification?.agent_id ||
+                result?.agent_card?.agent_id ||
+                result?.agent_card?.identification?.agent_id;
+            if (!agentId) return;
+            const agentName: string = args?.agent_name || result?.agent_name || result?.name || agentId;
+            const optimistic: AgentData = {
+                name: agentName,
+                description: args?.description || result?.description || agentName,
+                version: '1.0',
+                identification: {
+                    agent_id: agentId,
+                    role: null,
+                    instruction: args?.instruction || null,
+                    governance_status: 'Risk Assessment is running',
+                },
+                configuration: { autonomy_level: null },
+                tool: [],
+                data_source: [],
+                application: [],
+                business_process: [],
+                risk_assessment: null,
+            };
+            setAllAgents(prev => {
+                const ids = new Set(prev.map((a: AgentData) => a.identification?.agent_id).filter(Boolean));
+                if (ids.has(agentId)) return prev;
+                return [optimistic, ...prev];
+            });
+            setPage(1); // Jump to page 1 so the new agent is visible at the top
+        };
+        window.addEventListener('tavro:agent-created', handleAgentCreated);
+        return () => window.removeEventListener('tavro:agent-created', handleAgentCreated);
+    }, []);
 
     const totalPages = Math.max(1, Math.ceil(allAgents.length / PAGE_SIZE));
     const hasMore = page < totalPages;

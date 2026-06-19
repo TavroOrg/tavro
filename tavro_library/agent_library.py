@@ -3569,18 +3569,35 @@ class AgentMetadataExporter:
             record_range=record_range
         )
 
-        tenant_where = (
-            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
-            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
-            else ""
-        )
+        # ---------- Normalize tenant ----------
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_mode = "GLOBAL"
+            tenant_id = None
+        else:
+            tenant_mode = "TENANT"
+            tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        where_clause = ""
+        if tenant_mode == "TENANT":
+            where_clause = f"""
+            WHERE (
+                tenant_id = '{tenant_id}'
+                OR tenant_id IS NULL
+                OR tenant_id = ''
+                OR tenant_id = 'None'
+            )
+            """
 
         query = f"""
-            SELECT *,
-                ROW_NUMBER() OVER () AS rn,
-                COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_DB_NAME}.business_applications
-            {tenant_where}
+            SELECT *
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER () AS rn,
+                    COUNT(*) OVER () AS total_records
+                FROM {cls.CORE_DB_NAME}.business_applications
+                {where_clause}
+            ) AS catalog_page
+            WHERE rn BETWEEN {start} AND {end}
         """
 
         result_rows = cls.execute_select(query)
@@ -3588,12 +3605,11 @@ class AgentMetadataExporter:
         total = 0
         rows = []
         for row in result_rows:
-            if not total and row.get("total_records"):
+            if not total and row.get("total_records") is not None:
                 total = int(row["total_records"])
-            rn = int(row.pop("rn", 0))
+            row.pop("rn", None)
             row.pop("total_records", None)
-            if start <= rn <= end:
-                rows.append(row)
+            rows.append(row)
 
         return {
             "start_record": start,
@@ -3620,18 +3636,35 @@ class AgentMetadataExporter:
             record_range=record_range
         )
 
-        tenant_where = (
-            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
-            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
-            else ""
-        )
+        # ---------- Normalize tenant ----------
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_mode = "GLOBAL"
+            tenant_id = None
+        else:
+            tenant_mode = "TENANT"
+            tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        where_clause = ""
+        if tenant_mode == "TENANT":
+            where_clause = f"""
+            WHERE (
+                tenant_id = '{tenant_id}'
+                OR tenant_id IS NULL
+                OR tenant_id = ''
+                OR tenant_id = 'None'
+            )
+            """
 
         query = f"""
-            SELECT *,
-                ROW_NUMBER() OVER () AS rn,
-                COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_DB_NAME}.business_processes
-            {tenant_where}
+            SELECT *
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER () AS rn,
+                    COUNT(*) OVER () AS total_records
+                FROM {cls.CORE_DB_NAME}.business_processes
+                {where_clause}
+            ) AS catalog_page
+            WHERE rn BETWEEN {start} AND {end}
         """
 
         result_rows = cls.execute_select(query)
@@ -3639,12 +3672,11 @@ class AgentMetadataExporter:
         total = 0
         rows = []
         for row in result_rows:
-            if not total and row.get("total_records"):
+            if not total and row.get("total_records") is not None:
                 total = int(row["total_records"])
-            rn = int(row.pop("rn", 0))
+            row.pop("rn", None)
             row.pop("total_records", None)
-            if start <= rn <= end:
-                rows.append(row)
+            rows.append(row)
 
         return {
             "start_record": start,
