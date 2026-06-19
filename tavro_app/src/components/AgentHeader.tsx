@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { AgentData } from '../types/agent';
+import { AgentData, AGENT_TYPES } from '../types/agent';
 import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
 
@@ -10,6 +10,8 @@ interface AgentHeaderProps {
     isEditing?: boolean;
     editName?: string;
     onEditNameChange?: (v: string) => void;
+    editAgentType?: string;
+    onEditAgentTypeChange?: (v: string) => void;
     inlineEdit?: { field: AgentInlineField; value: string } | null;
     inlineSaving?: AgentInlineField | null;
     onStartInlineEdit?: (field: AgentInlineField) => void;
@@ -34,6 +36,8 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     isEditing,
     editName,
     onEditNameChange,
+    editAgentType,
+    onEditAgentTypeChange,
     inlineEdit,
     inlineSaving,
     onStartInlineEdit,
@@ -140,6 +144,17 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                             <span className="font-mono text-xs bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-600 break-all">
                                 {id?.agent_id || 'N/A'}
                             </span>
+                            {isEditing ? (
+                                <select
+                                    value={editAgentType ?? agent.agent_type ?? 'Config-driven'}
+                                    onChange={e => onEditAgentTypeChange?.(e.target.value)}
+                                    className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 cursor-pointer"
+                                >
+                                    {AGENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            ) : (
+                                <Badge text={agent.agent_type || 'Config-driven'} color="slate" />
+                            )}
                             {id?.environment && <Badge text={id.environment} color="blue" />}
                         </div>
                         {((agent.defaultInputModes?.length ?? 0) > 0 || (agent.defaultOutputModes?.length ?? 0) > 0 || capBadges.length > 0) && (

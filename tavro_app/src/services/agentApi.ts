@@ -46,6 +46,7 @@ export interface AgentCreatePayload {
     agent_name: string;
     description: string;
     instruction: string;
+    agent_type?: string;
     role?: string;
     environment?: string;
     owner?: string;
@@ -60,6 +61,7 @@ export interface AgentUpdatePayload {
     agent_name?: string;
     description?: string;
     instruction?: string;
+    agent_type?: string;
     issues?: AgentIssuePayload[];
     skills?: Array<{
         id?: string;
