@@ -83,6 +83,7 @@ services:
       AZURE_AI_FOUNDRY_API_VERSION: '${AZURE_AI_FOUNDRY_API_VERSION:-2024-02-15-preview}'
       AZURE_AI_FOUNDRY_DEPLOYMENT: '${AZURE_AI_FOUNDRY_DEPLOYMENT:-}'
       AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
+      AZURE_AI_FOUNDRY_HOSTED_ENDPOINT: '${AZURE_AI_FOUNDRY_HOSTED_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
       # DefaultAzureCredential uses these for local Docker runs. Azure deployments
       # can use managed identity instead.
@@ -105,6 +106,10 @@ services:
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
+      # Agent Playground — Publish to Git
+      GIT_PUBLISH_REPO_URL: '${GIT_PUBLISH_REPO_URL:-}'
+      GIT_PUBLISH_TOKEN:    '${GIT_PUBLISH_TOKEN:-}'
+      GIT_PUBLISH_BRANCH:   '${GIT_PUBLISH_BRANCH:-main}'
     dns:
       - 8.8.8.8
       - 8.8.4.4

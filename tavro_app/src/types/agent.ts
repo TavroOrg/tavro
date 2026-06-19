@@ -1,3 +1,12 @@
+// ── Agent types ───────────────────────────────────────────────────────────────
+
+export const AGENT_TYPES = [
+  'Config-driven',
+  'Code-driven',
+] as const;
+
+export type AgentType = typeof AGENT_TYPES[number];
+
 // ── Identification ────────────────────────────────────────────────────────────
 
 export interface AgentIdentification {
@@ -293,4 +302,5 @@ export interface AgentData {
   latest_risk_score?: string | number | null;
   latest_risk_class?: string | null;
   latest_event_status?: string | null;
+  agent_type?: string | null;
 }
