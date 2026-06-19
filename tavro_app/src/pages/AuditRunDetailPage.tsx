@@ -1,1 +1,5 @@
-export default function AuditRunDetailPage() { return <div />; }
+import EnterpriseGate from '../components/EnterpriseGate';
+
+export default function AuditRunDetailPage() {
+  return <EnterpriseGate>{null}</EnterpriseGate>;
+}

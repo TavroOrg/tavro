@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, Gem
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -313,7 +313,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -443,7 +442,6 @@ const Layout: React.FC = () => {
                                 >
                                     <TestTube2 size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/agent-evals') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -471,7 +469,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -494,7 +491,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -517,7 +513,6 @@ const Layout: React.FC = () => {
                                 >
                                     <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -540,7 +535,6 @@ const Layout: React.FC = () => {
                                 >
                                     <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
-                                    {isLeftPanelOpen && <Gem size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem

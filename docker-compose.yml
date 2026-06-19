@@ -58,8 +58,8 @@ services:
   # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
   tavro-api:
     build:
-      context: .
-      dockerfile: tavro_api/Dockerfile
+      context: ..
+      dockerfile: tavro/Dockerfile.api.${BUILD_MODE:-oss}
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -96,8 +96,7 @@ services:
       PLAYGROUND_BEDROCK_REGION:     '${PLAYGROUND_BEDROCK_REGION:-us-east-2}'
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
-      # Enterprise module — set to http://tavro-enterprise:8001 to enable Govern features
-      ENTERPRISE_URL: '${ENTERPRISE_URL:-}'
+      BUILD_MODE: '${BUILD_MODE:-oss}'
       # Risk schema names
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated
@@ -200,8 +199,8 @@ services:
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
-      context: ./tavro_app
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: tavro/Dockerfile.app.${BUILD_MODE:-oss}
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}

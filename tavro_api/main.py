@@ -118,10 +118,14 @@ app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Grap
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
-_ENTERPRISE_URL = os.getenv("ENTERPRISE_URL", "").strip()
-if _ENTERPRISE_URL:
-    from api.enterprise_proxy import make_govern_proxy
-    app.include_router(make_govern_proxy(_ENTERPRISE_URL), prefix="/api/v1", tags=["Govern"])
+# BUILD_MODE=enterprise means the entrypoint copied enterprise routers into
+# /app/api/routers/ before uvicorn started.  Any other value uses stubs.
+_ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
+if _ENTERPRISE_ENABLED:
+    from api.routers import compliance, compliance_research, audit
+    app.include_router(compliance.router,          prefix="/api/v1/compliance", tags=["Compliance"])
+    app.include_router(compliance_research.router, prefix="/api/v1/compliance", tags=["Compliance Research"])
+    app.include_router(audit.router,               prefix="/api/v1/audit",      tags=["Audit"])
 else:
     from api.govern_stub import router as _govern_stub
     app.include_router(_govern_stub, prefix="/api/v1", tags=["Govern"])
@@ -147,12 +151,4 @@ def health():
 
 @app.get("/api/v1/enterprise/status")
 async def enterprise_status():
-    if not _ENTERPRISE_URL:
-        return {"enabled": False}
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{_ENTERPRISE_URL}/health")
-            return {"enabled": resp.status_code == 200}
-    except Exception:
-        return {"enabled": False}
+    return {"enabled": _ENTERPRISE_ENABLED}

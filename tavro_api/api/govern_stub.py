@@ -1,6 +1,6 @@
 # =============================================================
 # api/govern_stub.py
-# Returned when ENTERPRISE_URL is not set.
+# Returned when enterprise routers are not present (BUILD_MODE != enterprise).
 # All /compliance and /audit routes respond with 402.
 # =============================================================
 
