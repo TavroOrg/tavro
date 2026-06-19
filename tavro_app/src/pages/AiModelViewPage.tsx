@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -260,6 +261,7 @@ const AiModelViewPage: React.FC = () => {
   const [actingProcess, setActingProcess] = useState<string | null>(null);
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
+  const [companyUseCases, setCompanyUseCases] = useState<Array<{ identifier: string; name?: string; description?: string | null }>>([]);
   const [editing, setEditing] = useState(isCreateMode);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
@@ -273,9 +275,16 @@ const AiModelViewPage: React.FC = () => {
 
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
-    businessRelationsApi.listApplications().then(setAllApplications).catch(() => setAllApplications([]));
-    businessRelationsApi.listProcesses().then(setAllProcesses).catch(() => setAllProcesses([]));
-  }, []);
+    businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setAllApplications).catch(() => setAllApplications([]));
+    businessRelationsApi.listProcesses(undefined, activeCompany?.id).then(setAllProcesses).catch(() => setAllProcesses([]));
+    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-500' })
+      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+        identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
+        name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
+        description: raw.description ?? null,
+      }))))
+      .catch(() => setCompanyUseCases([]));
+  }, [activeCompany?.id]);
 
   useEffect(() => {
     setEditing(isCreateMode);
@@ -499,9 +508,10 @@ const AiModelViewPage: React.FC = () => {
     () => new Set(linkedUseCases.map(u => u.ai_use_case_id).filter(Boolean)),
     [linkedUseCases],
   );
+  const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
   const availableUseCases = useMemo(() => {
     const q = useCaseSearch.trim().toLowerCase();
-    return allUseCases.filter(uc => {
+    return useCasesForLinking.filter(uc => {
       const id = uc.identifier ?? '';
       if (!id || linkedUseCaseIds.has(id)) return false;
       if (!q) return true;
@@ -511,7 +521,7 @@ const AiModelViewPage: React.FC = () => {
         (uc.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [allUseCases, useCaseSearch, linkedUseCaseIds]);
+  }, [useCasesForLinking, useCaseSearch, linkedUseCaseIds]);
 
   const addUseCase = async (useCaseId: string) => {
     if (!model) return;

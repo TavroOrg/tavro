@@ -663,7 +663,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
         use_case_row = await db.execute(
             text(
                 f"""
-                SELECT ai_use_case_id, name
+                SELECT ai_use_case_id, name, company_id
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
@@ -718,9 +718,9 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             text(
                 f"""
                 INSERT INTO {CORE}.agent_ai_use_cases
-                    (tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
                 VALUES
-                    (:tid, :uid, :uname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :uid, :uname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
@@ -731,6 +731,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             ),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "uname": str(use_case.get("name") or normalized_use_case_id),
                 "aid": agent_id,
@@ -882,11 +883,12 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
 
     try:
 
-        uc_exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+        uc_row = await db.execute(
+            text(f"SELECT ai_use_case_id, company_id FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
         )
-        if not uc_exists.first():
+        use_case = uc_row.mappings().first()
+        if not use_case:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
         application_row = await db.execute(
@@ -930,14 +932,15 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_use_case_business_applications (
-                    tenant_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
+                    tenant_id, company_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    :tid, :cid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
             """),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "aid": canonical_application_id,
                 "aname": application.get("application_name") or canonical_application_id,
@@ -1105,11 +1108,12 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
     )
 
     try:
-        uc_exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+        uc_row = await db.execute(
+            text(f"SELECT ai_use_case_id, company_id FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
         )
-        if not uc_exists.first():
+        use_case = uc_row.mappings().first()
+        if not use_case:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
         process_row = await db.execute(
@@ -1153,14 +1157,15 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_use_case_business_processes (
-                    tenant_id, ai_use_case_id, business_process_id, process_name, created_ts, updated_ts
+                    tenant_id, company_id, ai_use_case_id, business_process_id, process_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tid, :uid, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    :tid, :cid, :uid, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
             """),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "pid": canonical_process_id,
                 "pname": process.get("process_name") or canonical_process_id,

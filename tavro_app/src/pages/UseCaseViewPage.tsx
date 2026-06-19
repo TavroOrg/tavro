@@ -39,6 +39,7 @@ interface ApplicationRelationsSectionProps {
 interface AiModelRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
+  companyId?: string;
 }
 
 const normalizeUseCaseAiModels = (
@@ -1052,7 +1053,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   );
 };
 
-const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch, companyId }) => {
   const { refresh: refreshUC } = useUseCases();
   const useCaseId = useCase.identifier ?? '';
   const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
@@ -1086,7 +1087,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
   const loadModelCatalog = async () => {
     setLoadingCatalog(true);
     try {
-      setAllModels(await aiModelApi.listModels());
+      setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
       setRelationError(err.message || 'Failed to load AI model catalog.');
     } finally {
@@ -1096,7 +1097,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
 
   useEffect(() => {
     loadModelCatalog();
-  }, []);
+  }, [companyId]);
 
   const handleLinkModel = async (modelId: string) => {
     if (!useCaseId || !modelId || linkedModelIds.has(modelId)) return;
@@ -1622,7 +1623,7 @@ const UseCaseViewPage: React.FC = () => {
             <div className="flex flex-col gap-6">
               <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
               <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
-              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
             </div>
           }
           isEditing={isEditing}

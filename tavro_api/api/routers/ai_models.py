@@ -545,7 +545,7 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
     tenant_id = _tenant(request)
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -565,9 +565,9 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agent_ai_models
-                    (tenant_id, ai_model_id, model_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, model_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (agent_internal_id, ai_model_id)
                 DO UPDATE SET
                     model_name = EXCLUDED.model_name,
@@ -578,6 +578,7 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "aid": agent_id,
@@ -632,7 +633,7 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
         raise HTTPException(status_code=400, detail="ai_use_case_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -650,9 +651,9 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_ai_use_cases
-                    (tenant_id, ai_model_id, ai_model_name, ai_use_case_id, ai_use_case_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, ai_use_case_id, ai_use_case_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :uid, :uname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :uid, :uname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, ai_use_case_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -662,6 +663,7 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "uid": uc_id,
@@ -714,7 +716,7 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
         raise HTTPException(status_code=400, detail="business_application_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -732,9 +734,9 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_business_applications
-                    (tenant_id, ai_model_id, ai_model_name, business_application_id, application_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, business_application_id, application_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, business_application_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -744,6 +746,7 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "aid": app_id,
@@ -792,7 +795,7 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
         raise HTTPException(status_code=400, detail="business_process_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -810,9 +813,9 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_business_processes
-                    (tenant_id, ai_model_id, ai_model_name, business_process_id, process_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, business_process_id, process_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, business_process_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -822,6 +825,7 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "pid": proc_id,

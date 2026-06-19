@@ -341,8 +341,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
-  }, []);
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
 
   const linkedModels = process?.related_ai_models ?? [];
   const linkedModelIds = useMemo(

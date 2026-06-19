@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_governance_events (
 	tenant_id TEXT,
+	company_id TEXT,
 	governance_event_id TEXT,
 	agent_id TEXT,
 	event_type TEXT,

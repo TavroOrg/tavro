@@ -2104,11 +2104,11 @@ async def add_agent_integration_relation(
         text(
             """
             INSERT INTO core.agent_business_integrations (
-                tenant_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
+                tenant_id, company_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tenant_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
+                :tenant_id, :company_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             ON CONFLICT (agent_internal_id, integration_id)
@@ -2121,6 +2121,7 @@ async def add_agent_integration_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -3575,11 +3576,11 @@ async def add_agent_application_relation(
         text(
             """
             INSERT INTO core.agent_business_applications (
-                tenant_id, business_application_id, agent_id, application_name, criticality,
+                tenant_id, company_id, business_application_id, agent_id, application_name, criticality,
                 created_ts, updated_ts, agent_internal_id
             )
             VALUES (
-                :tenant_id, :business_application_id, :agent_id, :application_name, :criticality,
+                :tenant_id, :company_id, :business_application_id, :agent_id, :application_name, :criticality,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
             )
             ON CONFLICT (agent_internal_id, business_application_id)
@@ -3592,6 +3593,7 @@ async def add_agent_application_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
@@ -3711,11 +3713,11 @@ async def add_agent_process_relation(
         text(
             """
             INSERT INTO core.agent_business_processes (
-                tenant_id, business_process_id, agent_id, process_name, criticality,
+                tenant_id, company_id, business_process_id, agent_id, process_name, criticality,
                 created_ts, updated_ts, agent_internal_id
             )
             VALUES (
-                :tenant_id, :business_process_id, :agent_id, :process_name, :criticality,
+                :tenant_id, :company_id, :business_process_id, :agent_id, :process_name, :criticality,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
             )
             ON CONFLICT (agent_internal_id, business_process_id)
@@ -3728,6 +3730,7 @@ async def add_agent_process_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
@@ -4248,13 +4251,13 @@ async def add_agent_table_relation(
     await db.execute(
         text("""
             INSERT INTO core.agent_data_sources (
-                tenant_id, agent_internal_id, agent_id,
+                tenant_id, company_id, agent_internal_id, agent_id,
                 source_object_type, source_object_id, source_object_name,
                 target_object_type, target_object_id, target_object_name,
                 created_ts, updated_ts
             )
             SELECT
-                :tenant_id, :agent_internal_id, :agent_id,
+                :tenant_id, :company_id, :agent_internal_id, :agent_id,
                 'Table', tc.table_id, :table_name,
                 'Column', tc.column_id, tc.column_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -4266,6 +4269,7 @@ async def add_agent_table_relation(
         """),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
             "table_id": table_id,
@@ -4435,13 +4439,13 @@ async def add_agent_column_relation(
     await db.execute(
         text("""
             INSERT INTO core.agent_data_sources (
-                tenant_id, agent_internal_id, agent_id,
+                tenant_id, company_id, agent_internal_id, agent_id,
                 source_object_type, source_object_id, source_object_name,
                 target_object_type, target_object_id, target_object_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tid, :aiid, :agent_id,
+                :tid, :company_id, :aiid, :agent_id,
                 'Table', :table_id, :table_name,
                 'Column', :col_id, :col_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -4453,6 +4457,7 @@ async def add_agent_column_relation(
         """),
         {
             "tid": tenant_id,
+            "company_id": agent.get("company_id"),
             "aiid": agent_internal_id,
             "agent_id": real_agent_id,
             "table_id": col.get("table_id"),
