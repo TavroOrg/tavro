@@ -211,6 +211,7 @@ async def get_agent_catalog(
     start_record: int = 1,
     record_range: str = "1-50",
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -219,9 +220,9 @@ async def get_agent_catalog(
     except Exception:
         start, end = start_record, start_record + 49
 
-    tenant_id = _require_tenant(request)
+    tenant_id = (tenant_id or "").strip() or _require_tenant(request)
     params: Dict[str, Any] = {"tid": tenant_id}
-    where_parts = ["(a360.tenant_id = :tid OR a360.tenant_id IS NULL)"]
+    where_parts = ["a360.tenant_id = :tid"]
 
     cid = company_id.strip() if company_id and company_id.strip() else None
     if cid:
@@ -235,7 +236,7 @@ async def get_agent_catalog(
                 {"schema": CURATED, "tbl": "agent_360"},
             )
             if col_check.first():
-                where_parts.append("(CAST(a360.company_id AS text) = :company_id OR a360.company_id IS NULL OR CAST(a360.company_id AS text) = '')")
+                where_parts.append("(CAST(a360.company_id AS text) = :company_id OR a360.company_id IS NULL OR TRIM(CAST(a360.company_id AS text)) = '' OR a360.company_id = 'None')")
                 params["company_id"] = cid
         except Exception:
             pass
@@ -255,7 +256,7 @@ async def get_agent_catalog(
                       ON ag.agent_internal_id = a360.agent_internal_id
                      AND ag.agent_id = a360.agent_id
                      AND COALESCE(ag.is_current, true) = true
-                     AND (ag.tenant_id = a360.tenant_id OR ag.tenant_id IS NULL OR a360.tenant_id IS NULL)
+                     AND ag.tenant_id = a360.tenant_id
                     {where}
                 ) t
             """),
@@ -281,7 +282,7 @@ async def get_agent_catalog(
             core_company_filter = ""
             extra_params: Dict[str, Any] = {"tid": tenant_id}
             if cid and has_core_company_id:
-                core_company_filter = "AND (CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL)"
+                core_company_filter = "AND (CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL OR TRIM(CAST(a.company_id AS text)) = '' OR a.company_id = 'None')"
                 extra_params["company_id"] = cid
 
             extra_result = await db.execute(
@@ -292,7 +293,7 @@ async def get_agent_catalog(
                         {("a.company_id," if has_core_company_id else "NULL AS company_id,")}
                         a.created_ts, a.updated_ts
                     FROM {CORE}.agents a
-                    WHERE (a.tenant_id = :tid OR a.tenant_id IS NULL)
+                    WHERE a.tenant_id = :tid
                       AND a.is_current = true
                       {core_company_filter}
                 """),
@@ -324,7 +325,7 @@ async def get_agent_catalog(
 
     # Fallback to core.agents if curated.agent_360 fails entirely (e.g. TOAST corruption)
     try:
-        core_where_parts = ["(a.tenant_id = :tid OR a.tenant_id IS NULL)", "a.is_current = true"]
+        core_where_parts = ["a.tenant_id = :tid", "a.is_current = true"]
         core_params: Dict[str, Any] = {"tid": tenant_id}
         if cid:
             try:
@@ -337,7 +338,7 @@ async def get_agent_catalog(
                     {"schema": CORE, "tbl": "agents"},
                 )
                 if col_check2.first():
-                    core_where_parts.append("(CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL)")
+                    core_where_parts.append("(CAST(a.company_id AS text) = :company_id OR a.company_id IS NULL OR TRIM(CAST(a.company_id AS text)) = '' OR a.company_id = 'None')")
                     core_params["company_id"] = cid
             except Exception:
                 pass
@@ -1011,10 +1012,10 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_tools
-                        (tenant_id, agent_internal_id, tool_id, agent_id,
+                        (tenant_id, company_id, agent_internal_id, tool_id, agent_id,
                          agent_name, tool_name, created_ts, updated_ts)
                     VALUES
-                        (:tid, :iid, :tool_id, :aid,
+                        (:tid, :cid, :iid, :tool_id, :aid,
                          :aname, :tname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                         agent_id   = EXCLUDED.agent_id,
@@ -1022,7 +1023,7 @@ async def create_agent(
                         tool_name  = EXCLUDED.tool_name,
                         updated_ts = EXCLUDED.updated_ts
                 """),
-                {"tid": tenant_id, "iid": agent_internal_id, "tool_id": tool_id,
+                {"tid": tenant_id, "cid": cid, "iid": agent_internal_id, "tool_id": tool_id,
                  "aid": agent_id, "aname": body.agent_name, "tname": tool_name},
             )
 
@@ -1059,10 +1060,10 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_tables
-                        (tenant_id, agent_id, agent_name, agent_internal_id,
+                        (tenant_id, company_id, agent_id, agent_name, agent_internal_id,
                          table_id, table_name, created_ts, updated_ts)
                     VALUES
-                        (:tid, :aid, :aname, :iid, :table_id, :table_name,
+                        (:tid, :cid, :aid, :aname, :iid, :table_id, :table_name,
                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
                         agent_name = EXCLUDED.agent_name,
@@ -1070,7 +1071,7 @@ async def create_agent(
                         table_name = COALESCE(EXCLUDED.table_name, {CORE}.agent_tables.table_name),
                         updated_ts = EXCLUDED.updated_ts
                 """),
-                {"tid": tenant_id, "aid": agent_id, "aname": body.agent_name,
+                {"tid": tenant_id, "cid": cid, "aid": agent_id, "aname": body.agent_name,
                  "iid": agent_internal_id, "table_id": table_id, "table_name": table_name},
             )
 
@@ -1168,16 +1169,16 @@ async def create_agent(
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.table_columns
-                            (tenant_id, table_id, table_name, column_name, column_id, created_ts, updated_ts)
+                            (tenant_id, company_id, table_id, table_name, column_name, column_id, created_ts, updated_ts)
                         VALUES
-                            (:tid, :table_id, :table_name, :column_name, :col_id,
+                            (:tid, :cid, :table_id, :table_name, :column_name, :col_id,
                              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ON CONFLICT (tenant_id, table_id, column_name) DO UPDATE SET
                             table_name = COALESCE(EXCLUDED.table_name, {CORE}.table_columns.table_name),
                             column_id = COALESCE(EXCLUDED.column_id, {CORE}.table_columns.column_id),
                             updated_ts = EXCLUDED.updated_ts
                     """),
-                    {"tid": tenant_id, "table_id": table_id,
+                    {"tid": tenant_id, "cid": cid, "table_id": table_id,
                      "table_name": table_name, "column_name": column_name, "col_id": column_id},
                 )
                 await db.execute(
@@ -1302,13 +1303,13 @@ async def create_agent(
             await db.execute(
                 text(f"""
                     INSERT INTO {CORE}.agent_skills
-                        (tenant_id, skill_id, skill_name, agent_id, agent_name,
+                        (tenant_id, company_id, skill_id, skill_name, agent_id, agent_name,
                          agent_internal_id, created_ts, updated_ts)
                     VALUES
-                        (:tid, :sid, :sname, :aid, :aname,
+                        (:tid, :cid, :sid, :sname, :aid, :aname,
                          :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """),
-                {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                {"tid": tenant_id, "cid": cid, "sid": skill["skill_id"], "sname": skill["skill_name"],
                  "aid": agent_id, "aname": body.agent_name, "iid": agent_internal_id},
             )
 
@@ -1603,7 +1604,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
     try:
         exists = await db.execute(
             text(f"""
-                SELECT agent_internal_id, agent_name
+                SELECT agent_internal_id, agent_name, company_id
                 FROM {CORE}.agents
                 WHERE agent_id = :aid AND tenant_id = :tid
                 LIMIT 1
@@ -1617,6 +1618,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         agent_sets = ["updated_ts = CURRENT_TIMESTAMP"]
         params: Dict[str, Any] = {"aid": agent_id, "tid": tenant_id}
         effective_agent_name = str(agent_row["agent_name"] or "")
+        update_cid = str(agent_row.get("company_id") or "").strip() or None
 
         if body.agent_name and body.agent_name.strip():
             agent_sets.append("agent_name = :name")
@@ -1808,10 +1810,10 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                 await db.execute(
                     text(f"""
                         INSERT INTO {CORE}.agent_skills
-                            (tenant_id, skill_id, skill_name, agent_id, agent_name,
+                            (tenant_id, company_id, skill_id, skill_name, agent_id, agent_name,
                              agent_internal_id, created_ts, updated_ts)
                         VALUES
-                            (:tid, :sid, :sname, :aid, :aname,
+                            (:tid, :cid, :sid, :sname, :aid, :aname,
                              :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ON CONFLICT (tenant_id, skill_id, agent_id) DO UPDATE SET
                             skill_name = EXCLUDED.skill_name,
@@ -1819,7 +1821,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
                             agent_internal_id = EXCLUDED.agent_internal_id,
                             updated_ts = EXCLUDED.updated_ts
                     """),
-                    {"tid": tenant_id, "sid": skill["skill_id"], "sname": skill["skill_name"],
+                    {"tid": tenant_id, "cid": update_cid, "sid": skill["skill_id"], "sname": skill["skill_name"],
                      "aid": agent_id, "aname": effective_agent_name,
                      "iid": str(agent_row["agent_internal_id"])},
                 )

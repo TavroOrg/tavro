@@ -1137,6 +1137,7 @@ async def _fetch_integrations(
     integration_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     await _ensure_integrations_table(db)
 
@@ -1173,13 +1174,16 @@ async def _fetch_integrations(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in int_cols:
+        where_parts.append("bi.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if integration_id is not None:
         where_parts.append("bi.integration_id = :integration_id")
         query_params["integration_id"] = integration_id
 
     if company_id is not None:
         if "company_id" in int_cols:
-            where_parts.append("(bi.company_id = :filter_company_id OR bi.company_id IS NULL OR TRIM(CAST(bi.company_id AS text)) = '')")
+            where_parts.append("(bi.company_id = :filter_company_id OR bi.company_id IS NULL OR TRIM(CAST(bi.company_id AS text)) = '' OR bi.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
@@ -1224,6 +1228,8 @@ async def _fetch_integrations(
             if "integration_id" in abi_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in abi_cols:
+            abi_filter += " AND abi.tenant_id = :tenant_id"
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1276,6 +1282,7 @@ async def _fetch_applications(
     application_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     app_cols = await _table_columns(db, "core", "business_applications")
     if "business_application_id" not in app_cols:
@@ -1335,6 +1342,8 @@ async def _fetch_applications(
             if "business_application_id" in aba_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in aba_cols:
+            aba_filter += " AND aba.tenant_id = :tenant_id"
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1366,6 +1375,11 @@ async def _fetch_applications(
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
+    uc_app_tenant_filter = ""
+    if tenant_id and has_uc_app_rel:
+        uc_app_cols = await _table_columns(db, "core", "ai_use_case_business_applications")
+        if "tenant_id" in uc_app_cols:
+            uc_app_tenant_filter = "AND rel.tenant_id = :tenant_id"
     auc_order_sql = "ORDER BY 1"
     if has_auc:
         auc_cols = await _table_columns(db, "core", "ai_use_cases")
@@ -1417,11 +1431,12 @@ async def _fetch_applications(
                     WHERE rel.business_application_id = ba.business_application_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_app_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
     elif has_uc_app_rel:
-        uc_rel_sql = """
+        uc_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
                     json_agg(
@@ -1441,6 +1456,7 @@ async def _fetch_applications(
                     WHERE rel.business_application_id = ba.business_application_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_app_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
@@ -1453,6 +1469,11 @@ async def _fetch_applications(
 
     has_mdl_app_rel = await _table_exists(db, "core", "ai_model_business_applications")
     has_models = await _table_exists(db, "core", "ai_models")
+    mdl_app_tenant_filter = ""
+    if tenant_id and has_mdl_app_rel:
+        mdl_app_cols = await _table_columns(db, "core", "ai_model_business_applications")
+        if "tenant_id" in mdl_app_cols:
+            mdl_app_tenant_filter = "AND rmdl.tenant_id = :tenant_id"
     if has_mdl_app_rel:
         mdl_name_expr = "m.model_name" if has_models else "NULL::text"
         mdl_desc_expr = "m.description" if has_models else "NULL::text"
@@ -1484,6 +1505,7 @@ async def _fetch_applications(
                     WHERE rmdl.business_application_id = ba.business_application_id
                       AND rmdl.ai_model_id IS NOT NULL
                       AND rmdl.ai_model_id <> ''
+                      {mdl_app_tenant_filter}
                 ) related
             ) mdl_rel ON TRUE
         """
@@ -1503,13 +1525,16 @@ async def _fetch_applications(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in app_cols:
+        where_parts.append("ba.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if application_id is not None:
         where_parts.append("ba.business_application_id = :application_id")
         query_params["application_id"] = application_id
 
     if company_id is not None:
         if "company_id" in app_cols:
-            where_parts.append("(ba.company_id = :filter_company_id OR ba.company_id IS NULL OR TRIM(CAST(ba.company_id AS text)) = '')")
+            where_parts.append("(ba.company_id = :filter_company_id OR ba.company_id IS NULL OR TRIM(CAST(ba.company_id AS text)) = '' OR ba.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
@@ -1549,6 +1574,7 @@ async def _fetch_processes(
     process_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     process_cols = await _table_columns(db, "core", "business_processes")
     if "business_process_id" not in process_cols:
@@ -1605,6 +1631,8 @@ async def _fetch_processes(
             if "business_process_id" in abp_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in abp_cols:
+            abp_filter += " AND abp.tenant_id = :tenant_id"
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1634,7 +1662,17 @@ async def _fetch_processes(
             ) rel ON TRUE
         """
 
-    proc_rel_sql = """
+    process_tree_tenant_filter = (
+        "AND child.tenant_id = bp.tenant_id"
+        if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_tenant_join = (
+        "AND parent.tenant_id = bp.tenant_id"
+        if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    proc_rel_sql = f"""
         LEFT JOIN LATERAL (
             SELECT
                 json_agg(
@@ -1652,6 +1690,7 @@ async def _fetch_processes(
                 SELECT child.business_process_id AS other_process_id, 'CHILD'::text AS relationship_type
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
+                  {process_tree_tenant_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -1662,6 +1701,11 @@ async def _fetch_processes(
 
     has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
+    uc_proc_tenant_filter = ""
+    if tenant_id and has_uc_proc_rel:
+        uc_proc_cols = await _table_columns(db, "core", "ai_use_case_business_processes")
+        if "tenant_id" in uc_proc_cols:
+            uc_proc_tenant_filter = "AND rel.tenant_id = :tenant_id"
     auc_order_sql = "ORDER BY 1"
     if has_auc:
         auc_cols = await _table_columns(db, "core", "ai_use_cases")
@@ -1713,11 +1757,12 @@ async def _fetch_processes(
                     WHERE rel.business_process_id = bp.business_process_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_proc_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
     elif has_uc_proc_rel:
-        uc_rel_sql = """
+        uc_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
                     json_agg(
@@ -1737,6 +1782,7 @@ async def _fetch_processes(
                     WHERE rel.business_process_id = bp.business_process_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_proc_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
@@ -1749,6 +1795,11 @@ async def _fetch_processes(
 
     has_mdl_proc_rel = await _table_exists(db, "core", "ai_model_business_processes")
     has_models = await _table_exists(db, "core", "ai_models")
+    mdl_proc_tenant_filter = ""
+    if tenant_id and has_mdl_proc_rel:
+        mdl_proc_cols = await _table_columns(db, "core", "ai_model_business_processes")
+        if "tenant_id" in mdl_proc_cols:
+            mdl_proc_tenant_filter = "AND rmdl.tenant_id = :tenant_id"
     if has_mdl_proc_rel:
         mdl_name_expr = "m.model_name" if has_models else "NULL::text"
         mdl_desc_expr = "m.description" if has_models else "NULL::text"
@@ -1780,6 +1831,7 @@ async def _fetch_processes(
                     WHERE rmdl.business_process_id = bp.business_process_id
                       AND rmdl.ai_model_id IS NOT NULL
                       AND rmdl.ai_model_id <> ''
+                      {mdl_proc_tenant_filter}
                 ) related
             ) mdl_rel ON TRUE
         """
@@ -1799,13 +1851,16 @@ async def _fetch_processes(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in process_cols:
+        where_parts.append("bp.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if process_id is not None:
         where_parts.append("bp.business_process_id = :process_id")
         query_params["process_id"] = process_id
 
     if company_id is not None:
         if "company_id" in process_cols:
-            where_parts.append("(bp.company_id = :filter_company_id OR bp.company_id IS NULL OR TRIM(CAST(bp.company_id AS text)) = '')")
+            where_parts.append("(bp.company_id = :filter_company_id OR bp.company_id IS NULL OR TRIM(CAST(bp.company_id AS text)) = '' OR bp.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
@@ -1829,6 +1884,7 @@ async def _fetch_processes(
             FROM core.business_processes bp
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
+               {parent_tenant_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
@@ -1844,14 +1900,16 @@ async def _fetch_processes(
 
 @router.get("/integrations", tags=["Integrations"], summary="List Integrations")
 async def list_integrations(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_integrations(db, search=q, company_id=company_id)
+        all_items = await _fetch_integrations(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -1869,9 +1927,11 @@ async def list_integrations(
 @router.get("/integrations/{integration_id}", tags=["Integrations"], summary="Get Integration")
 async def get_integration(
     integration_id: str,
+    request: Request,
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_integrations(db, integration_id=integration_id)
+    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -2119,14 +2179,16 @@ async def remove_agent_integration_relation(
 
 @router.get("/applications", tags=["Applications"], summary="List Applications")
 async def list_applications(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_applications(db, search=q, company_id=company_id)
+        all_items = await _fetch_applications(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2144,9 +2206,11 @@ async def list_applications(
 @router.get("/applications/{application_id}", tags=["Applications"], summary="Get Application")
 async def get_application(
     application_id: str,
+    request: Request,
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_applications(db, application_id=application_id)
+    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -2352,14 +2416,16 @@ async def delete_application(
 
 @router.get("/processes", tags=["Processes"], summary="List Processes")
 async def list_processes(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_processes(db, search=q, company_id=company_id)
+        all_items = await _fetch_processes(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2377,9 +2443,11 @@ async def list_processes(
 @router.get("/processes/{process_id}", tags=["Processes"], summary="Get Process")
 async def get_process(
     process_id: str,
+    request: Request,
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_processes(db, process_id=process_id)
+    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -3863,12 +3931,17 @@ async def ensure_agent_tool_uuids(
     summary="List all tools with link status for an agent",
 )
 async def list_agent_tools(
+    request: Request,
     agent_id: str,
     q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
     agent_internal_id = agent.get("agent_internal_id")
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
 
     params: dict[str, Any] = {"agent_internal_id": agent_internal_id}
     search_catalog = ""
@@ -3877,6 +3950,15 @@ async def list_agent_tools(
         search_catalog = "AND (t.tool_name ILIKE :q OR t.tool_description ILIKE :q)"
         search_orphan = "AND lk2.tool_name ILIKE :q"
         params["q"] = f"%{q.strip()}%"
+
+    tenant_filter_catalog = ""
+    if tid:
+        tenant_filter_catalog = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    company_filter_catalog = ""
+    if cid:
+        company_filter_catalog = "AND t.company_id = :cid"
+        params["cid"] = cid
 
     rows = await db.execute(
         text(
@@ -3889,7 +3971,7 @@ async def list_agent_tools(
                     t.tool_name,
                     t.tool_description
                 FROM core.tools t
-                WHERE 1=1 {search_catalog}
+                WHERE 1=1 {search_catalog} {tenant_filter_catalog} {company_filter_catalog}
                 ORDER BY
                     LOWER(COALESCE(t.tool_name, '')),
                     (t.tool_id IS NOT NULL AND t.tool_id != '') DESC,
@@ -3996,10 +4078,10 @@ async def add_agent_tool_relation(
         text(
             """
             INSERT INTO core.agent_tools
-                (tenant_id, agent_internal_id, tool_id, agent_id, tool_name,
+                (tenant_id, company_id, agent_internal_id, tool_id, agent_id, tool_name,
                  created_ts, updated_ts)
             VALUES
-                (:tenant_id, :agent_internal_id, :tool_id, :agent_id, :tool_name,
+                (:tenant_id, :company_id, :agent_internal_id, :tool_id, :agent_id, :tool_name,
                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
                 agent_id = EXCLUDED.agent_id,
@@ -4009,6 +4091,7 @@ async def add_agent_tool_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
             "tool_id": actual_tool_id,
             "agent_id": agent.get("agent_id"),
@@ -4065,11 +4148,16 @@ async def remove_agent_tool_relation(
     summary="List all tables with link status for an agent",
 )
 async def list_agent_tables(
+    request: Request,
     agent_id: str,
     q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
 
     params: dict[str, Any] = {
         "agent_id": agent.get("agent_id"),
@@ -4079,6 +4167,15 @@ async def list_agent_tables(
     if q and q.strip():
         search_clause = "AND (t.name ILIKE :q OR t.country_of_provenance ILIKE :q)"
         params["q"] = f"%{q.strip()}%"
+
+    tenant_filter = ""
+    if tid:
+        tenant_filter = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    company_filter = ""
+    if cid:
+        company_filter = "AND t.company_id = :cid"
+        params["cid"] = cid
 
     rows = await db.execute(
         text(
@@ -4092,7 +4189,7 @@ async def list_agent_tables(
             LEFT JOIN core.agent_tables agt
                 ON agt.table_id = t.table_id
                 AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
-            WHERE 1=1 {search_clause}
+            WHERE 1=1 {search_clause} {tenant_filter} {company_filter}
             ORDER BY is_linked DESC, t.name ASC NULLS LAST
             """
         ),
@@ -4126,10 +4223,10 @@ async def add_agent_table_relation(
         text(
             """
             INSERT INTO core.agent_tables
-                (tenant_id, agent_id, agent_name, agent_internal_id,
+                (tenant_id, company_id, agent_id, agent_name, agent_internal_id,
                  table_id, table_name, created_ts, updated_ts)
             VALUES
-                (:tenant_id, :agent_id, :agent_name, :agent_internal_id,
+                (:tenant_id, :company_id, :agent_id, :agent_name, :agent_internal_id,
                  :table_id, :table_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
                 agent_name = EXCLUDED.agent_name,
@@ -4139,6 +4236,7 @@ async def add_agent_table_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "agent_id": agent.get("agent_id"),
             "agent_name": agent.get("agent_name"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -4219,13 +4317,18 @@ async def remove_agent_table_relation(
     summary="List all columns with link status for an agent",
 )
 async def list_agent_columns(
+    request: Request,
     agent_id: str,
     q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
     agent_internal_id = agent.get("agent_internal_id")
     real_agent_id = agent.get("agent_id")
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
 
     search_clause_linked = ""
     search_clause_avail = ""
@@ -4234,6 +4337,15 @@ async def list_agent_columns(
         search_clause_linked = "AND (LOWER(ads.target_object_name) LIKE :q OR LOWER(ads.source_object_name) LIKE :q)"
         search_clause_avail = "AND (LOWER(tc.column_name) LIKE :q OR LOWER(tc.table_name) LIKE :q)"
         params["q"] = f"%{q.strip().lower()}%"
+
+    table_tenant_filter = ""
+    if tid:
+        table_tenant_filter = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    table_company_filter = ""
+    if cid:
+        table_company_filter = "AND t.company_id = :cid"
+        params["cid"] = cid
 
     rows = await db.execute(
         text(f"""
@@ -4282,7 +4394,7 @@ async def list_agent_columns(
                     AND (ads2.target_object_id = tc.column_id
                          OR LOWER(ads2.target_object_name) = LOWER(tc.column_name))
               )
-              {search_clause_avail}
+              {search_clause_avail} {table_tenant_filter} {table_company_filter}
         """),
         params,
     )

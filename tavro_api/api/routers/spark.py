@@ -767,14 +767,21 @@ async def _fetch_dim_node_candidates(
         return []
 
 
-async def _fetch_agents(db: AsyncSession) -> list[SparkSimilarAgent]:
+async def _fetch_agents(db: AsyncSession, tenant_id: str | None = None) -> list[SparkSimilarAgent]:
     try:
         async with db.begin_nested():
-            rows = await db.execute(text("""
-                SELECT agent_id, role as agent_name
-                FROM agents
+            tenant_where = (
+                "WHERE tenant_id = :tenant_id"
+                if tenant_id
+                else ""
+            )
+            rows = await db.execute(text(f"""
+                SELECT agent_id, agent_name
+                FROM core.agents
+                {tenant_where}
+                ORDER BY updated_ts DESC NULLS LAST
                 LIMIT 50
-            """))
+            """), {"tenant_id": tenant_id} if tenant_id else {})
             return [SparkSimilarAgent(agent_id=str(r["agent_id"]), agent_name=r["agent_name"]) for r in rows.mappings()]
     except Exception:
         return []
@@ -1157,13 +1164,19 @@ async def _upsert_ideas(company_id: str, ideas: list[SparkIdea], tenant_id: str 
 
 @router.get("/ideas", response_model=list[SparkIdea])
 async def get_spark_ideas(
+    request: Request,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     search: str | None = Query(None, description="Free-text search across title and description"),
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Return stored ideas for a company. Optionally filter by search term."""
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     params: dict[str, Any] = {"company_id": company_id}
-    where = "company_id = :company_id"
+    where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+    if tenant_id:
+        where += " AND tenant_id = :tenant_id"
+        params["tenant_id"] = tenant_id
     if search and search.strip():
         where += " AND (title ILIKE :search OR description ILIKE :search OR rationale ILIKE :search)"
         params["search"] = f"%{search.strip()}%"
@@ -1199,17 +1212,24 @@ async def get_spark_ideas(
 
 @router.patch("/ideas/{idea_id}/reaction", response_model=SparkReactionResponse)
 async def update_spark_idea_reaction(
+    request: Request,
     idea_id: str,
     payload: SparkReactionRequest,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ) -> SparkReactionResponse:
     """Persist the current user's Spark idea reaction and derived popularity score."""
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+    params = {"company_id": company_id, "idea_id": idea_id, "tenant_id": tenant_id}
     current = await db.execute(text("""
         SELECT user_reaction, popularity_score
         FROM core.spark_ideas
-        WHERE company_id = :company_id AND idea_id = :idea_id
-    """), {"company_id": company_id, "idea_id": idea_id})
+        WHERE {company_where} AND idea_id = :idea_id
+          {tenant_where}
+    """.format(company_where=company_where, tenant_where=tenant_where)), params)
     row = current.mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Spark idea not found")
@@ -1224,10 +1244,12 @@ async def update_spark_idea_reaction(
         SET user_reaction = :reaction,
             popularity_score = :popularity_score,
             updated_at = NOW()
-        WHERE company_id = :company_id AND idea_id = :idea_id
-    """), {
+        WHERE {company_where} AND idea_id = :idea_id
+          {tenant_where}
+    """.format(company_where=company_where, tenant_where=tenant_where)), {
         "company_id": company_id,
         "idea_id": idea_id,
+        "tenant_id": tenant_id,
         "reaction": payload.reaction,
         "popularity_score": popularity_score,
     })
@@ -1242,32 +1264,39 @@ async def update_spark_idea_reaction(
 
 @router.delete("/ideas", status_code=204)
 async def reset_spark_ideas(
+    request: Request,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     idea_ids: str | None = Query(None, description="Comma-separated idea IDs to delete. Omit to delete all ideas for the company."),
 ) -> None:
     """Delete Spark ideas. Pass idea_ids to remove specific ones, or omit to wipe all for the company."""
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
     async with AsyncSessionLocal() as db:
         if idea_ids:
             ids = [i.strip() for i in idea_ids.split(",") if i.strip()]
             if ids:
                 placeholders = ", ".join(f":id_{i}" for i in range(len(ids)))
-                params: dict = {"company_id": company_id}
+                params: dict = {"company_id": company_id, "tenant_id": tenant_id}
                 params.update({f"id_{i}": v for i, v in enumerate(ids)})
                 await db.execute(
-                    text(f"DELETE FROM core.spark_ideas WHERE company_id = :company_id AND idea_id IN ({placeholders})"),
+                    text(f"DELETE FROM core.spark_ideas WHERE {company_where} {tenant_where} AND idea_id IN ({placeholders})"),
                     params,
                 )
         else:
             await db.execute(
-                text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
-                {"company_id": company_id},
+                text(f"DELETE FROM core.spark_ideas WHERE {company_where} {tenant_where}"),
+                {"company_id": company_id, "tenant_id": tenant_id},
             )
         await db.commit()
 
 
 @router.get("/context", response_model=SparkContextResponse)
 async def get_spark_context(
+    request: Request,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area"),
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS),
@@ -1276,9 +1305,10 @@ async def get_spark_context(
     """Return DB context (candidates or company nodes) for the copilot server to generate ideas."""
     dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
     direction_clean = direction.strip() if direction and direction.strip() else None
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
 
     edges = await _fetch_company_edges(db, company_id)
-    similar_agents = await _fetch_agents(db)
+    similar_agents = await _fetch_agents(db, tenant_id)
     edge_dicts = [{"source_label": e["source_label"], "target_label": e["target_label"], "rel_type": e["rel_type"]} for e in edges]
     agent_dicts = [{"agent_id": a.agent_id, "agent_name": a.agent_name} for a in similar_agents]
 
@@ -1301,24 +1331,32 @@ async def get_spark_context(
 
 
 @router.post("/ideas/batch", status_code=204)
-async def save_spark_ideas_batch(request: SparkIdeaBatchRequest) -> None:
+async def save_spark_ideas_batch(
+    body: SparkIdeaBatchRequest,
+    request: Request,
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
+) -> None:
     """Persist a batch of ideas generated by the copilot server."""
-    if not request.ideas:
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    if not body.ideas:
         return
-    if request.clear_existing:
+    if body.clear_existing:
+        tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
+        company_where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
         async with AsyncSessionLocal() as clear_db:
             await clear_db.execute(
-                text("DELETE FROM core.spark_ideas WHERE company_id = :company_id"),
-                {"company_id": request.company_id},
+                text(f"DELETE FROM core.spark_ideas WHERE {company_where} {tenant_where}"),
+                {"company_id": body.company_id, "tenant_id": tenant_id},
             )
             await clear_db.commit()
-    await _upsert_ideas(request.company_id, request.ideas)
+    await _upsert_ideas(body.company_id, body.ideas, tenant_id)
 
 
 @router.post("/generate", response_model=list[SparkIdea])
 async def generate_spark_ideas(
     request: Request,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area (e.g. 'Quality management')"),
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
@@ -1328,7 +1366,7 @@ async def generate_spark_ideas(
     db: AsyncSession = Depends(get_db),
 ) -> list[SparkIdea]:
     """Generate fresh ideas from company context, persist to DB, return them."""
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
     direction_clean = direction.strip() if direction and direction.strip() else None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -1343,13 +1381,13 @@ async def generate_spark_ideas(
         if not ideas:
             # Fallback to normal flow if direction generation fails
             unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
-            all_agents = await _fetch_agents(db)
+            all_agents = await _fetch_agents(db, tenant_id)
             ideas = await _build_ideas(unique, all_agents, api_key, direction=direction_clean, company_name=company_name, industry=industry, region=region, edges=edges)
     else:
         unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
         if not unique:
             return []
-        all_agents = await _fetch_agents(db)
+        all_agents = await _fetch_agents(db, tenant_id)
         ideas = await _build_ideas(unique, all_agents, api_key, company_name=company_name, industry=industry, region=region, edges=edges)
 
     if not ideas:
@@ -1358,15 +1396,17 @@ async def generate_spark_ideas(
     # Without direction: delete-all first for a fresh general refresh.
     # With direction: accumulate — each focus area adds to the library.
     if not direction_clean:
+        tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
         async with AsyncSessionLocal() as clear_db:
             await clear_db.execute(
-                text("""
+                text(f"""
                     DELETE FROM core.spark_ideas
-                    WHERE company_id = :company_id
+                    WHERE (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')
+                      {tenant_where}
                       AND user_reaction IS NULL
                       AND COALESCE(popularity_score, 0) = 0
                 """),
-                {"company_id": company_id},
+                {"company_id": company_id, "tenant_id": tenant_id},
             )
             await clear_db.commit()
 
@@ -1378,6 +1418,7 @@ async def generate_spark_ideas(
 async def generate_spark_ideas_stream(
     request: Request,
     company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
     dimensions: str | None = Query(None, description="Comma-separated dimension filter"),
     direction: str | None = Query(None, description="User-specified focus area"),
     idea_count: int = Query(SPARK_DEFAULT_IDEAS, ge=1, le=SPARK_MAX_IDEAS, description="Number of ideas to generate"),
@@ -1392,7 +1433,7 @@ async def generate_spark_ideas_stream(
     as each object is parsed from the Anthropic token stream.
     Always ends with a 'done' event (or 'error' on failure).
     """
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     dim_filter = [d.strip() for d in dimensions.split(",")] if dimensions else []
     direction_clean = direction.strip() if direction and direction.strip() else None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -1456,7 +1497,7 @@ async def generate_spark_ideas_stream(
                 # Gap-analysis mode: stream ideas as each enriched object arrives
                 unique = await _collect_candidates(db, company_id, dim_filter, idea_count)
                 if unique:
-                    all_agents = await _fetch_agents(db)
+                    all_agents = await _fetch_agents(db, tenant_id)
 
                     if api_key:
                         system, user = _build_gap_prompt(unique, direction_clean, company_name, industry, region, edges)
@@ -1522,15 +1563,17 @@ async def generate_spark_ideas_stream(
             # Persist to DB
             if collected:
                 if not direction_clean:
+                    tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
                     async with AsyncSessionLocal() as clear_db:
                         await clear_db.execute(
-                            text("""
+                            text(f"""
                                 DELETE FROM core.spark_ideas
-                                WHERE company_id = :company_id
+                                WHERE (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')
+                                  {tenant_where}
                                   AND user_reaction IS NULL
                                   AND COALESCE(popularity_score, 0) = 0
                             """),
-                            {"company_id": company_id},
+                            {"company_id": company_id, "tenant_id": tenant_id},
                         )
                         await clear_db.commit()
                 await _upsert_ideas(company_id, collected, tenant_id)

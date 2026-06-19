@@ -173,6 +173,7 @@ async def list_use_cases(
     title: Optional[str] = None,
     process_id: Optional[str] = None,
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     start_record: int = 1,
     record_range: str = "1-10",
     db: AsyncSession = Depends(get_db),
@@ -183,13 +184,13 @@ async def list_use_cases(
     except Exception:
         start, end = start_record, start_record + 9
 
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     where_clauses: List[str] = []
     params: Dict[str, Any] = {}
 
     if tenant_id:
         where_clauses.append(
-            "(u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+            "u.tenant_id = :tid"
         )
         params["tid"] = tenant_id
     if company_id and company_id.strip():
@@ -203,7 +204,9 @@ async def list_use_cases(
                 {"schema": CORE, "tbl": "ai_use_cases"},
             )
             if col_check.first():
-                where_clauses.append("(CAST(u.company_id AS text) = :company_id OR u.company_id IS NULL OR CAST(u.company_id AS text) = '')")
+                where_clauses.append(
+                    "(CAST(u.company_id AS text) = :company_id OR u.company_id IS NULL OR TRIM(CAST(u.company_id AS text)) = '' OR u.company_id = 'None')"
+                )
                 params["company_id"] = company_id.strip()
         except Exception:
             pass
@@ -218,7 +221,7 @@ async def list_use_cases(
         ]
         if tenant_id:
             process_filter.append(
-                "(rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                "rel.tenant_id = :tid"
             )
         where_clauses.append(
             "EXISTS (SELECT 1 FROM "
@@ -252,7 +255,7 @@ async def list_use_cases(
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
-                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                              {"AND rel.tenant_id = :tid" if tenant_id else ""}
                         ), 0) AS related_agent_count,
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
@@ -260,7 +263,7 @@ async def list_use_cases(
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
-                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                              {"AND rel.tenant_id = :tid" if tenant_id else ""}
                         ), 0) AS no_of_associated_agents,
                         ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records

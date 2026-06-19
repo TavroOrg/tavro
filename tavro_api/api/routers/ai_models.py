@@ -225,6 +225,7 @@ async def list_ai_models(
     start_record: int = 1,
     record_range: str = "1-500",
     company_id: Optional[str] = Query(None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -233,16 +234,18 @@ async def list_ai_models(
     except Exception:
         start, end = start_record, start_record + 499
 
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     where_clauses: List[str] = ["m.ai_model_id IS NOT NULL", "m.ai_model_id <> ''"]
     params: Dict[str, Any] = {}
     if tenant_id:
         where_clauses.append(
-            "(m.tenant_id = :tid OR m.tenant_id IS NULL OR m.tenant_id = '' OR m.tenant_id = 'None')"
+            "m.tenant_id = :tid"
         )
         params["tid"] = tenant_id
     if company_id:
-        where_clauses.append("(m.company_id = :cid OR m.company_id IS NULL OR TRIM(CAST(m.company_id AS text)) = '')")
+        where_clauses.append(
+            "(m.company_id = :cid OR m.company_id IS NULL OR TRIM(CAST(m.company_id AS text)) = '' OR m.company_id = 'None')"
+        )
         params["cid"] = company_id
     if q and q.strip():
         where_clauses.append(
@@ -252,7 +255,7 @@ async def list_ai_models(
     where_sql = " AND ".join(where_clauses)
 
     rel_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
     )
