@@ -11,6 +11,7 @@ from sqlalchemy import text
 import json
 
 from api.database import get_db
+from api.events import broadcaster
 from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
 from api.routers.business_relations import sync_dim_node_to_business_entity
 
@@ -141,6 +142,7 @@ async def create_dim_node(body: DimNodeCreate, db: AsyncSession = Depends(get_db
     except Exception:
         pass  # Non-fatal — dim_node was already committed
 
+    await broadcaster.publish({"entity": "dim_node", "action": "create", "id": node["id"]})
     return node
 
 
@@ -174,6 +176,7 @@ async def update_dim_node(
     result = row.mappings().first()
     if not result:
         raise HTTPException(status_code=404, detail="Node not found")
+    await broadcaster.publish({"entity": "dim_node", "action": "update", "id": str(node_id)})
     return dict(result)
 
 
@@ -185,6 +188,7 @@ async def soft_delete_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)
         {"id": str(node_id)},
     )
     await db.commit()
+    await broadcaster.publish({"entity": "dim_node", "action": "delete", "id": str(node_id)})
 
 
 # ── Attachments ──────────────────────────────────────────────────────────────

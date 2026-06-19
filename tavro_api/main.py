@@ -30,6 +30,7 @@ from api.routers import spark
 from api.routers import docker_logs
 from api.routers.docker_logs import start_log_collector
 from api.routers import claude_run
+from api.routers import events as events_router
 from api.migrations.init_tables import initialize_tables
 from api.database import get_db
 
@@ -134,6 +135,7 @@ app.include_router(drive_import.router,     prefix="/api/v1/drive",      tags=["
 app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["Spark"])
 app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 app.include_router(claude_run.router)
+app.include_router(events_router.router, prefix="/api/v1", tags=["Events"])
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])

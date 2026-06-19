@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Network,
@@ -43,13 +43,19 @@ const IntegrationsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(1);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    const onMutated = () => setRefreshKey(k => k + 1);
+    window.addEventListener('tavro:data-mutated', onMutated);
+    return () => window.removeEventListener('tavro:data-mutated', onMutated);
+  }, []);
+
+  const load = useCallback(async () => {
     if (catalogLoading) {
       setLoading(true);
       return;
     }
-
     if (catalogError || !lastFetched) {
       setIntegrations([]);
       setLoading(false);
@@ -60,21 +66,21 @@ const IntegrationsPage: React.FC = () => {
       );
       return;
     }
-
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await businessRelationsApi.listIntegrations(undefined, activeCompany?.id);
-        setIntegrations(data);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load integrations');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await businessRelationsApi.listIntegrations(undefined, activeCompany?.id);
+      setIntegrations(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load integrations');
+    } finally {
+      setLoading(false);
+    }
   }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
+
+  useEffect(() => {
+    load();
+  }, [load, refreshKey]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

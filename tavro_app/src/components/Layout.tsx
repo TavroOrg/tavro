@@ -101,6 +101,45 @@ const Layout: React.FC = () => {
         };
     }, [fetchCatalogCounts]);
 
+    // Subscribe to backend SSE mutation events so the UI stays in sync when
+    // any MCP tool (or other client) mutates data without going through the
+    // frontend API layer.
+    useEffect(() => {
+        const apiBase = (import.meta.env.VITE_TWIN_API_URL ?? '').replace(/\/$/, '');
+        const url = `${apiBase}/api/v1/events`;
+        let source: EventSource | null = null;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const connect = () => {
+            source = new EventSource(url);
+
+            source.onmessage = (e: MessageEvent) => {
+                try {
+                    JSON.parse(e.data); // validate it's a real event, not a keepalive
+                } catch {
+                    return;
+                }
+                // Refresh sidebar counts
+                window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+                // Signal list pages to re-fetch their own data
+                window.dispatchEvent(new CustomEvent('tavro:data-mutated'));
+            };
+
+            source.onerror = () => {
+                source?.close();
+                source = null;
+                // Reconnect after 5 s
+                retryTimer = setTimeout(connect, 5000);
+            };
+        };
+
+        connect();
+        return () => {
+            source?.close();
+            if (retryTimer !== null) clearTimeout(retryTimer);
+        };
+    }, []);
+
     useEffect(() => {
         const useCaseCreated = (event: Event) => {
             const detail = (event as CustomEvent).detail ?? {};

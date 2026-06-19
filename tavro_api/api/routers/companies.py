@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.events import broadcaster
 from api.schemas import Company, CompanyCreate, CompanyUpdate, Page
 
 router = APIRouter()
@@ -53,7 +54,9 @@ async def create_company(body: CompanyCreate, db: AsyncSession = Depends(get_db)
         body.model_dump(),
     )
     await db.commit()
-    return dict(row.mappings().first())
+    result = dict(row.mappings().first())
+    await broadcaster.publish({"entity": "company", "action": "create", "id": str(result.get("id", ""))})
+    return result
 
 
 @router.patch("/{company_id}", response_model=Company)
@@ -77,6 +80,7 @@ async def update_company(
     result = row.mappings().first()
     if not result:
         raise HTTPException(status_code=404, detail="Company not found")
+    await broadcaster.publish({"entity": "company", "action": "update", "id": str(company_id)})
     return dict(result)
 
 
@@ -175,6 +179,7 @@ async def delete_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
     )
     await db.commit()
 
+    await broadcaster.publish({"entity": "company", "action": "delete", "id": str(company_id)})
     return {
         "deleted": {
             "company":    company_name,

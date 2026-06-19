@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.events import broadcaster
 from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
@@ -1923,6 +1924,7 @@ async def create_integration(
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
+    await broadcaster.publish({"entity": "integration", "action": "create", "id": integration_id})
     return rows[0]
 
 
@@ -1970,6 +1972,7 @@ async def update_integration(
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
+    await broadcaster.publish({"entity": "integration", "action": "update", "id": integration_id})
     return rows[0]
 
 
@@ -1994,6 +1997,7 @@ async def delete_integration(
             detail=f"Integration '{integration_id}' not found",
         )
     await db.commit()
+    await broadcaster.publish({"entity": "integration", "action": "delete", "id": integration_id})
     return {"status": "deleted", "integration_id": integration_id}
 
 
@@ -2219,6 +2223,7 @@ async def create_application(
     rows = await _fetch_applications(db, application_id=app_id)
     if company_id and rows:
         await _sync_application_to_dim_node(db, company_id, rows[0])
+    await broadcaster.publish({"entity": "application", "action": "create", "id": app_id})
     return rows[0]
 
 
@@ -2262,6 +2267,7 @@ async def update_application(
     )
     await db.commit()
     rows = await _fetch_applications(db, application_id=application_id)
+    await broadcaster.publish({"entity": "application", "action": "update", "id": application_id})
     return rows[0]
 
 
@@ -2328,6 +2334,7 @@ async def delete_application(
             detail=f"Application '{application_id}' not found",
         )
     await db.commit()
+    await broadcaster.publish({"entity": "application", "action": "delete", "id": application_id})
     return {"status": "deleted", "application_id": application_id}
 
 
@@ -2461,6 +2468,7 @@ async def create_process(
     rows = await _fetch_processes(db, process_id=process_id)
     if company_id and rows:
         await _sync_process_to_dim_node(db, company_id, rows[0])
+    await broadcaster.publish({"entity": "process", "action": "create", "id": process_id})
     return rows[0]
 
 
@@ -2518,6 +2526,7 @@ async def update_process(
     )
     await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
+    await broadcaster.publish({"entity": "process", "action": "update", "id": process_id})
     return rows[0]
 
 
@@ -2597,6 +2606,7 @@ async def delete_process(
             detail=f"Process '{process_id}' not found",
         )
     await db.commit()
+    await broadcaster.publish({"entity": "process", "action": "delete", "id": process_id})
     return {"status": "deleted", "process_id": process_id}
 
 
