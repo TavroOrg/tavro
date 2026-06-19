@@ -1358,8 +1358,7 @@ const UseCaseViewPage: React.FC = () => {
     if (!id || isEditing) return;
 
     const handleWorkflowUpdate = () => {
-      mcpClient.invalidateCache();
-      fetchUseCaseSilently(true);
+      fetchUseCaseSilently();
       refreshUseCases();
     };
 
@@ -1374,7 +1373,7 @@ const UseCaseViewPage: React.FC = () => {
       if (raw !== null) {
         const workflows = JSON.parse(raw) as Array<{ status?: string }>;
         const hasRunning = workflows.some(w => String(w.status ?? '').trim().toLowerCase() === 'running');
-        if (!hasRunning) fetchUseCaseSilently(true);
+        if (!hasRunning) fetchUseCaseSilently();
       }
     } catch {
       // Ignore malformed workflow snapshots.
