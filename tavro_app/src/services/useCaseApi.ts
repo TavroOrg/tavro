@@ -1,5 +1,6 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -102,11 +103,26 @@ class UseCaseApiService {
         if (opts?.startRecord) params.set('start_record', String(opts.startRecord));
         if (opts?.recordRange) params.set('record_range', opts.recordRange);
         if (opts?.companyId) params.set('company_id', opts.companyId);
-        return req(`/use-cases/?${params}`);
+        appLogger.req('GET /api/v1/use-cases/', opts ?? {});
+        const t0 = Date.now();
+        const result = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        appLogger.res('GET /api/v1/use-cases/', { totalRecords: result.total_records, count: result.data?.length }, Date.now() - t0);
+        return result;
+    }
+
+    async countUseCases(companyId?: string): Promise<number> {
+        const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
+        if (companyId) params.set('company_id', companyId);
+        const data = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        return data?.total_records ?? 0;
     }
 
     async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
+        appLogger.req(`GET /api/v1/use-cases/${useCaseId}`);
+        const t0 = Date.now();
+        const result = await req<UseCaseListResponse>(`/use-cases/${encodeURIComponent(useCaseId)}`);
+        appLogger.res(`GET /api/v1/use-cases/${useCaseId}`, { count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
     async createUseCase(payload: UseCaseCreatePayload, companyId?: string, companyName?: string): Promise<{ message: string; use_case_id: string }> {
@@ -119,6 +135,7 @@ class UseCaseApiService {
             body: JSON.stringify(payload),
         });
         portalActivity.record(`Created AI use case: ${payload.title}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -145,6 +162,7 @@ class UseCaseApiService {
             method: 'DELETE',
         });
         portalActivity.record(`Deleted AI use case: ${useCaseId}`, 'amber');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 
@@ -213,6 +231,7 @@ class UseCaseApiService {
         const result = await reqFormData<{ uploaded_count: number; total_submitted: number; message: string }>(`/use-cases/upload${qs}`, formData);
         const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
         portalActivity.record(`Loaded ${result.uploaded_count} AI use case${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         return result;
     }
 

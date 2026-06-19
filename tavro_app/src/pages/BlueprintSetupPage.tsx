@@ -2,7 +2,7 @@
 // 4-step setup flow:
 //   Step 1 — Company identity + public / private toggle
 //   Step 2 — AI research preview (public only) — skip for private
-//   Step 3 — Industry template (Process, Application, Technology, Risk)
+//   Step 3 — Industry template (Process, Application, Integration, Risk)
 //   Step 4 — Confirm + create
 
 import React, { useState } from 'react';
@@ -42,49 +42,49 @@ const TEMPLATES = [
     label: 'Commercial Banking',
     desc:  'CRE, C&I, deposits, AML/BSA, regulatory reporting',
     icon:  '🏦',
-    counts: { process: 7, application: 7, technology: 4, risk: 6 },
+    counts: { process: 7, application: 7, integration: 4, risk: 6 },
   },
   {
     id:    'insurance',
     label: 'Insurance',
     desc:  'Underwriting, claims, actuarial, regulatory filings',
     icon:  '🛡️',
-    counts: { process: 5, application: 4, technology: 3, risk: 5 },
+    counts: { process: 5, application: 4, integration: 3, risk: 5 },
   },
   {
     id:    'healthcare',
     label: 'Healthcare',
     desc:  'Clinical operations, EHR, HIPAA, revenue cycle',
     icon:  '🏥',
-    counts: { process: 5, application: 5, technology: 3, risk: 4 },
+    counts: { process: 5, application: 5, integration: 3, risk: 4 },
   },
   {
     id:    'manufacturing',
     label: 'Manufacturing',
     desc:  'Supply chain, ERP, MES, OT/IT, quality management',
     icon:  '🏭',
-    counts: { process: 5, application: 4, technology: 4, risk: 4 },
+    counts: { process: 5, application: 4, integration: 4, risk: 4 },
   },
   {
     id:    'retail',
     label: 'Retail & CPG',
     desc:  'Merchandising, omnichannel, loyalty, supply chain',
     icon:  '🛍️',
-    counts: { process: 5, application: 5, technology: 3, risk: 4 },
+    counts: { process: 5, application: 5, integration: 3, risk: 4 },
   },
   {
     id:    'tech',
     label: 'Technology',
     desc:  'Product, engineering, SRE, AI governance, SaaS ops',
     icon:  '💻',
-    counts: { process: 5, application: 5, technology: 4, risk: 4 },
+    counts: { process: 5, application: 5, integration: 4, risk: 4 },
   },
   {
     id:    'blank',
     label: 'Blank canvas',
     desc:  'Start from scratch — add your own dimensions',
     icon:  '📋',
-    counts: { process: 0, application: 0, technology: 0, risk: 0 },
+    counts: { process: 0, application: 0, integration: 0, risk: 0 },
   },
 ];
 
@@ -577,7 +577,7 @@ const BlueprintSetupPage: React.FC = () => {
           {step === 3 && (
             <Card icon={<Layers size={18} className="text-blue-600 dark:text-blue-400" />}
               title="Industry template"
-              desc="Pre-populates Process, Application, Technology, and Risk dimensions">
+              desc="Pre-populates Process, Application, Integration, and Risk dimensions">
 
               <div className="flex flex-col gap-2.5">
                 {TEMPLATES.map(t => {
@@ -682,7 +682,7 @@ const BlueprintSetupPage: React.FC = () => {
                       <span className="font-bold">
                         {Object.values(selectedTemplate.counts).reduce((a, b) => a + b, 0)}
                       </span> template dimensions
-                      <span className="text-slate-400 dark:text-slate-500">(Process, Application, Technology, Risk)</span>
+                      <span className="text-slate-400 dark:text-slate-500">(Process, Application, Integration, Risk)</span>
                     </div>
                   )}
                   {(!researchResult || selectedNodes.size === 0) && selectedTemplate?.id === 'blank' && (

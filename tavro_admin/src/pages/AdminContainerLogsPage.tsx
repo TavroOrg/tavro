@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
-    ArrowLeft, Box, Circle, Search, Pause, Play,
+    Box, Circle, Search, Pause, Play,
     Trash2, Download, WifiOff, Loader2,
 } from 'lucide-react';
 
@@ -49,7 +48,6 @@ function formatTime(ts: number): string {
 }
 
 export default function AdminContainerLogsPage() {
-    const navigate = useNavigate();
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [containers, setContainers] = useState<ContainerInfo[]>([]);
     const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -194,19 +192,9 @@ export default function AdminContainerLogsPage() {
 
             {/* ── Header ──────────────────────────────────────────────────────── */}
             <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => navigate('/settings')}
-                        className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors"
-                    >
-                        <ArrowLeft size={16} />
-                        Settings
-                    </button>
-                    <span className="text-slate-300 dark:text-slate-700">/</span>
-                    <div className="flex items-center gap-2">
-                        <Box size={16} className="text-blue-500" />
-                        <span className="font-bold text-slate-800 dark:text-slate-100">Container Logs</span>
-                    </div>
+                <div className="flex items-center gap-2">
+                    <Box size={16} className="text-blue-500" />
+                    <span className="font-bold text-slate-800 dark:text-slate-100">Container Logs</span>
                 </div>
 
                 <div className="flex items-center gap-2">

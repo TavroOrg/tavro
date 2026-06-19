@@ -7,6 +7,7 @@ import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, P
 import { ChatMessage } from '../services/llmService';
 import { useNavigate } from 'react-router-dom';
 import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
+import { PDF_DOCUMENT_TEMPLATE } from '../utils/pdfTemplate';
 import { useChatContext } from '../context/ChatContext';
 import type { BlueprintContext } from '../context/ChatContext';
 import { buildSystemPrompt, getSuggestedPrompts, getContextBadge } from '../services/buildSystemPrompt';
@@ -80,6 +81,8 @@ const EXPORT_INSTRUCTIONS: Record<ExportFormat, string> = {
     txt:  '\n\nThe user wants the response as a plain text file. Write clean, well-structured prose without markdown symbols.',
     md:   '\n\nThe user wants the response as a Markdown document. Use proper Markdown with headers, bullet lists, and code blocks where appropriate.',
 };
+
+EXPORT_INSTRUCTIONS.pdf = `\n\n${PDF_DOCUMENT_TEMPLATE}\n\n[PDF EXPORT]\nRespond with ONLY the report content following the template above. Use the General Report template unless the user asks for a known document type such as Requirements, Technical Design, or Risk Assessment. Start directly with a single # title. Use clean markdown, ASCII only. Do not include preamble, completion notes, sign-off text, or unreplaced {{...}} placeholders. The platform extracts your response verbatim and converts it to PDF.`;
 
 /** Detect which download format (if any) the user is asking for. */
 function detectExportFormat(text: string): ExportFormat | null {

@@ -23,7 +23,15 @@ const AUTH_KEYS = [
     'tavro_oidc_client_id',
     'tavro_auth_redirect_uri',
     'tavro_oidc_state',
+    'tavro_tenant_id',
+    'tavro_last_activity_at',
 ];
+
+export const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+export const SESSION_WARNING_MS = 5 * 60 * 1000;
+export const LAST_ACTIVITY_KEY = 'tavro_last_activity_at';
+
+export type SessionExpiredReason = 'expired' | 'inactive';
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
     try {
@@ -206,10 +214,24 @@ export function clearAuth(): void {
     AUTH_KEYS.forEach(k => localStorage.removeItem(k));
 }
 
+export function recordSessionActivity(timestamp = Date.now()): void {
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(timestamp));
+    window.dispatchEvent(new CustomEvent('tavro:session_activity'));
+}
+
+export function getLastSessionActivity(): number {
+    const value = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    return Number.isFinite(value) && value > 0 ? value : Date.now();
+}
+
+export function isSessionInactive(now = Date.now()): boolean {
+    return now - getLastSessionActivity() >= SESSION_TIMEOUT_MS;
+}
+
 /**
  * Dispatch the app-wide session-expired event. Components that need to react
  * (e.g. UnauthorizedHandler in App.tsx) listen for this event.
  */
-export function signalSessionExpired(): void {
-    window.dispatchEvent(new CustomEvent('tavro:session_expired'));
+export function signalSessionExpired(reason: SessionExpiredReason = 'expired'): void {
+    window.dispatchEvent(new CustomEvent('tavro:session_expired', { detail: { reason } }));
 }

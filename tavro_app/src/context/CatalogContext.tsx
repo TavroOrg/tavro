@@ -1,6 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AgentData } from '../types/agent';
-import { mcpClient } from '../services/mcpClient';
 import { hasResolvedAgentRisk } from '../utils/agentRisk';
 import { agentApi, RiskWorkflowStatus } from '../services/agentApi';
 
@@ -246,10 +245,30 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Background auto-refreshes should be silent when cached data is already showing.
         const hasExistingData = Boolean(sessionStorage.getItem(AGENT_CACHE_KEY));
         if (!hasExistingData || shouldInvalidate) setLoading(true);
-        if (shouldInvalidate) mcpClient.invalidateCache();
 
         try {
-            const data = await mcpClient.getAllAgents();
+            const response = await agentApi.getAgentCatalog(1, '1-500');
+            const data: AgentData[] = (response.data ?? []).map((item: any) => ({
+                ...item,
+                name: item.name || item.agent_name || 'Unnamed Agent',
+                description: item.description || item.agent_description || item.summary || '',
+                version: item.version || '1.0',
+                identification: {
+                    ...item.identification,
+                    agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
+                    role: item.identification?.role || item.role || null,
+                    instruction: item.identification?.instruction || item.instruction || null,
+                    owner: item.identification?.owner || item.owner || item.agent_owner || undefined,
+                    environment: item.identification?.environment || item.environment || undefined,
+                    governance_status: item.identification?.governance_status || item.latest_event_status || undefined,
+                },
+                configuration: item.configuration || { autonomy_level: item.autonomy_level ?? null },
+                tool: item.tool || [],
+                data_source: item.data_source || [],
+                application: item.application || [],
+                business_process: item.business_process || [],
+                risk_assessment: item.risk_assessment || null,
+            }));
             const temporalRecords = readTemporalRecords();
             const runningRecords = temporalRecords.filter(r => r.status === 'running');
 
