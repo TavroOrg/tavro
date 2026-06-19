@@ -1413,7 +1413,7 @@ Return ONLY the JSON object with the "description" field."""
 # ---------------------------------------------------------------------------
 
 @router.get("/{agent_id}", summary="Get Agent Card")
-async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Depends(get_db), company_id: Optional[str] = Query(default=None)):
     tenant_id = _require_tenant(request)
     try:
         result = await db.execute(
@@ -1489,9 +1489,10 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                   AND rel.tenant_id = :tid
                   AND rel.skill_id IS NOT NULL
                   AND rel.skill_id <> ''
+                  {"AND (s.company_id = :company_id OR s.company_id IS NULL OR TRIM(CAST(s.company_id AS text)) = '' OR s.company_id = 'None')" if company_id else ""}
                 ORDER BY LOWER(COALESCE(s.name, rel.skill_name, rel.skill_id))
             """),
-            {"aid": agent_id, "tid": tenant_id},
+            {"aid": agent_id, "tid": tenant_id, "company_id": company_id},
         )
         data["skills"] = [dict(skill) for skill in skill_result.mappings().all()]
         return data

@@ -281,7 +281,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     try {
       const companyId = activeCompany?.id;
       const [agentRelations, appCatalog, processCatalog, modelCatalog, integrationCatalog, useCasePage, companyAgents] = await Promise.all([
-        businessRelationsApi.getAgentRelations(agentId),
+        businessRelationsApi.getAgentRelations(agentId, companyId),
         showApplications ? businessRelationsApi.listApplications(undefined, companyId) : Promise.resolve([] as BusinessApplicationRecord[]),
         showProcesses ? businessRelationsApi.listProcesses(undefined, companyId) : Promise.resolve([] as BusinessProcessRecord[]),
         showAiModels ? aiModelApi.listModels(undefined, companyId) : Promise.resolve([] as AiModelRecord[]),

@@ -163,10 +163,11 @@ class AgentApiService {
         return data?.total_records ?? 0;
     }
 
-    async getAgentCard(agentId: string): Promise<any> {
+    async getAgentCard(agentId: string, companyId?: string): Promise<any> {
         appLogger.req(`GET /api/v1/agents/${agentId}`);
         const t0 = Date.now();
-        const result = await req<any>(`/agents/${encodeURIComponent(agentId)}`);
+        const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+        const result = await req<any>(`/agents/${encodeURIComponent(agentId)}${suffix}`);
         appLogger.res(`GET /api/v1/agents/${agentId}`, { name: result?.name }, Date.now() - t0);
         return result;
     }

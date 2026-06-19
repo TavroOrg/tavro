@@ -341,29 +341,46 @@ async def create_use_case(
 # ---------------------------------------------------------------------------
 
 @router.get("/{use_case_id}", summary="Get AI Use Case")
-async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db), company_id: Optional[str] = Query(default=None)):
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     use_case_tenant_filter = (
-        "AND (u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+        "AND u.tenant_id = :tid"
         if tenant_id
         else ""
     )
     agent_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
     )
     process_tenant_filter = (
-        "AND (relp.tenant_id = :tid OR relp.tenant_id IS NULL OR relp.tenant_id = '' OR relp.tenant_id = 'None')"
+        "AND relp.tenant_id = :tid"
         if tenant_id
         else ""
     )
     application_tenant_filter = (
-        "AND (rela.tenant_id = :tid OR rela.tenant_id IS NULL OR rela.tenant_id = '' OR rela.tenant_id = 'None')"
+        "AND rela.tenant_id = :tid"
         if tenant_id
         else ""
     )
+    _ci = " OR {col}.company_id IS NULL OR TRIM(CAST({col}.company_id AS text)) = '' OR {col}.company_id = 'None'"
+    agent_company_filter = (
+        f"AND (ag.company_id = :company_id{_ci.format(col='ag')})" if company_id else ""
+    )
+    process_company_filter = (
+        f"AND (bp.company_id = :company_id{_ci.format(col='bp')})" if company_id else ""
+    )
+    application_company_filter = (
+        f"AND (ba.company_id = :company_id{_ci.format(col='ba')})" if company_id else ""
+    )
+    model_company_filter = (
+        f"AND (m.company_id = :company_id{_ci.format(col='m')})" if company_id else ""
+    )
+    agent_entity_tenant_filter = "AND ag.tenant_id = :tid" if tenant_id else ""
+    process_entity_tenant_filter = "AND bp.tenant_id = :tid" if tenant_id else ""
+    application_entity_tenant_filter = "AND ba.tenant_id = :tid" if tenant_id else ""
+    model_entity_tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     try:
         result = await db.execute(
             text(f"""
@@ -403,9 +420,11 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     AND COALESCE(ai.is_current, true) = true
                 WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid)) AND rel.agent_id IS NOT NULL
                   {agent_tenant_filter}
+                  {agent_company_filter}
+                  {agent_entity_tenant_filter}
                 ORDER BY name NULLS LAST
             """),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_agents = [dict(r) for r in agents_result.mappings().all()]
 
@@ -425,10 +444,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND relp.business_process_id IS NOT NULL
                   AND relp.business_process_id <> ''
                   {process_tenant_filter}
+                  {process_company_filter}
+                  {process_entity_tenant_filter}
                 ORDER BY process_sort_key
                 """
             ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_processes = [
             {
@@ -459,10 +480,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND rela.business_application_id IS NOT NULL
                   AND rela.business_application_id <> ''
                   {application_tenant_filter}
+                  {application_company_filter}
+                  {application_entity_tenant_filter}
                 ORDER BY application_sort_key
                 """
             ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_applications = [
             {
@@ -485,7 +508,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         ).scalar()
         if model_junction:
             model_tenant_filter = (
-                "AND (relm.tenant_id = :tid OR relm.tenant_id IS NULL OR relm.tenant_id = '' OR relm.tenant_id = 'None')"
+                "AND relm.tenant_id = :tid"
                 if tenant_id
                 else ""
             )
@@ -506,10 +529,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                       AND relm.ai_model_id IS NOT NULL
                       AND relm.ai_model_id <> ''
                       {model_tenant_filter}
+                      {model_company_filter}
+                      {model_entity_tenant_filter}
                     ORDER BY model_sort_key
                     """
                 ),
-                {"uid": normalized_use_case_id, "tid": tenant_id},
+                {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
             )
             linked_ai_models = [
                 {
@@ -650,12 +675,12 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
     normalized_use_case_id = _norm_id(use_case_id)
     tenant_id = _tenant(request)
     relation_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
     )
     use_case_tenant_filter = (
-        "AND (u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+        "AND u.tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -783,12 +808,12 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     relation_tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
     use_case_tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -876,7 +901,7 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -980,7 +1005,7 @@ async def unlink_application(use_case_id: str, application_id: str, request: Req
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -1102,7 +1127,7 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -1205,7 +1230,7 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )

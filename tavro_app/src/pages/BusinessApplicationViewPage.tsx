@@ -400,7 +400,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setRelationError(null);
     setUseCaseRelationError(null);
     try {
-      const data = await businessRelationsApi.getApplication(id);
+      const data = await businessRelationsApi.getApplication(id, activeCompany?.id);
       setApplication(data);
       setForm(formFromApplication(data));
       setAttemptedSave(false);

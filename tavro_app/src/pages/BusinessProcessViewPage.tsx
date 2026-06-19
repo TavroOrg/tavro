@@ -404,7 +404,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       const [proc, processes] = await Promise.all([
-        businessRelationsApi.getProcess(id),
+        businessRelationsApi.getProcess(id, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
       setProcess(proc);

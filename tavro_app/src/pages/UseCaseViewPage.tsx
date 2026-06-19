@@ -275,6 +275,8 @@ const mergeUseCaseWithRestDetail = (
     row.of_associated_agents ?? row.agents ?? [],
   );
 
+  const linkedAiModels = normalizeUseCaseAiModels(row.of_associated_ai_models ?? row.ai_models ?? []);
+
   if (base) {
     return {
       ...base,
@@ -284,6 +286,8 @@ const mergeUseCaseWithRestDetail = (
       applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
+      of_associated_ai_models: linkedAiModels,
+      ai_models: linkedAiModels,
     } as UseCaseDetail;
   }
 
@@ -303,6 +307,8 @@ const mergeUseCaseWithRestDetail = (
     agents: linkedAgents,
     applications: linkedApplications,
     business_processes: linkedProcesses,
+    of_associated_ai_models: linkedAiModels,
+    ai_models: linkedAiModels,
   } as UseCaseDetail;
 };
 
@@ -1294,7 +1300,7 @@ const UseCaseViewPage: React.FC = () => {
     setError(null);
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
@@ -1321,7 +1327,7 @@ const UseCaseViewPage: React.FC = () => {
     if (!id) return;
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);

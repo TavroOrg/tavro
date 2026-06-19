@@ -343,13 +343,15 @@ async def create_ai_model(
 # ---------------------------------------------------------------------------
 
 @router.get("/{ai_model_id}", summary="Get AI Model")
-async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_ai_model(
+    ai_model_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
+    db: AsyncSession = Depends(get_db),
+):
     tenant_id = _tenant(request)
     mid = _norm_id(ai_model_id)
-    tenant_filter = (
-        "AND (m.tenant_id = :tid OR m.tenant_id IS NULL OR m.tenant_id = '' OR m.tenant_id = 'None')"
-        if tenant_id else ""
-    )
+    tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     row = await db.execute(
         text(f"""
             SELECT m.* FROM {CORE}.ai_models m
@@ -363,6 +365,27 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
     if not model:
         raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
+    _company_inclusive = (
+        " OR {col}.company_id IS NULL"
+        " OR TRIM(CAST({col}.company_id AS text)) = ''"
+        " OR {col}.company_id = 'None'"
+    )
+    def _company_filter(col: str) -> str:
+        if not company_id:
+            return ""
+        return f"AND ({col}.company_id = :company_id{_company_inclusive.format(col=col)})"
+
+    def _tf(col: str) -> str:
+        if not tenant_id:
+            return ""
+        return f"AND {col}.tenant_id = :tid"
+
+    rel_params: dict[str, Any] = {"mid": mid}
+    if company_id:
+        rel_params["company_id"] = company_id
+    if tenant_id:
+        rel_params["tid"] = tenant_id
+
     agent_rows = await db.execute(
         text(f"""
             SELECT
@@ -375,9 +398,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 AND COALESCE(a.is_current, true) = true
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+              {_tf('rel')}
+              {_company_filter('a')}
+              {_tf('a')}
             ORDER BY LOWER(COALESCE(a.agent_name, rel.agent_name, rel.agent_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
     use_case_rows = await db.execute(
         text(f"""
@@ -393,9 +419,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(uc.ai_use_case_id)) = LOWER(TRIM(rel.ai_use_case_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.ai_use_case_id IS NOT NULL AND rel.ai_use_case_id <> ''
+              {_tf('rel')}
+              {_company_filter('uc')}
+              {_tf('uc')}
             ORDER BY LOWER(COALESCE(uc.name, rel.ai_use_case_name, rel.ai_use_case_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
 
     application_rows = await db.execute(
@@ -411,9 +440,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(ba.business_application_id)) = LOWER(TRIM(rel.business_application_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.business_application_id IS NOT NULL AND rel.business_application_id <> ''
+              {_tf('rel')}
+              {_company_filter('ba')}
+              {_tf('ba')}
             ORDER BY LOWER(COALESCE(ba.application_name, rel.application_name, rel.business_application_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
     process_rows = await db.execute(
         text(f"""
@@ -427,9 +459,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(bp.business_process_id)) = LOWER(TRIM(rel.business_process_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.business_process_id IS NOT NULL AND rel.business_process_id <> ''
+              {_tf('rel')}
+              {_company_filter('bp')}
+              {_tf('bp')}
             ORDER BY LOWER(COALESCE(bp.process_name, rel.process_name, rel.business_process_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
 
     result = dict(model)

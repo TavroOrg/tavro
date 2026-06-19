@@ -93,8 +93,9 @@ class AiModelApi {
     return (data?.items ?? data?.data ?? []) as AiModelRecord[];
   }
 
-  async getModel(modelId: string): Promise<AiModelRecord> {
-    return req(`/ai-models/${encodeURIComponent(modelId)}`);
+  async getModel(modelId: string, companyId?: string): Promise<AiModelRecord> {
+    const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/ai-models/${encodeURIComponent(modelId)}${suffix}`);
   }
 
   async createModel(payload: AiModelUpsertPayload, companyId?: string): Promise<{ message: string; ai_model_id: string }> {
