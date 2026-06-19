@@ -64,7 +64,7 @@ if _runtime_zitadel_client_id:
 # ---------------------------
 # Priority: mcp_root_url from config.yaml → fallback to http://localhost:<port>
 _root_url_override = os.getenv("mcp_root_url", "").strip()
-ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9000')}"
+ROOT_URL = _root_url_override if _root_url_override else f"http://{os.getenv('mcp_host', 'localhost')}:{os.getenv('mcp_port', '9001')}"
 
 GOOGLE_PREFIX = "/google"
 # COGNITO_PREFIX = "/cognito"
