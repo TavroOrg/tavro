@@ -29,6 +29,17 @@ const PRIORITY_OPTIONS = [
     '5 - Planning',
 ];
 
+const ARE_HINTS: Record<string, string> = {
+    agent_risk_exposure:
+        'ARE represents use case risk. It is calculated as the highest blended risk score among related agents.',
+    agent_risk_tier:
+        'ART indicates overall use case risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
+    associated_agents:
+        'Indicates the total number of agents associated with this use case.',
+    blended_risk_score:
+        'The highest current blended risk score across agents associated with this use case.',
+};
+
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
@@ -152,10 +163,23 @@ function MetaField({ label, children }: { label: string; children: React.ReactNo
     );
 }
 
-function ReadValue({ label, value }: { label: string; value: React.ReactNode }) {
+function HintLabel({ label, hint }: { label: string; hint?: string }) {
+    return (
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1.5">
+            {label}
+            {hint && (
+                <span title={hint}>
+                    <Info size={12} className="text-slate-400" />
+                </span>
+            )}
+        </div>
+    );
+}
+
+function ReadValue({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
     return (
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+            <HintLabel label={label} hint={hint} />
             <div className="mt-1 text-sm font-semibold text-slate-800">{value ?? 'N/A'}</div>
         </div>
     );
@@ -466,10 +490,10 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                         )}
                         <SectionCard icon={<ShieldAlert size={16} />} title="Agent Risk Exposure">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <ReadValue label="Agent Risk Exposure (ARE)" value={riskExposure} />
-                                <ReadValue label="Agent Risk Tier (ART)" value={agentRiskTier} />
-                                <ReadValue label="# Of Associated Agents" value={associatedAgentCount} />
-                                <ReadValue label="Blended Risk Score" value={blendedRiskScore} />
+                                <ReadValue label="Agent Risk Exposure (ARE)" value={riskExposure} hint={ARE_HINTS.agent_risk_exposure} />
+                                <ReadValue label="Agent Risk Tier (ART)" value={agentRiskTier} hint={ARE_HINTS.agent_risk_tier} />
+                                <ReadValue label="# Of Associated Agents" value={associatedAgentCount} hint={ARE_HINTS.associated_agents} />
+                                <ReadValue label="Blended Risk Score" value={blendedRiskScore} hint={ARE_HINTS.blended_risk_score} />
                                 <ReadValue label="Inherent Risk Classification" value={inherentRiskClassification} />
                                 <ReadValue label="Inherent Risk Classification Score" value={inherentRiskClassificationScore} />
                                 <ReadValue label="Residual Risk Classification" value={residualRiskClassification} />

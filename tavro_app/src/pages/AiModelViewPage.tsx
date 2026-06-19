@@ -9,6 +9,7 @@ import {
   Boxes,
   ClipboardList,
   Download,
+  Info,
   Link2,
   Loader2,
   Paperclip,
@@ -84,6 +85,17 @@ const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
   { label: 'Non-Critical', value: 'Non-Critical' },
 ];
 
+const MODEL_ARE_HINTS: Record<string, string> = {
+  agent_risk_exposure:
+    'ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.',
+  agent_risk_tier:
+    'ART indicates overall model risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
+  blended_risk_score:
+    'The highest current blended risk score across agents associated with this model.',
+  associated_agents:
+    'Indicates the total number of agents associated with this model.',
+};
+
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
 const textAreaCls = `${inputCls} resize-none`;
@@ -124,9 +136,16 @@ const changedPayload = (current: FormState, next: FormState): AiModelUpsertPaylo
   return changed as AiModelUpsertPayload;
 };
 
-const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean }> = ({ label, children, full }) => (
+const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean; hint?: string }> = ({ label, children, full, hint }) => (
   <div className={`flex flex-col gap-1.5 ${full ? 'md:col-span-2' : ''}`}>
-    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</label>
+    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+      {label}
+      {hint && (
+        <span title={hint}>
+          <Info size={12} className="text-slate-400" />
+        </span>
+      )}
+    </label>
     {children}
   </div>
 );
@@ -959,16 +978,16 @@ const AiModelViewPage: React.FC = () => {
         <Section title="Agent Risk Exposure">
           <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
           <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
-          <Field label="Agent Risk Exposure (ARE)">
+          <Field label="Agent Risk Exposure (ARE)" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
             <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
           </Field>
-          <Field label="Agent Risk Tier (ART)">
+          <Field label="Agent Risk Tier (ART)" hint={MODEL_ARE_HINTS.agent_risk_tier}>
             <p className={`${valueBoxCls}`}>{model?.agent_risk_tier ?? 'None'}</p>
           </Field>
-          <Field label="Blended Risk Score">
+          <Field label="Blended Risk Score" hint={MODEL_ARE_HINTS.blended_risk_score}>
             <p className={`${valueBoxCls}`}>{String(model?.blended_risk_score ?? 0)}</p>
           </Field>
-          <Field label="# Of Associated Agents">
+          <Field label="# Of Associated Agents" hint={MODEL_ARE_HINTS.associated_agents}>
             <p className={`${valueBoxCls}`}>{String(model?.no_of_associated_agents ?? 0)}</p>
           </Field>
           <Field label="Inherent Risk Classification">

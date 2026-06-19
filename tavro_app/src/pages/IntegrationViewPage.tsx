@@ -826,7 +826,7 @@ const IntegrationViewPage: React.FC = () => {
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
               </div>
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Blended Risk Score" />
+                <HintLabel label="Blended Risk Score" hint="The highest current blended risk score across agents associated with this integration." />
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.blended_risk_score ?? 0)}</p>
               </div>
               <div className="flex flex-col gap-1.5">
