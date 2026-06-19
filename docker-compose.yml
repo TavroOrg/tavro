@@ -515,6 +515,7 @@ services:
       COMPANY_API_BASE_URL:      ${COMPANY_API_BASE_URL}
       RISK_CLASSIFY_URL:         ${RISK_CLASSIFY_URL}
       RISK_CLASSIFY_FALLBACK_URL: ${RISK_CLASSIFY_FALLBACK_URL}
+      COPILOT_SERVER_URL:   ${VITE_COPILOT_API_URL}
       GITHUB_CLIENT_ID:     ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
@@ -529,6 +530,8 @@ services:
       zitadel-api:
         condition: service_healthy
       tavro-api:
+        condition: service_healthy
+      copilot-sdk:
         condition: service_healthy
       proxy:
         condition: service_started
