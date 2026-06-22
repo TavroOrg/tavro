@@ -351,9 +351,7 @@ class BusinessRelationsApi {
     window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
     return result;
   }
-
-  async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
-    return req(`/agents/${encodeURIComponent(agentId)}`);
+  
   async getAgentRelations(agentId: string, companyId?: string): Promise<AgentRelationsPayload> {
     const params = new URLSearchParams();
     if (companyId) params.set('company_id', companyId);
