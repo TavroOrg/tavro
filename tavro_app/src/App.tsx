@@ -56,7 +56,6 @@ import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
 import IssueViewPage from './pages/IssueViewPage';
-import RoadmapPage from './pages/RoadmapPage';
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -455,7 +454,6 @@ function App() {
 
                 <Route path="issues/:id" element={<IssueViewPage />} />
                 <Route path="spark" element={<SparkPage />} />
-                <Route path="roadmap" element={<RoadmapPage />} />
 
               </Route>
 
