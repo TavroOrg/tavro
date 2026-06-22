@@ -108,7 +108,7 @@ interface PlaygroundState {
 
   setConfig:       (update: Partial<PlaygroundConfig>) => void;
   setProvider:     (provider: InfraProvider) => void;
-  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string) => void;
+  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string, agentType?: string) => void;
   resetConfig:     () => void;
 
   startSession:    () => Promise<void>;
@@ -150,12 +150,13 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, []);
 
-  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string) => {
+  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string) => {
     setConfigState(prev => ({
       ...prev,
       useCaseId:    id,
       useCaseTitle: name,
       agentName:    name,
+      agentType:    agentType ?? prev.agentType,
       systemPrompt: instruction?.trim()
         ? instruction.trim()
         : description

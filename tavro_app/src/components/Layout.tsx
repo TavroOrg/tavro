@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
     Bot, Workflow, BarChart2, Settings,
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, Unlock
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -15,6 +16,7 @@ import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useEnterprise } from '../context/EnterpriseContext';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
 import { agentApi } from '../services/agentApi';
@@ -53,6 +55,58 @@ const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
 
 
+function LockedNavItem({
+    icon,
+    label,
+    badge,
+    isOpen,
+    showTooltip,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    badge: string;
+    isOpen: boolean;
+    showTooltip: boolean;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null);
+
+    const handleEnter = () => {
+        if (!showTooltip || !ref.current) return;
+        const r = ref.current.getBoundingClientRect();
+        setTooltipPos({ top: r.top + r.height / 2, left: r.right });
+    };
+
+    return (
+        <div
+            ref={ref}
+            onMouseEnter={handleEnter}
+            onMouseLeave={() => setTooltipPos(null)}
+            className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isOpen ? 'px-3' : 'px-0 justify-center'}`}
+        >
+            {icon}
+            <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>
+                {label}
+            </span>
+            {isOpen && (
+                showTooltip
+                    ? <Lock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />
+                    : <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{badge}</span>
+            )}
+            {tooltipPos && createPortal(
+                <div
+                    style={{ position: 'fixed', top: tooltipPos.top, left: tooltipPos.left + 12, transform: 'translateY(-50%)', zIndex: 9999 }}
+                    className="px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap shadow-lg pointer-events-none"
+                >
+                    This feature requires enterprise plan
+                    <div className="absolute right-full top-1/2 -translate-y-1/2 border-[5px] border-transparent border-r-slate-800" />
+                </div>,
+                document.body
+            )}
+        </div>
+    );
+}
+
 const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -60,6 +114,7 @@ const Layout: React.FC = () => {
     useCatalog();
     useUseCases();
     const { activeCompany } = useBlueprint();
+    const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
     const [processCount, setProcessCount] = useState(0);
     const [integrationCount, setIntegrationCount] = useState(0);
@@ -266,14 +321,27 @@ const Layout: React.FC = () => {
                                 <Network size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Enterprise Blueprint</span>
                             </button>
-                            <div
-                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
-                                title={!isLeftPanelOpen ? "Roadmap (Coming soon)" : undefined}
-                            >
-                                <Map size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
-                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
-                            </div>
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/roadmap')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/roadmap')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Roadmap' : undefined}
+                                >
+                                    <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<Map size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Roadmap"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
 
                             <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
 
@@ -386,55 +454,124 @@ const Layout: React.FC = () => {
                                 <FlaskConical size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/playground') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                 <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent playground</span>
                             </button>
-                            <div
-                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
-                                title={!isLeftPanelOpen ? "Agent evals (Coming soon)" : undefined}
-                            >
-                                <TestTube2 size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
-                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
-                            </div>
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/agent-evals')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/agent-evals')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Agent evals' : undefined}
+                                >
+                                    <TestTube2 size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/agent-evals') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<TestTube2 size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Agent evals"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
 
                             <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
 
                             {/* ── GOVERN ── */}
                             {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Govern</p>}
-                            <div
-                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
-                                title={!isLeftPanelOpen ? "Guardrails (Coming soon)" : undefined}
-                            >
-                                <Shield size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
-                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
-                            </div>
-                            <button
-                                onClick={() => navigate('/compliance')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/compliance')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Compliance" : undefined}
-                            >
-                                <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
-                            </button>
-                            <button
-                                onClick={() => navigate('/audit')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/audit')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Audit Center" : undefined}
-                            >
-                                <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
-                            </button>
-                            <div
-                                className={`flex items-center py-1 rounded-lg text-sm font-medium w-full cursor-default select-none ${isLeftPanelOpen ? 'px-3' : 'px-0 justify-center'}`}
-                                title={!isLeftPanelOpen ? "Issues (Coming soon)" : undefined}
-                            >
-                                <AlertTriangle size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 text-slate-400 dark:text-slate-600 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
-                                {isLeftPanelOpen && <span className="ml-auto text-[10px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">Coming soon</span>}
-                            </div>
+
+                            {/* Guardrails */}
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/guardrails')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/guardrails')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Guardrails' : undefined}
+                                >
+                                    <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<Shield size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Guardrails"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
+
+                            {/* Compliance */}
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/compliance')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/compliance')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? "Compliance" : undefined}
+                                >
+                                    <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<Scale size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Compliance"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
+
+                            {/* Audit center */}
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/audit')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/audit')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? "Audit Center" : undefined}
+                                >
+                                    <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<ShieldCheck size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Audit center"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
+
+                            {/* Issues */}
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/issues')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/issues')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Issues' : undefined}
+                                >
+                                    <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
+                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<AlertTriangle size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Issues"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
 
                         </div>
                     </div>{/* end scrollable nav */}

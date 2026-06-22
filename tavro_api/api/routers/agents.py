@@ -114,6 +114,7 @@ class AgentCreateRequest(BaseModel):
     agent_name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
     instruction: str
+    agent_type: Optional[str] = "Config-driven"
     role: Optional[str] = None
     environment: Optional[str] = None
     owner: Optional[str] = None
@@ -129,6 +130,7 @@ class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = None
     description: Optional[str] = None
     instruction: Optional[str] = None
+    agent_type: Optional[str] = None
     issues: Optional[List[Dict[str, Any]]] = None
     skills: Optional[List[Any]] = None
 
@@ -250,7 +252,8 @@ async def get_agent_catalog(
                 FROM (
                     SELECT
                         a360.*,
-                        ag.source_system
+                        ag.source_system,
+                        ag.agent_type AS _core_agent_type
                     FROM {CURATED}.agent_360 a360
                     LEFT JOIN {CORE}.agents ag
                       ON ag.agent_internal_id = a360.agent_internal_id
@@ -291,6 +294,7 @@ async def get_agent_catalog(
                         a.agent_id, a.agent_internal_id, a.agent_name AS agent_name,
                         a.agent_description, a.tenant_id,
                         {("a.company_id," if has_core_company_id else "NULL AS company_id,")}
+                        COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                         a.created_ts, a.updated_ts
                     FROM {CORE}.agents a
                     WHERE a.tenant_id = :tid
@@ -314,6 +318,9 @@ async def get_agent_catalog(
                 continue
 
             item = {k: v for k, v in r.items() if k not in ("rn", "total_records")}
+            # Prefer agent_type from core.agents (always authoritative) over curated snapshot
+            core_agent_type = item.pop("_core_agent_type", None)
+            item["agent_type"] = core_agent_type or item.get("agent_type") or "Config-driven"
             provider = _clean_text(item.get("source_system")) or "Tavro Internal"
             item["source_system"] = provider
             item["provider"] = {"organization": provider, "url": ""}
@@ -349,6 +356,7 @@ async def get_agent_catalog(
                 SELECT
                     a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
                     a.tenant_id, a.created_ts, a.updated_ts,
+                    COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                     ROW_NUMBER() OVER () AS rn, COUNT(*) OVER () AS total_records
                 FROM {CORE}.agents a
                 {core_where}
@@ -957,14 +965,17 @@ async def create_agent(
             text(f"""
                 INSERT INTO {CORE}.agents
                     (tenant_id, agent_internal_id, agent_id, agent_name, agent_description,
-                     source_system, created_ts, updated_ts, is_current, company_id, company_name)
+                     source_system, created_ts, updated_ts, is_current, company_id, company_name,
+                     agent_type)
                 VALUES
                     (:tid, :iid, :aid, :name, :desc,
-                     :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname)
+                     :source_system, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, true, :cid, :cname,
+                     :agent_type)
             """),
             {"tid": tenant_id, "iid": agent_internal_id, "aid": agent_id,
              "name": body.agent_name, "desc": body.description,
-             "source_system": provider, "cid": cid, "cname": cname},
+             "source_system": provider, "cid": cid, "cname": cname,
+             "agent_type": (body.agent_type or "Config-driven").strip()},
         )
 
         await db.execute(
@@ -1328,18 +1339,19 @@ async def create_agent(
                     tool_count, data_source_count, business_application_count,
                     business_process_count, ai_model_count,
                     contains_pii, contains_phi, contains_pci,
-                    company_id, company_name
+                    company_id, company_name, agent_type
                 ) VALUES (
                     :tid, :aid, :iid, :name, :desc,
                     CURRENT_TIMESTAMP,
                     0, 0, 0, 0, 0,
                     false, false, false,
-                    :cid, :cname
+                    :cid, :cname, :agent_type
                 )
                 ON CONFLICT (agent_internal_id) DO NOTHING
             """),
             {"tid": tenant_id, "aid": agent_id, "iid": agent_internal_id,
-             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname},
+             "name": body.agent_name, "desc": body.description, "cid": cid, "cname": cname,
+             "agent_type": (body.agent_type or "Config-driven").strip()},
         )
         await db.commit()
     except Exception as e:
@@ -1421,6 +1433,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                 SELECT
                     a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
                     a.source_system, a.created_ts, a.updated_ts, a.tenant_id,
+                    COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                     i.instruction, i.role, i.environment, i.governance_status,
                     r.risk_classification, r.blended_risk_score, r.pii_flag,
                     r.phi_flag, r.pci_flag
@@ -1632,6 +1645,9 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         if body.description and body.description.strip():
             agent_sets.append("agent_description = :desc")
             params["desc"] = body.description.strip()
+        if body.agent_type is not None and body.agent_type.strip():
+            agent_sets.append("agent_type = :agent_type")
+            params["agent_type"] = body.agent_type.strip()
 
         if len(agent_sets) > 1:
             await db.execute(
@@ -1660,6 +1676,19 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         if body.description and body.description.strip():
             curated_sets.append("agent_description = :c_desc")
             curated_params["c_desc"] = body.description.strip()
+        # agent_type sync — only include if the column exists in curated.agent_360
+        if body.agent_type is not None and body.agent_type.strip():
+            curated_type_col = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'agent_type'
+                    LIMIT 1
+                """),
+                {"schema": CURATED, "tbl": "agent_360"},
+            )
+            if curated_type_col.first():
+                curated_sets.append("agent_type = :c_agent_type")
+                curated_params["c_agent_type"] = body.agent_type.strip()
         if curated_sets:
             await db.execute(
                 text(f"UPDATE {CURATED}.agent_360 SET {', '.join(curated_sets)} WHERE agent_id = :aid AND tenant_id = :tid"),

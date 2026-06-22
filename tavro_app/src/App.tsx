@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Loader2, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   LAST_ACTIVITY_KEY,
   SESSION_TIMEOUT_MS,
@@ -42,6 +42,8 @@ import CompliancePage from './pages/CompliancePage';
 import ComplianceItemPage from './pages/ComplianceItemPage';
 import ComplianceSetupPage from './pages/ComplianceSetupPage';
 import { ComplianceProvider } from './context/ComplianceContext';
+import { EnterpriseProvider } from './context/EnterpriseContext';
+import EnterpriseGate from './components/EnterpriseGate';
 
 import AuditCenterPage from './pages/AuditCenterPage';
 import AuditRunDetailPage from './pages/AuditRunDetailPage';
@@ -56,6 +58,8 @@ import IntegrationViewPage from './pages/IntegrationViewPage';
 import SparkPage from './pages/SparkPage';
 import UserGuidePage from './pages/UserGuidePage';
 import IssueViewPage from './pages/IssueViewPage';
+import AgentEvalsPage from './pages/AgentEvalsPage';
+import RoadmapPage from './pages/RoadmapPage';
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -235,15 +239,8 @@ function SessionWarningHandler() {
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4">
       <div className="w-full max-w-[420px] border-2 border-amber-500 bg-white p-6 shadow-2xl rounded-lg">
-        <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="mb-4">
           <h2 className="text-lg font-bold text-slate-900">Session Expiring Soon</h2>
-          <button
-            type="button"
-            onClick={extendSession}
-            className="flex h-7 w-7 items-center justify-center border border-slate-300 text-slate-500 hover:bg-slate-50 rounded"
-          >
-            <X size={16} />
-          </button>
         </div>
         <p className="mb-6 text-sm text-slate-700">
           Your session will expire in <span className="font-semibold text-amber-600">{minutes} minute{minutes !== 1 ? 's' : ''}</span> due to inactivity.
@@ -365,19 +362,10 @@ function SessionExpiredHandler() {
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 px-4">
       <div className="w-full max-w-[420px] border-2 border-red-500 bg-white p-6 shadow-2xl">
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <h2 className="text-lg font-bold text-slate-900">Session Expired (401)</h2>
-          <button
-            type="button"
-            onClick={goToLogin}
-            className="flex h-7 w-7 items-center justify-center border border-blue-700 text-blue-800"
-          >
-            <X size={20} />
-          </button>
-        </div>
+        <h2 className="mb-4 text-lg font-bold text-slate-900">Your session has timed out</h2>
 
         <p className="mb-10 text-sm text-slate-700">
-          Required to provide Auth information
+          For your security, we've logged you out after a period of inactivity. Please log back in to continue.
         </p>
 
         <div className="flex justify-end">
@@ -386,7 +374,7 @@ function SessionExpiredHandler() {
             onClick={goToLogin}
             className="rounded bg-indigo-600 px-5 py-2 text-sm font-semibold text-white"
           >
-            Log in
+            Log In Again
           </button>
         </div>
       </div>
@@ -418,17 +406,19 @@ function App() {
                 path="/"
                 element={
                   <PrivateRoute>
-                    <CatalogProvider>
-                      <UseCaseProvider>
-                        <PlaygroundProvider>
-                          <BlueprintProvider>
-                            <ComplianceProvider>
-                              <Layout />
-                            </ComplianceProvider>
-                          </BlueprintProvider>
-                        </PlaygroundProvider>
-                      </UseCaseProvider>
-                    </CatalogProvider>
+                    <EnterpriseProvider>
+                      <CatalogProvider>
+                        <UseCaseProvider>
+                          <PlaygroundProvider>
+                            <BlueprintProvider>
+                              <ComplianceProvider>
+                                <Layout />
+                              </ComplianceProvider>
+                            </BlueprintProvider>
+                          </PlaygroundProvider>
+                        </UseCaseProvider>
+                      </CatalogProvider>
+                    </EnterpriseProvider>
                   </PrivateRoute>
                 }
               >
@@ -448,13 +438,17 @@ function App() {
                 {/* ── Playground routes ── */}
                 <Route path="playground" element={<PlaygroundPage />} />
 
-                {/* ── Compliance routes (ADD THESE) ── */}
-                <Route path="compliance" element={<CompliancePage />} />
-                <Route path="compliance/new" element={<ComplianceSetupPage />} />
-                <Route path="compliance/:id" element={<ComplianceItemPage />} />
+                {/* ── Compliance routes — enterprise gated ── */}
+                <Route path="compliance" element={<EnterpriseGate><CompliancePage /></EnterpriseGate>} />
+                <Route path="compliance/new" element={<EnterpriseGate><ComplianceSetupPage /></EnterpriseGate>} />
+                <Route path="compliance/:id" element={<EnterpriseGate><ComplianceItemPage /></EnterpriseGate>} />
 
-                <Route path="audit" element={<AuditCenterPage />} />
-                <Route path="audit/:runId" element={<AuditRunDetailPage />} />
+                <Route path="audit" element={<EnterpriseGate><AuditCenterPage /></EnterpriseGate>} />
+                <Route path="audit/:runId" element={<EnterpriseGate><AuditRunDetailPage /></EnterpriseGate>} />
+                <Route path="guardrails" element={<EnterpriseGate><div /></EnterpriseGate>} />
+                <Route path="issues" element={<EnterpriseGate><div /></EnterpriseGate>} />
+                <Route path="agent-evals" element={<EnterpriseGate><AgentEvalsPage /></EnterpriseGate>} />
+                <Route path="roadmap" element={<EnterpriseGate><RoadmapPage /></EnterpriseGate>} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />
                 <Route path="applications/new" element={<BusinessApplicationViewPage />} />
                 <Route path="applications/:id" element={<BusinessApplicationViewPage />} />

@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -sSL https://temporal.download/cli.sh | bash
+ENV PATH="/root/.temporalio/bin:${PATH}"
+
+WORKDIR /app
+
+COPY tavro/tavro_api/requirements.txt /tmp/requirements.txt
+COPY tavro/services/requirements.txt /tmp/requirements-risk.txt
+COPY tavro/dist/*.whl /tmp/
+
+RUN pip install \
+      -r /tmp/requirements.txt \
+      -r /tmp/requirements-risk.txt && \
+    pip install /tmp/*.whl
+
+COPY tavro/tavro_api/   /app/
+COPY tavro/services     /app/services
+COPY tavro/tavro_library /app/tavro_library
+COPY tavro/utils        /app/utils
+
+ENV PYTHONPATH=/app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,60 +1,26 @@
-// ── src/context/ComplianceContext.tsx ────────────────────────────────────────
+import { createContext, useContext } from 'react';
+import type { ReactNode } from 'react';
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { complianceApi } from '../services/complianceApi';
-import type { ComplianceItem, ComplianceDimType } from '../types/compliance';
-import { useBlueprint } from './BlueprintContext';
-
-interface ComplianceState {
-  items:       ComplianceItem[];
-  dimTypes:    ComplianceDimType[];
-  loading:     boolean;
-  error:       string | null;
+interface ComplianceContextValue {
+  items: any[];
+  dimTypes: any[];
+  loading: boolean;
+  error: string | null;
   lastFetched: Date | null;
-  refresh:     () => void;
+  refresh: () => void;
 }
 
-const ComplianceContext = createContext<ComplianceState>({
+const ComplianceContext = createContext<ComplianceContextValue>({
   items: [], dimTypes: [], loading: false, error: null, lastFetched: null, refresh: () => {},
 });
 
-export const ComplianceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { activeCompany } = useBlueprint();
-  const [items,       setItems]       = useState<ComplianceItem[]>([]);
-  const [dimTypes,    setDimTypes]    = useState<ComplianceDimType[]>([]);
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
-  const [lastFetched, setLastFetched] = useState<Date | null>(null);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [page, types] = await Promise.all([
-        complianceApi.listItems({
-          company_id: activeCompany?.id,
-          limit:      200,
-        }),
-        complianceApi.listDimTypes(),
-      ]);
-      setItems(page.items);
-      setDimTypes(types);
-      setLastFetched(new Date());
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to load compliance data');
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCompany?.id]);
-
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
+export function ComplianceProvider({ children }: { children: ReactNode }) {
   return (
-    <ComplianceContext.Provider value={{ items, dimTypes, loading, error, lastFetched, refresh: fetchAll }}>
+    <ComplianceContext.Provider value={{ items: [], dimTypes: [], loading: false, error: null, lastFetched: null, refresh: () => {} }}>
       {children}
     </ComplianceContext.Provider>
   );
-};
+}
 
 export function useCompliance() {
   return useContext(ComplianceContext);
