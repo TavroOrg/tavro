@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import csv
+import io
 import json
 from uuid import uuid4
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2331,6 +2333,195 @@ async def delete_application(
     return {"status": "deleted", "application_id": application_id}
 
 
+# ─── CSV helpers shared by both upload endpoints ──────────────────────────────
+
+def _get_upload_tenant(request: Request) -> Optional[str]:
+    val = request.headers.get("x-tenant-id", "")
+    return val.strip() or None
+
+
+def _parse_csv_rows(filename: str, content: bytes) -> list[dict]:
+    text_data = content.decode("utf-8-sig", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text_data[:4096], delimiters=",\t")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(text_data), dialect=dialect)
+    rows = []
+    for row in reader:
+        rows.append({k.strip(): (v.strip() if v else "") for k, v in row.items() if k and k.strip()})
+    if not rows:
+        raise ValueError(f"No data rows found in '{filename}'")
+    return rows
+
+
+_APP_UPLOAD_TEXT_COLS: set[str] = {
+    "application_name", "emergency_tier", "business_owner", "application_portfolio_manager",
+    "vendor_name", "business_criticality", "it_application_owner", "application_description",
+    "inherent_risk_classification", "residual_risk_classification", "agent_risk_tier",
+    "embedded_ai", "opt_out_option", "privacy_policy_url", "data_excluded_from_ai_training",
+    "vendor_description", "current_installed_version", "is_current_version_supported",
+    "latest_released_version", "latest_release_date", "latest_release_documentation_link",
+}
+
+_APP_UPLOAD_FLOAT_COLS: set[str] = {
+    "agent_risk_exposure", "blended_risk_score",
+    "inherent_risk_classification_score", "residual_risk_classification_score",
+}
+
+_APP_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
+
+_PROC_UPLOAD_TEXT_COLS: set[str] = {
+    "business_process_id", "process_number", "process_name", "process_description",
+    "parent_process_id", "owner", "stakeholders", "operators", "business_criticality",
+    "reputational_impact", "agent_risk_tier", "residual_risk_classification",
+    "inherent_risk_classification", "financial_impact", "regulatory_impact",
+    "sla", "process_health_state",
+}
+
+_PROC_UPLOAD_FLOAT_COLS: set[str] = {
+    "agent_risk_exposure", "blended_risk_score",
+    "residual_risk_classification_score", "inherent_risk_classification_score",
+}
+
+_PROC_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
+
+
+@router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")
+async def upload_applications_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business applications from one or more CSV or TSV files.
+    Only application_name is mandatory per row; all other fields are optional.
+    tenant_id is read from the x-tenant-id request header.
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    app_cols = await _table_columns(db, "core", "business_applications")
+    uploaded_count = 0
+    errors: list[str] = []
+
+    for row in all_rows:
+        app_name = _text_or_none(row.get("application_name", ""))
+        if not app_name:
+            errors.append("Skipped a row: application_name is required")
+            continue
+
+        app_id = uuid4().hex
+        insert_values: dict[str, Any] = {"business_application_id": app_id}
+
+        for col in _APP_UPLOAD_TEXT_COLS:
+            if col in app_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+        for col in _APP_UPLOAD_FLOAT_COLS:
+            if col in app_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = float(raw_val)
+                    except ValueError:
+                        pass
+        for col in _APP_UPLOAD_INT_COLS:
+            if col in app_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = int(float(raw_val))
+                    except ValueError:
+                        pass
+
+        for col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
+            if col in app_cols and col not in insert_values:
+                insert_values[col] = default_val
+
+        if "tenant_id" in app_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in app_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in app_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in app_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in app_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in app_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        try:
+            await db.execute(
+                text(f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"),
+                params,
+            )
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_applications(db, application_id=app_id)
+                if rows_fetched:
+                    await _sync_application_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{app_name}': {exc}")
+
+    if errors:
+        print(f"[WARN] application upload: {len(errors)} row(s) failed — {errors[:3]}")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Application" if uploaded_count == 1 else "Applications"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+    }
+
+
 @router.get("/processes", tags=["Processes"], summary="List Processes")
 async def list_processes(
     q: Optional[str] = Query(default=None),
@@ -2598,6 +2789,190 @@ async def delete_process(
         )
     await db.commit()
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.post("/processes/upload", status_code=200, tags=["Processes"], summary="Bulk Upload Processes CSV")
+async def upload_processes_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business processes from one or more CSV or TSV files.
+    Only process_name is mandatory per row; business_process_id is auto-generated if absent.
+    tenant_id is read from the x-tenant-id request header.
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    proc_cols = await _table_columns(db, "core", "business_processes")
+    uploaded_count = 0
+    errors: list[str] = []
+    warnings: list[str] = []
+    # Defer parent_process_id to avoid FK violation when the parent is also in the same CSV
+    deferred_parents: list[tuple[str, str, str]] = []  # (proc_id, parent_pid, proc_name)
+
+    for row in all_rows:
+        proc_name = _text_or_none(row.get("process_name", ""))
+        if not proc_name:
+            errors.append("Skipped a row: process_name is required")
+            continue
+
+        proc_id = _text_or_none(row.get("business_process_id", "")) or uuid4().hex
+        insert_values: dict[str, Any] = {"business_process_id": proc_id}
+
+        parent_pid = _text_or_none(row.get("parent_process_id", ""))
+        if parent_pid:
+            deferred_parents.append((proc_id, parent_pid, proc_name))
+
+        for col in _PROC_UPLOAD_TEXT_COLS - {"business_process_id", "parent_process_id"}:
+            if col in proc_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+        for col in _PROC_UPLOAD_FLOAT_COLS:
+            if col in proc_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = float(raw_val)
+                    except ValueError:
+                        pass
+        for col in _PROC_UPLOAD_INT_COLS:
+            if col in proc_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = int(float(raw_val))
+                    except ValueError:
+                        pass
+
+        for col, default_val in _PROCESS_READONLY_DEFAULTS.items():
+            if col in proc_cols and col not in insert_values:
+                insert_values[col] = default_val
+
+        if "tenant_id" in proc_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in proc_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in proc_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in proc_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in proc_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in proc_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        non_id_cols = [c for c in col_names if c != "business_process_id"]
+        conflict_set = ", ".join(
+            "updated_ts = CURRENT_TIMESTAMP" if c == "updated_ts" else f"{c} = EXCLUDED.{c}"
+            for c in non_id_cols
+        )
+        upsert_sql = (
+            f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
+            f" ON CONFLICT (business_process_id) DO UPDATE SET {conflict_set}"
+            if conflict_set else
+            f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
+            f" ON CONFLICT (business_process_id) DO NOTHING"
+        )
+
+        try:
+            await db.execute(text(upsert_sql), params)
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_processes(db, process_id=proc_id)
+                if rows_fetched:
+                    await _sync_process_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{proc_name}': {exc}")
+
+    # Second pass: apply parent_process_id now that all processes are inserted.
+    # Collect all parent IDs that actually exist to avoid FK violations from missing parents.
+    if deferred_parents:
+        parent_ids_needed = list({pid for _, pid, _ in deferred_parents})
+        placeholders = ", ".join(f":p{i}" for i in range(len(parent_ids_needed)))
+        exists_result = await db.execute(
+            text(f"SELECT business_process_id FROM core.business_processes WHERE business_process_id IN ({placeholders})"),
+            {f"p{i}": v for i, v in enumerate(parent_ids_needed)},
+        )
+        existing_parents: set[str] = {row[0] for row in exists_result.fetchall()}
+
+        for proc_id, parent_pid, proc_name in deferred_parents:
+            if parent_pid not in existing_parents:
+                warnings.append(
+                    f"'{proc_name}' was created but parent '{parent_pid}' was not found "
+                    "in the database or this CSV — upload the parent first to link them"
+                )
+                continue
+            try:
+                await db.execute(
+                    text(
+                        "UPDATE core.business_processes SET parent_process_id = :parent_pid, "
+                        "updated_ts = CURRENT_TIMESTAMP WHERE business_process_id = :proc_id"
+                    ),
+                    {"parent_pid": parent_pid, "proc_id": proc_id},
+                )
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                errors.append(f"Could not set parent '{parent_pid}' on process '{proc_id}': {exc}")
+
+    if errors or warnings:
+        print(f"[WARN] process upload: {len(errors)} error(s), {len(warnings)} warning(s)")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Process" if uploaded_count == 1 else "Processes"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+        "warnings": warnings,
+    }
 
 
 @router.get(

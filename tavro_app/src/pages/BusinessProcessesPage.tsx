@@ -11,12 +11,14 @@ import {
   Plus,
   Search,
   ShieldAlert,
+  Upload,
   Workflow,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import LoadProcessesModal from '../components/LoadProcessesModal';
 
 const PAGE_SIZE = 10;
 
@@ -88,6 +90,7 @@ const BusinessProcessesPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(1);
+  const [showLoadModal, setShowLoadModal] = useState(false);
 
   useEffect(() => {
     if (catalogLoading) {
@@ -120,6 +123,10 @@ const BusinessProcessesPage: React.FC = () => {
     };
     load();
   }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
+
+  const reload = () => {
+    businessRelationsApi.listProcesses(undefined, activeCompany?.id).then(setProcesses).catch(() => {});
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -168,6 +175,13 @@ const BusinessProcessesPage: React.FC = () => {
 
         {!isSearching && (
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLoadModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-all shadow-sm"
+            >
+              <Upload size={16} />
+              Load Processes
+            </button>
             <button
               onClick={() => navigate('/processes/new')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
@@ -377,6 +391,15 @@ const BusinessProcessesPage: React.FC = () => {
             <ChevronRight size={16} />
           </button>
         </div>
+      )}
+
+      {showLoadModal && (
+        <LoadProcessesModal
+          companyId={activeCompany?.id}
+          companyName={activeCompany?.name}
+          onClose={() => setShowLoadModal(false)}
+          onSuccess={() => reload()}
+        />
       )}
     </div>
   );
