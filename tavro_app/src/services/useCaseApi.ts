@@ -1,6 +1,7 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
 import { appLogger } from './logger';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -18,7 +19,7 @@ async function reqFormData<T>(path: string, formData: FormData): Promise<T> {
     });
     if (!res.ok) {
         const body = await res.text();
-        throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(parseApiError(res.status, body));
     }
     return res.json();
 }
@@ -37,7 +38,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
     if (!res.ok) {
         const body = await res.text();
-        throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(parseApiError(res.status, body));
     }
     return res.json();
 }
@@ -253,7 +254,7 @@ class UseCaseApiService {
         });
         if (!res.ok) {
             const body = await res.text();
-            throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+            throw new Error(parseApiError(res.status, body));
         }
         return res.blob();
     }

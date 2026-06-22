@@ -4,12 +4,15 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 from typing import Any, AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+
+_logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1192,10 +1195,8 @@ Return ONLY the JSON object with "summary" and "tags" fields."""
     try:
         parsed = json.loads(_extract_json(raw))
     except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"AI returned invalid JSON: {str(e)[:200]}"
-        )
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestDimensionResponse(
         summary=parsed.get("summary", ""),

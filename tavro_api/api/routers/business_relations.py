@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from uuid import uuid4
+
+_logger = logging.getLogger(__name__)
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -2062,7 +2065,8 @@ async def list_integrations(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list integrations: {exc}")
+        _logger.error("Failed to list integrations: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve integrations. Please try again.")
 
 
 @router.get("/integrations/{integration_id}", tags=["Integrations"], summary="Get Integration")
@@ -2343,7 +2347,8 @@ async def list_applications(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list business applications: {exc}")
+        _logger.error("Failed to list business applications: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve business applications. Please try again.")
 
 
 @router.get("/applications/{application_id}", tags=["Applications"], summary="Get Application")
@@ -2375,7 +2380,8 @@ async def suggest_application_description(body: SuggestApplicationDescriptionReq
             "business application",
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestApplicationDescriptionResponse(description=description)
 
@@ -2581,7 +2587,8 @@ async def list_processes(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list business processes: {exc}")
+        _logger.error("Failed to list business processes: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve business processes. Please try again.")
 
 
 @router.get("/processes/{process_id}", tags=["Processes"], summary="Get Process")
@@ -2613,7 +2620,8 @@ async def suggest_process_description(body: SuggestProcessDescriptionRequest):
             "business process",
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestProcessDescriptionResponse(description=description)
 

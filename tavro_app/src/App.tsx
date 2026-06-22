@@ -60,6 +60,7 @@ import UserGuidePage from './pages/UserGuidePage';
 import IssueViewPage from './pages/IssueViewPage';
 import AgentEvalsPage from './pages/AgentEvalsPage';
 import RoadmapPage from './pages/RoadmapPage';
+import ErrorBoundary from './components/ErrorBoundary';
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -387,6 +388,7 @@ function SessionExpiredHandler() {
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <ThemeProvider>
         <ChatSessionProvider>
@@ -475,6 +477,7 @@ function App() {
         </ChatSessionProvider>
       </ThemeProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

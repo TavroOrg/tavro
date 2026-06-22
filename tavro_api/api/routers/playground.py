@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -1836,7 +1837,7 @@ async def send_message(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     # Add assistant message to session
     assistant_msg = {

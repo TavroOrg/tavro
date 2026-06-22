@@ -8,6 +8,7 @@ import type {
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
 
 export interface AgentTableRecord {
   table_id: string;
@@ -321,7 +322,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -352,7 +353,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -383,7 +384,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
