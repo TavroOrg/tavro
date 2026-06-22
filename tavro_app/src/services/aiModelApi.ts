@@ -82,22 +82,25 @@ function changedAiModelFields(payload: AiModelUpsertPayload): string {
 }
 
 class AiModelApi {
-  async listModels(search?: string): Promise<AiModelRecord[]> {
+  async listModels(search?: string, companyId?: string): Promise<AiModelRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
     params.set('record_range', '1-500');
+    if (companyId) params.set('company_id', companyId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
     const data = await req<any>(`/ai-models/${suffix}`);
     if (Array.isArray(data)) return data as AiModelRecord[];
     return (data?.items ?? data?.data ?? []) as AiModelRecord[];
   }
 
-  async getModel(modelId: string): Promise<AiModelRecord> {
-    return req(`/ai-models/${encodeURIComponent(modelId)}`);
+  async getModel(modelId: string, companyId?: string): Promise<AiModelRecord> {
+    const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/ai-models/${encodeURIComponent(modelId)}${suffix}`);
   }
 
-  async createModel(payload: AiModelUpsertPayload): Promise<{ message: string; ai_model_id: string }> {
-    const result = await req<{ message: string; ai_model_id: string }>('/ai-models/', {
+  async createModel(payload: AiModelUpsertPayload, companyId?: string): Promise<{ message: string; ai_model_id: string }> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    const result = await req<{ message: string; ai_model_id: string }>(`/ai-models/${qs}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -106,8 +109,9 @@ class AiModelApi {
     return result;
   }
 
-  async updateModel(modelId: string, payload: AiModelUpsertPayload, modelName?: string): Promise<{ message: string; ai_model_id: string }> {
-    const result = await req<{ message: string; ai_model_id: string }>(`/ai-models/${encodeURIComponent(modelId)}`, {
+  async updateModel(modelId: string, payload: AiModelUpsertPayload, modelName?: string, companyId?: string): Promise<{ message: string; ai_model_id: string }> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    const result = await req<{ message: string; ai_model_id: string }>(`/ai-models/${encodeURIComponent(modelId)}${qs}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     });

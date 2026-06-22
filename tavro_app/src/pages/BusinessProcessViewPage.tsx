@@ -343,8 +343,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
-  }, []);
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
 
   const linkedModels = process?.related_ai_models ?? [];
   const linkedModelIds = useMemo(
@@ -406,7 +406,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       const [proc, processes] = await Promise.all([
-        businessRelationsApi.getProcess(id),
+        businessRelationsApi.getProcess(id, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
       setProcess(proc);

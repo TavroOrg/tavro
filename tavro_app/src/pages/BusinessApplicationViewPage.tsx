@@ -365,8 +365,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
-  }, []);
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
 
   const linkedModels = application?.related_ai_models ?? [];
   const linkedModelIds = useMemo(
@@ -402,7 +402,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setRelationError(null);
     setUseCaseRelationError(null);
     try {
-      const data = await businessRelationsApi.getApplication(id);
+      const data = await businessRelationsApi.getApplication(id, activeCompany?.id);
       setApplication(data);
       setForm(formFromApplication(data));
       setAttemptedSave(false);

@@ -39,7 +39,24 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
     };
 
     const getRelatedAgentCount = (uc: any): number => {
-        const counts: number[] = [];
+        // Prefer the backend-computed numeric count — it is already filtered by
+        // company_id and tenant_id. Return the first valid value found so that a
+        // fresh zero from a company switch is never overridden by a stale cached value.
+        const numericFields = [
+            uc?.related_agent_count,
+            uc?.no_of_associated_agents,
+            uc?.num_of_associated_agents,
+            uc?.associated_agent_count,
+            uc?.agent_count,
+            uc?.num_agents,
+            uc?.associated_count,
+        ];
+        for (const value of numericFields) {
+            const parsed = parseCount(value);
+            if (parsed !== null) return parsed;
+        }
+
+        // Fall back to array lengths when no numeric field is present.
         const listFields = [
             uc?.agents,
             uc?.of_associated_agents,
@@ -47,38 +64,11 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
             uc?.ai_agents,
             uc?.related_agents,
         ];
-        listFields.forEach(list => {
-            if (Array.isArray(list)) counts.push(list.length);
-        });
-
-        const numericFields = [
-            uc?.related_agent_count,
-            uc?.num_of_associated_agents,
-            uc?.associated_agent_count,
-            uc?.agent_count,
-            uc?.num_agents,
-            uc?.associated_count,
-        ];
-        numericFields.forEach(value => {
-            const parsed = parseCount(value);
-            if (parsed !== null) counts.push(parsed);
-        });
-
-        const useCaseKey = String(uc?.identifier ?? uc?.id ?? '').trim();
-        if (useCaseKey) {
-            try {
-                const raw = sessionStorage.getItem(USE_CASE_AGENT_COUNT_CACHE_KEY);
-                if (raw) {
-                    const parsed = JSON.parse(raw) as Record<string, unknown>;
-                    const cached = parseCount(parsed[useCaseKey]);
-                    if (cached !== null) counts.push(cached);
-                }
-            } catch {
-                // Ignore cache parsing errors.
-            }
+        for (const list of listFields) {
+            if (Array.isArray(list)) return list.length;
         }
 
-        return counts.length ? Math.max(...counts) : 0;
+        return 0;
     };
 
     const getUseCaseSummary = (uc: any): string => {

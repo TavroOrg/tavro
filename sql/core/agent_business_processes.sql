@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_business_processes (
 	tenant_id TEXT,
+	company_id TEXT,
 	business_process_id TEXT,
 	agent_id TEXT,
 	process_name TEXT,

@@ -5,9 +5,9 @@
  * Handles: H1–H4 headings, inline bold, bullet/numbered lists,
  *          markdown tables, code blocks, horizontal rules.
  *
- * Visual format matches the AI Risk Assessment report:
- *   - Dark header (navy) with Tavro logo and document title
- *   - Blue accent stripe at top of header
+ * Visual format matches the Tavro Agent BizOps dashboard:
+ *   - Light header with Tavro logo tile and document title
+ *   - Purple brand accent near the bottom of the header
  *   - Page footer with platform name and page numbers
  *
  * No-op when content is empty — callers must only invoke after a
@@ -16,15 +16,34 @@
 // @ts-ignore — jspdf is installed in the Docker container; no local node_modules
 import { jsPDF } from 'jspdf';
 import tavrLogoUrl from '../assets/travo_logo.png';
+import { PDF_VISUAL_FORMAT } from './pdfTemplate';
 
 // Pre-load logo at module init so it is ready when the first PDF is generated.
 let _logoImg: HTMLImageElement | null = null;
 (function () {
   const img = new Image();
   img.onload = () => { _logoImg = img; };
-  img.onerror = () => { /* graceful — will use fallback box */ };
+  img.onerror = () => { /* graceful — logo simply won't appear */ };
   img.src = tavrLogoUrl;
 }());
+
+let _pdfFont = 'helvetica';
+
+function savePdf(doc: jsPDF, filename: string): void {
+  try {
+    doc.save(filename);
+  } catch {
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+}
 
 // ── Page geometry (A4 mm) ─────────────────────────────────────────────────────
 const PAGE_W = 210;
@@ -226,7 +245,7 @@ function renderSegs(
   let cx   = 0;
 
   for (const { w, bold } of words) {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFont(_pdfFont, bold ? 'bold' : 'normal');
     const ww = doc.getTextWidth(w);
     const sw = doc.getTextWidth(' ');
     if (cx === 0) {
@@ -243,7 +262,7 @@ function renderSegs(
   for (let li = 0; li < lines.length; li++) {
     if (li > 0 || !skipFirstBreak) y = pb(doc, y, lh);
     for (const lw of lines[li]) {
-      doc.setFont('helvetica', lw.bold ? 'bold' : 'normal');
+      doc.setFont(_pdfFont, lw.bold ? 'bold' : 'normal');
       doc.text(lw.w, lx + lw.x, y);
     }
     y += lh;
@@ -299,7 +318,7 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
 
   // Wrap a cell value to fit textW, measuring with the correct font weight.
   const wrapCell = (text: string, bold: boolean): string[] => {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFont(_pdfFont, bold ? 'bold' : 'normal');
     const lines = doc.splitTextToSize(sanitize((text ?? '').trim()), textW) as string[];
     return lines.length ? lines : [''];
   };
@@ -321,7 +340,7 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
   doc.setFillColor(228, 233, 248);
   doc.rect(MX, y, CW, headerH, 'F');
 
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(_pdfFont, 'bold');
   doc.setFontSize(T_FS);
   doc.setTextColor(25, 50, 120);
 
@@ -341,7 +360,7 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
   doc.setDrawColor(0, 0, 0);
 
   // ── Data rows ───────────────────────────────────────────────────────────────
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(_pdfFont, 'normal');
   doc.setFontSize(T_FS);
 
   for (let r = 0; r < rows.length; r++) {
@@ -356,7 +375,7 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
       // Reprint a continuation header
       doc.setFillColor(228, 233, 248);
       doc.rect(MX, y, CW, headerH, 'F');
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(_pdfFont, 'bold');
       doc.setFontSize(T_FS);
       doc.setTextColor(25, 50, 120);
       for (let c = 0; c < cols; c++) {
@@ -372,7 +391,7 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
       doc.line(MX, y, MX + CW, y);
       doc.setTextColor(0, 0, 0);
       doc.setDrawColor(0, 0, 0);
-      doc.setFont('helvetica', 'normal');
+      doc.setFont(_pdfFont, 'normal');
       doc.setFontSize(T_FS);
     }
 
@@ -406,32 +425,68 @@ function renderTable(doc: jsPDF, headers: string[], rows: string[][], y: number)
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
+ * Infer a short document-type label from the user's question text.
+ * Used as the "Type" line in the PDF header for Playground and AI Assistant.
+ */
+export function inferDocType(question: string): string {
+  const q = question.toLowerCase();
+  const checks: [RegExp, string][] = [
+    [/\brisk\s*assessment\b/,          'Risk Assessment Report'],
+    [/\baudit\b/,                       'Audit Report'],
+    [/\banalys[ei]s\b|\banalyze\b/,     'Analysis'],
+    [/\bassessment\b/,                  'Assessment'],
+    [/\bsummary\b|\bsummariz/,          'Summary'],
+    [/\bstrateg/,                       'Strategy Document'],
+    [/\bproposal\b/,                    'Proposal'],
+    [/\bspecification\b|\bspec\b/,      'Specification'],
+    [/\bplan\b/,                        'Plan'],
+    [/\bguide\b|\bhow.?to\b/,           'Guide'],
+    [/\breview\b/,                      'Review'],
+    [/\boverview\b/,                    'Overview'],
+    [/\bcomparison\b|\bcompare\b/,      'Comparison Report'],
+    [/\bdashboard\b/,                   'Dashboard Report'],
+    [/\breport\b/,                      'Report'],
+    [/\bdocument\b/,                    'Document'],
+  ];
+  for (const [re, label] of checks) {
+    if (re.test(q)) return label;
+  }
+  return 'Report';
+}
+
+/**
  * Generate a PDF from markdown content and trigger a browser download.
  *
  * Silently returns without generating a file when `markdown` is empty — this
  * prevents accidental empty PDFs when an API call fails or returns no content.
+ *
+ * When `docType` is provided the header renders a Name / Type / Platform layout;
+ * the first markdown heading is preserved in the body (not skipped).
+ * When omitted the legacy single-title layout is used and the first heading
+ * is skipped from the body (existing behaviour).
  */
-export function generateMarkdownPdf(title: string, markdown: string, filename: string): void {
+export function generateMarkdownPdf(title: string, markdown: string, filename: string, docType?: string): void {
   if (!markdown.trim()) return;
 
   const doc   = new jsPDF({ unit: 'mm', format: 'a4' });
   const nodes = parseMarkdown(markdown);
+  const visual = PDF_VISUAL_FORMAT;
 
-  // ── Header banner (matches AI Risk Assessment report visual style) ─────────
-  // Dark navy background
-  doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, PAGE_W, 44, 'F');
-  // Blue accent stripe at very top
-  doc.setFillColor(59, 130, 246);
-  doc.rect(0, 0, PAGE_W, 3, 'F');
-  // Darker strip at bottom of header
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 41, PAGE_W, 3, 'F');
+  // ── Header banner ─────────────────────────────────────────────────────────
+  doc.setFillColor(...visual.headerBackground);
+  doc.rect(0, 0, PAGE_W, visual.headerHeight, 'F');
+  doc.setDrawColor(...visual.headerBorder);
+  doc.setLineWidth(0.3);
+  doc.line(0, visual.headerHeight - 0.3, PAGE_W, visual.headerHeight - 0.3);
+  if (visual.accentHeight > 0) {
+    doc.setFillColor(...visual.accent);
+    doc.rect(MX, visual.headerHeight - visual.accentHeight - 1, PAGE_W - (MX * 2), visual.accentHeight, 'F');
+  }
 
-  // Logo or fallback "AI" box
+  // Logo — rendered directly, no tile/card wrapper
   const LOGO_H = 11;
-  const LOGO_Y = (44 - LOGO_H) / 2;   // vertically centred in 44mm header
-  let titleX   = MX;
+  const LOGO_Y = (visual.headerHeight - LOGO_H) / 2;
+  let titleX = MX + LOGO_H + 5;       // default spacing; updated below with actual logo width
 
   if (_logoImg) {
     const ratio = _logoImg.naturalWidth / _logoImg.naturalHeight;
@@ -439,53 +494,65 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
     try {
       doc.addImage(_logoImg, 'PNG', MX, LOGO_Y, logoW, LOGO_H);
       titleX = MX + logoW + 5;
-    } catch {
-      titleX = MX;
-    }
+    } catch { /* logo unavailable — title starts at default offset */ }
   }
 
-  if (!_logoImg || titleX === MX) {
-    doc.setFillColor(37, 99, 235);
-    doc.roundedRect(MX, LOGO_Y + 0.5, 10, 10, 2, 2, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(5.5);
-    doc.setFont('helvetica', 'bold');
-    doc.text('AI', MX + 5, LOGO_Y + 7, { align: 'center' });
-    titleX = MX + 14;
-  }
-
-  // Document title (white, bold) — truncated to one line
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  const titleLines = doc.splitTextToSize(sanitize(title), PAGE_W - titleX - MX) as string[];
-  doc.text(titleLines[0] ?? '', titleX, 19);
-
-  // Subtitle: platform name
-  doc.setTextColor(148, 163, 184);
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Tavro AI Governance Platform', titleX, 27);
-
-  // Date — right-aligned
   const dateStr = new Date().toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
   });
-  doc.setTextColor(100, 116, 139);
-  doc.setFontSize(7);
-  doc.text(dateStr, PAGE_W - MX, 27, { align: 'right' });
+
+  if (docType) {
+    // Name / Type / Platform layout
+    doc.setTextColor(...visual.nameColor);
+    doc.setFontSize(visual.nameSize);
+    doc.setFont(_pdfFont, 'bold');
+    const nameLines = doc.splitTextToSize(sanitize(title), PAGE_W - titleX - MX) as string[];
+    doc.text(nameLines[0] ?? '', titleX, visual.nameY);
+
+    doc.setTextColor(...visual.typeColor);
+    doc.setFontSize(visual.typeSize);
+    doc.setFont(_pdfFont, 'normal');
+    doc.text(sanitize(docType), titleX, visual.typeY);
+
+    doc.setTextColor(...visual.subtitleColor);
+    doc.setFontSize(visual.subtitleSize);
+    doc.setFont(_pdfFont, 'normal');
+    doc.text('Tavro AI Governance Platform', titleX, visual.subtitleY);
+
+    doc.setTextColor(...visual.dateColor);
+    doc.setFontSize(visual.dateSize);
+    doc.text(dateStr, PAGE_W - MX, visual.dateY, { align: 'right' });
+  } else {
+    // Legacy single-title layout
+    doc.setTextColor(...visual.nameColor);
+    doc.setFontSize(13);
+    doc.setFont(_pdfFont, 'bold');
+    const titleLines = doc.splitTextToSize(sanitize(title), PAGE_W - titleX - MX) as string[];
+    doc.text(titleLines[0] ?? '', titleX, 19);
+
+    doc.setTextColor(...visual.subtitleColor);
+    doc.setFontSize(visual.subtitleSize);
+    doc.setFont(_pdfFont, 'normal');
+    doc.text('Tavro AI Governance Platform', titleX, 27);
+
+    doc.setTextColor(...visual.dateColor);
+    doc.setFontSize(visual.dateSize);
+    doc.text(dateStr, PAGE_W - MX, 27, { align: 'right' });
+  }
 
   // Content starts below the header
-  let y = 50;
+  let y = visual.contentStartY;
 
   // Reset colours for body content
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
 
   // ── Render each AST node ───────────────────────────────────────────────────
-  // The first heading (h1/h2/h3) is already shown as the document title above.
-  // Skip it to avoid a duplicate heading at the top of the body.
-  let firstHeadingSkipped = false;
+  // When no docType: the header shows the document title (same as H1), so skip
+  // the first heading from the body to avoid duplication (legacy behaviour).
+  // When docType is set: the header shows Name/Type (distinct from the H1), so
+  // the first heading is preserved in the body.
+  let firstHeadingSkipped = !!docType;
 
   for (const node of nodes) {
     if (!firstHeadingSkipped &&
@@ -499,23 +566,19 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
       // ── Headings ──────────────────────────────────────────────────────────
       case 'h1': {
         y = pb(doc, y, LH.h1 + 5);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(_pdfFont, 'bold');
         doc.setFontSize(FS.h1);
         doc.setTextColor(20, 55, 140);
         const wl = doc.splitTextToSize(node.text, CW);
         for (const ln of wl) { doc.text(ln, MX, y); y += LH.h1; }
-        // Decorative underline under last line
-        doc.setLineWidth(0.35);
-        doc.setDrawColor(20, 55, 140);
-        doc.line(MX, y - LH.h1 + 2, MX + CW * 0.65, y - LH.h1 + 2);
-        y += 2;
+        y += 1;
         doc.setTextColor(0, 0, 0);
         doc.setDrawColor(0, 0, 0);
         break;
       }
       case 'h2': {
         y = pb(doc, y, LH.h2 + 3);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(_pdfFont, 'bold');
         doc.setFontSize(FS.h2);
         doc.setTextColor(40, 75, 160);
         for (const ln of doc.splitTextToSize(node.text, CW)) { doc.text(ln, MX, y); y += LH.h2; }
@@ -525,7 +588,7 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
       }
       case 'h3': {
         y = pb(doc, y, LH.h3 + 2);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(_pdfFont, 'bold');
         doc.setFontSize(FS.h3);
         doc.setTextColor(55, 90, 170);
         for (const ln of doc.splitTextToSize(node.text, CW)) { doc.text(ln, MX, y); y += LH.h3; }
@@ -535,7 +598,7 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
       }
       case 'h4': {
         y = pb(doc, y, LH.h4 + 1);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(_pdfFont, 'bold');
         doc.setFontSize(FS.h4);
         for (const ln of doc.splitTextToSize(node.text, CW)) { doc.text(ln, MX, y); y += LH.h4; }
         break;
@@ -543,7 +606,7 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
 
       // ── Body text ──────────────────────────────────────────────────────────
       case 'body': {
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(_pdfFont, 'normal');
         doc.setFontSize(FS.body);
         y = renderSegs(doc, node.segs, MX, y, CW, FS.body, LH.body);
         break;
@@ -552,7 +615,7 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
       // ── Bullet / ordered list item ─────────────────────────────────────────
       case 'bullet': {
         doc.setFontSize(FS.body);
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(_pdfFont, 'normal');
         // Indent based on nesting level; leave room for prefix
         const ix  = MX + (node.level - 1) * 5;
         const pw  = doc.getTextWidth(node.prefix + ' ');
@@ -586,13 +649,13 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
           y += LH.code;
         }
         if (visN < node.lines.length) {
-          doc.setFont('helvetica', 'normal');
+          doc.setFont(_pdfFont, 'normal');
           doc.setFontSize(8);
           doc.setTextColor(110, 110, 130);
           doc.text(`[...${node.lines.length - visN} more lines omitted]`, MX + 1, y);
           y += 4;
         }
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(_pdfFont, 'normal');
         doc.setTextColor(0, 0, 0);
         doc.setDrawColor(0, 0, 0);
         y += 3;
@@ -627,19 +690,19 @@ export function generateMarkdownPdf(title: string, markdown: string, filename: s
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
-    doc.setFillColor(248, 250, 252);
-    doc.rect(0, PAGE_H - 12, PAGE_W, 12, 'F');
-    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(...visual.footerBackground);
+    doc.rect(0, PAGE_H - visual.footerHeight, PAGE_W, visual.footerHeight, 'F');
+    doc.setDrawColor(...visual.footerBorder);
     doc.setLineWidth(0.3);
-    doc.line(0, PAGE_H - 12, PAGE_W, PAGE_H - 12);
-    doc.setTextColor(148, 163, 184);
+    doc.line(0, PAGE_H - visual.footerHeight, PAGE_W, PAGE_H - visual.footerHeight);
+    doc.setTextColor(...visual.footerText);
     doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(_pdfFont, 'normal');
     doc.text('Tavro AI Governance Platform  ·  Confidential', MX, PAGE_H - 5.5);
     doc.text(`Page ${p} of ${totalPages}`, PAGE_W - MX, PAGE_H - 5.5, { align: 'right' });
   }
 
-  doc.save(filename);
+  savePdf(doc, filename);
 }
 
 /**
