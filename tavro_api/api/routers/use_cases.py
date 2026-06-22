@@ -231,6 +231,15 @@ async def list_use_cases(
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
+    # Company filter for the agent count subqueries — join agents table to apply company_id.
+    _has_company = "company_id" in params
+    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if _has_company else ""
+    _agent_cnt_cf = (
+        "AND (ag.company_id = :company_id OR ag.company_id IS NULL"
+        " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
+        if _has_company else ""
+    )
+
     try:
         result = await db.execute(
             text(f"""
@@ -252,18 +261,22 @@ async def list_use_cases(
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
+                              {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
+                              {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
                         ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records

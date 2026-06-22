@@ -260,6 +260,14 @@ async def list_ai_models(
         else ""
     )
 
+    # Company filter for the agent count subquery — join agents table to apply company_id.
+    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if company_id else ""
+    _agent_cnt_cf = (
+        "AND (ag.company_id = :cid OR ag.company_id IS NULL"
+        " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
+        if company_id else ""
+    )
+
     try:
         result = await db.execute(
             text(f"""
@@ -270,10 +278,12 @@ async def list_ai_models(
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_models rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
                               {rel_tenant_filter}
+                              {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         ROW_NUMBER() OVER (ORDER BY m.created_ts DESC NULLS LAST) AS rn,
                         COUNT(*) OVER () AS total_records

@@ -2050,7 +2050,7 @@ async def list_integrations(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_integrations(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
+        all_items = await _fetch_integrations(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2331,7 +2331,7 @@ async def list_applications(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_applications(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
+        all_items = await _fetch_applications(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2569,7 +2569,7 @@ async def list_processes(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_processes(db, search=q, company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
+        all_items = await _fetch_processes(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
