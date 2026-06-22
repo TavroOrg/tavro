@@ -1,13 +1,14 @@
-# ======================================================# api/routers/compliance_research.py
+# =============================================================
+# api/routers/compliance_research.py
 # AI-powered research for regulations and policies.
-# Same multi-turn pattern as blueprint.py research.
-# ======================================================
+# =============================================================
+
 import json
 import os
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -16,6 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.llm import (
+    _resolve_compliance_llm,
+    _call_anthropic,
+    _call_openai,
+    _collect_text,
+    _extract_json,
+)
 
 router = APIRouter()
 
@@ -29,17 +37,15 @@ class _Job:
 
 _jobs: dict[str, _Job] = {}
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL   = "claude-sonnet-4-6"
-OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL      = "gpt-4o"
-MAX_OUTPUT_TOKENS = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4096"))
-MAX_SEARCH_TURNS  = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "3"))
+MAX_OUTPUT_TOKENS      = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS",     "4096"))
+MAX_SEARCH_TURNS       = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",      "3"))
 MAX_JSON_CONTINUATIONS = int(os.getenv("RESEARCH_MAX_JSON_CONTINUATIONS", "3"))
 
 
-# ======================================================# Schemas
-# ======================================================
+# =============================================================
+# Schemas
+# =============================================================
+
 class RegResearchRequest(BaseModel):
     name:          str
     short_name:    str | None = None
@@ -66,103 +72,15 @@ class ResearchResponse(BaseModel):
     turns_used:  int
 
 
-# ======================================================# Helpers (same as blueprint.py)
-# ======================================================
-def _extract_json(raw: str) -> str:
-    fenced = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', raw)
-    if fenced:
-        return fenced.group(1).strip()
-    start = raw.find('{')
-    if start != -1:
-        depth = 0
-        for i, ch in enumerate(raw[start:], start):
-            if ch == '{': depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0: return raw[start:i+1]
-    return raw.strip()
-
-
-async def _call_anthropic(
-    api_key: str,
-    messages: list[dict],
-    system: str,
-    tools: list[dict] | None = None,
-    max_tokens: int = MAX_OUTPUT_TOKENS,
-) -> dict:
-    payload: dict[str, Any] = {
-        "model": ANTHROPIC_MODEL, "max_tokens": max_tokens,
-        "system": system, "messages": messages,
-    }
-    if tools: payload["tools"] = tools
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            ANTHROPIC_API_URL,
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json=payload,
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Anthropic error {resp.status_code}: {resp.text[:300]}")
-    return resp.json()
-
-
-async def _call_openai(
-    api_key: str,
-    messages: list[dict],
-    system: str,
-    max_tokens: int = MAX_OUTPUT_TOKENS,
-) -> dict:
-    payload_messages = [{"role": "system", "content": system}] + messages
-    payload: dict[str, Any] = {
-        "model": OPENAI_MODEL,
-        "messages": payload_messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.2,
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            OPENAI_API_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"OpenAI error {resp.status_code}: {resp.text[:300]}")
-
-    data = resp.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-    finish_reason = data.get("choices", [{}])[0].get("finish_reason", "stop")
-    return {
-        "stop_reason": "max_tokens" if finish_reason == "length" else "end_turn",
-        "content": [{"type": "text", "text": content}],
-        "usage": data.get("usage", {}),
-    }
-
-
-def _resolve_compliance_llm() -> tuple[str, str]:
-    """
-    Resolve provider/key for compliance research endpoints.
-    Research flows are enforced to Anthropic-only.
-    """
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if anthropic_key:
-        return "anthropic", anthropic_key
-    raise HTTPException(
-        status_code=500,
-        detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
-    )
-
-
-def _collect_text(data: dict) -> str:
-    return "\n".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
-
+# =============================================================
+# Research helpers
+# =============================================================
 
 def _collect_tool_results(data: dict) -> list[dict]:
-    return [{"type": "tool_result", "tool_use_id": b["id"], "content": "Search done. Return JSON now."}
-            for b in data.get("content", []) if b.get("type") == "tool_use"]
+    return [
+        {"type": "tool_result", "tool_use_id": b["id"], "content": "Search done. Return JSON now."}
+        for b in data.get("content", []) if b.get("type") == "tool_use"
+    ]
 
 
 async def _run_research(
@@ -174,11 +92,12 @@ async def _run_research(
     """Run multi-turn research and return (dimensions, sources, notice, turns_used)."""
     messages = [{"role": "user", "content": user_prompt}]
     tools    = [{"type": "web_search_20250305", "name": "web_search"}] if provider == "anthropic" else None
+
     if provider == "openai":
         data = await _call_openai(api_key, messages, system, MAX_OUTPUT_TOKENS)
     else:
         data = await _call_anthropic(api_key, messages, system, tools)
-    turns    = 0
+    turns = 0
 
     for _ in range(MAX_SEARCH_TURNS if provider == "anthropic" else 0):
         if data.get("stop_reason") != "tool_use": break
@@ -201,10 +120,9 @@ async def _run_research(
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "",        raw).strip()
-    # Strip invalid JSON control characters (keep tab, newline, carriage return)
     raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", raw)
 
-    # Truncation recovery: if JSON is cut off, allow multiple continuation rounds.
+    # Truncation recovery
     if data.get("stop_reason") == "max_tokens":
         for _ in range(MAX_JSON_CONTINUATIONS):
             try:
@@ -228,13 +146,11 @@ async def _run_research(
                     break
                 raw = raw + cont_text
                 if cont.get("stop_reason") != "max_tokens":
-                    # One more parse attempt will happen after loop.
                     break
 
     try:
         parsed = json.loads(_extract_json(raw), strict=False)
     except json.JSONDecodeError:
-        # One repair attempt: ask the model to normalize prior output into valid JSON only.
         repair_system = (
             "You are a JSON formatter. Convert the user's input into strictly valid JSON. "
             "Return only one JSON object. No markdown, no commentary, no backticks."
@@ -245,20 +161,9 @@ async def _run_research(
             f"{raw}"
         )
         if provider == "openai":
-            repaired_data = await _call_openai(
-                api_key,
-                [{"role": "user", "content": repair_prompt}],
-                repair_system,
-                MAX_OUTPUT_TOKENS,
-            )
+            repaired_data = await _call_openai(api_key, [{"role": "user", "content": repair_prompt}], repair_system, MAX_OUTPUT_TOKENS)
         else:
-            repaired_data = await _call_anthropic(
-                api_key,
-                [{"role": "user", "content": repair_prompt}],
-                repair_system,
-                tools=None,
-                max_tokens=MAX_OUTPUT_TOKENS,
-            )
+            repaired_data = await _call_anthropic(api_key, [{"role": "user", "content": repair_prompt}], repair_system, tools=None, max_tokens=MAX_OUTPUT_TOKENS)
         repaired_raw = _collect_text(repaired_data).strip()
         if repaired_raw.startswith("```"):
             repaired_raw = re.sub(r"^```(?:json)?\s*", "", repaired_raw)
@@ -275,8 +180,10 @@ async def _run_research(
     return dims, sources, notice, turns
 
 
-# ======================================================# Regulation research system prompt
-# ======================================================
+# =============================================================
+# System prompts
+# =============================================================
+
 REG_RESEARCH_SYSTEM = """You are a regulatory compliance expert AI. Research the given regulation
 and return ONLY a JSON object (no markdown, no fences, start with {) with this structure:
 
@@ -308,8 +215,6 @@ Rules:
 - Return ONLY the JSON. No other text. No backticks."""
 
 
-# ======================================================# Policy research system prompt
-# ======================================================
 POLICY_RESEARCH_SYSTEM = """You are a corporate compliance and policy expert AI.
 Analyse the given policy information and return ONLY a JSON object with this structure:
 
@@ -337,8 +242,10 @@ Categories to cover:
 Return ONLY the JSON. No other text."""
 
 
-# ======================================================# GET /research/job/{job_id}
-# ======================================================
+# =============================================================
+# GET /research/job/{job_id}
+# =============================================================
+
 @router.get("/research/job/{job_id}")
 async def get_research_job(job_id: str):
     job = _jobs.get(job_id)
@@ -347,8 +254,10 @@ async def get_research_job(job_id: str):
     return {"status": job.status, "result": job.result, "error": job.error}
 
 
-# ======================================================# POST /research/regulation  — returns job_id immediately
-# ======================================================
+# =============================================================
+# POST /research/regulation
+# =============================================================
+
 async def _bg_regulation_research(job_id: str, provider: str, api_key: str, body: RegResearchRequest) -> None:
     try:
         jur_text = ", ".join(body.jurisdiction) or "US"
@@ -380,8 +289,10 @@ async def research_regulation(body: RegResearchRequest, background_tasks: Backgr
     return {"job_id": job_id}
 
 
-# ======================================================# POST /research/policy  — returns job_id immediately
-# ======================================================
+# =============================================================
+# POST /research/policy
+# =============================================================
+
 async def _bg_policy_research(job_id: str, provider: str, api_key: str, body: PolicyResearchRequest, co_ctx: str) -> None:
     try:
         doc_ctx  = f"\n\nPolicy document extract:\n{body.doc_text[:4000]}" if body.doc_text else ""
@@ -418,16 +329,16 @@ async def research_policy(body: PolicyResearchRequest, background_tasks: Backgro
     return {"job_id": job_id}
 
 
-# ======================================================# POST /save-dimensions
-# Save AI-researched dimensions to a compliance item
-# ======================================================
+# =============================================================
+# POST /save-dimensions
+# =============================================================
+
 class SaveDimsRequest(BaseModel):
     compliance_item_id: str
     dimensions:         list[ResearchedDimension]
 
 @router.post("/save-dimensions")
 async def save_dimensions(body: SaveDimsRequest, db: AsyncSession = Depends(get_db)):
-    # Get dim type map
     type_rows = await db.execute(text("SELECT id, category FROM twin.compliance_dim_type ORDER BY category"))
     type_map  = {r.category: str(r.id) for r in type_rows}
 
@@ -456,7 +367,6 @@ async def save_dimensions(body: SaveDimsRequest, db: AsyncSession = Depends(get_
         })
         saved += 1
 
-    # Mark as AI researched
     await db.execute(
         text("UPDATE twin.compliance_item SET ai_researched = true WHERE id = :id"),
         {"id": body.compliance_item_id}

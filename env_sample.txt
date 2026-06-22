@@ -10,6 +10,15 @@ POSTGRES_USER=tavro_user
 POSTGRES_PASSWORD=tavro_secret_changeme
 DATABASE_URL=postgresql://tavro_user:tavro_secret_changeme@localhost:5433/tavro
 
+# ── Tavro Enterprise ──────────────────────────────────────────────────────────
+# Set to "enterprise" when the enterprise repo exists as a sibling of tavro/:
+#   parent/
+#   ├── tavro/       ← this repo
+#   └── enterprise/  ← enterprise repo (TavroOrg/tavro-enterprise)
+# Then run: docker compose up --build -d
+# Leave unset (or set to "oss") for open-source mode — shows stub pages.
+BUILD_MODE=
+
 # ── AI Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
@@ -55,6 +64,9 @@ AZURE_AI_FOUNDRY_DEPLOYMENT=
 AZURE_AI_FOUNDRY_CLIENT_ID=
 AZURE_AI_FOUNDRY_TENANT_ID=
 AZURE_AI_FOUNDRY_CLIENT_SECRET=
+# Hosted-agent deployments — set to the resource/project that has Hosted Agents enabled.
+# If omitted, AZURE_AI_FOUNDRY_ENDPOINT is used as the fallback.
+AZURE_AI_FOUNDRY_HOSTED_ENDPOINT=
 
 # ── Agent Playground - AWS Bedrock ──────────────────────────────────────────
 # AWS credentials for provisioning Bedrock agents in Agent Playground
@@ -107,6 +119,13 @@ GEMINI_TOKEN_URI=https://oauth2.googleapis.com/token
 # ── Catalog Connector - GitHub MCP ───────────────────────────────────────────
 GITHUB_MCP_BASE_URL=https://api.github.com
 GITHUB_MCP_TOKEN=
+
+# ── Agent Playground - Publish to Git ────────────────────────────────────────
+# GitHub repo where generated agent code is published from the Playground Code tab.
+# Token requires `repo` scope.
+GIT_PUBLISH_REPO_URL=https://github.com/your-org/your-repo
+GIT_PUBLISH_TOKEN=
+GIT_PUBLISH_BRANCH=main
 
 # ── Zitadel / Auth ───────────────────────────────────────────────────────────
 TAVRO_PUBLIC_ORIGIN=http://localhost:9000

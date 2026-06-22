@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS curated.agent_360 (
     agent_internal_id TEXT,
     summary TEXT,
     company_id TEXT,
-    company_name TEXT
+    company_name TEXT,
+    agent_type TEXT DEFAULT 'Config-driven'
 );
 

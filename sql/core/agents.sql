@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS core.agents (
 	agent_internal_id TEXT,
 	parent_agent_internal_id TEXT,
 	company_id TEXT,
-	company_name TEXT
+	company_name TEXT,
+	agent_type TEXT DEFAULT 'Config-driven'
 );
 

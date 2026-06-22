@@ -10,7 +10,6 @@ import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
 import AgentIssuesTab from './AgentIssuesTab';
-import AgentClaudeSupportTab from './AgentClaudeSupportTab';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -21,6 +20,8 @@ interface AgentViewProps {
     isEditing?: boolean;
     editName?: string;
     onEditNameChange?: (v: string) => void;
+    editAgentType?: string;
+    onEditAgentTypeChange?: (v: string) => void;
     editDescription?: string;
     onEditDescriptionChange?: (v: string) => void;
     editInstruction?: string;
@@ -40,8 +41,7 @@ type TabType =
     | 'LINEAGE'
     | 'ISSUES'
     | 'RISK'
-    | 'CONTEXT'
-    | 'CLAUDE_SUPPORT';
+    | 'CONTEXT';
 
 const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
@@ -51,12 +51,11 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
     { id: 'ISSUES', label: 'Issues' },
-    { id: 'CLAUDE_SUPPORT', label: 'Claude Support' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({
     agent, onBusinessImpactChange, onIssuesChange,
-    isEditing, editName, onEditNameChange,
+    isEditing, editName, onEditNameChange, editAgentType, onEditAgentTypeChange,
     editDescription, onEditDescriptionChange,
     editInstruction, onEditInstructionChange,
     inlineEdit, inlineSaving, onStartInlineEdit,
@@ -80,6 +79,8 @@ const AgentView: React.FC<AgentViewProps> = ({
                     isEditing={isEditing}
                     editName={editName}
                     onEditNameChange={onEditNameChange}
+                    editAgentType={editAgentType}
+                    onEditAgentTypeChange={onEditAgentTypeChange}
                     inlineEdit={inlineEdit}
                     inlineSaving={inlineSaving}
                     onStartInlineEdit={onStartInlineEdit}
@@ -159,9 +160,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                 {activeTab === 'CONTEXT' && (
                     <div><AgentContextGraph agent={agent} /></div>
                 )}
-                {activeTab === 'CLAUDE_SUPPORT' && (
-                    <div><AgentClaudeSupportTab agent={agent} /></div>
-                )}
+
             </div>
         </div>
     );
