@@ -1,13 +1,28 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers } from 'lucide-react';
+import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers, Building2 } from 'lucide-react';
 import travoLogo from '../assets/travo_logo.png';
 
 const TAVRO_VERSION = '3.1';
 
+const STORAGE_NAME_KEY = 'tavro_active_company_name';
+
 const AdminLayout: React.FC = () => {
     const [collapsed, setCollapsed] = useState(false);
     const navigate = useNavigate();
+    const [activeCompanyName, setActiveCompanyName] = useState<string>(
+        () => localStorage.getItem(STORAGE_NAME_KEY) ?? ''
+    );
+
+    // Keep footer in sync when company is changed on the Company page
+    React.useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            setActiveCompanyName(detail?.name ?? '');
+        };
+        window.addEventListener('tavro_company_changed', handler);
+        return () => window.removeEventListener('tavro_company_changed', handler);
+    }, []);
 
     const handleLogout = () => {
         localStorage.removeItem('tavro_admin_auth');
@@ -47,6 +62,19 @@ const AdminLayout: React.FC = () => {
 
                 {/* Nav */}
                 <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+                    <NavLink
+                        to="/company"
+                        className={({ isActive }) =>
+                            `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border ${isActive
+                                ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/20'
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white border-transparent'
+                            }`
+                        }
+                    >
+                        <Building2 size={18} className="shrink-0" />
+                        {!collapsed && <span>Company</span>}
+                    </NavLink>
+
                     <NavLink
                         to="/connectors"
                         className={({ isActive }) =>
@@ -122,7 +150,12 @@ const AdminLayout: React.FC = () => {
                 {/* Footer */}
                 <footer className="flex-shrink-0 border-t border-slate-200 dark:border-slate-800 py-2 px-6 text-[11px] text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-900 transition-colors flex items-center justify-between">
                     <span>Tavro v{TAVRO_VERSION}</span>
-                    <span>—</span>
+                    <span className="flex items-center gap-1.5">
+                        <Building2 size={11} className={activeCompanyName ? 'text-blue-500' : 'text-slate-400'} />
+                        <span className={activeCompanyName ? 'text-slate-700 dark:text-slate-300 font-medium' : ''}>
+                            {activeCompanyName || '—'}
+                        </span>
+                    </span>
                     <span>© 2026 Tavro AI.</span>
                 </footer>
             </main>

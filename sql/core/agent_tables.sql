@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_tables (
   tenant_id         TEXT,
+  company_id        TEXT,
   agent_id          TEXT,
   agent_name        TEXT,
   agent_internal_id TEXT,
