@@ -17,6 +17,7 @@ from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 # Catalog columns that may be supplied on create/update (everything except the
 # system-managed ones: tenant_id, ai_model_id, no_of_associated_agents,
@@ -871,10 +872,10 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
 
     max_brs_row = await db.execute(
         text(f"""
-            SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs
+            SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM {CORE}.agent_ai_models rel
             JOIN LATERAL (
-                SELECT blended_risk_score
+                SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM {CORE}.agent_risk_assessments ara
                 WHERE ara.agent_id = rel.agent_id
                   AND ara.blended_risk_score IS NOT NULL
@@ -886,10 +887,56 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             ) brs ON TRUE
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
         """),
         {"mid": ai_model_id},
     )
-    max_brs = float((max_brs_row.mappings().first() or {}).get("max_brs") or 0.0)
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    all_agent_ids_sql = f"""
+            SELECT DISTINCT ara.agent_internal_id
+            FROM {CORE}.agent_ai_models rel
+            JOIN {CORE}.agent_risk_assessments ara ON ara.agent_id = rel.agent_id
+            WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+    """
+
+    inh_row = (await db.execute(
+        text(f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Inherent Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"mid": ai_model_id},
+    )).mappings().first()
+    if inh_row:
+        inherent_class = inh_row.get("risk_classification") or ""
+        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
+
+    res_row = (await db.execute(
+        text(f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Residual Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"mid": ai_model_id},
+    )).mappings().first()
+    if res_row:
+        residual_class = res_row.get("risk_classification") or ""
+        residual_score = float(res_row.get("risk_classification_score") or 0.0)
 
     are = round(max_brs * (bc_score + et_score) / 2.0, 2)
     if are >= 9.0:
@@ -907,13 +954,17 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             SET blended_risk_score = :max_brs,
                 agent_risk_exposure = :are,
                 agent_risk_tier = :art,
-                inherent_risk_classification = 'None',
-                residual_risk_classification = 'None',
-                inherent_risk_classification_score = 0,
-                residual_risk_classification_score = 0
+                inherent_risk_classification = :inherent_class,
+                residual_risk_classification = :residual_class,
+                inherent_risk_classification_score = :inherent_score,
+                residual_risk_classification_score = :residual_score
             WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
         """),
-        {"max_brs": max_brs, "are": are, "art": art, "mid": ai_model_id},
+        {
+            "max_brs": max_brs, "are": are, "art": art, "mid": ai_model_id,
+            "inherent_class": inherent_class, "inherent_score": inherent_score,
+            "residual_class": residual_class, "residual_score": residual_score,
+        },
     )
 
 

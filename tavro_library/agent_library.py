@@ -20,7 +20,7 @@ COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
     @classmethod
     @contextmanager
@@ -2440,21 +2440,26 @@ class AgentMetadataExporter:
         blended_score = float(metrics.get("max_score") or 0.0)
 
         inherent_class = ""
+        inherent_score = 0.0
         residual_class = ""
+        residual_score = 0.0
         if worst_agent_id and cls.RISK_MANAGEMENT_DB_NAME:
             risk_detail_q = f"""
-                SELECT type_of_risk, risk_classification
+                SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
                 WHERE agent_internal_id = '{cls.sanitize(str(worst_agent_id))}'
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC
             """
             risk_rows = cls.execute_select(risk_detail_q)
-            inherent_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Inherent Risk'), "")
-            residual_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Residual Risk'), "")
-
-        inherent_score = cls._regulatory_risk_score(inherent_class)
-        residual_score = cls._regulatory_risk_score(residual_class)
+            for r in risk_rows:
+                tor = r.get("type_of_risk")
+                if tor == "Inherent Risk" and not inherent_class:
+                    inherent_class = r.get("risk_classification") or ""
+                    inherent_score = float(r.get("risk_classification_score") or 0.0)
+                elif tor == "Residual Risk" and not residual_class:
+                    residual_class = r.get("risk_classification") or ""
+                    residual_score = float(r.get("risk_classification_score") or 0.0)
         risk_tier = cls._get_risk_tier(blended_score)
 
         sync_q = f"""

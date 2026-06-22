@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from uuid import uuid4
 from typing import Any, Optional
 
@@ -15,6 +16,7 @@ from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
@@ -1130,10 +1132,10 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
     max_brs_row = await db.execute(
         text(
             """
-            SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+            SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM core.agent_business_applications aba
             JOIN LATERAL (
-                SELECT blended_risk_score
+                SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
                 WHERE ara.agent_id = aba.agent_id
                   AND ara.blended_risk_score IS NOT NULL
@@ -1144,12 +1146,61 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
                 LIMIT 1
             ) brs ON TRUE
             WHERE aba.business_application_id = :business_application_id
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
             """
         ),
         {"business_application_id": business_application_id},
     )
-    max_brs_result = max_brs_row.mappings().first()
-    max_brs = float(max_brs_result.get("max_blended_risk_score") or 0.0)
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    all_agent_ids_sql = """
+            SELECT DISTINCT ara.agent_internal_id
+            FROM core.agent_business_applications aba
+            JOIN core.agent_risk_assessments ara ON ara.agent_id = aba.agent_id
+            WHERE aba.business_application_id = :business_application_id
+              AND aba.agent_id IS NOT NULL AND aba.agent_id <> ''
+    """
+
+    inh_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Inherent Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )).mappings().first()
+    if inh_row:
+        inherent_class = inh_row.get("risk_classification") or ""
+        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
+
+    res_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Residual Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )).mappings().first()
+    if res_row:
+        residual_class = res_row.get("risk_classification") or ""
+        residual_score = float(res_row.get("risk_classification_score") or 0.0)
 
     criticality_avg = (bc_score + et_score) / 2.0
     are = round(max_brs * criticality_avg, 2)
@@ -1176,6 +1227,18 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
     if "agent_risk_tier" in app_cols:
         set_parts.append("agent_risk_tier = :art")
         update_params["art"] = art
+    if "inherent_risk_classification" in app_cols:
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
+    if "inherent_risk_classification_score" in app_cols:
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in app_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
+    if "residual_risk_classification_score" in app_cols:
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
 
     if set_parts:
         await db.execute(
@@ -1265,10 +1328,10 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
     max_brs_row = await db.execute(
         text(
             """
-            SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+            SELECT brs.agent_internal_id, brs.blended_risk_score
             FROM core.agent_business_processes abp
             JOIN LATERAL (
-                SELECT blended_risk_score
+                SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
                 WHERE ara.agent_id = abp.agent_id
                   AND ara.blended_risk_score IS NOT NULL
@@ -1279,12 +1342,61 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
                 LIMIT 1
             ) brs ON TRUE
             WHERE abp.business_process_id = :business_process_id
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
             """
         ),
         {"business_process_id": business_process_id},
     )
-    max_brs_result = max_brs_row.mappings().first()
-    max_brs = float(max_brs_result.get("max_blended_risk_score") or 0.0)
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    all_agent_ids_sql = """
+            SELECT DISTINCT ara.agent_internal_id
+            FROM core.agent_business_processes abp
+            JOIN core.agent_risk_assessments ara ON ara.agent_id = abp.agent_id
+            WHERE abp.business_process_id = :business_process_id
+              AND abp.agent_id IS NOT NULL AND abp.agent_id <> ''
+    """
+
+    inh_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Inherent Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )).mappings().first()
+    if inh_row:
+        inherent_class = inh_row.get("risk_classification") or ""
+        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
+
+    res_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Residual Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )).mappings().first()
+    if res_row:
+        residual_class = res_row.get("risk_classification") or ""
+        residual_score = float(res_row.get("risk_classification_score") or 0.0)
 
     impact_avg = (bc_score + fi_score + ri_score + rgi_score) / 4.0
     are = round(max_brs * impact_avg, 2)
@@ -1311,6 +1423,18 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
     if "agent_risk_tier" in proc_cols:
         set_parts.append("agent_risk_tier = :art")
         update_params["art"] = art
+    if "inherent_risk_classification" in proc_cols:
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
+    if "inherent_risk_classification_score" in proc_cols:
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in proc_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
+    if "residual_risk_classification_score" in proc_cols:
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
 
     if set_parts:
         await db.execute(
@@ -1372,17 +1496,17 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
     et_score = {"mission critical": 1.0, "business critical": 0.4,
                 "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
 
+    max_brs = 0.0
+    worst_internal_id = None
     has_abi = await _table_exists(db, "core", "agent_business_integrations")
-    if not has_abi:
-        max_brs = 0.0
-    else:
+    if has_abi:
         max_brs_row = await db.execute(
             text(
                 """
-                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+                SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM core.agent_business_integrations abi
                 JOIN LATERAL (
-                    SELECT blended_risk_score
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
                     FROM core.agent_risk_assessments ara
                     WHERE ara.agent_id = abi.agent_id
                       AND ara.blended_risk_score IS NOT NULL
@@ -1393,11 +1517,62 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                     LIMIT 1
                 ) brs ON TRUE
                 WHERE abi.integration_id = :integration_id
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
                 """
             ),
             {"integration_id": integration_id},
         )
-        max_brs = float((max_brs_row.mappings().first() or {}).get("max_blended_risk_score") or 0.0)
+        worst_row = max_brs_row.mappings().first()
+        if worst_row:
+            max_brs = float(worst_row.get("blended_risk_score") or 0.0)
+            worst_internal_id = worst_row.get("agent_internal_id")
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    all_agent_ids_sql = """
+            SELECT DISTINCT ara.agent_internal_id
+            FROM core.agent_business_integrations abi
+            JOIN core.agent_risk_assessments ara ON ara.agent_id = abi.agent_id
+            WHERE abi.integration_id = :integration_id
+              AND abi.agent_id IS NOT NULL AND abi.agent_id <> ''
+    """
+
+    inh_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Inherent Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id},
+    )).mappings().first()
+    if inh_row:
+        inherent_class = inh_row.get("risk_classification") or ""
+        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
+
+    res_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Residual Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id},
+    )).mappings().first()
+    if res_row:
+        residual_class = res_row.get("risk_classification") or ""
+        residual_score = float(res_row.get("risk_classification_score") or 0.0)
 
     criticality_avg = (bc_score + et_score) / 2.0
     are = round(max_brs * criticality_avg, 2)
@@ -1424,13 +1599,17 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
         set_parts.append("agent_risk_tier = :art")
         update_params["art"] = art
     if "inherent_risk_classification" in int_cols:
-        set_parts.append("inherent_risk_classification = 'None'")
-    if "residual_risk_classification" in int_cols:
-        set_parts.append("residual_risk_classification = 'None'")
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
     if "inherent_risk_classification_score" in int_cols:
-        set_parts.append("inherent_risk_classification_score = 0")
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in int_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
     if "residual_risk_classification_score" in int_cols:
-        set_parts.append("residual_risk_classification_score = 0")
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
 
     if set_parts:
         await db.execute(

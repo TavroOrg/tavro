@@ -18,6 +18,7 @@ from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
@@ -93,14 +94,15 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
         await db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": f"{CORE}.agent_risk_assessments"})
     ).scalar()
     max_brs = 0.0
+    worst_internal_id = None
     if risk_table:
         risk_row = await db.execute(
             text(
                 f"""
-                SELECT COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_blended_risk_score
+                SELECT brs.agent_internal_id, brs.blended_risk_score
                 FROM {CORE}.agent_ai_use_cases rel
                 JOIN LATERAL (
-                    SELECT ara.blended_risk_score
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
                     FROM {CORE}.agent_risk_assessments ara
                     WHERE ara.blended_risk_score IS NOT NULL
                       AND (
@@ -121,12 +123,63 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
                   AND rel.agent_id IS NOT NULL
                   AND rel.agent_id <> ''
                   {relation_tenant_filter}
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
                 """
             ),
             {"uid": use_case_id, "tid": tenant_id},
         )
-        risk_result = risk_row.mappings().first()
-        max_brs = float(risk_result.get("max_blended_risk_score") or 0.0) if risk_result else 0.0
+        worst_row = risk_row.mappings().first()
+        if worst_row:
+            max_brs = float(worst_row.get("blended_risk_score") or 0.0)
+            worst_internal_id = worst_row.get("agent_internal_id")
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    all_agent_ids_sql = f"""
+            SELECT DISTINCT ara.agent_internal_id
+            FROM {CORE}.agent_ai_use_cases rel
+            JOIN {CORE}.agent_risk_assessments ara ON ara.agent_id = rel.agent_id
+            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+              {relation_tenant_filter}
+    """
+
+    inh_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Inherent Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"uid": use_case_id, "tid": tenant_id},
+    )).mappings().first()
+    if inh_row:
+        inherent_class = inh_row.get("risk_classification") or ""
+        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
+
+    res_row = (await db.execute(
+        text(
+            f"""
+            SELECT r.risk_classification, r.risk_classification_score
+            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
+            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
+              AND r.type_of_risk = 'Residual Risk'
+            ORDER BY r.created_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"uid": use_case_id, "tid": tenant_id},
+    )).mappings().first()
+    if res_row:
+        residual_class = res_row.get("risk_classification") or ""
+        residual_score = float(res_row.get("risk_classification_score") or 0.0)
 
     are = round(max_brs, 2)
     art = _art_from_are(are) if associated_count > 0 else "None"
@@ -140,12 +193,21 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
                 blended_risk_score = :max_brs,
                 agent_risk_exposure_are = :are,
                 agent_risk_tier_art = :art,
+                inherent_risk_classification = :inherent_class,
+                inherent_risk_classification_score = :inherent_score,
+                residual_risk_classification = :residual_class,
+                residual_risk_classification_score = :residual_score,
                 updated_ts = CURRENT_TIMESTAMP
             WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
               {use_case_tenant_filter}
             """
         ),
-        {"cnt": associated_count, "max_brs": max_brs, "are": are, "art": art, "uid": use_case_id, "tid": tenant_id},
+        {
+            "cnt": associated_count, "max_brs": max_brs, "are": are, "art": art,
+            "inherent_class": inherent_class, "inherent_score": inherent_score,
+            "residual_class": residual_class, "residual_score": residual_score,
+            "uid": use_case_id, "tid": tenant_id,
+        },
     )
     return associated_count
 

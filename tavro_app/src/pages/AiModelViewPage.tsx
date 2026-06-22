@@ -991,13 +991,13 @@ const AiModelViewPage: React.FC = () => {
             <p className={`${valueBoxCls}`}>{String(model?.no_of_associated_agents ?? 0)}</p>
           </Field>
           <Field label="Inherent Risk Classification">
-            <p className={`${valueBoxCls}`}>{model?.inherent_risk_classification ?? 'None'}</p>
+            <p className={`${valueBoxCls}`}>{model?.inherent_risk_classification || 'N/A'}</p>
           </Field>
           <Field label="Inherent Risk Classification Score">
             <p className={`${valueBoxCls}`}>{String(model?.inherent_risk_classification_score ?? 0)}</p>
           </Field>
           <Field label="Residual Risk Classification">
-            <p className={`${valueBoxCls}`}>{model?.residual_risk_classification ?? 'None'}</p>
+            <p className={`${valueBoxCls}`}>{model?.residual_risk_classification || 'N/A'}</p>
           </Field>
           <Field label="Residual Risk Classification Score">
             <p className={`${valueBoxCls}`}>{String(model?.residual_risk_classification_score ?? 0)}</p>

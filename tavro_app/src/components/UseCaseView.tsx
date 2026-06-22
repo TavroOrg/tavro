@@ -260,10 +260,10 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const associatedAgentCount = String((uc as any).no_of_associated_agents ?? (uc as any).num_of_associated_agents ?? linkedAgentCount ?? 0);
     const agentRiskTier = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
     const blendedRiskScore = String((uc as any).blended_risk_score ?? 0);
-    const inherentRiskClassification = 'None';
-    const inherentRiskClassificationScore = '0';
-    const residualRiskClassification = 'None';
-    const residualRiskClassificationScore = '0';
+    const inherentRiskClassification = (uc as any).inherent_risk_classification || 'N/A';
+    const inherentRiskClassificationScore = String((uc as any).inherent_risk_classification_score ?? 0);
+    const residualRiskClassification = (uc as any).residual_risk_classification || 'N/A';
+    const residualRiskClassificationScore = String((uc as any).residual_risk_classification_score ?? 0);
 
     const REQUIRED_INLINE_FIELDS = new Set(['title', 'description']);
     const renderInlineActions = (field: string) => {

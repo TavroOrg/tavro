@@ -835,7 +835,7 @@ const IntegrationViewPage: React.FC = () => {
               </div>
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Inherent Risk Classification" />
-                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.inherent_risk_classification ?? 'None'}</p>
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.inherent_risk_classification || 'N/A'}</p>
               </div>
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Inherent Risk Classification Score" />
@@ -843,7 +843,7 @@ const IntegrationViewPage: React.FC = () => {
               </div>
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Residual Risk Classification" />
-                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.residual_risk_classification ?? 'None'}</p>
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.residual_risk_classification || 'N/A'}</p>
               </div>
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Residual Risk Classification Score" />
