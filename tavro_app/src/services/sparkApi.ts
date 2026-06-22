@@ -7,9 +7,12 @@ const V1 = `${BASE}/api/v1`;
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('tavro_access_token');
-  return token
-    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    : { 'Content-Type': 'application/json' };
+  const tenantId = localStorage.getItem('tavro_tenant_id');
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+  };
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {

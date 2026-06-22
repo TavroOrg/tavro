@@ -38,6 +38,7 @@ interface ApplicationRelationsSectionProps {
 interface AiModelRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
+  companyId?: string;
 }
 
 const normalizeUseCaseAiModels = (
@@ -273,6 +274,8 @@ const mergeUseCaseWithRestDetail = (
     row.of_associated_agents ?? row.agents ?? [],
   );
 
+  const linkedAiModels = normalizeUseCaseAiModels(row.of_associated_ai_models ?? row.ai_models ?? []);
+
   if (base) {
     return {
       ...base,
@@ -282,6 +285,8 @@ const mergeUseCaseWithRestDetail = (
       applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
+      of_associated_ai_models: linkedAiModels,
+      ai_models: linkedAiModels,
     } as UseCaseDetail;
   }
 
@@ -301,6 +306,8 @@ const mergeUseCaseWithRestDetail = (
     agents: linkedAgents,
     applications: linkedApplications,
     business_processes: linkedProcesses,
+    of_associated_ai_models: linkedAiModels,
+    ai_models: linkedAiModels,
   } as UseCaseDetail;
 };
 
@@ -1051,7 +1058,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   );
 };
 
-const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch, companyId }) => {
   const { refresh: refreshUC } = useUseCases();
   const useCaseId = useCase.identifier ?? '';
   const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
@@ -1085,7 +1092,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
   const loadModelCatalog = async () => {
     setLoadingCatalog(true);
     try {
-      setAllModels(await aiModelApi.listModels());
+      setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
       setRelationError(err.message || 'Failed to load AI model catalog.');
     } finally {
@@ -1095,7 +1102,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
 
   useEffect(() => {
     loadModelCatalog();
-  }, []);
+  }, [companyId]);
 
   const handleLinkModel = async (modelId: string) => {
     if (!useCaseId || !modelId || linkedModelIds.has(modelId)) return;
@@ -1291,7 +1298,7 @@ const UseCaseViewPage: React.FC = () => {
     setError(null);
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
@@ -1318,7 +1325,7 @@ const UseCaseViewPage: React.FC = () => {
     if (!id) return;
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
@@ -1614,7 +1621,7 @@ const UseCaseViewPage: React.FC = () => {
             <div className="flex flex-col gap-6">
               <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
               <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
-              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
             </div>
           }
           isEditing={isEditing}

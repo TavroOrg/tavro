@@ -5,7 +5,7 @@ import base64
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +52,18 @@ def _tenant(request: Request) -> Optional[str]:
 
 def _norm_id(value: str) -> str:
     return (value or "").strip()
+
+
+async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
+    try:
+        row = await db.execute(
+            text("SELECT name FROM twin.company WHERE id = :cid LIMIT 1"),
+            {"cid": company_id},
+        )
+        result = row.mappings().first()
+        return result["name"] if result else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +224,8 @@ async def list_ai_models(
     q: Optional[str] = None,
     start_record: int = 1,
     record_range: str = "1-500",
+    company_id: Optional[str] = Query(None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -220,14 +234,19 @@ async def list_ai_models(
     except Exception:
         start, end = start_record, start_record + 499
 
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     where_clauses: List[str] = ["m.ai_model_id IS NOT NULL", "m.ai_model_id <> ''"]
     params: Dict[str, Any] = {}
     if tenant_id:
         where_clauses.append(
-            "(m.tenant_id = :tid OR m.tenant_id IS NULL OR m.tenant_id = '' OR m.tenant_id = 'None')"
+            "m.tenant_id = :tid"
         )
         params["tid"] = tenant_id
+    if company_id:
+        where_clauses.append(
+            "(m.company_id = :cid OR m.company_id IS NULL OR TRIM(CAST(m.company_id AS text)) = '' OR m.company_id = 'None')"
+        )
+        params["cid"] = company_id
     if q and q.strip():
         where_clauses.append(
             "(LOWER(m.model_name) LIKE LOWER(:q) OR LOWER(m.ai_model_id) LIKE LOWER(:q) OR LOWER(COALESCE(m.description,'')) LIKE LOWER(:q))"
@@ -236,9 +255,17 @@ async def list_ai_models(
     where_sql = " AND ".join(where_clauses)
 
     rel_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
+    )
+
+    # Company filter for the agent count subquery — join agents table to apply company_id.
+    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if company_id else ""
+    _agent_cnt_cf = (
+        "AND (ag.company_id = :cid OR ag.company_id IS NULL"
+        " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
+        if company_id else ""
     )
 
     try:
@@ -251,10 +278,12 @@ async def list_ai_models(
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_models rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
                               {rel_tenant_filter}
+                              {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         ROW_NUMBER() OVER (ORDER BY m.created_ts DESC NULLS LAST) AS rn,
                         COUNT(*) OVER () AS total_records
@@ -279,14 +308,25 @@ async def list_ai_models(
 # ---------------------------------------------------------------------------
 
 @router.post("/", summary="Create AI Model", status_code=201)
-async def create_ai_model(body: AiModelCreate, request: Request, db: AsyncSession = Depends(get_db)):
+async def create_ai_model(
+    body: AiModelCreate,
+    request: Request,
+    company_id: Optional[str] = Query(None, description="Company UUID — stores company_id/company_name on the record"),
+    db: AsyncSession = Depends(get_db),
+):
     ai_model_id = str(uuid.uuid4())
     tenant_id = _tenant(request)
+    company_name = await _get_company_name(db, company_id) if company_id else None
 
     payload = body.model_dump(exclude_none=True)
     columns = ["tenant_id", "ai_model_id", "no_of_associated_agents", "created_ts", "updated_ts"]
     placeholders = [":tid", ":mid", "0", "CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP"]
     params: Dict[str, Any] = {"tid": tenant_id, "mid": ai_model_id}
+    if company_id:
+        columns += ["company_id", "company_name"]
+        placeholders += [":cid", ":cname"]
+        params["cid"] = company_id
+        params["cname"] = company_name
     for col in _AI_MODEL_EDITABLE_COLUMNS:
         if col in payload:
             columns.append(col)
@@ -313,13 +353,15 @@ async def create_ai_model(body: AiModelCreate, request: Request, db: AsyncSessio
 # ---------------------------------------------------------------------------
 
 @router.get("/{ai_model_id}", summary="Get AI Model")
-async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_ai_model(
+    ai_model_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
+    db: AsyncSession = Depends(get_db),
+):
     tenant_id = _tenant(request)
     mid = _norm_id(ai_model_id)
-    tenant_filter = (
-        "AND (m.tenant_id = :tid OR m.tenant_id IS NULL OR m.tenant_id = '' OR m.tenant_id = 'None')"
-        if tenant_id else ""
-    )
+    tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     row = await db.execute(
         text(f"""
             SELECT m.* FROM {CORE}.ai_models m
@@ -333,6 +375,27 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
     if not model:
         raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
+    _company_inclusive = (
+        " OR {col}.company_id IS NULL"
+        " OR TRIM(CAST({col}.company_id AS text)) = ''"
+        " OR {col}.company_id = 'None'"
+    )
+    def _company_filter(col: str) -> str:
+        if not company_id:
+            return ""
+        return f"AND ({col}.company_id = :company_id{_company_inclusive.format(col=col)})"
+
+    def _tf(col: str) -> str:
+        if not tenant_id:
+            return ""
+        return f"AND {col}.tenant_id = :tid"
+
+    rel_params: dict[str, Any] = {"mid": mid}
+    if company_id:
+        rel_params["company_id"] = company_id
+    if tenant_id:
+        rel_params["tid"] = tenant_id
+
     agent_rows = await db.execute(
         text(f"""
             SELECT
@@ -345,9 +408,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 AND COALESCE(a.is_current, true) = true
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+              {_tf('rel')}
+              {_company_filter('a')}
+              {_tf('a')}
             ORDER BY LOWER(COALESCE(a.agent_name, rel.agent_name, rel.agent_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
     use_case_rows = await db.execute(
         text(f"""
@@ -363,9 +429,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(uc.ai_use_case_id)) = LOWER(TRIM(rel.ai_use_case_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.ai_use_case_id IS NOT NULL AND rel.ai_use_case_id <> ''
+              {_tf('rel')}
+              {_company_filter('uc')}
+              {_tf('uc')}
             ORDER BY LOWER(COALESCE(uc.name, rel.ai_use_case_name, rel.ai_use_case_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
 
     application_rows = await db.execute(
@@ -381,9 +450,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(ba.business_application_id)) = LOWER(TRIM(rel.business_application_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.business_application_id IS NOT NULL AND rel.business_application_id <> ''
+              {_tf('rel')}
+              {_company_filter('ba')}
+              {_tf('ba')}
             ORDER BY LOWER(COALESCE(ba.application_name, rel.application_name, rel.business_application_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
     process_rows = await db.execute(
         text(f"""
@@ -397,9 +469,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
                 ON LOWER(TRIM(bp.business_process_id)) = LOWER(TRIM(rel.business_process_id))
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
               AND rel.business_process_id IS NOT NULL AND rel.business_process_id <> ''
+              {_tf('rel')}
+              {_company_filter('bp')}
+              {_tf('bp')}
             ORDER BY LOWER(COALESCE(bp.process_name, rel.process_name, rel.business_process_id))
         """),
-        {"mid": mid},
+        rel_params,
     )
 
     result = dict(model)
@@ -415,7 +490,12 @@ async def get_ai_model(ai_model_id: str, request: Request, db: AsyncSession = De
 # ---------------------------------------------------------------------------
 
 @router.put("/{ai_model_id}", summary="Update AI Model")
-async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSession = Depends(get_db)):
+async def update_ai_model(
+    ai_model_id: str,
+    body: AiModelUpdate,
+    company_id: Optional[str] = Query(None, description="Company UUID — updates company_id/company_name on the record"),
+    db: AsyncSession = Depends(get_db),
+):
     mid = _norm_id(ai_model_id)
     try:
         exists = await db.execute(
@@ -425,9 +505,14 @@ async def update_ai_model(ai_model_id: str, body: AiModelUpdate, db: AsyncSessio
         if not exists.first():
             raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
+        company_name = await _get_company_name(db, company_id) if company_id else None
         payload = body.model_dump(exclude_none=True)
         sets: List[str] = ["updated_ts = CURRENT_TIMESTAMP"]
         params: Dict[str, Any] = {"mid": mid}
+        if company_id:
+            sets += ["company_id = :cid", "company_name = :cname"]
+            params["cid"] = company_id
+            params["cname"] = company_name
         for col in _AI_MODEL_EDITABLE_COLUMNS:
             if col in payload:
                 sets.append(f"{col} = :{col}")
@@ -505,7 +590,7 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
     tenant_id = _tenant(request)
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -525,9 +610,9 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.agent_ai_models
-                    (tenant_id, ai_model_id, model_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, model_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (agent_internal_id, ai_model_id)
                 DO UPDATE SET
                     model_name = EXCLUDED.model_name,
@@ -538,6 +623,7 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "aid": agent_id,
@@ -592,7 +678,7 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
         raise HTTPException(status_code=400, detail="ai_use_case_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -610,9 +696,9 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_ai_use_cases
-                    (tenant_id, ai_model_id, ai_model_name, ai_use_case_id, ai_use_case_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, ai_use_case_id, ai_use_case_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :uid, :uname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :uid, :uname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, ai_use_case_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -622,6 +708,7 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "uid": uc_id,
@@ -674,7 +761,7 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
         raise HTTPException(status_code=400, detail="business_application_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -692,9 +779,9 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_business_applications
-                    (tenant_id, ai_model_id, ai_model_name, business_application_id, application_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, business_application_id, application_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, business_application_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -704,6 +791,7 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "aid": app_id,
@@ -752,7 +840,7 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
         raise HTTPException(status_code=400, detail="business_process_id is required.")
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
             {"mid": mid},
         )
         model = model_row.mappings().first()
@@ -770,9 +858,9 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_model_business_processes
-                    (tenant_id, ai_model_id, ai_model_name, business_process_id, process_name, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_model_id, ai_model_name, business_process_id, process_name, created_ts, updated_ts)
                 VALUES
-                    (:tid, :mid, :mname, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :mid, :mname, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (ai_model_id, business_process_id)
                 DO UPDATE SET
                     ai_model_name = EXCLUDED.ai_model_name,
@@ -782,6 +870,7 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
             """),
             {
                 "tid": tenant_id,
+                "cid": model.get("company_id"),
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "pid": proc_id,
