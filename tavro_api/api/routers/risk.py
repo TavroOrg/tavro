@@ -6,7 +6,7 @@ from typing import Literal, Optional, Dict, Any, List
 
 import requests
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -342,8 +342,47 @@ async def update_risk_summary(session: AsyncSession, agent_internal_id: str) -> 
 # EXISTING POST API
 # ============================================================
 
-@router.post("/classify-risk", response_model=RiskClassificationResponse)
-async def classify_risk(request: RiskClassificationRequest, http_request: Request):
+async def _track_workflow(
+    workflow_id: str,
+    handle: Any,
+    tenant_id: Optional[str],
+    agent_internal_id: str,
+    agent_id: str,
+    agent_name: str,
+    agent_description: str,
+) -> None:
+    try:
+        await handle.result()
+        _set_workflow_status(
+            workflow_id,
+            run_id=handle.result_run_id,
+            tenant_id=tenant_id,
+            agent_internal_id=agent_internal_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            agent_description=agent_description,
+            status="completed",
+        )
+    except Exception as e:
+        _set_workflow_status(
+            workflow_id,
+            run_id=handle.result_run_id,
+            tenant_id=tenant_id,
+            agent_internal_id=agent_internal_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            agent_description=agent_description,
+            status="failed",
+            error=str(e),
+        )
+
+
+@router.post("/classify-risk", status_code=202)
+async def classify_risk(
+    request: RiskClassificationRequest,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+):
     workflow_id = f"risk-manager-{uuid.uuid4()}"
     tenant_id = request.tenant_id or _tenant(http_request)
     _set_workflow_status(
@@ -398,31 +437,24 @@ async def classify_risk(request: RiskClassificationRequest, http_request: Reques
             status="running",
         )
 
-        workflow_result = await handle.result()
-        risk_result = workflow_result["risk_result"]
-
-        _set_workflow_status(
+        background_tasks.add_task(
+            _track_workflow,
             workflow_id,
-            run_id=handle.result_run_id,
-            tenant_id=tenant_id,
-            agent_internal_id=request.agent_internal_id,
-            agent_id=request.agent_id,
-            agent_name=request.agent_name,
-            agent_description=request.agent_description,
-            status="completed",
+            handle,
+            tenant_id,
+            request.agent_internal_id,
+            request.agent_id,
+            request.agent_name,
+            request.agent_description,
         )
 
-        return RiskClassificationResponse(
-            agent_internal_id=request.agent_internal_id,
-            agent_id=request.agent_id,
-            risk_classification=risk_result["Risk Classification"],
-            personally_identifiable_information=risk_result["Personally Identifiable Information"],
-            protected_health_information=risk_result["Protected Health Information"],
-            payment_card_industry=risk_result["Payment Card Industry"],
-            article_5=risk_result["Article 5(Prohibited AI Practices)"],
-            article_6=risk_result["Article 6(High-Risk AI Systems)"],
-            risk_rating_rationale=risk_result["Risk Rating Rationale"],
-        )
+        return {
+            "workflow_id": workflow_id,
+            "agent_id": request.agent_id,
+            "agent_internal_id": request.agent_internal_id,
+            "status": "running",
+        }
+
     except Exception as e:
         _set_workflow_status(
             workflow_id,

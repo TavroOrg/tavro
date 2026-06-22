@@ -725,6 +725,10 @@ class AgentMetadataExporter:
                 resp = requests.post(primary_url, json=payload, timeout=(2, 30))
                 if resp.status_code >= 400:
                     print(f"[risk-trigger] Primary endpoint returned {resp.status_code}: {resp.text[:300]}")
+            except requests.exceptions.ReadTimeout:
+                # The server received the request and started the workflow — do NOT
+                # fall back, because doing so would trigger a duplicate workflow.
+                print(f"[risk-trigger] Primary read timeout — workflow already started, skipping fallback")
             except Exception as e:
                 print(f"[risk-trigger] Primary endpoint failed ({primary_url}): {e}")
                 try:
