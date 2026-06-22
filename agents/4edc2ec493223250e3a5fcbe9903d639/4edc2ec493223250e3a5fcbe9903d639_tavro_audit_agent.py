@@ -1,26 +1,28 @@
 """
 Tavro Audit Agent
 =================
-Tavro ID      : 4edc2ec493223250e3a5fcbe9903d639
-File          : 4edc2ec493223250e3a5fcbe9903d639_tavro_audit_agent.py
+Tavro ID    : 4edc2ec493223250e3a5fcbe9903d639
+File        : 4edc2ec493223250e3a5fcbe9903d639_tavro_audit_agent.py
 
-Role          : Organization audit agent for all agents and risk assessment details
-                based on the AIVSS framework.
-Description   : Produces audit-ready HTML reports by retrieving linked risk
-                assessments, agents, and summaries, validating every AIVSS score
-                and classification against the official AIVSS guide, and
-                synthesizing validated findings into the mandated Tavro template.
+Description : Performs organization-wide AI agent audits and risk assessments
+              based on the AIVSS (AI Vulnerability Scoring System) framework.
+              Produces audit-ready HTML reports following the Tavro audit template.
 
-Risk          : Classification=Unknown | Score=4.64
-                EU AI Act=Other       | AIVSS=5.55
+Risk Classification : Unknown
+Risk Score          : 4.64
+AIVSS Score         : 5.55
+EU AI Act Category  : Other
 
-Tools         : Get Risk profile details
-                AIA File Upload
-                Get Agent details & related entities
-                Update Audit Report
+Tools:
+  - Get Risk profile details
+  - AIA File Upload
+  - Get Agent details & related entities
+  - Update Audit Report
 
-Data Sources  : Tavro Audit Agent
-PII/PHI/PCI   : No / No / No
+Data Sources:
+  - Tavro Audit Agent
+
+Sensitivity: PII=No | PHI=No | PCI=No
 """
 
 import os
@@ -39,84 +41,63 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 @dataclass
-class TavroAuditAgentRecord:
-    """Represents a record from the 'Tavro Audit Agent' data source."""
-    sys_id: str
-    agent_name: str
-    agent_description: Optional[str] = None
-    agent_source: Optional[str] = None          # platform / source system
-    agent_status: Optional[str] = None          # active, inactive, etc.
-
-    # Risk & governance
-    aivss_score: Optional[float] = None
-    aivss_classification: Optional[str] = None  # Low / Medium / High / Critical
-    risk_classification: Optional[str] = None
-    eu_ai_act_category: Optional[str] = None
-
-    # Assessment linkage
-    assessment_sys_id: Optional[str] = None
-    assessment_summary: Optional[str] = None
-    assessment_status: Optional[str] = None     # Active / Cancelled / Failed
-
-    # Capability flags (used for EU AI Act mapping)
-    has_write_access: bool = False
-    has_operational_access: bool = False
-    uses_biometrics: bool = False
-    embedded_ai: Optional[str] = None           # "Yes" / "No"
-    associated_agent: Optional[str] = None
-
-    # Access / sensitivity — no PII, PHI, or PCI per configuration
-    pii_data: bool = False   # PII: No
-    phi_data: bool = False   # PHI: No
-    pci_data: bool = False   # PCI: No
-
-    # AIVSS component attributes (for recomputation)
-    aivss_components: Dict[str, Any] = field(default_factory=dict)
-
-    # Regulatory flags
-    prohibited_practice: bool = False
-    high_risk_eu: bool = False
-
-
-@dataclass
-class RiskProfileRecord:
-    """Represents a risk profile retrieved from the risk-profile tool."""
+class RiskProfile:
+    """Risk profile for an AI agent as stored in Tavro."""
     sys_id: str
     agent_sys_id: str
-    profile_name: Optional[str] = None
-    overall_score: Optional[float] = None
-    classification: Optional[str] = None
+    aivss_score: float
+    aivss_classification: str          # e.g. Low / Medium / High / Critical
+    eu_ai_act_category: str            # e.g. Prohibited / High-Risk / Limited / Minimal / Other
+    risk_classification: str
+    has_write_access: bool
+    has_operational_access: bool
+    pii_involved: bool                 # Not PII data — flag only
+    phi_involved: bool                 # Not PHI data — flag only
+    pci_involved: bool                 # Not PCI data — flag only
+    biometric_use: bool
     component_scores: Dict[str, float] = field(default_factory=dict)
-    last_assessed: Optional[str] = None
-    assessor: Optional[str] = None
-    notes: Optional[str] = None
+    missing_attributes: List[str] = field(default_factory=list)
+    assessment_summary: str = ""
+    assessment_status: str = ""        # Active / Cancelled / Failed
 
 
 @dataclass
-class AgentDetailRecord:
-    """Represents agent details and related entities."""
+class AgentDetail:
+    """Core details for a discovered AI agent."""
     sys_id: str
     name: str
-    description: Optional[str] = None
-    owner: Optional[str] = None
-    department: Optional[str] = None
-    source_platform: Optional[str] = None
-    linked_assessment_ids: List[str] = field(default_factory=list)
-    linked_risk_profile_ids: List[str] = field(default_factory=list)
-    governance_status: Optional[str] = None
-    created_on: Optional[str] = None
-    updated_on: Optional[str] = None
+    description: str
+    platform: str
+    source: str
+    embedded_ai: bool
+    embedded_ai_application: str
+    linked_risk_assessment_id: Optional[str]
+    is_mission_critical: bool
+    is_business_critical: bool
+    governance_status: str
 
 
 @dataclass
-class AuditReportRecord:
-    """Represents an audit report payload for the Update Audit Report tool."""
+class AuditRecord:
+    """Top-level audit record linking all agents for a given audit_sys_id."""
     audit_sys_id: str
-    report_html: str
-    generated_at: Optional[str] = None
-    generated_by: str = "Tavro Audit Agent"
-    status: str = "Draft"
-    notes: Optional[str] = None
+    organisation: str
+    audit_date: str
+    total_agents_in_scope: int
+    risk_profiles: List[RiskProfile] = field(default_factory=list)
+    agents: List[AgentDetail] = field(default_factory=list)
+    aivss_guide: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AuditReportPayload:
+    """Payload sent to the Update Audit Report tool."""
+    audit_sys_id: str
+    html_report: str
+    generated_at: str
+    total_agents: int
+    critical_count: int
+    high_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -125,32 +106,29 @@ class AuditReportRecord:
 
 def get_risk_profile_details(audit_sys_id: str) -> Dict[str, Any]:
     """
-    Retrieve all risk-profile records linked to the given audit system ID.
+    Retrieve all risk assessment profiles linked to the given audit_sys_id.
 
-    Args:
-        audit_sys_id: The sys_id of the audit record whose risk profiles
-                      are to be fetched.
-
-    Returns:
-        A dictionary containing a list of risk profile objects with their
-        AIVSS component scores, classifications, and metadata.
+    Returns a dict containing:
+      - risk_profiles: list of risk profile records
+      - aivss_guide: the official AIVSS scoring guide (thresholds, rules)
+      - assessment_summaries: per-agent summary texts
+      - cancelled_failed_counts: per-agent count of non-active assessments
     """
     # TODO: Replace with real integration
     return {}
 
 
-def aia_file_upload(file_content: str, file_name: str, content_type: str = "text/html") -> Dict[str, Any]:
+def aia_file_upload(file_content: str, filename: str, mime_type: str = "text/html") -> Dict[str, Any]:
     """
-    Upload a file (e.g., an HTML audit report) to the AIA document store.
+    Upload a file (e.g., the finished HTML audit report) to the AIA document store.
 
     Args:
-        file_content:  Raw string content of the file to upload.
-        file_name:     Desired file name in the document store.
-        content_type:  MIME type of the content (default 'text/html').
+        file_content: Raw content of the file to upload.
+        filename: Target filename in the document store.
+        mime_type: MIME type of the file being uploaded.
 
     Returns:
-        A dictionary containing the upload result, including the document
-        sys_id and URL for retrieval.
+        Upload confirmation including document sys_id and URL.
     """
     # TODO: Replace with real integration
     return {}
@@ -158,58 +136,53 @@ def aia_file_upload(file_content: str, file_name: str, content_type: str = "text
 
 def get_agent_details_and_related_entities(audit_sys_id: str) -> Dict[str, Any]:
     """
-    Retrieve all agents linked to the given audit system ID together with
-    their related entities (assessments, risk profiles, summaries, AIVSS
-    component attributes, EU AI Act mapping fields).
+    Retrieve all AI agents linked to the audit, along with related entities such as
+    business applications, platforms, and embedded-AI flags.
 
     Args:
-        audit_sys_id: The sys_id of the audit record.
+        audit_sys_id: The system ID of the audit record.
 
     Returns:
-        A dictionary containing agents, assessments, summaries, and the
-        OWASP AIVSS reference guide required for validation.
+        Dict containing agents list, application metadata, and platform breakdown.
     """
     # TODO: Replace with real integration
     return {}
 
 
-def update_audit_report(audit_sys_id: str, report_html: str, status: str = "Draft") -> Dict[str, Any]:
+def update_audit_report(audit_sys_id: str, html_report: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Persist the generated HTML audit report back to the Tavro platform
-    against the specified audit record.
+    Persist the final HTML audit report back to the Tavro audit record.
 
     Args:
-        audit_sys_id: The sys_id of the audit record to update.
-        report_html:  The fully rendered HTML audit report string.
-        status:       Lifecycle status for the report (default 'Draft').
+        audit_sys_id: The system ID of the audit record to update.
+        html_report: Validated, fully-rendered HTML string of the audit report.
+        metadata: Summary metadata (agent counts, score stats, generation timestamp).
 
     Returns:
-        A dictionary with the update confirmation, including the updated
-        record sys_id and timestamp.
+        Confirmation dict with update status and record URL.
     """
     # TODO: Replace with real integration
     return {}
 
 
 # ---------------------------------------------------------------------------
-# Claude Tool Definitions
+# TOOLS list — Claude tool definitions
 # ---------------------------------------------------------------------------
 
 TOOLS: List[Dict[str, Any]] = [
     {
         "name": "get_risk_profile_details",
         "description": (
-            "Retrieves all risk-profile records linked to a given audit_sys_id, "
-            "including AIVSS component scores, overall score, classification, "
-            "and assessment metadata. Use this to gather the raw scoring data "
-            "needed for AIVSS validation."
+            "Retrieve all risk assessment profiles, AIVSS component scores, assessment summaries, "
+            "and the official AIVSS guide for a given audit_sys_id. "
+            "Also returns cancelled/failed assessment counts per agent."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "audit_sys_id": {
                     "type": "string",
-                    "description": "The sys_id of the audit record whose risk profiles are to be fetched."
+                    "description": "The Tavro audit record system ID."
                 }
             },
             "required": ["audit_sys_id"]
@@ -218,45 +191,40 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "aia_file_upload",
         "description": (
-            "Uploads a file to the AIA document store. Primarily used to store "
-            "the generated HTML audit report as an attached document. "
-            "Returns the document sys_id and retrieval URL."
+            "Upload the finished HTML audit report or any supporting file to the AIA document store."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "file_content": {
                     "type": "string",
-                    "description": "Raw string content of the file to upload."
+                    "description": "Raw string content of the file."
                 },
-                "file_name": {
+                "filename": {
                     "type": "string",
-                    "description": "Desired file name in the document store."
+                    "description": "Target filename, e.g. audit_report_<audit_sys_id>.html"
                 },
-                "content_type": {
+                "mime_type": {
                     "type": "string",
-                    "description": "MIME type of the content. Defaults to 'text/html'.",
+                    "description": "MIME type of the file. Default: text/html",
                     "default": "text/html"
                 }
             },
-            "required": ["file_content", "file_name"]
+            "required": ["file_content", "filename"]
         }
     },
     {
         "name": "get_agent_details_and_related_entities",
         "description": (
-            "Retrieves all agents linked to the given audit_sys_id along with "
-            "their related entities: assessments, risk profiles, assessment "
-            "summaries, AIVSS component attributes, embedded-AI flags, and the "
-            "OWASP AIVSS reference guide. This is the primary data-gathering "
-            "tool that must be called before any analysis."
+            "Retrieve all AI agents associated with the audit, including platform metadata, "
+            "embedded-AI flags, linked risk assessment IDs, and application criticality markers."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "audit_sys_id": {
                     "type": "string",
-                    "description": "The sys_id of the audit record."
+                    "description": "The Tavro audit record system ID."
                 }
             },
             "required": ["audit_sys_id"]
@@ -265,29 +233,31 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "update_audit_report",
         "description": (
-            "Persists the completed HTML audit report back to the Tavro platform "
-            "against the specified audit record. Must be the final tool call after "
-            "the report HTML has been fully generated and stored in ${audit_result}."
+            "Save the final HTML audit report to the Tavro audit record and mark it as complete."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "audit_sys_id": {
                     "type": "string",
-                    "description": "The sys_id of the audit record to update."
+                    "description": "The system ID of the audit record to update."
                 },
-                "report_html": {
+                "html_report": {
                     "type": "string",
-                    "description": "The fully rendered HTML audit report string."
+                    "description": "The complete, validated HTML audit report string."
                 },
-                "status": {
-                    "type": "string",
-                    "description": "Lifecycle status for the report.",
-                    "enum": ["Draft", "Final", "Under Review"],
-                    "default": "Draft"
+                "metadata": {
+                    "type": "object",
+                    "description": "Summary metadata: agent counts, score stats, generation timestamp.",
+                    "properties": {
+                        "total_agents": {"type": "integer"},
+                        "critical_count": {"type": "integer"},
+                        "high_count": {"type": "integer"},
+                        "generated_at": {"type": "string"}
+                    }
                 }
             },
-            "required": ["audit_sys_id", "report_html"]
+            "required": ["audit_sys_id", "html_report", "metadata"]
         }
     }
 ]
@@ -299,42 +269,43 @@ TOOLS: List[Dict[str, Any]] = [
 
 def handle_tool_call(name: str, inputs: dict) -> Any:
     """
-    Route an incoming tool call from the Claude model to the appropriate
-    stub function and return the serialised result.
+    Route an incoming tool-use request from Claude to the appropriate stub function.
 
     Args:
-        name:   Name of the tool as defined in TOOLS.
-        inputs: Dictionary of input parameters provided by the model.
+        name:   The tool name as declared in TOOLS.
+        inputs: The input arguments extracted from the Claude tool_use block.
 
     Returns:
-        JSON-serialisable result from the corresponding tool function.
+        JSON-serialisable result from the called stub, or an error dict.
     """
-    if name == "get_risk_profile_details":
-        return get_risk_profile_details(
-            audit_sys_id=inputs["audit_sys_id"]
-        )
+    dispatch_map = {
+        "get_risk_profile_details": lambda i: get_risk_profile_details(
+            audit_sys_id=i["audit_sys_id"]
+        ),
+        "aia_file_upload": lambda i: aia_file_upload(
+            file_content=i["file_content"],
+            filename=i["filename"],
+            mime_type=i.get("mime_type", "text/html")
+        ),
+        "get_agent_details_and_related_entities": lambda i: get_agent_details_and_related_entities(
+            audit_sys_id=i["audit_sys_id"]
+        ),
+        "update_audit_report": lambda i: update_audit_report(
+            audit_sys_id=i["audit_sys_id"],
+            html_report=i["html_report"],
+            metadata=i.get("metadata", {})
+        ),
+    }
 
-    elif name == "aia_file_upload":
-        return aia_file_upload(
-            file_content=inputs["file_content"],
-            file_name=inputs["file_name"],
-            content_type=inputs.get("content_type", "text/html")
-        )
-
-    elif name == "get_agent_details_and_related_entities":
-        return get_agent_details_and_related_entities(
-            audit_sys_id=inputs["audit_sys_id"]
-        )
-
-    elif name == "update_audit_report":
-        return update_audit_report(
-            audit_sys_id=inputs["audit_sys_id"],
-            report_html=inputs["report_html"],
-            status=inputs.get("status", "Draft")
-        )
-
-    else:
+    handler = dispatch_map.get(name)
+    if handler is None:
         return {"error": f"Unknown tool: {name}"}
+
+    try:
+        result = handler(inputs)
+        return result if result is not None else {"status": "ok", "data": None}
+    except Exception as exc:  # pragma: no cover
+        return {"error": str(exc), "tool": name, "inputs": inputs}
 
 
 # ---------------------------------------------------------------------------
@@ -342,120 +313,151 @@ def handle_tool_call(name: str, inputs: dict) -> Any:
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """
-You are the **Tavro Audit Agent** (Tavro ID: 4edc2ec493223250e3a5fcbe9903d639), operating within the Tavro AI Governance Platform.
+You are the **Tavro Audit Agent** — an authoritative AI governance auditor operating within
+the Tavro platform. Your sole purpose is to produce a rigorous, audit-ready HTML report for
+a given `audit_sys_id`, following the mandatory Tavro audit template and the AIVSS framework.
 
-⚠️  GOVERNANCE WARNING: The governance status for this agent is currently **Not Set**. All outputs must be treated as preliminary/draft until formal governance approval is obtained. Do not publish or act on findings without appropriate human review.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GOVERNANCE WARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This agent's governance status is **Not Set**. It has not received formal approval.
+Operate with heightened caution:
+  • Do not expose internal system identifiers beyond those needed for the report.
+  • Do not speculate or extrapolate beyond retrieved records.
+  • Every claim must be traceable to a retrieved data record or the official AIVSS guide.
+  • Flag this governance gap in the audit trail metadata.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IDENTITY & ROLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You are an expert in AI governance, risk management, and regulatory compliance (EU AI Act,
+AIVSS framework). You conduct organisation-wide audits of AI agents, validate risk scores,
+and synthesise findings into executive-grade reports for senior stakeholders and compliance teams.
 
-## Identity & Role
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATA SENSITIVITY GUARDRAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• PII: No — do not treat any retrieved field as personally identifiable.
+• PHI: No — no protected health information in scope.
+• PCI: No — no payment card data in scope.
+Even so, apply the principle of minimum necessary disclosure. Do not reproduce raw data
+dumps in the report; only present processed, aggregated, or validated findings.
 
-You are an AI governance auditor specialised in AIVSS-framework-based risk assessments. Your sole purpose is to produce a factual, evidence-backed, audit-ready HTML report for a given `audit_sys_id`. You retrieve data, validate it against the official AIVSS guide, and synthesise findings into the mandated Tavro template. You do not speculate, extrapolate, or invent data.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RISK-AWARE GUARDRAILS  (Risk Score 4.64 | AIVSS 5.55 | EU AI Act: Other)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• This agent itself carries a Medium risk profile. Apply conservative judgment.
+• Do not make irreversible write operations without confirming the audit report is complete.
+• AIVSS score thresholds (apply guide values if they differ):
+    Low      :  0.0 – 3.9
+    Medium   :  4.0 – 6.9
+    High     :  7.0 – 8.9
+    Critical :  9.0 – 10.0
+• EU AI Act: flag agents in Prohibited or High-Risk categories by name.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OPERATIONAL INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Business Context
+OBJECTIVE
+Produce an audit-ready HTML report for a given audit_sys_id by retrieving linked risk
+assessments, agents, and summaries, validating every AIVSS score and classification against
+the official AIVSS guide, and synthesising validated findings into the mandated Tavro template.
 
-This agent conducts organisation-wide audits of all discovered AI agents and their risk assessment details. The audit validates AIVSS scores and classifications, maps agents to EU AI Act categories, identifies governance gaps, and surfaces critical risk exposures for leadership review.
+INPUT
+  audit_sys_id — a single string value provided by the caller.
 
----
+BUSINESS RULES
+• Use agent names wherever meaningful — sentences should read:
+  "<AgentName> is classified as …" rather than "1 agent has …".
+• Vary tone and sentence structure throughout the report — avoid monotony.
+• The report must not look like a wall of text; use structure, emphasis, and layout.
 
-## Operational Instructions
+DATA RETRIEVAL & VALIDATION
+• Use only tool-based retrievals. Use `get_risk_profile_details` to obtain the official
+  AIVSS reference guide as well as all risk data.
+• Missing numeric fields → use a sensible, professionally worded placeholder ("Data Not Available").
+• Do not infer or extrapolate beyond retrieved records.
 
-### Objective
-Produce an audit-ready HTML report for a given `audit_sys_id` by retrieving linked risk assessments, agents, and summaries, validating every AIVSS score and classification against the official AIVSS guide, and synthesising validated findings into the mandated Tavro template.
+MANDATORY PROCESSING STEPS
+1. Retrieve all risk assessments for audit_sys_id, all linked agents, all assessment summaries.
+2. Load the official AIVSS guide; extract: score thresholds, classification rules, required
+   attributes, and validation logic.
+3. For each agent: recompute AIVSS where component attributes are present; compare to stored
+   score; compare stored classification to guide-derived classification; flag mismatches and
+   missing attributes.
+4. Use agent names in every relevant sentence — never anonymous "Agent #N".
+5. Produce detailed entries ONLY for exceptions (misclassifications, outliers, missing critical
+   attributes).
+6. If an agent's summary field is empty, note the count of Cancelled/Failed assessments and
+   mention that in audit scope. Strictly exclude that agent's data from all other analysis.
 
-### Input
-- `audit_sys_id` (single value)
+REPORT TEMPLATE — SECTION-BY-SECTION
 
-### Business Rules
-- Take agent names wherever necessary, majorly in where an agent is differentiating in any point.
-- Do not be monotonic in tone and writing — be a little dynamic in those areas.
-- Based on data, produce a report that doesn't look like just a bunch of text.
+── Executive Audit Report (h2 heading) ──
 
-### Data Retrieval & Validation Precepts
-- Use only Script Tool retrievals and use the 'Get AIVSS guide' tool to extract the official AIVSS reference guide.
-- If a required field or attribute is missing, return generic statements; if numbers or quantifiable statements are involved, use sensible statements that reports generally have.
-- Do not infer or extrapolate beyond retrieved records. All claims must be traceable to retrieved data or guide rules.
+── 1. Executive Summary (h3) ──
+  Audit Scope paragraph:
+    "Assessment of {N} agents discovered via Tavro across {platforms} Platforms.
+     The objective of the assessment is to identify potential gaps in agent governance,
+     critical risk exposure and the business impact."
 
-### Mandatory Processing Steps (condensed)
-1. **Retrieve**: all risk assessments for `audit_sys_id`, all agents linked to those assessments, all assessment summaries, and OWASP AIVSS summary. (No intermediate output.)
-2. **Load** the official AIVSS guide and extract: score thresholds, classification rules, required attributes, and the exact validation logic.
-3. **For each agent**: recompute AIVSS where component attributes exist; compare recomputed score to stored score; compare stored classification to classification derived from guide thresholds; flag mismatches and missing attributes.
-4. Mention the **name of agent** wherever needed instead of "1 agent has so and so". Make sentences like: `<agent_name> is classified as ...`. If more than one agent, name all of them. Have proper detailed sentences that are understandable.
-5. Only produce detailed entries for **exceptions** (misclassifications, outliers, missing critical attributes).
-6. If the summary field is empty for any agent, make note of the count of all Cancelled/Failed assessments and mention that in audit scope. **Strictly do not use that agent's data anywhere.**
+  Visibility Gap sub-point:
+    Embedded AI Yes = X
+    AI Yes + no associated agent = Y  → Mission Critical = Y/X × 100 %
+    AI Yes + associated agent present = Z → Business Critical = Z/X × 100 %
 
-### Template — What to Include in Each Section
+  Critical Exposure:
+    Count agents with AIVSS ≥ 7 and AIVSS ≥ 9; quantify how many of those have
+    write/operational access.
 
-#### Executive Audit Report (h2) → top-level title.
+  Regulatory Posture:
+    Enumerate agents (by name) triggering Prohibited Practices or High-Risk under EU AI Act.
 
-#### 1. Executive Summary (h3)
-- **Audit scope**: Assessment of {total count of assessment} agents discovered via Tavro across {list of agent sources/platforms} Platforms. The objective is to identify potential gaps in agent governance, critical risk exposure and the business impact.
-  - **Visibility Gap**: [x] out of total business applications indicate that they have embedded AI Yes but no associated agents have been identified or discovered in the system. Calculate [x]% of these applications as mission critical and remaining [y]% as business critical from Embedded AI as Yes application count (not total application count).
-    - In simple words:
-      - Embedded AI Yes = x
-      - AI Yes and associated agent is empty = y
-      - AI Yes and associated agent is not empty = z
-      - mission critical = y/x*100
-      - business critical = z/x*100
-  - **Critical Exposure**: count agents with AIVSS >= 7 and those with AIVSS >= 9; quantify how many of those have write/operational access.
-  - **Regulatory Posture**: enumerate numbers of agents with their names triggering Prohibited Practices or High-Risk categories per EU AI Act mapping.
-- **Strategic Recommendation**: provide 3–5 prioritised, factual recommendations strictly tied to documented findings. No generic suggestions.
+  Strategic Recommendations:
+    3–5 prioritised, factual recommendations tied strictly to documented findings.
 
-#### 2. Detailed Observations (h3)
-- **Agent Risk Distribution Summary**: The distribution of AIVSS scores and corresponding risk classifications is a critical metric for understanding the organisation's exposure to AI-related vulnerabilities. The current assessment of the {total number of assessments} agents reveals a distinct clustering of risk at the upper end of the AIVSS scale (High Risk), highlighting a concentration of significant potential exposure.
-- **Key Observations**: three explicit points:
-  1. **Risk Concentration**: report number and percent of agents (with names) in High (>=7) and Critical (>=9) bins. Agents already in Critical bin must NOT be mentioned in the High bin.
-  2. **Data Integrity**: state validation results — which agents and how many had complete attributes, how many recomputed scores matched stored scores. Use exact counts.
-  3. **Score Gap**: report min, max, and any notable gaps in contiguous score ranges. Only mention when meaningful.
-- **Detected Anomalies**:
-  - List only exceptions. If no anomalies found regarding assessment data, **strictly state**: "No anomalies detected based on available assessment data." (without table)
-  - For each anomaly include agent id, anomaly type, short factual description. Use tabular format with headers: Anomaly Type | Description | Observations.
-- **Next Best Action**: 3–5 evidence-backed next steps, each tied to a specific finding. Do not mention anything about missing or unavailable data — this is an action section.
+── 2. Detailed Observations (h3) ──
+  Opening paragraph about AIVSS distribution (use exact total count).
 
-#### 3. Risk Assessment Details by Agent (h3)
-- Provide an HTML table (thead/tbody) with exact columns in order: **S.No, Agent Name, Regulatory Risk Classification, AIVSS Score** (score only). S.No sequential. Include all agents. For any missing value use "Data Not Available" or similar. No extra columns or commentary.
+  Agent Risk Distribution Summary:
+    Narrative description of score clustering.
 
-### Data Interpretation & Validation Rules
-- **Score bounds**: AIVSS range 0–10. Use guide thresholds: High risk >= 7.0, Critical risk >= 9.0. Always take higher values — if all agents are Critical, no need to also mention High risk for them.
-- **Outlier & clustering detection**: Compute IQR; mark agents as outliers if score < Q1 - 1.5×IQR or > Q3 + 1.5×IQR; report clustering if a plurality of agents fall above the High threshold (document exact percent). Avoid interpretive language beyond these metrics.
-- **Regulatory mapping**: Map attributes (PII/PHI/PCI, biometric use, write access) to EU AI Act categories per guide; point out if mapping inputs are missing.
+  Key Observations (three explicit points):
+    • Risk Concentration — agents by name in High (≥7) and Critical (≥9) bins.
+      An agent already in Critical must NOT also appear in High.
+    • Data Integrity — validation results: complete-attribute count, recomputed-vs-stored matches.
+    • Score Gap — min, max, notable contiguous range gaps (only where meaningful).
 
-### Presentation & Audit-Readiness Rules
-- Output must be **valid Rich HTML** using specified tags.
-- Highlight key metrics visually (bold or emphasised HTML) but preserve exact narrative wording from the template where present.
-- Make subpoints bold and highlighted. For important values like agent names, platform names, scores — emphasise them.
-- Justify every flagged anomaly by citing the numeric evidence (e.g., recomputed score, missing attribute name).
-- Save final output to `${audit_result}` and invoke **Update Audit Report** with that payload.
+  Detected Anomalies:
+    If none → "No anomalies detected based on available assessment data." (no table).
+    If any → HTML table with columns: Anomaly Type | Description | Observations.
 
----
+  Next Best Action:
+    3–5 evidence-backed next steps tied to specific findings.
+    Do NOT reference missing data — this is an action section.
 
-## Data Sensitivity Guardrails
+── 3. Risk Assessment Details by Agent (h3) ──
+  HTML table (thead/tbody). Exact columns in order:
+    S.No | Agent Name | Regulatory Risk Classification | AIVSS Score
+  Sequential S.No. All agents included. Use "Data Not Available" for missing values.
+  No extra columns or commentary below the table.
 
-This agent handles **no PII, no PHI, and no PCI data**. Despite this:
-- Do not log, echo, or transmit any data fields that appear to contain personal identifiers, health information, or payment details if encountered unexpectedly in retrieved records.
-- Treat all retrieved organisational data as internal-confidential.
-- Do not include raw API responses in the final report HTML.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRESENTATION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Output must be valid, rich HTML.
+• Sub-headings and key labels: <strong> or <b>.
+• Highlight important values (agent names, scores, platform names): <strong> or <span> with
+  inline style where appropriate.
+• Every flagged anomaly must cite numeric evidence (recomputed score, missing attribute name).
+• Save final output to a variable and invoke `update_audit_report` with that payload.
 
----
-
-## Risk-Aware Guardrails
-
-- **Risk Score**: 4.64 (Unknown classification) | **AIVSS**: 5.55 | **EU AI Act**: Other
-- Given the Unknown risk classification, apply conservative judgement: when in doubt, flag for human review rather than making a determination.
-- Do not make autonomous decisions about agent governance status or risk classifications beyond what the AIVSS guide explicitly supports.
-- All findings in the report are advisory. Governance decisions rest with authorised human reviewers.
-- This agent's own governance status is **Not Set** — outputs are inherently draft until a human approver signs off.
-
----
-
-## Tone and Constraints
-- Professional, factual, evidence-based. No speculation or extrapolation.
-- Every statement must be tied to a retrieved record or the AIVSS guide.
-- No LLM or robotic tone. No overly obvious statements. No overexplaining.
-- Be dynamic — vary sentence structure and phrasing across sections.
-- The report should look visually structured, not a wall of text.
+TONE & CONSTRAINTS
+• Professional, factual, evidence-based. No speculation.
+• Avoid LLM/robotic phrasing. No "It is worth noting that…", "Certainly!", etc.
+• Do not state the obvious or over-explain. Be concise but complete.
+• Every statement must be traceable to a retrieved record or the AIVSS guide.
 """
 
 
@@ -467,27 +469,31 @@ def run_agent(user_message: str) -> str:
     """
     Execute the Tavro Audit Agent agentic loop.
 
-    Sends the user message to Claude, processes any tool calls, and continues
-    until a final text response is returned.
+    Sends the user message to Claude, handles all tool-use turns, and returns
+    the final text response (the completed audit report or a status message).
 
     Args:
-        user_message: The natural-language instruction triggering the audit,
-                      typically containing the audit_sys_id.
+        user_message: The triggering message, typically containing the audit_sys_id.
 
     Returns:
-        The final text response from the model (may include a confirmation
-        that the audit report has been saved).
+        The final text output from Claude after all tool interactions complete.
     """
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
     messages: List[Dict[str, Any]] = [
         {"role": "user", "content": user_message}
     ]
 
-    print(f"[Tavro Audit Agent] Starting audit run...")
-    print(f"[Tavro Audit Agent] User message: {user_message[:120]}{'...' if len(user_message) > 120 else ''}")
+    print(f"[Tavro Audit Agent] Starting audit run …")
+    print(f"[Tavro Audit Agent] User message: {user_message[:120]}{'…' if len(user_message) > 120 else ''}")
 
-    while True:
+    iteration = 0
+    max_iterations = 20  # Guard against runaway loops
+
+    while iteration < max_iterations:
+        iteration += 1
+        print(f"[Tavro Audit Agent] Calling Claude (iteration {iteration}) …")
+
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=4096,
@@ -496,93 +502,91 @@ def run_agent(user_message: str) -> str:
             messages=messages
         )
 
-        print(f"[Tavro Audit Agent] Model stop reason: {response.stop_reason}")
+        print(f"[Tavro Audit Agent] Stop reason: {response.stop_reason}")
 
-        # Append the assistant turn
-        messages.append({"role": "assistant", "content": response.content})
+        # Collect all tool-use blocks in this response turn
+        tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
+        text_blocks = [block for block in response.content if block.type == "text"]
 
-        # If the model is done, extract and return the final text
-        if response.stop_reason == "end_turn":
-            final_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    final_text += block.text
-            print("[Tavro Audit Agent] Audit run complete.")
+        if response.stop_reason == "end_turn" or not tool_use_blocks:
+            # No more tool calls — extract and return final text
+            final_text = "\n".join(block.text for block in text_blocks if hasattr(block, "text"))
+            print(f"[Tavro Audit Agent] Completed. Output length: {len(final_text)} chars.")
             return final_text
 
-        # Handle tool use
-        if response.stop_reason == "tool_use":
-            tool_results = []
+        # Append assistant turn to conversation history
+        messages.append({"role": "assistant", "content": response.content})
 
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_inputs = block.input
-                    tool_use_id = block.id
+        # Process every tool call in this turn
+        tool_results = []
+        for tool_block in tool_use_blocks:
+            tool_name = tool_block.name
+            tool_inputs = tool_block.input
+            tool_use_id = tool_block.id
 
-                    print(f"[Tavro Audit Agent] Tool call → {tool_name}({json.dumps(tool_inputs, default=str)[:200]})")
+            print(f"[Tavro Audit Agent] Tool called: {tool_name} | inputs: {json.dumps(tool_inputs, default=str)[:200]}")
 
-                    try:
-                        result = handle_tool_call(tool_name, tool_inputs)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": json.dumps(result, default=str)
-                        })
-                        print(f"[Tavro Audit Agent] Tool result for {tool_name}: OK")
-                    except Exception as exc:
-                        error_payload = {"error": str(exc), "tool": tool_name}
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": json.dumps(error_payload),
-                            "is_error": True
-                        })
-                        print(f"[Tavro Audit Agent] Tool error for {tool_name}: {exc}")
+            raw_result = handle_tool_call(tool_name, tool_inputs)
+            result_str = json.dumps(raw_result, default=str)
 
-            # Feed tool results back to the model
-            messages.append({"role": "user", "content": tool_results})
+            print(f"[Tavro Audit Agent] Tool result ({tool_name}): {result_str[:200]}{'…' if len(result_str) > 200 else ''}")
 
-        else:
-            # Unexpected stop reason — surface the last response text and exit
-            fallback_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    fallback_text += block.text
-            print(f"[Tavro Audit Agent] Unexpected stop reason: {response.stop_reason}")
-            return fallback_text or f"[Audit agent stopped unexpectedly: {response.stop_reason}]"
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": result_str
+            })
+
+        # Append all tool results as a single user turn
+        messages.append({"role": "user", "content": tool_results})
+
+    print(f"[Tavro Audit Agent] WARNING: Max iterations ({max_iterations}) reached.")
+    return "Audit run exceeded maximum iterations. Please review tool integrations and retry."
 
 
 # ---------------------------------------------------------------------------
-# Main Entry Point
+# main()
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     """
-    Realistic invocation of the Tavro Audit Agent.
+    Trigger the Tavro Audit Agent for a specific audit record.
 
-    Triggers a full organisational audit for the audit record identified by
-    the TAVRO_AUDIT_SYS_ID environment variable (falls back to a default
-    test sys_id if not set). Prints the final report confirmation to stdout.
+    In production this audit_sys_id would be passed via a Tavro workflow trigger,
+    a REST callback, or a scheduled job. Here we demonstrate the call pattern.
     """
-    audit_sys_id = os.getenv("TAVRO_AUDIT_SYS_ID", "4edc2ec493223250e3a5fcbe9903d639")
+    # The audit_sys_id to process — in production, source this from environment
+    # variable, CLI argument, or incoming webhook payload.
+    audit_sys_id = os.environ.get("TAVRO_AUDIT_SYS_ID", "4edc2ec493223250e3a5fcbe9903d639")
 
     user_message = (
-        f"Please run a full organisational audit for audit_sys_id = '{audit_sys_id}'. "
-        "Retrieve all linked agents and their risk assessments, validate every AIVSS "
-        "score and classification against the official AIVSS guide, and produce the "
-        "mandated Tavro audit report in valid HTML. Once the report is generated, "
-        "upload it via AIA File Upload and then persist it using Update Audit Report. "
-        "Ensure all three sections — Executive Summary, Detailed Observations, and "
-        "Risk Assessment Details by Agent — are complete and accurate."
+        f"Please conduct a full AIVSS-based audit for audit_sys_id: {audit_sys_id}.\n\n"
+        f"Steps to follow:\n"
+        f"1. Call `get_agent_details_and_related_entities` with audit_sys_id='{audit_sys_id}' "
+        f"   to retrieve all agents, their platforms, embedded-AI flags, and application metadata.\n"
+        f"2. Call `get_risk_profile_details` with audit_sys_id='{audit_sys_id}' to retrieve "
+        f"   all risk assessments, AIVSS component scores, assessment summaries, and the "
+        f"   official AIVSS reference guide.\n"
+        f"3. Validate every AIVSS score and classification against the official guide. "
+        f"   Recompute scores where component attributes are available. Flag mismatches.\n"
+        f"4. Exclude any agent whose summary field is empty; record their Cancelled/Failed "
+        f"   assessment count and mention it in the audit scope.\n"
+        f"5. Compose the full HTML audit report following the Tavro mandatory template "
+        f"   (Executive Audit Report → Executive Summary → Detailed Observations → "
+        f"   Risk Assessment Details by Agent).\n"
+        f"6. Call `update_audit_report` with audit_sys_id='{audit_sys_id}', the complete "
+        f"   HTML report, and the summary metadata dict.\n"
+        f"7. Optionally call `aia_file_upload` to archive the HTML report in the document store.\n\n"
+        f"Return the finished HTML report as your final response."
     )
 
     result = run_agent(user_message)
+
     print("\n" + "=" * 80)
     print("TAVRO AUDIT AGENT — FINAL OUTPUT")
     print("=" * 80)
     print(result)
-    print("=" * 80 + "\n")
+    print("=" * 80)
 
 
 # ---------------------------------------------------------------------------
@@ -591,63 +595,96 @@ def main() -> None:
 
 def approval_workflow() -> None:
     """
-    Stub for the Tavro governance approval workflow.
+    Post-execution governance workflow for the Tavro Audit Agent.
 
-    In production this would:
-    1. Submit the generated draft audit report for human review.
-    2. Notify the designated approver(s) via the configured notification channel.
-    3. Poll or await a webhook for the approval decision.
-    4. Update the report status to 'Final' upon approval or 'Rejected' on refusal.
-    5. Log the approval chain for audit-trail purposes.
+    Checks whether the agent's governance status has been formally approved.
+    If not, raises an alert and blocks downstream publishing steps.
 
-    NOTE: The governance status of this agent is currently **Not Set**.
-          This workflow must be completed before any report is treated as Final.
+    In a production deployment this would integrate with the Tavro governance
+    API to update the approval record and notify relevant stakeholders.
     """
-    audit_sys_id = os.getenv("TAVRO_AUDIT_SYS_ID", "4edc2ec493223250e3a5fcbe9903d639")
-    approver_email = os.getenv("TAVRO_APPROVER_EMAIL", "governance-team@organisation.internal")
+    governance_status = os.environ.get("TAVRO_GOVERNANCE_STATUS", "Not set")
+    agent_name = "Tavro Audit Agent"
+    tavro_id = "4edc2ec493223250e3a5fcbe9903d639"
 
-    print(f"[Approval Workflow] Submitting audit report for '{audit_sys_id}' to {approver_email} for review.")
-    print("[Approval Workflow] Status: Pending Human Approval")
-    print("[Approval Workflow] ⚠️  Governance status is Not Set — report remains Draft until approved.")
-    # TODO: Replace with real approval integration (e.g., ServiceNow approval task, email trigger, etc.)
+    print(f"\n[Approval Workflow] Checking governance status for '{agent_name}' ({tavro_id}) …")
+
+    if governance_status.lower() not in ("approved",):
+        print(
+            f"[Approval Workflow] ⚠️  GOVERNANCE STATUS: '{governance_status}' — "
+            f"formal approval has not been granted.\n"
+            f"  Action required: A designated AI governance officer must review the audit "
+            f"  output and approve this agent in the Tavro platform before it can be "
+            f"  promoted to production or scheduled for automated runs.\n"
+            f"  Publishing to Azure is BLOCKED until approval is confirmed."
+        )
+        # In production: send notification to governance team, create a Tavro task record,
+        # and halt the CI/CD pipeline.
+        return
+
+    print(f"[Approval Workflow] ✅ Agent '{agent_name}' is Approved. Proceeding to publish …")
+    publish_to_azure()
 
 
 def publish_to_azure() -> None:
     """
-    Stub for publishing the approved audit report to Azure storage / platform.
+    Publish the approved Tavro Audit Agent artefacts to the Azure deployment target.
 
-    In production this would:
-    1. Retrieve the approved HTML report from the Tavro platform.
-    2. Authenticate to Azure Blob Storage (or Azure DevOps / Power BI, etc.)
-       using credentials from environment variables.
-    3. Upload the report to the configured container / workspace.
-    4. Return and log the public or internal URL of the published artefact.
-    5. Update the audit record with the Azure artefact reference.
+    Responsibilities (production implementation):
+      - Package the agent source file and dependencies.
+      - Push the container image or function app package to Azure Container Registry
+        or Azure Functions.
+      - Update the Tavro platform registry with the deployed endpoint URL.
+      - Trigger a post-deployment smoke test to verify tool connectivity.
+
+    Current state: stub — replace with real Azure SDK / CLI calls.
     """
-    audit_sys_id = os.getenv("TAVRO_AUDIT_SYS_ID", "4edc2ec493223250e3a5fcbe9903d639")
-    azure_container = os.getenv("AZURE_AUDIT_CONTAINER", "tavro-audit-reports")
+    print("[Azure Publish] Initiating deployment to Azure …")
 
-    print(f"[Azure Publish] Publishing approved audit report for '{audit_sys_id}' to container '{azure_container}'.")
-    print("[Azure Publish] Status: Pending — approval must be confirmed before publishing.")
-    # TODO: Replace with real Azure SDK integration (azure-storage-blob, etc.)
+    # TODO: Replace with real Azure deployment logic, e.g.:
+    #   from azure.identity import DefaultAzureCredential
+    #   from azure.mgmt.containerinstance import ContainerInstanceManagementClient
+    #   credential = DefaultAzureCredential()
+    #   … deploy container with agent image …
+
+    deployment_target = os.environ.get("AZURE_DEPLOYMENT_TARGET", "azure-functions-tavro-prod")
+    print(f"[Azure Publish] Target environment : {deployment_target}")
+    print(f"[Azure Publish] Agent file          : 4edc2ec493223250e3a5fcbe9903d639_tavro_audit_agent.py")
+    print(f"[Azure Publish] Status              : Deployment stub — integration pending.")
+    print(f"[Azure Publish] Next step           : Configure AZURE_DEPLOYMENT_TARGET and Azure credentials.")
 
 
 def fix_issues() -> None:
     """
-    Stub for the automated issue-remediation workflow triggered post-audit.
+    Remediation helper invoked when the audit run surfaces critical issues
+    or when the approval workflow detects a governance gap.
 
-    In production this would:
-    1. Parse the generated audit report for flagged anomalies and critical findings.
-    2. Create remediation tasks in the configured ITSM / project-management system
-       for each identified issue.
-    3. Assign tasks to the relevant agent owners or governance team members.
-    4. Set SLA deadlines based on AIVSS severity (Critical → 48 h, High → 7 days, etc.).
-    5. Track and report remediation progress back to the audit record.
+    Typical remediation actions:
+      - Re-trigger data retrieval if tool stubs returned empty results.
+      - Patch missing AIVSS component attributes in source records.
+      - Escalate Prohibited / High-Risk EU AI Act classifications to the risk team.
+      - Re-run the agentic loop after fixes are applied.
     """
-    print("[Fix Issues] Extracting flagged anomalies and critical findings from the audit report...")
-    print("[Fix Issues] Creating remediation tasks for identified issues...")
-    print("[Fix Issues] ⚠️  Automated remediation is advisory only — all task assignments require human confirmation.")
-    # TODO: Replace with real ITSM integration (ServiceNow, Jira, Azure DevOps, etc.)
+    print("[Fix Issues] Scanning for known remediation paths …")
+
+    remediation_steps = [
+        "1. Verify ANTHROPIC_API_KEY is set and valid.",
+        "2. Confirm tool integrations (get_risk_profile_details, get_agent_details_and_related_entities) "
+        "   are connected to live Tavro data endpoints.",
+        "3. Ensure TAVRO_AUDIT_SYS_ID environment variable is set to a valid audit record ID.",
+        "4. Check that the AIVSS guide is retrievable via get_risk_profile_details — "
+        "   if not, provide a static fallback guide path.",
+        "5. For agents with empty summaries, confirm whether their assessments are genuinely "
+        "   Cancelled/Failed or if a data pipeline issue exists.",
+        "6. If EU AI Act Prohibited agents are identified, escalate to the AI Ethics Board "
+        "   immediately — do not schedule further automated runs until resolved.",
+        "7. Set TAVRO_GOVERNANCE_STATUS=Approved in the environment once formal sign-off is obtained.",
+    ]
+
+    for step in remediation_steps:
+        print(f"[Fix Issues]   {step}")
+
+    print("[Fix Issues] Remediation checklist printed. Address items above and re-run main().")
 
 
 # ---------------------------------------------------------------------------
