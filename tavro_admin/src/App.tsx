@@ -8,6 +8,7 @@ import AdminHomePage from './pages/AdminHomePage';
 import AdminConnectorsPage from './pages/AdminConnectorsPage';
 import AdminContainerLogsPage from './pages/AdminContainerLogsPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
+import AdminCompanyPage from './pages/AdminCompanyPage';
 
 function isAuthenticated(): boolean {
     const token = localStorage.getItem('tavro_admin_access_token');
@@ -43,6 +44,7 @@ function App() {
                         }
                     >
                         <Route index element={<AdminHomePage />} />
+                        <Route path="company" element={<AdminCompanyPage />} />
                         <Route path="connectors" element={<AdminConnectorsPage />} />
                         <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />

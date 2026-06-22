@@ -170,12 +170,17 @@ def get_current_agent_source_hash(agent_id: str):
 #   CREATE UNIQUE INDEX ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 # ══════════════════════════════════════════════════════════════════════════════
 
-def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> str:
+def upsert_agent(
+    card: dict, now_str: str, incoming_source_hash: str = None,
+    tenant_id: str = None, company_id: str = None, company_name: str = None,
+) -> str:
     ident    = card.get("identification", {})
     agent_id = ident.get("agent_id")
     incoming_internal_id = ident.get("agent_internal_id")
-    tenant_id = ident.get("tenant_id") or TENANT_ID or None
-    tenant_id_sql = "NULL" if not tenant_id else _sq(tenant_id)
+    tenant_id    = ident.get("tenant_id") or tenant_id or TENANT_ID or None
+    tenant_id_sql    = "NULL" if not tenant_id    else _sq(tenant_id)
+    company_id_sql   = "NULL" if not company_id   else _sq(company_id)
+    company_name_sql = "NULL" if not company_name else _sq(company_name)
 
     row = {
         "agent_name":             card.get("name"),
@@ -212,7 +217,7 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             agent_id, agent_internal_id, agent_name, agent_description,
             protocol_version, preferred_transport, supports_auth_ext_card,
             card_version, source_hash, source_system, record_hash,
-            tenant_id,
+            tenant_id, company_id, company_name,
             valid_from_ts, valid_to_ts, is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_id)}, {_sq(agent_internal_id)}, {_sq(row['agent_name'])},
@@ -220,7 +225,7 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             {_sq(row['preferred_transport'])}, {_bool(row['supports_auth_ext_card'])},
             {_sq(row['card_version'])}, {_sq(source_hash)}, {_sq(row['source_system'])},
             {_sq(record_hash)},
-            {tenant_id_sql},
+            {tenant_id_sql}, {company_id_sql}, {company_name_sql},
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
@@ -236,6 +241,8 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
             source_system          = EXCLUDED.source_system,
             record_hash            = EXCLUDED.record_hash,
             tenant_id              = EXCLUDED.tenant_id,
+            company_id             = EXCLUDED.company_id,
+            company_name           = EXCLUDED.company_name,
             updated_ts             = EXCLUDED.updated_ts
     """
     print("  Upserting agents …")
@@ -243,7 +250,8 @@ def upsert_agent(card: dict, now_str: str, incoming_source_hash: str = None) -> 
     return agent_internal_id
 
 
-def upsert_agent_configuration(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_configuration(card: dict, agent_internal_id: str, now_str: str,
+                               tenant_id: str = None):
     ident = card.get("identification", {})
     cfg   = card.get("configuration", {})
     if not has_meaningful_data(cfg):
@@ -253,6 +261,7 @@ def upsert_agent_configuration(card: dict, agent_internal_id: str, now_str: str)
     caps = card.get("capabilities", {})
     agent_id = ident.get("agent_id")
     execution_mode = "streaming" if caps.get("streaming") else "batch"
+    tenant_id_sql = _sq(tenant_id)
 
     row = {
         "access_scope":           cfg.get("access_scope"),
@@ -270,14 +279,14 @@ def upsert_agent_configuration(card: dict, agent_internal_id: str, now_str: str)
             agent_internal_id, agent_id,
             access_scope, memory_type, data_freshness_policy,
             autonomy_level, reasoning_model, human_in_the_loop_flag,
-            execution_mode, record_hash,
+            execution_mode, record_hash, tenant_id,
             valid_from_ts, valid_to_ts, is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(row['access_scope'])}, {_sq(row['memory_type'])},
             {_sq(row['data_freshness_policy'])}, {_sq(row['autonomy_level'])},
             {_sq(row['reasoning_model'])}, {_bool(row['human_in_the_loop_flag'])},
-            {_sq(row['execution_mode'])}, {_sq(record_hash)},
+            {_sq(row['execution_mode'])}, {_sq(record_hash)}, {tenant_id_sql},
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
@@ -292,17 +301,20 @@ def upsert_agent_configuration(card: dict, agent_internal_id: str, now_str: str)
             human_in_the_loop_flag = EXCLUDED.human_in_the_loop_flag,
             execution_mode         = EXCLUDED.execution_mode,
             record_hash            = EXCLUDED.record_hash,
+            tenant_id              = EXCLUDED.tenant_id,
             updated_ts             = EXCLUDED.updated_ts
     """
     print("  Upserting agent_configurations …")
     execute_dml(sql, label="agent_configurations INSERT ON CONFLICT")
 
 
-def upsert_agent_identification(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_identification(card: dict, agent_internal_id: str, now_str: str,
+                               tenant_id: str = None):
     ident    = card.get("identification", {})
     agent_id = ident.get("agent_id")
     tags_raw = ident.get("tags")
     tags     = tags_raw if isinstance(tags_raw, list) else []
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_identifications (
@@ -310,6 +322,7 @@ def upsert_agent_identification(card: dict, agent_internal_id: str, now_str: str
             goal_orientation, role, instruction,
             owner, environment, tags,
             governance_status, reviewer, cost_center,
+            tenant_id,
             is_current, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
@@ -318,6 +331,7 @@ def upsert_agent_identification(card: dict, agent_internal_id: str, now_str: str
             {_sq(ident.get('environment'))}, {_array_str(tags)},
             {_sq(ident.get('governance_status'))}, {_sq(ident.get('reviewer'))},
             {_sq(ident.get('cost_center'))},
+            {tenant_id_sql},
             true, TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id) WHERE is_current = true
@@ -332,13 +346,15 @@ def upsert_agent_identification(card: dict, agent_internal_id: str, now_str: str
             governance_status= EXCLUDED.governance_status,
             reviewer         = EXCLUDED.reviewer,
             cost_center      = EXCLUDED.cost_center,
+            tenant_id        = EXCLUDED.tenant_id,
             updated_ts       = EXCLUDED.updated_ts
     """
     print("  Upserting agent_identifications …")
     execute_dml(sql, label="agent_identifications INSERT ON CONFLICT")
 
 
-def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str,
+                       tenant_id: str = None):
     ident = card.get("identification", {})
     tools = card.get("tool", []) or []
     if not has_meaningful_data(tools):
@@ -365,6 +381,7 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(tool.get('input_schema'))}      AS input_schema_json_text,
                 {_sq(tool.get('output_schema'))}     AS output_schema_json_text,
                 {_sq(tool.get('default_value'))}     AS default_config_json_text,
+                {_sq(tenant_id)}                     AS tenant_id,
                 TIMESTAMP '{now_str}'                AS now_ts
         """.strip())
         relation_rows.append(f"""
@@ -373,6 +390,7 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(agent_id)}                      AS agent_id,
                 {_sq(tool_id)}                       AS tool_id,
                 {_sq(tool.get('name'))}              AS tool_name,
+                {_sq(tenant_id)}                     AS tenant_id,
                 TIMESTAMP '{now_str}'                AS now_ts
         """.strip())
 
@@ -382,12 +400,14 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             tool_id, tool_name, tool_description,
             delegation_possible, allowed_delegates,
             input_schema_json_text, output_schema_json_text, default_config_json_text,
+            tenant_id,
             now_ts, now_ts
         FROM ({tools_union}) AS s
         ON CONFLICT (tool_id)
@@ -399,6 +419,7 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
             input_schema_json_text   = EXCLUDED.input_schema_json_text,
             output_schema_json_text  = EXCLUDED.output_schema_json_text,
             default_config_json_text = EXCLUDED.default_config_json_text,
+            tenant_id                = EXCLUDED.tenant_id,
             updated_ts               = EXCLUDED.updated_ts
     """, label="tools BULK INSERT ON CONFLICT")
 
@@ -406,23 +427,27 @@ def upsert_agent_tools(card: dict, agent_internal_id: str, now_str: str):
     execute_dml(f"""
         INSERT INTO core.agent_tools (
             agent_internal_id, agent_id, tool_id, tool_name,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             agent_internal_id, agent_id, tool_id, tool_name,
+            tenant_id,
             now_ts, now_ts
         FROM ({relation_union}) AS s
         ON CONFLICT (agent_internal_id, tool_id)
         DO UPDATE SET
             agent_id   = EXCLUDED.agent_id,
             tool_name  = EXCLUDED.tool_name,
+            tenant_id  = EXCLUDED.tenant_id,
             updated_ts = EXCLUDED.updated_ts
     """, label="agent_tools BULK INSERT ON CONFLICT")
 
     print(f"  Upserting {len(tools)} tools …")
 
 
-def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str,
+                          tenant_id: str = None):
     ident    = card.get("identification", {})
     controls = card.get("control", []) or []
     if not has_meaningful_data(controls):
@@ -441,6 +466,7 @@ def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(control.get('name'))}        AS name,
                 {_sq(control.get('objective'))}   AS objective,
                 {_sq(control.get('domain'))}      AS domain,
+                {_sq(tenant_id)}                  AS tenant_id,
                 TIMESTAMP '{now_str}'             AS now_ts
         """.strip())
 
@@ -449,10 +475,12 @@ def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):
     sql = f"""
         INSERT INTO core.agent_controls (
             agent_internal_id, agent_id, identifier, name, objective, domain,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             agent_internal_id, agent_id, identifier, name, objective, domain,
+            tenant_id,
             now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, name)
@@ -461,13 +489,15 @@ def upsert_agent_controls(card: dict, agent_internal_id: str, now_str: str):
             identifier = EXCLUDED.identifier,
             objective  = EXCLUDED.objective,
             domain     = EXCLUDED.domain,
+            tenant_id  = EXCLUDED.tenant_id,
             updated_ts = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(controls)} controls …")
     execute_dml(sql, label="agent_controls BULK INSERT ON CONFLICT")
 
 
-def upsert_agent_knowledge_source(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_knowledge_source(card: dict, agent_internal_id: str, now_str: str,
+                                  tenant_id: str = None):
     ident    = card.get("identification", {})
     ks       = card.get("knowledge_source", {}) or {}
     if not has_meaningful_data(ks):
@@ -475,15 +505,18 @@ def upsert_agent_knowledge_source(card: dict, agent_internal_id: str, now_str: s
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_knowledge_sources (
             agent_internal_id, agent_id, identifier, name, access_mechanism,
+            tenant_id,
             created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(ks.get('identifier'))}, {_sq(ks.get('name'))},
             {_sq(ks.get('access_mechanism'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id)
@@ -492,13 +525,15 @@ def upsert_agent_knowledge_source(card: dict, agent_internal_id: str, now_str: s
             identifier       = EXCLUDED.identifier,
             name             = EXCLUDED.name,
             access_mechanism = EXCLUDED.access_mechanism,
+            tenant_id        = EXCLUDED.tenant_id,
             updated_ts       = EXCLUDED.updated_ts
     """
     print("  Upserting agent_knowledge_sources …")
     execute_dml(sql, label="agent_knowledge_sources INSERT ON CONFLICT")
 
 
-def upsert_agent_llm_models(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_llm_models(card: dict, agent_internal_id: str, now_str: str,
+                            tenant_id: str = None):
     ident      = card.get("identification", {})
     llm_models = card.get("llm_model", []) or []
     if not has_meaningful_data(llm_models):
@@ -515,6 +550,7 @@ def upsert_agent_llm_models(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(agent_id)}               AS agent_id,
                 {_sq(model.get('name'))}      AS name,
                 {_sq(model.get('version'))}   AS version_number,
+                {_sq(tenant_id)}              AS tenant_id,
                 TIMESTAMP '{now_str}'         AS now_ts
         """.strip())
 
@@ -523,28 +559,31 @@ def upsert_agent_llm_models(card: dict, agent_internal_id: str, now_str: str):
     sql = f"""
         INSERT INTO core.agent_llm_models (
             agent_internal_id, agent_id, name, version_number,
+            tenant_id,
             created_ts, updated_ts
         )
-        SELECT agent_internal_id, agent_id, name, version_number, now_ts, now_ts
+        SELECT agent_internal_id, agent_id, name, version_number, tenant_id, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, name)
         DO UPDATE SET
             agent_id       = EXCLUDED.agent_id,
             version_number = EXCLUDED.version_number,
+            tenant_id      = EXCLUDED.tenant_id,
             updated_ts     = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(llm_models)} LLM models …")
     execute_dml(sql, label="agent_llm_models BULK INSERT ON CONFLICT")
 
 
-def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str,
+                               tenant_id: str = None, company_id: str = None, company_name: str = None):
     ident = card.get("identification", {})
     ai_use_cases = card.get("ai_use_case", []) or []
     if not has_meaningful_data(ai_use_cases):
         print("Skipping ai_use_case: all values are null/empty.")
         return
 
-    tenant_id = ident.get("tenant_id") or ""
+    tenant_id = ident.get("tenant_id") or tenant_id or ""
     agent_id = ident.get("agent_id")
     agent_name = ident.get("agent_name") or card.get("name")
     select_rows = []
@@ -594,7 +633,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
-            solution_approach, created_ts, updated_ts
+            solution_approach, company_id, company_name, created_ts, updated_ts
         )
         SELECT
             tenant_id, ai_use_case_id, ai_use_case_name, description, proposed_by, owner, function,
@@ -602,7 +641,7 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             agent_risk_exposure_are, no_of_associated_agents, inherent_risk_classification,
             residual_risk_classification, agent_risk_tier_art, blended_risk_score,
             inherent_risk_classification_score, residual_risk_classification_score,
-            solution_approach, now_ts, now_ts
+            solution_approach, {_sq(company_id)} AS company_id, {_sq(company_name)} AS company_name, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (tenant_id, ai_use_case_id)
         DO UPDATE SET
@@ -624,6 +663,8 @@ def upsert_agent_ai_use_cases(card: dict, agent_internal_id: str, now_str: str):
             inherent_risk_classification_score = EXCLUDED.inherent_risk_classification_score,
             residual_risk_classification_score = EXCLUDED.residual_risk_classification_score,
             solution_approach = EXCLUDED.solution_approach,
+            company_id = EXCLUDED.company_id,
+            company_name = EXCLUDED.company_name,
             updated_ts = EXCLUDED.updated_ts
     """
     execute_dml(use_case_sql, label="ai_use_cases BULK INSERT ON CONFLICT")
@@ -686,7 +727,8 @@ def _canonical_entity_id(raw_identifier, raw_name):
     return _clean_text(raw_identifier) or _clean_text(raw_name)
 
 
-def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
+def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str,
+                               tenant_id: str = None, company_id: str = None, company_name: str = None):
     processes = card.get("business_process", []) or []
     if not has_meaningful_data(processes):
         print("Skipping core.business_processes: all values are null/empty.")
@@ -718,6 +760,9 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(proc.get('description'))}          AS process_description,
                 {_sq(parent_process_id)}                AS parent_process_id,
                 {_sq(proc.get('business_criticality'))} AS business_criticality,
+                {_sq(tenant_id)}                        AS tenant_id,
+                {_sq(company_id)}                       AS company_id,
+                {_sq(company_name)}                     AS company_name,
                 TIMESTAMP '{now_str}'                   AS now_ts
         """.strip())
 
@@ -746,11 +791,15 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
     sql = f"""
         INSERT INTO core.business_processes (
             business_process_id, process_number, process_name, process_description,
-            parent_process_id, business_criticality, created_ts, updated_ts
+            parent_process_id, business_criticality,
+            tenant_id, company_id, company_name,
+            created_ts, updated_ts
         )
         SELECT
             business_process_id, process_number, process_name, process_description,
-            parent_process_id, business_criticality, now_ts, now_ts
+            parent_process_id, business_criticality,
+            tenant_id, company_id, company_name,
+            now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (business_process_id)
         DO UPDATE SET
@@ -759,13 +808,17 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str):
             process_description  = COALESCE(EXCLUDED.process_description, core.business_processes.process_description),
             parent_process_id    = COALESCE(EXCLUDED.parent_process_id, core.business_processes.parent_process_id),
             business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_processes.business_criticality),
+            tenant_id            = COALESCE(EXCLUDED.tenant_id, core.business_processes.tenant_id),
+            company_id           = COALESCE(EXCLUDED.company_id, core.business_processes.company_id),
+            company_name         = COALESCE(EXCLUDED.company_name, core.business_processes.company_name),
             updated_ts           = EXCLUDED.updated_ts
     """
-    print(f"  Upserting {len(select_rows)} core business processes â€¦")
+    print(f"  Upserting {len(select_rows)} core business processes …")
     execute_dml(sql, label="business_processes BULK INSERT ON CONFLICT")
 
 
-def upsert_business_applications(card: dict, agent_internal_id: str, now_str: str):
+def upsert_business_applications(card: dict, agent_internal_id: str, now_str: str,
+                                  tenant_id: str = None, company_id: str = None, company_name: str = None):
     applications = card.get("application", []) or []
     if not has_meaningful_data(applications):
         print("Skipping core.business_applications: all values are null/empty.")
@@ -787,6 +840,9 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
                 {_sq(app.get('business_criticality'))}   AS business_criticality,
                 {_sq(app.get('emergency_tier'))}         AS emergency_tier,
                 {_sq(app.get('description'))}            AS application_description,
+                {_sq(tenant_id)}                         AS tenant_id,
+                {_sq(company_id)}                        AS company_id,
+                {_sq(company_name)}                      AS company_name,
                 TIMESTAMP '{now_str}'                    AS now_ts
         """.strip())
 
@@ -799,11 +855,15 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
     sql = f"""
         INSERT INTO core.business_applications (
             business_application_id, application_name, business_criticality,
-            emergency_tier, application_description, created_ts, updated_ts
+            emergency_tier, application_description,
+            tenant_id, company_id, company_name,
+            created_ts, updated_ts
         )
         SELECT
             business_application_id, application_name, business_criticality,
-            emergency_tier, application_description, now_ts, now_ts
+            emergency_tier, application_description,
+            tenant_id, company_id, company_name,
+            now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (business_application_id)
         DO UPDATE SET
@@ -811,13 +871,17 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
             business_criticality    = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
             emergency_tier          = COALESCE(EXCLUDED.emergency_tier, core.business_applications.emergency_tier),
             application_description = COALESCE(EXCLUDED.application_description, core.business_applications.application_description),
+            tenant_id               = COALESCE(EXCLUDED.tenant_id, core.business_applications.tenant_id),
+            company_id              = COALESCE(EXCLUDED.company_id, core.business_applications.company_id),
+            company_name            = COALESCE(EXCLUDED.company_name, core.business_applications.company_name),
             updated_ts              = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(select_rows)} core business applications ...")
     execute_dml(sql, label="business_applications BULK INSERT ON CONFLICT")
 
 
-def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str: str,
+                                    tenant_id: str = None):
     ident     = card.get("identification", {})
     processes = card.get("business_process", []) or []
     if not has_meaningful_data(processes):
@@ -841,6 +905,7 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
                 {_sq(business_process_id)}              AS business_process_id,
                 {_sq(proc.get('name'))}                 AS process_name,
                 {_sq(proc.get('business_criticality'))} AS criticality,
+                {_sq(tenant_id)}                        AS tenant_id,
                 TIMESTAMP '{now_str}'                   AS now_ts
         """.strip())
 
@@ -853,10 +918,12 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
     sql = f"""
         INSERT INTO core.agent_business_processes (
             agent_internal_id, agent_id, business_process_id, process_name, criticality,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             agent_internal_id, agent_id, business_process_id, process_name, criticality,
+            tenant_id,
             now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, business_process_id)
@@ -864,6 +931,7 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
             agent_id            = EXCLUDED.agent_id,
             process_name        = EXCLUDED.process_name,
             criticality         = EXCLUDED.criticality,
+            tenant_id           = EXCLUDED.tenant_id,
             updated_ts          = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(select_rows)} business processes ...")
@@ -879,7 +947,8 @@ def upsert_agent_business_processes(card: dict, agent_internal_id: str, now_str:
     execute_dml(cleanup_sql, label="agent_business_processes DELETE STALE RELATIONS")
 
 
-def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_str: str,
+                                       tenant_id: str = None):
     ident        = card.get("identification", {})
     applications = card.get("application", []) or []
     if not has_meaningful_data(applications):
@@ -903,6 +972,7 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
                 {_sq(business_application_id)}          AS business_application_id,
                 {_sq(app.get('name'))}                  AS application_name,
                 {_sq(app.get('business_criticality'))}  AS criticality,
+                {_sq(tenant_id)}                        AS tenant_id,
                 TIMESTAMP '{now_str}'                   AS now_ts
         """.strip())
 
@@ -915,10 +985,12 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
     sql = f"""
         INSERT INTO core.agent_business_applications (
             agent_internal_id, agent_id, business_application_id, application_name, criticality,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             agent_internal_id, agent_id, business_application_id, application_name, criticality,
+            tenant_id,
             now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, business_application_id)
@@ -926,6 +998,7 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
             agent_id         = EXCLUDED.agent_id,
             application_name = EXCLUDED.application_name,
             criticality      = EXCLUDED.criticality,
+            tenant_id        = EXCLUDED.tenant_id,
             updated_ts       = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(select_rows)} business applications ...")
@@ -940,7 +1013,8 @@ def upsert_agent_business_applications(card: dict, agent_internal_id: str, now_s
     """
     execute_dml(cleanup_sql, label="agent_business_applications DELETE STALE RELATIONS")
 
-def upsert_agent_guardrail(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_guardrail(card: dict, agent_internal_id: str, now_str: str,
+                           tenant_id: str = None):
     ident     = card.get("identification", {})
     guardrail = card.get("guardrail", {})
     if not has_meaningful_data(guardrail):
@@ -948,15 +1022,18 @@ def upsert_agent_guardrail(card: dict, agent_internal_id: str, now_str: str):
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_guardrails (
             agent_internal_id, agent_id, name, description, model,
+            tenant_id,
             created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(guardrail.get('name'))}, {_sq(guardrail.get('description'))},
             {_sq(guardrail.get('model'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id, name)
@@ -964,13 +1041,15 @@ def upsert_agent_guardrail(card: dict, agent_internal_id: str, now_str: str):
             agent_id    = EXCLUDED.agent_id,
             description = EXCLUDED.description,
             model       = EXCLUDED.model,
+            tenant_id   = EXCLUDED.tenant_id,
             updated_ts  = EXCLUDED.updated_ts
     """
     print(f"  Upserting guardrail for agent {agent_id} …")
     execute_dml(sql, label="agent_guardrails INSERT ON CONFLICT")
 
 
-def upsert_agent_mcp_server(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_mcp_server(card: dict, agent_internal_id: str, now_str: str,
+                            tenant_id: str = None):
     ident      = card.get("identification", {})
     mcp_server = card.get("mcp_server", {})
     if not has_meaningful_data(mcp_server):
@@ -978,15 +1057,18 @@ def upsert_agent_mcp_server(card: dict, agent_internal_id: str, now_str: str):
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_mcp_servers (
             agent_internal_id, agent_id, name, url, version_number,
+            tenant_id,
             last_updated_ts, created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(mcp_server.get('name'))}, {_sq(mcp_server.get('url'))},
             {_sq(mcp_server.get('version_number'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id)
@@ -995,6 +1077,7 @@ def upsert_agent_mcp_server(card: dict, agent_internal_id: str, now_str: str):
             name            = EXCLUDED.name,
             url             = EXCLUDED.url,
             version_number  = EXCLUDED.version_number,
+            tenant_id       = EXCLUDED.tenant_id,
             last_updated_ts = EXCLUDED.last_updated_ts,
             updated_ts      = EXCLUDED.updated_ts
     """
@@ -1002,7 +1085,8 @@ def upsert_agent_mcp_server(card: dict, agent_internal_id: str, now_str: str):
     execute_dml(sql, label="agent_mcp_servers INSERT ON CONFLICT")
 
 
-def upsert_agent_memory(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_memory(card: dict, agent_internal_id: str, now_str: str,
+                        tenant_id: str = None):
     ident  = card.get("identification", {})
     memory = card.get("memory", {})
     if not has_meaningful_data(memory):
@@ -1010,15 +1094,18 @@ def upsert_agent_memory(card: dict, agent_internal_id: str, now_str: str):
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_memories (
             agent_internal_id, agent_id, identifier, name, type,
+            tenant_id,
             created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(memory.get('identifier'))}, {_sq(memory.get('name'))},
             {_sq(memory.get('type'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id)
@@ -1027,13 +1114,15 @@ def upsert_agent_memory(card: dict, agent_internal_id: str, now_str: str):
             identifier = EXCLUDED.identifier,
             name       = EXCLUDED.name,
             type       = EXCLUDED.type,
+            tenant_id  = EXCLUDED.tenant_id,
             updated_ts = EXCLUDED.updated_ts
     """
     print(f"  Upserting memory for agent {agent_id} …")
     execute_dml(sql, label="agent_memories INSERT ON CONFLICT")
 
 
-def upsert_agent_physical_ai(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_physical_ai(card: dict, agent_internal_id: str, now_str: str,
+                             tenant_id: str = None):
     ident            = card.get("identification", {})
     physical_ai_list = card.get("physical_ai", []) or []
     if not has_meaningful_data(physical_ai_list):
@@ -1052,6 +1141,7 @@ def upsert_agent_physical_ai(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(pa.get('name'))}                AS name,
                 {_sq(pa.get('type'))}                AS type,
                 {_sq(pa.get('sensory_input_source'))} AS sensory_input_source,
+                {_sq(tenant_id)}                     AS tenant_id,
                 TIMESTAMP '{now_str}'                AS now_ts
         """.strip())
 
@@ -1060,10 +1150,12 @@ def upsert_agent_physical_ai(card: dict, agent_internal_id: str, now_str: str):
     sql = f"""
         INSERT INTO core.agent_physical_ai (
             agent_internal_id, agent_id, identifier, name, type, sensory_input_source,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             agent_internal_id, agent_id, identifier, name, type, sensory_input_source,
+            tenant_id,
             now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, name)
@@ -1072,13 +1164,15 @@ def upsert_agent_physical_ai(card: dict, agent_internal_id: str, now_str: str):
             identifier           = EXCLUDED.identifier,
             type                 = EXCLUDED.type,
             sensory_input_source = EXCLUDED.sensory_input_source,
+            tenant_id            = EXCLUDED.tenant_id,
             updated_ts           = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(physical_ai_list)} physical AI entries …")
     execute_dml(sql, label="agent_physical_ai BULK INSERT ON CONFLICT")
 
 
-def upsert_agent_prompt_template(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_prompt_template(card: dict, agent_internal_id: str, now_str: str,
+                                 tenant_id: str = None):
     ident    = card.get("identification", {})
     template = card.get("prompt_template", {})
     if not has_meaningful_data(template):
@@ -1086,15 +1180,18 @@ def upsert_agent_prompt_template(card: dict, agent_internal_id: str, now_str: st
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_prompt_templates (
             agent_internal_id, agent_id, identifier, name, description,
+            tenant_id,
             created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(template.get('identifier'))}, {_sq(template.get('name'))},
             {_sq(template.get('description'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id)
@@ -1103,13 +1200,15 @@ def upsert_agent_prompt_template(card: dict, agent_internal_id: str, now_str: st
             identifier  = EXCLUDED.identifier,
             name        = EXCLUDED.name,
             description = EXCLUDED.description,
+            tenant_id   = EXCLUDED.tenant_id,
             updated_ts  = EXCLUDED.updated_ts
     """
     print(f"  Upserting prompt template for agent {agent_id} …")
     execute_dml(sql, label="agent_prompt_templates INSERT ON CONFLICT")
 
 
-def upsert_agent_regulation_or_framework(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_regulation_or_framework(card: dict, agent_internal_id: str, now_str: str,
+                                         tenant_id: str = None):
     ident = card.get("identification", {})
     reg   = card.get("regulation_or_framework", {})
     if not has_meaningful_data(reg):
@@ -1117,17 +1216,20 @@ def upsert_agent_regulation_or_framework(card: dict, agent_internal_id: str, now
         return
 
     agent_id = ident.get("agent_id")
+    tenant_id_sql = _sq(tenant_id)
 
     sql = f"""
         INSERT INTO core.agent_regulations_or_frameworks (
             agent_internal_id, agent_id,
             name, type, regulatory_authority, jurisdiction, requirement,
+            tenant_id,
             created_ts, updated_ts
         ) VALUES (
             {_sq(agent_internal_id)}, {_sq(agent_id)},
             {_sq(reg.get('name'))}, {_sq(reg.get('type'))},
             {_sq(reg.get('regulatory_authority'))}, {_sq(reg.get('jurisdiction'))},
             {_sq(reg.get('requirement'))},
+            {tenant_id_sql},
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
         ON CONFLICT (agent_internal_id)
@@ -1138,13 +1240,15 @@ def upsert_agent_regulation_or_framework(card: dict, agent_internal_id: str, now
             regulatory_authority = EXCLUDED.regulatory_authority,
             jurisdiction         = EXCLUDED.jurisdiction,
             requirement          = EXCLUDED.requirement,
+            tenant_id            = EXCLUDED.tenant_id,
             updated_ts           = EXCLUDED.updated_ts
     """
     print(f"  Upserting regulation/framework for agent {agent_id} …")
     execute_dml(sql, label="agent_regulations_or_frameworks INSERT ON CONFLICT")
 
 
-def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str,
+                           tenant_id: str = None):
     ident  = card.get("identification", {})
     models = card.get("ai_model", []) or []
     if not has_meaningful_data(models):
@@ -1169,6 +1273,7 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
                 {_sq(model.get('model_provider') or model.get('provider'))} AS provider,
                 {_sq(model.get('model_version') or model.get('version'))}   AS version_number,
                 {_sq(model.get('model_type') or model.get('type'))}         AS model_type,
+                {_sq(tenant_id)}                              AS tenant_id,
                 TIMESTAMP '{now_str}'                         AS now_ts
             WHERE NULLIF(trim({_sq(model.get('name'))}), '') IS NOT NULL
         """.strip())
@@ -1180,11 +1285,14 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
         INSERT INTO core.ai_models (
             ai_model_id, model_name, owner, department_executive, description,
             provider, version_number, model_type, no_of_associated_agents,
+            tenant_id,
             created_ts, updated_ts
         )
         SELECT
             ai_model_id, model_name, owner, department_executive, description,
-            provider, version_number, model_type, 0, now_ts, now_ts
+            provider, version_number, model_type, 0,
+            tenant_id,
+            now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (ai_model_id) DO UPDATE SET
             model_name           = COALESCE(NULLIF(EXCLUDED.model_name, ''), ai_models.model_name),
@@ -1194,6 +1302,7 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
             provider             = COALESCE(EXCLUDED.provider, ai_models.provider),
             version_number       = COALESCE(EXCLUDED.version_number, ai_models.version_number),
             model_type           = COALESCE(EXCLUDED.model_type, ai_models.model_type),
+            tenant_id            = EXCLUDED.tenant_id,
             updated_ts           = EXCLUDED.updated_ts
     """
     print(f"  Upserting {len(models)} AI models into catalog …")
@@ -1202,27 +1311,31 @@ def upsert_agent_ai_models(card: dict, agent_internal_id: str, now_str: str):
     # 2) Upsert the agent<->model link (pure junction).
     link_sql = f"""
         INSERT INTO core.agent_ai_models (
-            ai_model_id, model_name, agent_id, agent_internal_id, created_ts, updated_ts
+            ai_model_id, model_name, agent_id, agent_internal_id,
+            tenant_id,
+            created_ts, updated_ts
         )
-        SELECT ai_model_id, model_name, agent_id, agent_internal_id, now_ts, now_ts
+        SELECT ai_model_id, model_name, agent_id, agent_internal_id, tenant_id, now_ts, now_ts
         FROM ({union_all}) AS s
         ON CONFLICT (agent_internal_id, ai_model_id)
         DO UPDATE SET
             model_name = EXCLUDED.model_name,
             agent_id   = EXCLUDED.agent_id,
+            tenant_id  = EXCLUDED.tenant_id,
             updated_ts = EXCLUDED.updated_ts
     """
     execute_dml(link_sql, label="agent_ai_models link upsert")
 
 
-def upsert_agent_data_sources(card: dict, agent_internal_id: str, now_str: str):
+def upsert_agent_data_sources(card: dict, agent_internal_id: str, now_str: str,
+                               tenant_id: str = None):
     ident        = card.get("identification", {})
     data_sources = card.get("data_source", []) or []
     if not has_meaningful_data(data_sources):
         print("Skipping data_source: all values are null/empty.")
         return
 
-    tenant_id = ident.get("tenant_id")
+    tenant_id = ident.get("tenant_id") or tenant_id
     agent_id = ident.get("agent_id")
 
     def _to_bool(val):
@@ -1446,7 +1559,7 @@ def shutdown_api_dispatch_pool(wait_for_completion: bool):
 # # CORE PROCESSOR  
 # # ══════════════════════════════════════════════════════════════════════════════
 
-def process_card(card_dict: dict):
+def process_card(card_dict: dict, tenant_id: str = None, company_id: str = None, company_name: str = None):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
@@ -1485,37 +1598,41 @@ def process_card(card_dict: dict):
 
     try:
         print("[INFO] Step  1/21 - agents")
-        agent_internal_id = upsert_agent(card_dict, now_str, incoming_source_hash)
+        agent_internal_id = upsert_agent(card_dict, now_str, incoming_source_hash,
+                                         tenant_id=tenant_id, company_id=company_id, company_name=company_name)
     except Exception as e:
         print(f"[ERROR] upsert_agent failed: {e}")
         return
 
+    ctx     = {"tenant_id": tenant_id}
+    ctx_all = {"tenant_id": tenant_id, "company_id": company_id, "company_name": company_name}
+
     steps = [
-        ("[INFO] Step  2/21 - agent_configurations",              upsert_agent_configuration),
-        ("[INFO] Step  3/21 - agent_identifications",             upsert_agent_identification),
-        ("[INFO] Step  4/21 - agent_tools",                       upsert_agent_tools),
-        ("[INFO] Step  5/21 - agent_controls",                    upsert_agent_controls),
-        ("[INFO] Step  6/21 - agent_knowledge_sources",           upsert_agent_knowledge_source),
-        ("[INFO] Step  7/21 - agent_llm_models",                  upsert_agent_llm_models),
-        ("[INFO] Step  8/21 - agent_ai_use_cases",                upsert_agent_ai_use_cases),
-        ("[INFO] Step  9/21 - business_processes",                upsert_business_processes),
-        ("[INFO] Step 10/21 - business_applications",             upsert_business_applications),
-        ("[INFO] Step 11/21 - agent_business_processes",          upsert_agent_business_processes),
-        ("[INFO] Step 12/21 - agent_business_applications",       upsert_agent_business_applications),
-        ("[INFO] Step 13/21 - agent_guardrails",                  upsert_agent_guardrail),
-        ("[INFO] Step 14/21 - agent_mcp_servers",                 upsert_agent_mcp_server),
-        ("[INFO] Step 15/21 - agent_memories",                    upsert_agent_memory),
-        ("[INFO] Step 16/21 - agent_physical_ai",                 upsert_agent_physical_ai),
-        ("[INFO] Step 17/21 - agent_prompt_templates",            upsert_agent_prompt_template),
-        ("[INFO] Step 18/21 - agent_regulations_or_frameworks",   upsert_agent_regulation_or_framework),
-        ("[INFO] Step 19/21 - agent_ai_models",                   upsert_agent_ai_models),
-        ("[INFO] Step 20/21 - agent_data_sources",                upsert_agent_data_sources),
+        ("[INFO] Step  2/21 - agent_configurations",              upsert_agent_configuration,           ctx),
+        ("[INFO] Step  3/21 - agent_identifications",             upsert_agent_identification,           ctx),
+        ("[INFO] Step  4/21 - agent_tools",                       upsert_agent_tools,                   ctx),
+        ("[INFO] Step  5/21 - agent_controls",                    upsert_agent_controls,                ctx),
+        ("[INFO] Step  6/21 - agent_knowledge_sources",           upsert_agent_knowledge_source,        ctx),
+        ("[INFO] Step  7/21 - agent_llm_models",                  upsert_agent_llm_models,              ctx),
+        ("[INFO] Step  8/21 - agent_ai_use_cases",                upsert_agent_ai_use_cases,            ctx_all),
+        ("[INFO] Step  9/21 - business_processes",                upsert_business_processes,            ctx_all),
+        ("[INFO] Step 10/21 - business_applications",             upsert_business_applications,         ctx_all),
+        ("[INFO] Step 11/21 - agent_business_processes",          upsert_agent_business_processes,      ctx),
+        ("[INFO] Step 12/21 - agent_business_applications",       upsert_agent_business_applications,   ctx),
+        ("[INFO] Step 13/21 - agent_guardrails",                  upsert_agent_guardrail,               ctx),
+        ("[INFO] Step 14/21 - agent_mcp_servers",                 upsert_agent_mcp_server,              ctx),
+        ("[INFO] Step 15/21 - agent_memories",                    upsert_agent_memory,                  ctx),
+        ("[INFO] Step 16/21 - agent_physical_ai",                 upsert_agent_physical_ai,             ctx),
+        ("[INFO] Step 17/21 - agent_prompt_templates",            upsert_agent_prompt_template,         ctx),
+        ("[INFO] Step 18/21 - agent_regulations_or_frameworks",   upsert_agent_regulation_or_framework, ctx),
+        ("[INFO] Step 19/21 - agent_ai_models",                   upsert_agent_ai_models,               ctx),
+        ("[INFO] Step 20/21 - agent_data_sources",                upsert_agent_data_sources,            ctx),
     ]
 
-    for label, fn in steps:
+    for label, fn, kwargs in steps:
         print(label)
         try:
-            fn(card_dict, agent_internal_id, now_str)
+            fn(card_dict, agent_internal_id, now_str, **kwargs)
         except Exception as e:
             print(f"[ERROR] {fn.__name__} failed: {e}")
 
