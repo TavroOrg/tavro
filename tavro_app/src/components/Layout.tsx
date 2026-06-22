@@ -622,7 +622,7 @@ const Layout: React.FC = () => {
 
                 <div className={location.pathname === '/settings/logs'
                     ? 'flex-1 min-h-0 flex flex-col overflow-hidden'
-                    : 'p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto'}>
+                    : `p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto${location.pathname.includes('/use-cases/') ? ' scrollbar-hide' : ''}`}>
                     <Outlet />
                 </div>
                 <footer className={`flex-shrink-0 border-t border-slate-200 dark:border-slate-800 py-2 px-6 text-[11px] text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-900 transition-colors flex items-center justify-between${location.pathname === '/settings/logs' ? ' hidden' : ''}`}>

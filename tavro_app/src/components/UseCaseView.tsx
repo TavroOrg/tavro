@@ -24,13 +24,7 @@ import {
 } from 'lucide-react';
 
 
-const PRIORITY_OPTIONS = [
-    '1 - Critical',
-    '2 - High',
-    '3 - Moderate',
-    '4 - Low',
-    '5 - Planning',
-];
+
 
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
@@ -74,29 +68,6 @@ function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | '
     );
 }
 
-type PriorityTone = 'critical' | 'high' | 'moderate' | 'low' | 'planning' | 'unknown';
-
-function getPriorityTone(priority?: string | null): PriorityTone {
-    const p = String(priority ?? '').toLowerCase().trim();
-    if (!p) return 'unknown';
-    if (p.startsWith('1') || p.includes('critical')) return 'critical';
-    if (p.startsWith('2') || p.includes('high')) return 'high';
-    if (p.startsWith('3') || p.includes('moderate') || p.includes('medium')) return 'moderate';
-    if (p.startsWith('4') || p.includes('low')) return 'low';
-    if (p.startsWith('5') || p.includes('planning') || p.includes('plan')) return 'planning';
-    return 'unknown';
-}
-
-function getPriorityTheme(tone: PriorityTone) {
-    switch (tone) {
-        case 'critical': return { badge: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500' };
-        case 'high':     return { badge: 'bg-orange-50 text-orange-700 border-orange-200', dot: 'bg-orange-500' };
-        case 'moderate': return { badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500' };
-        case 'low':      return { badge: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' };
-        case 'planning': return { badge: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' };
-        default:         return { badge: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-300' };
-    }
-}
 
 function StatusBadge({ status }: { status?: string | null }) {
     if (!status) return <span className="text-slate-400 text-xs">—</span>;
@@ -285,7 +256,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     isEditing,
     editTitle, onEditTitleChange,
     editDescription, onEditDescriptionChange,
-    editPriority, onEditPriorityChange,
     editOwner, onEditOwnerChange,
     editProblemStatement, onEditProblemStatementChange,
     editExpectedBenefits, onEditExpectedBenefitsChange,
@@ -372,9 +342,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const linkedAgentCount = linkedAgents.length;
 
     const statusLabel = uc.status || 'Proposed';
-    const priorityValue = uc.priority ?? null;
-    const priorityTone = getPriorityTone(priorityValue);
-    const priorityTheme = getPriorityTheme(priorityTone);
 
     const owner = uc.owner ?? (uc as any).use_case_owner ?? null;
     const proposedBy = uc.proposed_by ?? (uc as any).proposed_by ?? null;
@@ -420,8 +387,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         { id: 'business_impact',  label: 'Business Impact',          icon: Building2 },
         { id: 'ai_agents',        label: `AI Agents (${linkedAgentCount})`, icon: Bot },
         { id: 'risk_assessments', label: 'Risk Assessments',         icon: ShieldAlert },
-        { id: 'controls',         label: 'Controls',                 icon: ShieldCheck },
         { id: 'prioritization',   label: 'Prioritization',           icon: Target },
+        { id: 'controls',         label: 'Controls',                 icon: ShieldCheck },
     ];
 
     return (
@@ -433,6 +400,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 <div className="p-6 flex flex-col gap-4">
                     {/* Title row */}
                     <div className="flex items-start gap-4">
+                        {/* Left: icon + title + status */}
                         <div className="p-3 bg-blue-600 text-white rounded-xl shadow-sm shrink-0">
                             <ClipboardList size={22} />
                         </div>
@@ -465,78 +433,173 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 </h1>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                                {uc.identifier && (
-                                    <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-slate-500">
-                                        {uc.identifier}
-                                    </span>
-                                )}
+                                <StatusBadge status={statusLabel} />
                                 {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                         </div>
-                        {headerActions && (
-                            <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
-                                {headerActions}
-                            </div>
-                        )}
+
+                        {/* Right: Priority Score chip + Quadrant badge + headerActions */}
+                        <div className="flex items-center gap-2.5 shrink-0">
+                            {/* Priority Score chip — light fill when value exists, plain dash when not */}
+                            {priorityScore !== null ? (() => {
+                                const s = priorityScore;
+                                const bg = s >= 3.5 ? 'bg-emerald-50 border-emerald-200'
+                                    : s >= 2.5 ? 'bg-amber-50 border-amber-200'
+                                    : 'bg-red-50 border-red-200';
+                                const vc = s >= 3.5 ? 'text-emerald-700' : s >= 2.5 ? 'text-amber-700' : 'text-red-700';
+                                return (
+                                    <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${bg}`}>
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
+                                        <span className={`text-lg font-black leading-none tracking-tight ${vc}`}>{s.toFixed(1)}</span>
+                                    </div>
+                                );
+                            })() : (
+                                <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
+                                    <span className="text-slate-400 text-sm">—</span>
+                                </div>
+                            )}
+                            {/* Quadrant — light fill when value exists, plain dash when not */}
+                            {(() => {
+                                const qMap: Record<string, { bg: string; border: string; value: string }> = {
+                                    'Quick Win':  { bg: 'bg-emerald-50', border: 'border-emerald-200', value: 'text-emerald-700' },
+                                    'Fill-in':    { bg: 'bg-orange-50',  border: 'border-orange-200',  value: 'text-orange-700' },
+                                    'Big Bet':    { bg: 'bg-violet-50',  border: 'border-violet-200',  value: 'text-violet-700' },
+                                    'Money Pit':  { bg: 'bg-red-50',     border: 'border-red-200',     value: 'text-red-700'    },
+                                };
+                                const q = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
+                                return q ? (
+                                    <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${q.bg} ${q.border}`}>
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className={`text-sm font-black leading-tight text-center ${q.value}`}>{quadrant!.label}</span>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="text-slate-400 text-sm">—</span>
+                                    </div>
+                                );
+                            })()}
+                            {headerActions && (
+                                <div className="flex items-center gap-2 flex-wrap ml-1">
+                                    {headerActions}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    {/* Metadata grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-3 border-t border-slate-100">
-                        <MetaField label="Status">
-                            <StatusBadge status={statusLabel} />
-                        </MetaField>
+                    {/* Bottom row — Owner + Proposed By + metric cards */}
+                    <div className="flex items-stretch gap-3 pt-3 border-t border-slate-100 flex-wrap">
+                        {/* Owner + Proposed By */}
+                        <div className="flex items-center gap-6">
+                            <MetaField label="Owner">
+                                {owner
+                                    ? <span className="inline-flex items-center gap-1 text-slate-700"><User size={12} className="text-slate-400" />{owner}</span>
+                                    : <span className="text-slate-400 text-xs">Unassigned</span>}
+                            </MetaField>
+                            <MetaField label="Proposed By">
+                                {proposedBy
+                                    ? <span className="inline-flex items-center gap-1 text-slate-700"><Users size={12} className="text-slate-400" />{proposedBy}</span>
+                                    : <span className="text-slate-400 text-xs">—</span>}
+                            </MetaField>
+                        </div>
 
-                        <MetaField label="Priority">
-                            {isEditing ? (
-                                <select
-                                    value={editPriority ?? ''}
-                                    onChange={e => onEditPriorityChange?.(e.target.value)}
-                                    className="text-xs border-b border-blue-400 bg-transparent outline-none py-0.5 pr-1"
-                                >
-                                    {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                            ) : inlineEdit?.field === 'priority' ? (
-                                <div className="flex items-center gap-1">
-                                    <select
-                                        value={inlineEdit.value}
-                                        onChange={e => onInlineValueChange?.(e.target.value)}
-                                        className="text-xs border-b border-blue-400 bg-transparent outline-none py-0.5 pr-1"
-                                        autoFocus
+                        <div className="flex-1" />
+
+                        {/* Metric cards */}
+                        <div className="flex flex-col gap-1.5 items-end">
+                            <div className="flex items-stretch gap-2">
+                                {([
+                                    {
+                                        label: 'Business Value',
+                                        value: pvBV,
+                                        weightLabel: `${(cfg.priorityWeights.BV * 100).toFixed(0)}%`,
+                                        contribution: pvBV !== null ? pvBV * cfg.priorityWeights.BV : null,
+                                        tooltip: 'Measurable financial or strategic impact of this use case. Higher score = greater value.',
+                                        positiveScale: true,
+                                    },
+                                    {
+                                        label: 'Data Readiness',
+                                        value: pvDR,
+                                        weightLabel: `${(cfg.priorityWeights.DR * 100).toFixed(0)}%`,
+                                        contribution: pvDR !== null ? pvDR * cfg.priorityWeights.DR : null,
+                                        tooltip: 'How available, clean, and governed the required data is. Higher = more ready.',
+                                        positiveScale: true,
+                                    },
+                                    {
+                                        label: 'Tech Complexity',
+                                        value: pvTC,
+                                        weightLabel: `(6−n)×${(cfg.priorityWeights.TC * 100).toFixed(0)}%`,
+                                        contribution: pvTC !== null ? (6 - pvTC) * cfg.priorityWeights.TC : null,
+                                        tooltip: 'Implementation difficulty. Score is inverted — (6−n) means lower complexity gives a higher priority boost.',
+                                        positiveScale: false,
+                                    },
+                                    {
+                                        label: 'Risk',
+                                        value: riskComposite !== null ? riskComposite : null,
+                                        weightLabel: `${(cfg.priorityWeights.RISK * 100).toFixed(0)}%`,
+                                        contribution: riskComposite !== null ? -(riskComposite * cfg.priorityWeights.RISK) : null,
+                                        tooltip: 'Composite risk score from the Risk Assessments tab. Higher risk reduces priority score.',
+                                        positiveScale: false,
+                                    },
+                                ] as { label: string; value: number | null; weightLabel: string; contribution: number | null; tooltip: string; positiveScale: boolean }[]).map(item => {
+                                    const hasValue = item.value !== null;
+                                    const valueColor = hasValue
+                                        ? item.positiveScale
+                                            ? (item.value! >= 4 ? 'text-emerald-600' : item.value! >= 2.5 ? 'text-amber-500' : 'text-red-500')
+                                            : (item.value! <= 2 ? 'text-emerald-600' : item.value! <= 3.5 ? 'text-amber-500' : 'text-red-500')
+                                        : 'text-slate-400';
+                                    return (
+                                        <div key={item.label} className="flex flex-col gap-1.5 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[112px]">
+                                            {/* Label with tooltip — always gray */}
+                                            <div className="group relative flex items-center gap-1 w-fit">
+                                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
+                                                {/* Tooltip */}
+                                                <div className="absolute bottom-full left-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                                                    <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-44 leading-snug">
+                                                        {item.tooltip}
+                                                    </div>
+                                                    <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 ml-2" />
+                                                </div>
+                                            </div>
+                                            {/* Score + weight */}
+                                            <div className="flex items-baseline gap-1">
+                                                {hasValue ? (
+                                                    <>
+                                                        <span className={`text-base font-black leading-none ${valueColor}`}>{(item.value as number).toFixed(1)}</span>
+                                                        <span className="text-[10px] text-slate-400 leading-none">× {item.weightLabel}</span>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-sm text-slate-400 font-normal leading-none">—</span>
+                                                )}
+                                            </div>
+                                            {/* Contribution — only shown when value exists */}
+                                            {item.contribution !== null ? (
+                                                <span className={`text-xs font-bold leading-none ${item.contribution >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                    {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)} pts
+                                                </span>
+                                            ) : (
+                                                <span />
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            {/* Empty state hint */}
+                            {(pvBV === null && pvDR === null && pvTC === null && riskComposite === null) && (
+                                <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                                    <span>Scores pending evaluation.</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('risk_assessments')}
+                                        className="text-blue-500 hover:text-blue-700 font-semibold hover:underline transition-colors"
                                     >
-                                        {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                                    </select>
-                                    {renderInlineActions('priority')}
+                                        Add scores →
+                                    </button>
                                 </div>
-                            ) : priorityValue ? (
-                                <span
-                                    onDoubleClick={() => onStartInlineEdit?.('priority', priorityValue)}
-                                    title="Double-click to edit"
-                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold border cursor-text hover:opacity-80 ${priorityTheme.badge}`}
-                                >
-                                    <span className={`w-1.5 h-1.5 rounded-full ${priorityTheme.dot}`} />
-                                    {priorityValue}
-                                </span>
-                            ) : (
-                                <span
-                                    onDoubleClick={() => onStartInlineEdit?.('priority', '')}
-                                    title="Double-click to edit"
-                                    className="text-slate-400 text-xs cursor-text hover:opacity-80"
-                                >—</span>
                             )}
-                        </MetaField>
-
-                        <MetaField label="Owner">
-                            {owner
-                                ? <span className="inline-flex items-center gap-1 text-slate-700"><User size={12} className="text-slate-400" />{owner}</span>
-                                : <span className="text-slate-400 text-xs">Unassigned</span>}
-                        </MetaField>
-
-                        <MetaField label="Proposed By">
-                            {proposedBy
-                                ? <span className="inline-flex items-center gap-1 text-slate-700"><Users size={12} className="text-slate-400" />{proposedBy}</span>
-                                : <span className="text-slate-400 text-xs">—</span>}
-                        </MetaField>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -648,12 +711,13 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Users size={13} className="text-slate-400" />{proposedBy}</span>
                                 </div>
                             )}
-                            {uc.function && (
-                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Business Function</span>
-                                    <span className="text-sm font-semibold text-slate-700">{String(uc.function)}</span>
-                                </div>
-                            )}
+                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Business Function</span>
+                                {uc.function
+                                    ? <span className="text-sm font-semibold text-slate-700">{String(uc.function)}</span>
+                                    : <span className="text-sm text-slate-400 font-normal">—</span>
+                                }
+                            </div>
                             <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</span>
                                 <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(createdAt)}</span>
@@ -1004,28 +1068,16 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             </div>
                         )}
 
-                        {/* ── 5 accordion dimension cards ── */}
+                        {/* ── 5 dimension cards — horizontal card layout ── */}
                         <div className="flex flex-col gap-2">
                             {RISK_DIMENSIONS.map(dim => {
                                 const selected = riskScores[dim.key];
-                                const isExpanded = expandedDims.has(dim.key);
-                                const toggle = () => setExpandedDims(prev => {
-                                    const next = new Set(prev);
-                                    next.has(dim.key) ? next.delete(dim.key) : next.add(dim.key);
-                                    return next;
-                                });
                                 return (
                                     <div key={dim.key} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                                        {/* Accordion header */}
-                                        <button
-                                            type="button"
-                                            onClick={toggle}
-                                            className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition-colors text-left"
-                                        >
-                                            <span className={`flex-shrink-0 w-2 h-2 rounded-full ${selected !== null ? (selected <= 2 ? 'bg-emerald-500' : selected <= 3 ? 'bg-amber-500' : 'bg-red-500') : 'bg-slate-300'}`} />
-                                            <div className="flex-1 min-w-0">
+                                        <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+                                            <div>
                                                 <p className="text-sm font-bold text-slate-800">{dim.label}</p>
-                                                <p className="text-xs text-slate-500 mt-0.5 truncate">{dim.question}</p>
+                                                <p className="text-xs text-slate-500 mt-0.5">{dim.question}</p>
                                             </div>
                                             {selected !== null ? (
                                                 <span className={`flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-lg border ${scoreBg(selected)}`}>
@@ -1036,43 +1088,32 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                                     Not scored
                                                 </span>
                                             )}
-                                            <ChevronDown size={14} className={`text-slate-400 flex-shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
-                                        </button>
-
-                                        {/* Accordion body */}
-                                        {isExpanded && (
-                                            <div className="px-5 pt-4 pb-5 border-t border-slate-100 flex flex-col gap-1.5">
-                                                {dim.options.map(opt => {
-                                                    const isSelected = selected === opt.score;
-                                                    return (
-                                                        <button
-                                                            key={opt.score}
-                                                            type="button"
-                                                            onClick={() => setRiskScores(prev => ({ ...prev, [dim.key]: opt.score }))}
-                                                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all flex items-start gap-3 ${
-                                                                isSelected
-                                                                    ? `${scoreBg(opt.score)} shadow-sm`
-                                                                    : 'bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-white'
-                                                            }`}
-                                                        >
-                                                            <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold mt-0.5 ${
+                                        </div>
+                                        <div className="p-4 grid grid-cols-1 sm:grid-cols-5 gap-2">
+                                            {dim.options.map(opt => {
+                                                const isSelected = selected === opt.score;
+                                                return (
+                                                    <button
+                                                        key={opt.score}
+                                                        type="button"
+                                                        onClick={() => setRiskScores(prev => ({ ...prev, [dim.key]: isSelected ? null : opt.score }))}
+                                                        className={`text-left p-3 rounded-xl border transition-all flex flex-col gap-1 ${
+                                                            isSelected
+                                                                ? `${scoreBg(opt.score)} shadow-sm`
+                                                                : 'bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-white'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
                                                                 isSelected ? `${scoreColor(opt.score)} bg-white border-2 border-current` : 'bg-slate-200 text-slate-500'
-                                                            }`}>
-                                                                {opt.score}
-                                                            </span>
-                                                            <div className="flex flex-col gap-0.5 min-w-0">
-                                                                <span className={`text-sm font-bold ${isSelected ? scoreColor(opt.score) : 'text-slate-700'}`}>
-                                                                    {opt.tier}
-                                                                </span>
-                                                                <span className="text-xs text-slate-500 leading-relaxed">
-                                                                    {opt.description}
-                                                                </span>
-                                                            </div>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
+                                                            }`}>{opt.score}</span>
+                                                            <span className={`text-xs font-bold leading-tight ${isSelected ? scoreColor(opt.score) : 'text-slate-700'}`}>{opt.tier}</span>
+                                                        </div>
+                                                        <p className="text-[11px] text-slate-400 leading-snug">{opt.description}</p>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
                                 );
                             })}
@@ -1260,96 +1301,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         Score all 5 risk categories in the <button type="button" onClick={() => setActiveTab('risk_assessments')} className="font-bold underline underline-offset-2 hover:text-amber-900">Risk Assessments tab</button> to populate this dimension.
                                     </div>
                                 )}
-                            </div>
-                        </div>
-
-                        {/* ── Section B: Priority Score ── */}
-                        <div className="flex flex-col gap-2">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Section B — Priority Score</p>
-                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-
-                                {/* Score hero */}
-                                <div className="px-6 py-5 flex items-center justify-between gap-6 flex-wrap border-b border-slate-100">
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Priority Score</span>
-                                        {priorityScore !== null ? (
-                                            <div className="flex items-end gap-2">
-                                                <span className={`text-5xl font-black leading-none ${priorityScore >= 3.5 ? 'text-emerald-600' : priorityScore >= 2.5 ? 'text-amber-600' : 'text-red-600'}`}>
-                                                    {priorityScore.toFixed(2)}
-                                                </span>
-                                                <span className="text-sm text-slate-400 mb-1">/ 5.0</span>
-                                            </div>
-                                        ) : (
-                                            <span className="text-4xl font-black text-slate-200 leading-none">—</span>
-                                        )}
-                                        <span className="text-xs text-slate-400 mt-1">
-                                            {priorityScore !== null
-                                                ? priorityScore >= 4.0 ? 'Top priority — act now'
-                                                : priorityScore >= 3.0 ? 'Strong candidate — schedule soon'
-                                                : priorityScore >= 2.0 ? 'Moderate priority — review conditions'
-                                                : 'Low priority — reconsider or park'
-                                                : 'Complete all 4 dimensions to generate score'}
-                                        </span>
-                                    </div>
-
-                                    {quadrant && (
-                                        <div className={`flex flex-col gap-1 px-5 py-3.5 rounded-xl border ${quadrant.bg} ${quadrant.border}`}>
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Quadrant</span>
-                                            <span className="text-lg font-black" style={{ color: quadrant.color }}>{quadrant.label}</span>
-                                            <span className="text-xs text-slate-500 max-w-[200px]">{quadrant.desc}</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Formula breakdown */}
-                                <div className="px-6 py-4 flex flex-col gap-3">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Formula breakdown</p>
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                        {[
-                                            { label: 'Business Value',      value: pvBV,           weight: cfg.priorityWeights.BV,   contribution: pvBV !== null ? pvBV * cfg.priorityWeights.BV : null,                                positive: true },
-                                            { label: 'Data Readiness',      value: pvDR,           weight: cfg.priorityWeights.DR,   contribution: pvDR !== null ? pvDR * cfg.priorityWeights.DR : null,                                positive: true },
-                                            { label: 'Tech Complexity',     value: pvTC,           weight: cfg.priorityWeights.TC,   contribution: pvTC !== null ? (6 - pvTC) * cfg.priorityWeights.TC : null,                          positive: false },
-                                            { label: 'Risk',                value: riskComposite,  weight: cfg.priorityWeights.RISK, contribution: riskComposite !== null ? -(riskComposite * cfg.priorityWeights.RISK) : null,         positive: false },
-                                        ].map(item => (
-                                            <div key={item.label} className="flex flex-col gap-1 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest truncate">{item.label}</span>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className={`text-lg font-black ${item.value !== null ? scoreColor(item.value) : 'text-slate-300'}`}>
-                                                        {item.value !== null ? item.value.toFixed(1) : '—'}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400">× {item.label === 'Tech Complexity' ? `(6−n)×` : ''}{(item.weight * 100).toFixed(0)}%</span>
-                                                </div>
-                                                {item.contribution !== null && (
-                                                    <span className={`text-xs font-bold ${item.contribution >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                                                        {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)} pts
-                                                    </span>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {priorityScore !== null && (
-                                        <div className="mt-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full rounded-full transition-all"
-                                                style={{
-                                                    width: `${Math.max(0, Math.min(100, (priorityScore / 5) * 100))}%`,
-                                                    background: priorityScore >= 3.5 ? '#16a34a' : priorityScore >= 2.5 ? '#d97706' : '#dc2626',
-                                                }}
-                                            />
-                                        </div>
-                                    )}
-
-                                    {(pvBV === null || pvDR === null || pvTC === null || riskComposite === null) && (
-                                        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-                                            <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
-                                            <span>
-                                                {[pvBV === null && 'Business Value', pvDR === null && 'Data Readiness', pvTC === null && 'Technical Complexity', riskComposite === null && 'Risk'].filter(Boolean).join(', ')} {(([pvBV, pvDR, pvTC, riskComposite].filter(v => v === null).length) === 1) ? 'is' : 'are'} not yet scored.
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-
                             </div>
                         </div>
 
