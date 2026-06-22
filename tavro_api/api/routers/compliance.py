@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
-from api.routers.agents import _resolve_agent_llm
-from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.llm import _resolve_agent_llm, _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 
@@ -597,10 +596,6 @@ async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get('/company/{company_id}/summary')
 async def company_compliance_summary(company_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Returns a summary of all compliance obligations for a company —
-    both global regulations and company-specific policies.
-    """
     rows = await db.execute(text("""
         SELECT
             ci.id, ci.item_type, ci.name, ci.short_name, ci.status,

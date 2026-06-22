@@ -128,10 +128,11 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                 </div>
             ) : (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                    <div className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1.5fr_1fr_120px_130px_1fr_140px_48px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <div>Agent Name</div>
                         <div>Description</div>
                         <div>Version</div>
+                        <div>Type</div>
                         <div>Status</div>
                         <div>Risk Level</div>
                         <div></div>
@@ -147,7 +148,7 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                 <div
                                     key={agent.identification?.agent_id || agent.id || agent.name}
                                     onClick={() => onSelectAgent(agent)}
-                                    className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                                    className="grid grid-cols-[1.5fr_1fr_120px_130px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
                                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
@@ -162,6 +163,11 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                     </div>
                                     <div className="text-xs text-slate-400 dark:text-slate-500 font-medium">
                                         v{agent.version || '1.0'}
+                                    </div>
+                                    <div>
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 uppercase tracking-wide">
+                                            {agent.agent_type || 'Config-driven'}
+                                        </span>
                                     </div>
                                     <div>
                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">

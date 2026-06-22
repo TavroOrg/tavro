@@ -9,7 +9,6 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
 import { useChatSync } from '../hooks/useChatSync';
-import AuditInitModal from '../components/audit/AuditInitModal';
 import { useCaseApi } from '../services/useCaseApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
@@ -1235,7 +1234,6 @@ const UseCaseViewPage: React.FC = () => {
   const location = useLocation();
   const [useCase, setUseCase] = useState<UseCaseDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -1562,12 +1560,6 @@ const UseCaseViewPage: React.FC = () => {
             ) : (
               <>
                 <button
-                  onClick={() => setAuditModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
-                >
-                  <ShieldCheck size={15} /> Audit
-                </button>
-                <button
                   onClick={() => setJsonOpen(true)}
                   title="AI Use Case Card"
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
@@ -1649,14 +1641,6 @@ const UseCaseViewPage: React.FC = () => {
         />
       )}
 
-      <AuditInitModal
-        open={auditModalOpen}
-        onClose={() => setAuditModalOpen(false)}
-        onLaunched={(runId) => navigate(`/audit/${runId}`)}
-        prefillUseCaseId={useCase?.identifier ?? (useCase as any)?.id ?? ''}
-        prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
-        mode="use_case"
-      />
 
       {/* JSON Inspector Modal */}
       {jsonOpen && useCase && (

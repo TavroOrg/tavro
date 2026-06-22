@@ -1,14 +1,12 @@
-"""
-Claude Code integration: generate agent code via Anthropic API, stream output, read files.
-No claude CLI required — all code generation is done natively via the Anthropic API.
-"""
 import asyncio
+import base64
 import json
 import os
 import re
 from pathlib import Path
 from typing import AsyncGenerator
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -55,6 +53,12 @@ class SaveToDbRequest(BaseModel):
     code: str
     tenant_id: str | None = None
     agent_internal_id: str | None = None
+
+class PublishToGitRequest(BaseModel):
+    agent_id: str
+    filename: str
+    code: str
+    commit_message: str | None = None
 
 
 # ── SSE helpers ──────────────────────────────────────────────────────────────
@@ -488,6 +492,32 @@ User Question:
 
     yield _done()
     
+async def _handle_deploy_to_azure(agent_id: str, current_code: str = "") -> AsyncGenerator[str, None]:
+    """Load an agent card and deploy the generated code to Azure Foundry."""
+    from api.routers.azure_deploy import DeployRequest, _handle_deploy
+
+    card = _load_agent_card(agent_id)
+    if not card:
+        yield _err(f"Agent card not found for '{agent_id}'.")
+        yield _done()
+        return
+
+    name  = card.get("name", agent_id)
+    ident = card.get("identification", {})
+    role  = ident.get("role", "")
+    instr = ident.get("instruction", "")
+
+    # Azure agent names: alphanumeric + hyphens, max 63 chars
+    slug = re.sub(r'[^a-z0-9-]+', '-', agent_id.lower()).strip('-')[:63]
+
+    async for chunk in _handle_deploy(DeployRequest(
+        agent_name    = slug,
+        code          = current_code,
+        system_prompt = f"You are {name}. {role}\n\n{instr}".strip(),
+    )):
+        yield chunk
+
+
 async def _dispatch(body: RunRequest) -> AsyncGenerator[str, None]:
     """Route a command string to the appropriate handler."""
     cmd = body.command.strip()
@@ -496,6 +526,13 @@ async def _dispatch(body: RunRequest) -> AsyncGenerator[str, None]:
     m = re.match(r'^/generate-agent-code\s+(\S+)', cmd, re.IGNORECASE)
     if m:
         async for chunk in _handle_generate(m.group(1)):
+            yield chunk
+        return
+
+    # /deploy-to-azure <agent_id>
+    m = re.match(r'^/deploy-to-azure\s+(\S+)', cmd, re.IGNORECASE)
+    if m:
+        async for chunk in _handle_deploy_to_azure(m.group(1), body.current_code):
             yield chunk
         return
 
@@ -650,4 +687,121 @@ async def load_from_db(
         "tenant_id": row[1],
         "tavro_internal_id": row[2],
         "updated_at": str(row[3]),
+    }
+
+
+def _read_env_var(key: str, default: str = "") -> str:
+    """Read a variable from the process env first, then fall back to the .env file."""
+    val = os.getenv(key, "").strip()
+    if val:
+        return val
+    env_file = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
+    if not env_file.exists():
+        return default
+    import re as _re
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        m = _re.match(rf'^{_re.escape(key)}\s*=\s*(.*)', line.strip())
+        if m:
+            v = m.group(1)
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            return v.strip()
+    return default
+
+
+@router.post("/publish-to-git")
+async def publish_to_git(body: PublishToGitRequest):
+    """Push an agent source file to the configured git repository via GitHub API."""
+    import logging
+    log = logging.getLogger("publish_to_git")
+
+    env_file_path = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
+    log.info(f"[publish-to-git] ENV_FILE_PATH resolved to: {env_file_path} (exists={env_file_path.exists()})")
+
+    repo_url = _read_env_var("GIT_PUBLISH_REPO_URL")
+    token    = _read_env_var("GIT_PUBLISH_TOKEN")
+    branch   = _read_env_var("GIT_PUBLISH_BRANCH", "main") or "main"
+
+    log.info(f"[publish-to-git] repo_url={repo_url!r}  branch={branch!r}  token_set={bool(token)}")
+
+    if not repo_url:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Git repository not configured — GIT_PUBLISH_REPO_URL is empty. "
+                f".env file path: {env_file_path} (exists={env_file_path.exists()})"
+            ),
+        )
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Git token not configured — GIT_PUBLISH_TOKEN is empty. repo_url={repo_url!r}",
+        )
+
+    # Parse https://github.com/owner/repo  or  owner/repo
+    cleaned = repo_url.rstrip("/")
+    if "github.com/" in cleaned:
+        cleaned = cleaned.split("github.com/", 1)[1]
+    cleaned = cleaned.removesuffix(".git")
+    parts = [p for p in cleaned.split("/") if p]
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail=f"Cannot parse GitHub owner/repo from: {repo_url!r}")
+    owner, repo = parts[0], parts[1]
+    log.info(f"[publish-to-git] Parsed → owner={owner!r}  repo={repo!r}")
+
+    file_path_in_repo = f"agents/{body.agent_id}/{body.filename}"
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path_in_repo}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    encoded = base64.b64encode(body.code.encode()).decode()
+    commit_msg = body.commit_message or f"chore: publish agent {body.agent_id} ({body.filename})"
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        # Check if file already exists to get its SHA (required for update)
+        existing_sha: str | None = None
+        log.info(f"[publish-to-git] GET {api_url}  branch={branch!r}")
+        get_resp = await client.get(api_url, headers=headers, params={"ref": branch})
+        log.info(f"[publish-to-git] GET status={get_resp.status_code}")
+        if get_resp.status_code == 200:
+            existing_sha = get_resp.json().get("sha")
+            log.info(f"[publish-to-git] File exists, sha={existing_sha!r}")
+        elif get_resp.status_code not in (404,):
+            log.warning(f"[publish-to-git] Unexpected GET status {get_resp.status_code}: {get_resp.text[:300]}")
+
+        payload: dict = {
+            "message": commit_msg,
+            "content": encoded,
+            "branch":  branch,
+        }
+        if existing_sha:
+            payload["sha"] = existing_sha
+
+        log.info(f"[publish-to-git] PUT {api_url}  sha_present={bool(existing_sha)}")
+        put_resp = await client.put(api_url, headers=headers, json=payload)
+        log.info(f"[publish-to-git] PUT status={put_resp.status_code}  body={put_resp.text[:300]}")
+
+    if put_resp.status_code not in (200, 201):
+        try:
+            gh_msg = put_resp.json().get("message", put_resp.text)
+        except Exception:
+            gh_msg = put_resp.text
+        log.error(f"[publish-to-git] GitHub rejected PUT: status={put_resp.status_code}  message={gh_msg!r}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub API error ({put_resp.status_code}): {gh_msg}",
+        )
+
+    result = put_resp.json()
+    html_url = result.get("content", {}).get("html_url", "")
+    log.info(f"[publish-to-git] ✓ Published → {html_url}")
+    return {
+        "status": "published",
+        "url": html_url,
+        "repo": f"{owner}/{repo}",
+        "branch": branch,
+        "path": file_path_in_repo,
     }

@@ -279,6 +279,7 @@ class AgentMetadataExporter:
                     db_rows = cls.execute_select(
                         f"""
                         SELECT a.agent_name, a.agent_description,
+                               COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                                i.instruction, i.governance_status, i.role
                         FROM {cls.CORE_DB_NAME}.agents a
                         LEFT JOIN LATERAL (
@@ -301,6 +302,8 @@ class AgentMetadataExporter:
                             local_card["name"] = row["agent_name"]
                         if row.get("agent_description"):
                             local_card["description"] = row["agent_description"]
+                        if row.get("agent_type"):
+                            local_card["agent_type"] = row["agent_type"]
                         ident = local_card.get("identification") or {}
                         if row.get("instruction") is not None:
                             ident["instruction"] = row["instruction"]
