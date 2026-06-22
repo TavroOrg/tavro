@@ -1,0 +1,43 @@
+FROM python:3.12-slim
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -sSL https://temporal.download/cli.sh | bash
+ENV PATH="/root/.temporalio/bin:${PATH}"
+
+WORKDIR /app
+
+COPY tavro/tavro_api/requirements.txt /tmp/requirements.txt
+COPY tavro/services/requirements.txt /tmp/requirements-risk.txt
+COPY tavro/dist/*.whl /tmp/
+
+# Install base deps + pdfplumber (used by enterprise compliance routers)
+RUN pip install \
+      -r /tmp/requirements.txt \
+      -r /tmp/requirements-risk.txt \
+      pdfplumber && \
+    pip install /tmp/*.whl
+
+COPY tavro/tavro_api/   /app/
+COPY tavro/services     /app/services
+COPY tavro/tavro_library /app/tavro_library
+COPY tavro/utils        /app/utils
+
+# Store enterprise files at /enterprise/ — outside /app so they survive
+# the ./tavro_api:/app dev-mode volume mount.  The entrypoint copies them
+# into /app/api/ at container start, after the volume mount is applied.
+COPY enterprise/api/routers/compliance.py           /enterprise/api/routers/compliance.py
+COPY enterprise/api/routers/compliance_research.py  /enterprise/api/routers/compliance_research.py
+COPY enterprise/api/routers/audit.py                /enterprise/api/routers/audit.py
+COPY enterprise/api/llm.py                          /enterprise/api/llm.py
+
+COPY tavro/tavro_api/entrypoint.enterprise.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV PYTHONPATH=/app
+
+EXPOSE 8000
+
+CMD ["/entrypoint.sh"]

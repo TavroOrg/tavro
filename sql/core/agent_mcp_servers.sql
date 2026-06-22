@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_mcp_servers (
   tenant_id TEXT,
+  company_id TEXT,
   agent_id TEXT,
   name TEXT,
   url TEXT,

@@ -255,7 +255,7 @@ const IntegrationViewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await businessRelationsApi.getIntegration(id);
+      const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
       setIntegration(data);
       setForm(formFromIntegration(data));
       setAttemptedSave(false);

@@ -83,6 +83,9 @@ export interface PlaygroundConfig {
   // Blueprint context
   companyId?:   string;
   companyName?: string;
+
+  // Agent type (drives Code tab visibility)
+  agentType?:   string;
 }
 
 export interface PlaygroundMessage {

@@ -247,8 +247,9 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (!hasExistingData || shouldInvalidate) setLoading(true);
 
         try {
-            const response = await agentApi.getAgentCatalog(1, '1-500');
-            const data: AgentData[] = (response.data ?? []).map((item: any) => ({
+            const PAGE_SIZE = 100;
+
+            const normalizeItem = (item: any): AgentData => ({
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
                 description: item.description || item.agent_description || item.summary || '',
@@ -268,7 +269,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 application: item.application || [],
                 business_process: item.business_process || [],
                 risk_assessment: item.risk_assessment || null,
-            }));
+            });
+
             const temporalRecords = readTemporalRecords();
             const runningRecords = temporalRecords.filter(r => r.status === 'running');
 
@@ -284,9 +286,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 locallyPendingIds = new Set();
             }
 
+            // Page 1: fetch immediately, run the full temporal-workflow merge, show data.
+            const firstResponse = await agentApi.getAgentCatalog(1, `1-${PAGE_SIZE}`);
+            const totalRecords = firstResponse.total_records ?? 0;
+            const firstBatch = (firstResponse.data ?? []).map(normalizeItem);
+
             setAgents(prev => {
                 const prevMap = mapByIdentity(prev);
-                const merged = data.map(agent => {
+                const merged = firstBatch.map(agent => {
                     const key = identityKey(agent);
                     const old = key ? prevMap.get(key) : undefined;
                     const base = old ? mergeAgent(agent, old) : agent;
@@ -349,12 +356,58 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     .map(toPendingAgentFromWorkflow);
 
                 const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
-                const now = Date.now();
+                // Don't stamp the cache timestamp yet — wait until all pages arrive so the
+                // 5-minute freshness window only starts once the data set is complete.
                 sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
-                sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
-                setLastFetched(new Date(now));
                 return next;
             });
+            setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
+
+            // Pages 2–N: fire all concurrently, append new agents as each arrives.
+            if (totalRecords > PAGE_SIZE) {
+                const pageStarts: number[] = [];
+                for (let start = PAGE_SIZE + 1; start <= totalRecords; start += PAGE_SIZE) {
+                    pageStarts.push(start);
+                }
+                await Promise.all(pageStarts.map(async start => {
+                    const end = Math.min(start + PAGE_SIZE - 1, totalRecords);
+                    try {
+                        const resp = await agentApi.getAgentCatalog(start, `${start}-${end}`);
+                        const batch = (resp.data ?? []).map(normalizeItem);
+                        setAgents(prev => {
+                            const prevKeys = new Set(prev.map(identityKey).filter(Boolean));
+                            const fresh = batch
+                                .filter(a => {
+                                    const key = identityKey(a);
+                                    return key && !prevKeys.has(key);
+                                })
+                                .map(agent => {
+                                    // Apply workflow status for agents discovered in later pages.
+                                    const isRunning = runningRecords.some(wf => workflowMatchesAgent(wf, agent));
+                                    if (!isRunning) return agent;
+                                    return {
+                                        ...agent,
+                                        latest_risk_score: null,
+                                        latest_risk_class: null,
+                                        risk_assessment: null,
+                                        identification: { ...agent.identification, governance_status: 'Risk Assessment is running' },
+                                    };
+                                });
+                            if (!fresh.length) return prev;
+                            const next = dedupeLogicalAgents([...prev, ...fresh]);
+                            sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                            return next;
+                        });
+                    } catch {
+                        // Silently skip a failed page — partial data is better than nothing.
+                    }
+                }));
+            }
+
+            // All pages done — stamp cache as fully valid.
+            const now = Date.now();
+            sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            setLastFetched(new Date(now));
         } catch (err: any) {
             setError(err.message ?? 'Failed to load agent catalog');
         } finally {
