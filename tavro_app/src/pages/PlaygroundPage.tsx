@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
 import AgentClaudeSupportTab from '../components/AgentClaudeSupportTab';
-import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
+import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, inferDocType } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
 import type { AttachmentPayload } from '../context/PlaygroundContext';
 import AttachmentPicker from '../components/playground/AttachmentPicker';
@@ -209,9 +209,9 @@ const PlaygroundPage: React.FC = () => {
     setAttachments([]);
     const responseText = await sendMessage(text, atts);
     if (isPdf && responseText?.trim()) {
-      const body  = extractPdfBody(responseText);
-      const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
-      if (body.trim()) generateMarkdownPdf(title, body, `tavro-playground-${Date.now()}.pdf`);
+      const body = extractPdfBody(responseText);
+      const name = config.agentName || 'Agent Playground';
+      if (body.trim()) generateMarkdownPdf(name, body, `tavro-playground-${Date.now()}.pdf`, inferDocType(text));
     }
   };
 
@@ -679,9 +679,12 @@ const PlaygroundPage: React.FC = () => {
                             ))}
                             <button
                               onClick={() => {
-                                const body  = extractPdfBody(msg.content);
-                                const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
-                                if (body.trim()) generateMarkdownPdf(title, body, `tavro-response-${Date.now()}.pdf`);
+                                const body = extractPdfBody(msg.content);
+                                const name = config.agentName || 'Agent Playground';
+                                const allMsgs = messages.filter(m => m.role !== 'system');
+                                const idx = allMsgs.findIndex(m => m.id === msg.id);
+                                const prevUser = allMsgs.slice(0, idx).reverse().find(m => m.role === 'user');
+                                if (body.trim()) generateMarkdownPdf(name, body, `tavro-response-${Date.now()}.pdf`, inferDocType(prevUser?.content || ''));
                               }}
                               className="flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200 dark:hover:border-blue-700 transition-colors"
                               title="Download as PDF">

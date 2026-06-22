@@ -97,12 +97,17 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
     const handleDownloadReport = async () => {
         if (!data || !headline) return;
         setDownloading(true);
+        setError(null);
         try {
             await generateRiskReportPDF(data.agent_name, data.agent_id, headline.level, headline.aivss, data.risk_summary);
+        } catch (err: any) {
+            console.error('[AgentRiskSummary] PDF generation failed', err);
+            setError(err?.message || 'Failed to generate risk report PDF.');
         } finally {
             setDownloading(false);
         }
     };
+
 
     useEffect(() => {
         let cancelled = false;
