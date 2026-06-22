@@ -54,8 +54,12 @@ function buildTranscript(messages: Message[], sessionTitle?: string, modelLabel?
     return header ? `${header}\n\n---\n\n${body}` : body;
 }
 
-function saveTextAsPdf(title: string, text: string, filename: string): void {
-    generateMarkdownPdf(title, text, filename);
+function saveTextAsPdf(title: string, text: string, filename: string, docType?: string): void {
+    generateMarkdownPdf(title, text, filename, docType);
+}
+
+function getAssistantPdfHeaderName(): string {
+    return 'User Conversation Request';
 }
 
 // ── Export / download helpers ──────────────────────────────────────────────────
@@ -139,12 +143,13 @@ function markdownToWordHtml(text: string): string {
  * Trigger the appropriate file download for the given export format.
  * Returns true when a file was successfully created and downloaded.
  */
-function handleExport(format: ExportFormat, content: string, title: string, basename: string): boolean {
+function handleExport(format: ExportFormat, content: string, title: string, basename: string, userRequest?: string): boolean {
     switch (format) {
         case 'pdf': {
             const body = extractPdfBody(content);
             if (!body.trim()) return false;
-            generateMarkdownPdf(extractPdfTitle(body, title), body, `${basename}.pdf`);
+            const name = userRequest ? getAssistantPdfHeaderName() : extractPdfTitle(body, title);
+            generateMarkdownPdf(name, body, `${basename}.pdf`, 'Summary');
             return true;
         }
         case 'csv':
@@ -785,18 +790,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const downloadConversationPdf = () => {
-        const title = activeSession?.title ?? 'Tavro AI Assistant Chat';
+        const title = getAssistantPdfHeaderName();
         saveTextAsPdf(
             title,
             buildTranscript(messages, activeSession?.title, modelLabel),
-            `tavro-chat-${Date.now()}.pdf`
+            `tavro-chat-${Date.now()}.pdf`,
+            'Summary',
         );
     };
 
     const handleDownloadMessagePDF = (msg: Message) => {
-        const body  = extractPdfBody(msg.text);
-        const title = extractPdfTitle(body, 'Tavro AI Assistant Response');
-        generateMarkdownPdf(title, body, `tavro-assistant-response-${Date.now()}.pdf`);
+        const body = extractPdfBody(msg.text);
+        const msgIndex = messages.findIndex(m => m.id === msg.id);
+        const prevUserMsg = messages.slice(0, msgIndex).reverse().find(m => m.role === 'user');
+        const name = prevUserMsg ? getAssistantPdfHeaderName() : 'Tavro AI Assistant Response';
+        generateMarkdownPdf(name, body, `tavro-assistant-response-${Date.now()}.pdf`, 'Summary');
     };
 
     const sendMessage = async () => {
@@ -862,6 +870,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     accumulated,
                     activeSession?.title ?? 'Tavro AI Response',
                     `tavro-export-${Date.now()}`,
+                    text,
                 );
                 if (exportDownloaded) {
                     accumulated += `\n\n---\n*Your ${EXPORT_LABELS[exportFormat]} has been downloaded.*`;

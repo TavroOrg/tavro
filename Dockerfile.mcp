@@ -23,6 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY mcp_server ./mcp_server
 COPY tavro_library ./tavro_library
+COPY tavro_app/copilot-server/templates ./templates
 COPY utils ./utils
 COPY services ./services
 

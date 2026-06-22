@@ -1232,8 +1232,12 @@ async def generate_agent_artifacts(
         )
 
         import base64 as _base64
-        req_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(requirements_markdown)
-        tech_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(technical_markdown)
+        req_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(
+            requirements_markdown, agent_name=agent_name, doc_type="Requirement Document"
+        )
+        tech_pdf_bytes = AgentMetadataExporter._markdown_to_pdf(
+            technical_markdown, agent_name=agent_name, doc_type="Technical Document"
+        )
 
         headers: Dict[str, str] = {"Content-Type": "application/json"}
         if tenant_id:

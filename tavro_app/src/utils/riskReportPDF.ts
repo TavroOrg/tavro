@@ -1,5 +1,22 @@
 import { jsPDF } from 'jspdf';
 import tavrLogoUrl from '../assets/travo_logo.png';
+import { PDF_VISUAL_FORMAT } from './pdfTemplate';
+
+function savePdf(doc: jsPDF, filename: string): void {
+  try {
+    doc.save(filename);
+  } catch {
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+}
 
 /* ── Block types ──────────────────────────────────────────────────────────── */
 type Block =
@@ -14,10 +31,10 @@ type Block =
 
 /* ── Proportional column widths ───────────────────────────────────────────── */
 function calcColWidths(headers: string[], rows: string[][], totalW: number): number[] {
-  const n = headers.length;
+  const n = Math.max(headers.length, ...rows.map(row => row.length), 0);
   if (n === 0) return [];
-  const lens = headers.map((h, i) => {
-    let max = h.length;
+  const lens = Array.from({ length: n }, (_, i) => {
+    let max = (headers[i] ?? '').length;
     rows.forEach(row => { max = Math.max(max, (row[i] ?? '').length); });
     return Math.max(max, 4);
   });
@@ -31,6 +48,14 @@ function calcColWidths(headers: string[], rows: string[][], totalW: number): num
 /* ── Markdown helpers ─────────────────────────────────────────────────────── */
 function stripInlineMd(text: string): string {
   return text
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u2192/g, '->')
+    .replace(/\u2190/g, '<-')
+    .replace(/\u2022/g, '-')
+    .replace(/\u00a0/g, ' ')
     // Paired markdown spans
     .replace(/\*\*\*(.+?)\*\*\*/g, '$1')   // ***bold italic***
     .replace(/\*\*(.+?)\*\*/g, '$1')        // **bold**
@@ -56,6 +81,10 @@ function stripInlineMd(text: string): string {
     .replace(/ /g, ' ')              // non-breaking space
     .replace(/[^\x00-\xFF]/g, '')          // drop anything outside Latin-1
     .trim();
+}
+
+function registerRiskPdfFont(doc: jsPDF): string {
+  return 'helvetica';
 }
 
 function parseMarkdown(text: string): Block[] {
@@ -309,6 +338,14 @@ export async function generateRiskReportPDF(
   aivssScore: string,
   riskSummaryContent: string
 ): Promise<void> {
+  // Sanitize header fields — jsPDF's built-in Helvetica uses Latin-1 encoding;
+  // any character outside that range causes "Cannot read properties of undefined
+  // (reading 'Unicode')" when splitTextToSize / text tries to look up glyph widths.
+  agentName = stripInlineMd(agentName);
+  agentId   = stripInlineMd(agentId);
+  riskLevel = stripInlineMd(riskLevel);
+  aivssScore = stripInlineMd(aivssScore);
+
   // Pre-load the Tavro logo (graceful fallback if unavailable)
   let logoImg: HTMLImageElement | null = null;
   try {
@@ -316,10 +353,13 @@ export async function generateRiskReportPDF(
   } catch { /* continue without logo */ }
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const visual = PDF_VISUAL_FORMAT;
   const PW = doc.internal.pageSize.getWidth();
   const PH = doc.internal.pageSize.getHeight();
   const ML = 18;
   const CW = PW - ML * 2;
+
+  const docFont = registerRiskPdfFont(doc);
 
   let y = 0;
 
@@ -344,7 +384,7 @@ export async function generateRiskReportPDF(
   ): void {
     const { x = ML, maxW = CW, size, style = 'normal', color, lineH, align = 'left' } = opts;
     doc.setFontSize(size);
-    doc.setFont('helvetica', style);
+    doc.setFont(docFont, style);
     doc.setTextColor(...color);
     const lines = doc.splitTextToSize(str, maxW);
     for (const line of lines) {
@@ -358,64 +398,59 @@ export async function generateRiskReportPDF(
   // HEADER BANNER
   // ══════════════════════════════════════════════════════════════════════════
 
-  doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, PW, 44, 'F');
-  // Blue accent stripe at top
-  doc.setFillColor(59, 130, 246);
-  doc.rect(0, 0, PW, 3, 'F');
+  doc.setFillColor(...visual.headerBackground);
+  doc.rect(0, 0, PW, visual.headerHeight, 'F');
+  doc.setDrawColor(...visual.headerBorder);
+  doc.setLineWidth(0.3);
+  doc.line(0, visual.headerHeight - 0.3, PW, visual.headerHeight - 0.3);
+  if (visual.accentHeight > 0) {
+    doc.setFillColor(...visual.accent);
+    doc.rect(ML, visual.headerHeight - visual.accentHeight - 1, PW - (ML * 2), visual.accentHeight, 'F');
+  }
 
-  // ── Logo (or fallback "AI" box) ──
+  // Logo — rendered directly, no tile/card wrapper
   const LOGO_H = 11;
-  const LOGO_Y = (44 - LOGO_H) / 2;  // vertically centred in the 44mm header
-  let titleX = ML;
+  const LOGO_Y = (visual.headerHeight - LOGO_H) / 2;
+  let titleX = ML + LOGO_H + 5;      // default; updated below with actual logo width
 
   if (logoImg) {
     const ratio = logoImg.naturalWidth / logoImg.naturalHeight;
-    const logoW = Math.min(LOGO_H * ratio, 38);  // cap at 38mm wide
+    const logoW = Math.min(LOGO_H * ratio, 38);
     try {
       doc.addImage(logoImg, 'PNG', ML, LOGO_Y, logoW, LOGO_H);
       titleX = ML + logoW + 5;
-    } catch {
-      titleX = ML; // addImage failed — fall through to fallback rendering
-    }
+    } catch { /* logo unavailable — title starts at default offset */ }
   }
 
-  if (!logoImg) {
-    // Fallback: blue rounded square with "AI" text
-    doc.setFillColor(37, 99, 235);
-    doc.roundedRect(ML, LOGO_Y + 0.5, 10, 10, 2, 2, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(5.5);
-    doc.setFont('helvetica', 'bold');
-    doc.text('AI', ML + 5, LOGO_Y + 7, { align: 'center' });
-    titleX = ML + 14;
-  }
+  // Name: agent name (bold, 11pt)
+  doc.setTextColor(...visual.nameColor);
+  doc.setFontSize(visual.nameSize);
+  doc.setFont(docFont, 'bold');
+  const agentNameLines = doc.splitTextToSize(agentName, PW - titleX - ML) as string[];
+  doc.text(agentNameLines[0] ?? agentName, titleX, visual.nameY);
 
-  // Report title
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('AI Risk Assessment Report', titleX, 19);
+  // Type: document type (8pt, slate-600)
+  doc.setTextColor(...visual.typeColor);
+  doc.setFontSize(visual.typeSize);
+  doc.setFont(docFont, 'normal');
+  doc.text('AI Risk Assessment Report', titleX, visual.typeY);
 
-  doc.setTextColor(148, 163, 184);
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'normal');
-  doc.text('EU AI Act  ·  OWASP AIVSS Framework', titleX, 27);
+  // Platform subtitle
+  doc.setTextColor(...visual.subtitleColor);
+  doc.setFontSize(visual.subtitleSize);
+  doc.setFont(docFont, 'normal');
+  doc.text('Tavro AI Governance Platform', titleX, visual.subtitleY);
 
   // Right: generation date
   const dateStr = new Date().toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
   });
-  doc.setTextColor(100, 116, 139);
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.text(dateStr, PW - ML, 27, { align: 'right' });
+  doc.setTextColor(...visual.dateColor);
+  doc.setFontSize(visual.dateSize);
+  doc.setFont(docFont, 'normal');
+  doc.text(dateStr, PW - ML, visual.dateY, { align: 'right' });
 
-  // Darker strip at bottom of header
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 41, PW, 3, 'F');
-
-  y = 50;
+  y = visual.contentStartY;
 
   // ══════════════════════════════════════════════════════════════════════════
   // AGENT INFO CARD
@@ -427,17 +462,17 @@ export async function generateRiskReportPDF(
 
   doc.setTextColor(148, 163, 184);
   doc.setFontSize(6.5);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text('AGENT', ML + 4, y + 6);
 
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text(doc.splitTextToSize(agentName, CW - 10)[0], ML + 4, y + 13.5);
 
   doc.setTextColor(100, 116, 139);
   doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(docFont, 'normal');
   doc.text(agentId, ML + 4, y + 21);
 
   y += 34;
@@ -455,14 +490,14 @@ export async function generateRiskReportPDF(
 
   doc.setTextColor(100, 116, 139);
   doc.setFontSize(6.5);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text('RISK OVERVIEW', ML + 4, y + 6);
 
   doc.setFillColor(...bg);
   doc.roundedRect(ML + 4, y + 9, 44, 11, 2, 2, 'F');
   doc.setTextColor(...fg);
   doc.setFontSize(8.5);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text(riskLevel, ML + 4 + 22, y + 16, { align: 'center' });
 
   doc.setDrawColor(226, 232, 240);
@@ -470,11 +505,11 @@ export async function generateRiskReportPDF(
 
   doc.setTextColor(100, 116, 139);
   doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont(docFont, 'normal');
   doc.text('AIVSS Score', ML + 56, y + 13);
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text(aivssScore, ML + 56, y + 22);
 
   if (aivssScore !== 'N/A') {
@@ -491,7 +526,7 @@ export async function generateRiskReportPDF(
   doc.roundedRect(PW - ML - 50, y + 9, 23, 8, 1.5, 1.5, 'F');
   doc.setTextColor(37, 99, 235);
   doc.setFontSize(6.5);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text('EU AI Act', PW - ML - 50 + 11.5, y + 14, { align: 'center' });
 
   doc.setFillColor(240, 253, 244);
@@ -510,7 +545,7 @@ export async function generateRiskReportPDF(
   doc.rect(ML, y, CW, 9, 'DF');
   doc.setTextColor(51, 65, 85);
   doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont(docFont, 'bold');
   doc.text('DETAILED ASSESSMENT REPORT', ML + 4, y + 6);
   y += 13;
 
@@ -530,7 +565,7 @@ export async function generateRiskReportPDF(
       doc.rect(ML + 3, y, CW - 3, 9, 'F');
       doc.setTextColor(15, 23, 42);
       doc.setFontSize(9.5);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(docFont, 'bold');
       doc.text(block.text.toUpperCase(), ML + 7, y + 6.3);
       y += 12;
 
@@ -540,7 +575,7 @@ export async function generateRiskReportPDF(
       guard(12);
       y += 3;
       doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(docFont, 'bold');
       doc.setTextColor(51, 65, 85);
       const h3lines = doc.splitTextToSize(block.text, CW - 2);
       for (const line of h3lines) {
@@ -564,7 +599,7 @@ export async function generateRiskReportPDF(
       guard(6);
       const keyLabel = `${block.key}: `;
       doc.setFontSize(8.5);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(docFont, 'bold');
       doc.setTextColor(30, 41, 59);
       const keyW = doc.getTextWidth(keyLabel);
 
@@ -578,14 +613,14 @@ export async function generateRiskReportPDF(
         // Inline: bold key + normal value on same baseline
         const valLines = doc.splitTextToSize(block.value, CW - keyW - 1);
         doc.text(keyLabel, ML, y);
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(docFont, 'normal');
         doc.setTextColor(71, 85, 105);
         doc.text(valLines[0] ?? '', ML + keyW, y);
         y += 5;
         for (let vi = 1; vi < valLines.length; vi++) {
           guard(4.5);
           doc.setFontSize(8.5);
-          doc.setFont('helvetica', 'normal');
+          doc.setFont(docFont, 'normal');
           doc.setTextColor(71, 85, 105);
           doc.text(valLines[vi], ML + keyW, y);
           y += 4.5;
@@ -604,13 +639,17 @@ export async function generateRiskReportPDF(
     // ── table: Formatted table ───────────────────────────────────────────────
     } else if (block.kind === 'table') {
       const { headers, rows } = block;
-      const colCount = Math.max(headers.length, rows[0]?.length ?? 0);
+      const colCount = Math.max(headers.length, ...rows.map(row => row.length), 0);
       if (colCount === 0) continue;
 
       guard(18);
       y += 3;
 
-      const colWidths = calcColWidths(headers, rows, CW);
+      const normalizedHeaders = headers.length > 0
+        ? Array.from({ length: colCount }, (_, i) => headers[i] ?? '')
+        : [];
+      const normalizedRows = rows.map(row => Array.from({ length: colCount }, (_, i) => row[i] ?? ''));
+      const colWidths = calcColWidths(normalizedHeaders, normalizedRows, CW);
       const PAD = 2.5;
       const LH = 3.8;
       const MAX_LINES = 7;
@@ -637,7 +676,7 @@ export async function generateRiskReportPDF(
         doc.rect(ML, rY, CW, rH, 'DF');
 
         doc.setFontSize(7.5);
-        doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
+        doc.setFont(docFont, isHeader ? 'bold' : 'normal');
         doc.setTextColor(isHeader ? 255 : 51, isHeader ? 255 : 65, isHeader ? 255 : 85);
 
         let xCursor = ML;
@@ -655,14 +694,14 @@ export async function generateRiskReportPDF(
         });
       };
 
-      if (headers.length > 0) {
-        const rh = calcRH(headers);
+      if (normalizedHeaders.length > 0) {
+        const rh = calcRH(normalizedHeaders);
         guard(rh);
-        drawRow(headers, y, rh, true, false);
+        drawRow(normalizedHeaders, y, rh, true, false);
         y += rh;
       }
 
-      rows.forEach((row, ri) => {
+      normalizedRows.forEach((row, ri) => {
         const rh = calcRH(row);
         guard(rh);
         drawRow(row, y, rh, false, ri % 2 === 1);
@@ -691,17 +730,17 @@ export async function generateRiskReportPDF(
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
-    doc.setFillColor(248, 250, 252);
-    doc.rect(0, PH - 12, PW, 12, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.line(0, PH - 12, PW, PH - 12);
-    doc.setTextColor(148, 163, 184);
+    doc.setFillColor(...visual.footerBackground);
+    doc.rect(0, PH - visual.footerHeight, PW, visual.footerHeight, 'F');
+    doc.setDrawColor(...visual.footerBorder);
+    doc.line(0, PH - visual.footerHeight, PW, PH - visual.footerHeight);
+    doc.setTextColor(...visual.footerText);
     doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(docFont, 'normal');
     doc.text('Tavro AI Governance Platform  ·  Confidential', ML, PH - 5.5);
     doc.text(`Page ${p} of ${totalPages}`, PW - ML, PH - 5.5, { align: 'right' });
   }
 
   const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
-  doc.save(`${safeName}_risk_report_${new Date().toISOString().slice(0, 10)}.pdf`);
+  savePdf(doc, `${safeName}_risk_report_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
