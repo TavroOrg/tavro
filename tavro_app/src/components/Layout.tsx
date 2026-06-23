@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, Unlock
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -53,7 +53,6 @@ function isProcessPage(pathname: string): boolean {
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
-
 
 function LockedNavItem({
     icon,
@@ -111,8 +110,8 @@ const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [showLogs] = useShowLogs();
-    useCatalog();
-    useUseCases();
+    const { agents } = useCatalog();
+    const { useCases } = useUseCases();
     const { activeCompany } = useBlueprint();
     const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
@@ -129,7 +128,7 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(undefined, companyId),
+            aiModelApi.listModels(),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {
@@ -309,17 +308,81 @@ const Layout: React.FC = () => {
 
                             <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
 
-                            {/* ── BLUEPRINT ── */}
-                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Blueprint</p>}
+                            {/* ── STRATEGY ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Strategy</p>}
                             <button
                                 onClick={() => navigate('/blueprint')}
                                 className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/blueprint')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Company Profile" : undefined}
+                                title={!isLeftPanelOpen ? "Enterprise Blueprint" : undefined}
                             >
                                 <Network size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/blueprint') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Company Profile</span>
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Enterprise Blueprint</span>
+                            </button>
+                            {enterpriseEnabled ? (
+                                <button
+                                    onClick={() => navigate('/roadmap')}
+                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/roadmap')
+                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                    title={!isLeftPanelOpen ? 'Roadmap' : undefined}
+                                >
+                                    <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
+                                </button>
+                            ) : (
+                                <LockedNavItem
+                                    icon={<Map size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
+                                    label="Roadmap"
+                                    badge="Enterprise"
+                                    isOpen={isLeftPanelOpen}
+                                    showTooltip={true}
+                                />
+                            )}
+
+                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
+
+                            {/* ── PLAN ── */}
+                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Plan</p>}
+                            <button
+                                onClick={() => navigate('/spark')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/spark')
+                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Spark" : undefined}
+                            >
+                                <Zap size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
+                                {isLeftPanelOpen && sparkCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{sparkCount} {sparkCount === 1 ? 'idea' : 'ideas'}</span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => navigate('/use-cases')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "AI Use Cases" : undefined}
+                            >
+                                <ClipboardList size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI use cases</span>
+                                {isLeftPanelOpen && useCaseCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCaseCount} {useCaseCount === 1 ? 'case' : 'cases'}</span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => navigate('/catalog')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent')
+                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
+                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                                title={!isLeftPanelOpen ? "Agents" : undefined}
+                            >
+                                <Bot size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
+                                {isLeftPanelOpen && agentCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agentCount} {agentCount === 1 ? 'agent' : 'agents'}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => navigate('/applications')}
@@ -348,19 +411,6 @@ const Layout: React.FC = () => {
                                 )}
                             </button>
                             <button
-                                onClick={() => navigate('/integrations')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/integrations')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Integrations" : undefined}
-                            >
-                                <Plug size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/integrations') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
-                                {isLeftPanelOpen && integrationCount > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{integrationCount} {integrationCount === 1 ? 'integration' : 'integrations'}</span>
-                                )}
-                            </button>
-                            <button
                                 onClick={() => navigate('/ai-models')}
                                 className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/ai-models')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
@@ -373,74 +423,18 @@ const Layout: React.FC = () => {
                                     <span className="ml-auto text-[10px] font-semibold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{aiModelCount} {aiModelCount === 1 ? 'model' : 'models'}</span>
                                 )}
                             </button>
-                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
-                            {enterpriseEnabled ? (
-                                <button
-                                    onClick={() => navigate('/roadmap')}
-                                    className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/roadmap')
-                                        ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                        : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                    title={!isLeftPanelOpen ? 'Roadmap' : undefined}
-                                >
-                                    <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                    <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
-                                </button>
-                            ) : (
-                                <LockedNavItem
-                                    icon={<Map size={16} className="flex-shrink-0 text-slate-300 dark:text-slate-600" />}
-                                    label="Roadmap"
-                                    badge="Enterprise"
-                                    isOpen={isLeftPanelOpen}
-                                    showTooltip={true}
-                                />
-                            )}
 
-                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
-
-                            {/* Spark */}
                             <button
-                                onClick={() => navigate('/spark')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/spark')
-                                    ? 'bg-violet-50 dark:bg-violet-600/20 text-violet-700 dark:text-violet-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Spark" : undefined}
-                            >
-                                <Zap size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/spark') ? 'text-violet-600 dark:text-violet-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Spark</span>
-                                {isLeftPanelOpen && sparkCount > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{sparkCount} {sparkCount === 1 ? 'idea' : 'ideas'}</span>
-                                )}
-                            </button>
-
-                            <hr className="border-slate-100 dark:border-slate-800 mx-1 my-1" />
-
-                            {/* ── PLAN ── */}
-                            {isLeftPanelOpen && <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 pb-0.5">Plan</p>}
-                            <button
-                                onClick={() => navigate('/use-cases')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case')
+                                onClick={() => navigate('/integrations')}
+                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/integrations')
                                     ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
                                     : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "AI Use Cases" : undefined}
+                                title={!isLeftPanelOpen ? "Integrations" : undefined}
                             >
-                                <ClipboardList size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/use-cases') || location.pathname.startsWith('/use-case') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>AI Use Case</span>
-                                {isLeftPanelOpen && useCaseCount > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{useCaseCount} {useCaseCount === 1 ? 'case' : 'cases'}</span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => navigate('/catalog')}
-                                className={`flex items-center py-1 rounded-lg transition-all text-sm font-medium w-full outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'} ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent')
-                                    ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 shadow-sm'
-                                    : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                                title={!isLeftPanelOpen ? "Agents" : undefined}
-                            >
-                                <Bot size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/catalog') || location.pathname.startsWith('/agent') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agents</span>
-                                {isLeftPanelOpen && agentCount > 0 && (
-                                    <span className="ml-auto text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{agentCount} {agentCount === 1 ? 'agent' : 'agents'}</span>
+                                <Plug size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/integrations') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                                <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[160px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Integrations</span>
+                                {isLeftPanelOpen && integrationCount > 0 && (
+                                    <span className="ml-auto text-[10px] font-semibold text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{integrationCount} {integrationCount === 1 ? 'integration' : 'integrations'}</span>
                                 )}
                             </button>
 
@@ -468,7 +462,6 @@ const Layout: React.FC = () => {
                                 >
                                     <TestTube2 size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/agent-evals') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -496,7 +489,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -519,7 +511,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -542,7 +533,6 @@ const Layout: React.FC = () => {
                                 >
                                     <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -565,7 +555,6 @@ const Layout: React.FC = () => {
                                 >
                                     <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
