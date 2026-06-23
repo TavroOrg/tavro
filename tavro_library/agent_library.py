@@ -1935,6 +1935,15 @@ class AgentMetadataExporter:
         # Fire-and-forget
         cls.send_payload_async(payload)
 
+        # Sync to AICT — runs synchronously (this method is already off the event loop)
+        try:
+            from services.integrations.aict_integration import create_ai_system, is_configured
+            if is_configured():
+                aict_result = create_ai_system(raw_agent_name, raw_description, provider)
+                print(f"[aict-sync] mcp create_agent: {aict_result}")
+        except Exception as aict_err:
+            print(f"[aict-sync] mcp create_agent error: {aict_err}")
+
         return {
             "agent_id": agent_id,
             "agent_name": raw_agent_name,

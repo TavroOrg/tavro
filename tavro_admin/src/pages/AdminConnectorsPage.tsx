@@ -129,6 +129,17 @@ const CONNECTORS: ConnectorDef[] = [
             { key: 'token',    label: 'Token',          type: 'password' },
         ],
     },
+    {
+        id: 'servicenow_aict', name: 'ServiceNow AICT', description: 'ServiceNow AI Control Tower — AI system governance',
+        category: 'ServiceNow', initials: 'SA', color: 'from-emerald-500 to-emerald-700',
+        fields: [
+            { key: 'instance_url',          label: 'Instance URL',           type: 'text',     placeholder: 'https://myinstance.service-now.com' },
+            { key: 'username',              label: 'Username',               type: 'text' },
+            { key: 'password',              label: 'Password',               type: 'password' },
+            { key: 'provider_name',         label: 'Provider Name',          type: 'text',     placeholder: 'Tavro' },
+            { key: 'model_category_sys_id', label: 'Model Category Sys ID',  type: 'text',     placeholder: '5383f164ffec2a10c0fbffffffffff82' },
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -363,7 +374,8 @@ const AdminConnectorsPage: React.FC = () => {
                         </div>
                     )}
 
-                    {/* credential fields */}
+                    {/* credential fields — AICT renders its own fields inside the toggle section */}
+                    {selectedConnector.id !== 'servicenow_aict' && (
                     <div className="space-y-4">
                         <div className="flex items-center gap-2">
                             <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
@@ -396,6 +408,7 @@ const AdminConnectorsPage: React.FC = () => {
                             ))}
                         </div>
                     </div>
+                    )}
 
                     {/* Gemini: Get Authorization URL */}
                     {selectedConnector.id === 'gemini' && (
@@ -485,8 +498,99 @@ const AdminConnectorsPage: React.FC = () => {
                         </div>
                     )}
 
-                    {/* run button — hidden for Gemini (shown inside the auth URL block instead) */}
-                    {selectedConnector.id !== 'gemini' && (
+                    {/* ServiceNow AICT: toggle at top, fields + save only when enabled */}
+                    {selectedConnector.id === 'servicenow_aict' && (
+                        <div className="space-y-5">
+                            {/* Enable/Disable toggle */}
+                            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable AICT Sync</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                        When enabled, agents created in Tavro are automatically registered in ServiceNow AI Control Tower
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const current = getCred('servicenow_aict', 'enabled');
+                                        setCred('servicenow_aict', 'enabled', current === 'false' ? 'true' : 'false');
+                                    }}
+                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/30
+                                        ${getCred('servicenow_aict', 'enabled') === 'false'
+                                            ? 'bg-slate-300 dark:bg-slate-600'
+                                            : 'bg-emerald-500'
+                                        }`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+                                        ${getCred('servicenow_aict', 'enabled') === 'false' ? 'translate-x-1' : 'translate-x-6'}`}
+                                    />
+                                </button>
+                            </div>
+
+                            {/* Credential fields + Save — only shown when enabled */}
+                            {getCred('servicenow_aict', 'enabled') !== 'false' && (
+                                <div className="space-y-4">
+                                    {selectedConnector.fields.map(field => (
+                                        <div key={field.key}>
+                                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                                                {field.label}
+                                            </label>
+                                            {field.type === 'password' ? (
+                                                <PasswordInput
+                                                    value={getCred('servicenow_aict', field.key)}
+                                                    onChange={v => setCred('servicenow_aict', field.key, v)}
+                                                    placeholder={field.placeholder}
+                                                />
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    value={getCred('servicenow_aict', field.key)}
+                                                    onChange={e => setCred('servicenow_aict', field.key, e.target.value)}
+                                                    placeholder={field.placeholder ?? ''}
+                                                    className={inputBase}
+                                                />
+                                            )}
+                                        </div>
+                                    ))}
+                                    <button
+                                        onClick={() => saveCredentials('servicenow_aict')}
+                                        disabled={saveState === 'saving'}
+                                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
+                                    >
+                                        {saveState === 'saving'
+                                            ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                                            : saveState === 'saved'
+                                                ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
+                                                : saveState === 'error'
+                                                    ? <><AlertCircle size={14} className="text-red-500" /> Error</>
+                                                    : <><Save size={14} /> Save Settings</>
+                                        }
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* When disabled, just show a Save to persist the disabled state */}
+                            {getCred('servicenow_aict', 'enabled') === 'false' && (
+                                <button
+                                    onClick={() => saveCredentials('servicenow_aict')}
+                                    disabled={saveState === 'saving'}
+                                    className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-5 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
+                                >
+                                    {saveState === 'saving'
+                                        ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                                        : saveState === 'saved'
+                                            ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
+                                            : saveState === 'error'
+                                                ? <><AlertCircle size={14} className="text-red-500" /> Error</>
+                                                : <><Save size={14} /> Save Settings</>
+                                    }
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* run button — hidden for Gemini and ServiceNow AICT */}
+                    {selectedConnector.id !== 'gemini' && selectedConnector.id !== 'servicenow_aict' && (
                         <div className="flex items-center gap-3 pt-2 flex-wrap">
                             <button
                                 onClick={() => runConnector(selectedConnector)}

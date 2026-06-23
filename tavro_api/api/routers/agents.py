@@ -106,6 +106,23 @@ async def _fire_risk(payload: Dict[str, Any]) -> None:
         print(f"[risk-trigger] {e}")
 
 
+async def _sync_to_aict(
+    agent_name: str,
+    agent_description: str,
+    provider: Optional[str] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    try:
+        from services.integrations.aict_integration import create_ai_system, is_configured
+        if not is_configured():
+            return
+        import asyncio
+        result = await asyncio.to_thread(create_ai_system, agent_name, agent_description, provider, tools)
+        print(f"[aict-sync] created AI system: {result}")
+    except Exception as e:
+        print(f"[aict-sync] {e}")
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -1358,6 +1375,8 @@ async def create_agent(
         _risk_payload(agent_internal_id, agent_id, body.agent_name,
                       body.description, body.instruction, tenant_id),
     )
+
+    background_tasks.add_task(_sync_to_aict, body.agent_name, body.description, provider, body.tools)
 
     return {"agent_id": agent_id, "agent_name": body.agent_name,
             "message": "Agent created successfully and risk assessment triggered."}

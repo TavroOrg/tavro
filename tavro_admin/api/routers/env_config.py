@@ -64,6 +64,14 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
         "base_url": "GITHUB_MCP_BASE_URL",
         "token":    "GITHUB_MCP_TOKEN",
     },
+    "servicenow_aict": {
+        "instance_url":          "AICT_INSTANCE_URL",
+        "username":              "AICT_USERNAME",
+        "password":              "AICT_PASSWORD",
+        "provider_name":         "AICT_PROVIDER_NAME",
+        "model_category_sys_id": "AICT_MODEL_CATEGORY_SYS_ID",
+        "enabled":               "AICT_ENABLED",
+    },
 }
 
 

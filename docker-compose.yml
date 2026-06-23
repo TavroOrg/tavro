@@ -104,6 +104,14 @@ services:
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
+      # AICT (ServiceNow AI Control Tower) — leave blank to disable
+      AICT_INSTANCE_URL:    ${AICT_INSTANCE_URL:-}
+      AICT_USERNAME:        ${AICT_USERNAME:-}
+      AICT_PASSWORD:        ${AICT_PASSWORD:-}
+      AICT_PROVIDER_NAME:   ${AICT_PROVIDER_NAME:-Tavro}
+      AICT_MODEL_CATEGORY_SYS_ID: ${AICT_MODEL_CATEGORY_SYS_ID:-5383f164ffec2a10c0fbffffffffff82}
+      AICT_ENABLED:         ${AICT_ENABLED:-true}
+      ENV_FILE_PATH:        /app/.env
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -116,6 +124,7 @@ services:
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
       interval: 30s
@@ -520,9 +529,17 @@ services:
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
       OPENAI_API_KEY:       ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
+      AICT_INSTANCE_URL:    ${AICT_INSTANCE_URL:-}
+      AICT_USERNAME:        ${AICT_USERNAME:-}
+      AICT_PASSWORD:        ${AICT_PASSWORD:-}
+      AICT_PROVIDER_NAME:   ${AICT_PROVIDER_NAME:-Tavro}
+      AICT_MODEL_CATEGORY_SYS_ID: ${AICT_MODEL_CATEGORY_SYS_ID:-5383f164ffec2a10c0fbffffffffff82}
+      AICT_ENABLED:         ${AICT_ENABLED:-true}
+      ENV_FILE_PATH:        /app/.env
     volumes:
       - ./tavro_api/agent_cards:/app/agent_cards
       - tavro_runtime_config:/app/runtime:ro
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
     depends_on:
       tavro-postgres:
         condition: service_healthy
