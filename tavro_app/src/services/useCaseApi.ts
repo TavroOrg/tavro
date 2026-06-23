@@ -64,6 +64,28 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+    // Prioritization scores
+    business_value_score?: number;
+    business_value_override?: boolean;
+    business_value_override_reason?: string;
+    data_readiness_score?: number;
+    data_readiness_override?: boolean;
+    data_readiness_override_reason?: string;
+    technical_complexity_score?: number;
+    technical_complexity_override?: boolean;
+    technical_complexity_override_reason?: string;
+    risk_data_privacy_score?: number;
+    risk_operational_score?: number;
+    risk_compliance_score?: number;
+    risk_ai_behavioral_score?: number;
+    risk_strategic_reputational_score?: number;
+    risk_composite_score?: number;
+    priority_score?: number;
+    quadrant?: string;
+    time_horizon?: string;
+    time_horizon_rationale?: string;
+    roadmap_approved?: boolean;
+    scoring_history_entry?: Record<string, unknown>;
 }
 
 function changedUseCaseFields(payload: UseCaseUpdatePayload): string {

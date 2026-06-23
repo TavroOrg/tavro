@@ -1,5 +1,6 @@
 import React from 'react';
 import { readRoadmapConfig } from '../services/roadmapConfig';
+import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import {
@@ -265,39 +266,37 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
 
-    // ── localStorage persistence key for this use case ───────────────────────
-    const storageKey = `tavro_prio_${uc.identifier}`;
-    const _stored = (() => {
-        try { const r = localStorage.getItem(storageKey); return r ? JSON.parse(r) : {}; } catch { return {}; }
+    // ── Business Case fields — localStorage until DB columns are added ────────
+    const _bcStorageKey = `tavro_bc_${uc.identifier}`;
+    const _storedBc = (() => {
+        try { const r = localStorage.getItem(_bcStorageKey); return r ? JSON.parse(r) : {}; } catch { return {}; }
     })();
 
-    // ── Business Case new fields (pending DB columns) ────────────────────────
-    const [bcImpactCategory,    setBcImpactCategory]    = React.useState<string>(_stored.bcImpactCategory    ?? (uc as any).impact_category    ?? '');
-    const [bcProjectedRoi,      setBcProjectedRoi]      = React.useState<string>(_stored.bcProjectedRoi      ?? (uc as any).projected_roi      ?? '');
-    const [bcQuantifiedBenefit, setBcQuantifiedBenefit] = React.useState<string>(_stored.bcQuantifiedBenefit ?? (uc as any).quantified_benefit ?? '');
+    const [bcImpactCategory,    setBcImpactCategory]    = React.useState<string>(_storedBc.bcImpactCategory    ?? (uc as any).impact_category    ?? '');
+    const [bcProjectedRoi,      setBcProjectedRoi]      = React.useState<string>(_storedBc.bcProjectedRoi      ?? (uc as any).projected_roi      ?? '');
+    const [bcQuantifiedBenefit, setBcQuantifiedBenefit] = React.useState<string>(_storedBc.bcQuantifiedBenefit ?? (uc as any).quantified_benefit ?? '');
 
-    // ── Prioritization scoring dimensions (pending DB columns) ─────────────
-    const [pvBV, setPvBV] = React.useState<number | null>(_stored.pvBV ?? (uc as any).pv_business_value_score ?? null);
-    const [pvDR, setPvDR] = React.useState<number | null>(_stored.pvDR ?? (uc as any).pv_data_readiness_score ?? null);
-    const [pvTC, setPvTC] = React.useState<number | null>(_stored.pvTC ?? (uc as any).pv_technical_complexity_score ?? null);
+    // ── Prioritization scoring — sourced from DB, saved back via API ──────────
+    const [pvBV, setPvBV] = React.useState<number | null>((uc as any).pv_business_value_score ?? null);
+    const [pvDR, setPvDR] = React.useState<number | null>((uc as any).pv_data_readiness_score ?? null);
+    const [pvTC, setPvTC] = React.useState<number | null>((uc as any).pv_technical_complexity_score ?? null);
 
     const [riskScores, setRiskScores] = React.useState<Record<string, number | null>>({
-        data_privacy:           _stored.riskScores?.data_privacy           ?? (uc as any).risk_data_privacy_score           ?? null,
-        operational:            _stored.riskScores?.operational            ?? (uc as any).risk_operational_score            ?? null,
-        compliance:             _stored.riskScores?.compliance             ?? (uc as any).risk_compliance_score             ?? null,
-        ai_behavioral:          _stored.riskScores?.ai_behavioral          ?? (uc as any).risk_ai_behavioral_score          ?? null,
-        strategic_reputational: _stored.riskScores?.strategic_reputational ?? (uc as any).risk_strategic_reputational_score ?? null,
+        data_privacy:           (uc as any).risk_data_privacy_score           ?? null,
+        operational:            (uc as any).risk_operational_score            ?? null,
+        compliance:             (uc as any).risk_compliance_score             ?? null,
+        ai_behavioral:          (uc as any).risk_ai_behavioral_score          ?? null,
+        strategic_reputational: (uc as any).risk_strategic_reputational_score ?? null,
     });
-    // ── Persist scores to localStorage whenever they change ──────────────────
+
+    // ── Persist bc* fields to localStorage (pending DB columns) ──────────────
     React.useEffect(() => {
         try {
-            localStorage.setItem(storageKey, JSON.stringify({
-                pvBV, pvDR, pvTC,
-                riskScores,
+            localStorage.setItem(_bcStorageKey, JSON.stringify({
                 bcImpactCategory, bcProjectedRoi, bcQuantifiedBenefit,
             }));
         } catch {}
-    }, [pvBV, pvDR, pvTC, riskScores, bcImpactCategory, bcProjectedRoi, bcQuantifiedBenefit]);
+    }, [bcImpactCategory, bcProjectedRoi, bcQuantifiedBenefit]);
 
     const [expandedDims, setExpandedDims] = React.useState<Set<string>>(new Set());
 
@@ -334,6 +333,56 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         if ( highCost && !highRisk) return { label: 'Big Bet',    color: '#5C2D8A', bg: 'bg-violet-50',   border: 'border-violet-300',  desc: 'High investment, manageable risk — plan carefully.' };
         return                             { label: 'Money Pit',  color: '#A32D2D', bg: 'bg-red-50',      border: 'border-red-300',     desc: 'High cost and high risk — reconsider or redesign.' };
     }, [pvTC, riskComposite]);
+
+    // ── API sync: persist prioritization scores to backend ───────────────────
+    const _pendingScores = React.useRef<Parameters<typeof useCaseApi.updateUseCase>[1] | null>(null);
+    const _apiSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const _doSave = React.useCallback((payload: Parameters<typeof useCaseApi.updateUseCase>[1]) => {
+        useCaseApi.updateUseCase(uc.identifier, payload).catch(() => {});
+    }, [uc.identifier]);
+
+    React.useEffect(() => {
+        if (pvBV === null && pvDR === null && pvTC === null) return;
+        const quadrantKey = quadrant
+            ? ({ 'Quick Win': 'quick_win', 'Fill In': 'fill_in', 'Big Bet': 'big_bet', 'Money Pit': 'money_pit' } as Record<string, string>)[quadrant.label]
+            : undefined;
+        const payload: Parameters<typeof useCaseApi.updateUseCase>[1] = {
+            __activityName: uc.name || uc.identifier,
+            ...(pvBV !== null ? { business_value_score: pvBV } : {}),
+            ...(pvDR !== null ? { data_readiness_score: pvDR } : {}),
+            ...(pvTC !== null ? { technical_complexity_score: pvTC } : {}),
+            ...(riskScores.data_privacy !== null ? { risk_data_privacy_score: riskScores.data_privacy } : {}),
+            ...(riskScores.operational !== null ? { risk_operational_score: riskScores.operational } : {}),
+            ...(riskScores.compliance !== null ? { risk_compliance_score: riskScores.compliance } : {}),
+            ...(riskScores.ai_behavioral !== null ? { risk_ai_behavioral_score: riskScores.ai_behavioral } : {}),
+            ...(riskScores.strategic_reputational !== null ? { risk_strategic_reputational_score: riskScores.strategic_reputational } : {}),
+            ...(riskComposite !== null ? { risk_composite_score: riskComposite } : {}),
+            ...(priorityScore !== null ? { priority_score: priorityScore } : {}),
+            ...(quadrantKey ? { quadrant: quadrantKey } : {}),
+        };
+        _pendingScores.current = payload;
+        if (_apiSaveTimer.current) clearTimeout(_apiSaveTimer.current);
+        _apiSaveTimer.current = setTimeout(() => {
+            _pendingScores.current = null;
+            _doSave(payload);
+        }, 600);
+        return () => {
+            if (_apiSaveTimer.current) clearTimeout(_apiSaveTimer.current);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pvBV, pvDR, pvTC, riskScores, riskComposite, priorityScore, quadrant, uc.identifier]);
+
+    // Flush unsaved scores when the component unmounts (user navigates away)
+    React.useEffect(() => {
+        return () => {
+            if (_pendingScores.current) {
+                _doSave(_pendingScores.current);
+                _pendingScores.current = null;
+            }
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [_doSave]);
 
     const applications = uc.applications?.filter(Boolean) ?? [];
     const controls = uc.controls?.filter(Boolean) ?? [];
@@ -544,18 +593,13 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         positiveScale: false,
                                     },
                                 ] as { label: string; value: number | null; weightLabel: string; contribution: number | null; tooltip: string; positiveScale: boolean }[]).map(item => {
-                                    const hasValue = item.value !== null;
-                                    const valueColor = hasValue
-                                        ? item.positiveScale
-                                            ? (item.value! >= 4 ? 'text-emerald-600' : item.value! >= 2.5 ? 'text-amber-500' : 'text-red-500')
-                                            : (item.value! <= 2 ? 'text-emerald-600' : item.value! <= 3.5 ? 'text-amber-500' : 'text-red-500')
+                                    const contribColor = item.contribution !== null
+                                        ? (item.contribution >= 0 ? 'text-emerald-600' : 'text-red-500')
                                         : 'text-slate-400';
-                                    return (
-                                        <div key={item.label} className="flex flex-col gap-1.5 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[112px]">
-                                            {/* Label with tooltip — always gray */}
+                                    return item.contribution !== null ? (
+                                        <div key={item.label} className="flex flex-col gap-1 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[100px]">
                                             <div className="group relative flex items-center gap-1 w-fit">
                                                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
-                                                {/* Tooltip */}
                                                 <div className="absolute bottom-full left-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
                                                     <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-44 leading-snug">
                                                         {item.tooltip}
@@ -563,25 +607,14 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                                     <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 ml-2" />
                                                 </div>
                                             </div>
-                                            {/* Score + weight */}
-                                            <div className="flex items-baseline gap-1">
-                                                {hasValue ? (
-                                                    <>
-                                                        <span className={`text-base font-black leading-none ${valueColor}`}>{(item.value as number).toFixed(1)}</span>
-                                                        <span className="text-[10px] text-slate-400 leading-none">× {item.weightLabel}</span>
-                                                    </>
-                                                ) : (
-                                                    <span className="text-sm text-slate-400 font-normal leading-none">—</span>
-                                                )}
-                                            </div>
-                                            {/* Contribution — only shown when value exists */}
-                                            {item.contribution !== null ? (
-                                                <span className={`text-xs font-bold leading-none ${item.contribution >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                                                    {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)} pts
-                                                </span>
-                                            ) : (
-                                                <span />
-                                            )}
+                                            <span className={`text-base font-black leading-none ${contribColor}`}>
+                                                {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div key={item.label} className="flex flex-col gap-1 min-w-[100px]">
+                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">{item.label}</span>
+                                            <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                         </div>
                                     );
                                 })}

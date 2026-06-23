@@ -131,16 +131,9 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
     const cfg = React.useMemo(() => readRoadmapConfig(), []);
 
     const computeScores = (uc: any) => {
-        // Read localStorage scores (same key as UseCaseView.tsx: tavro_prio_${identifier})
-        let stored: any = {};
-        try {
-            const raw = localStorage.getItem(`tavro_prio_${uc.identifier}`);
-            if (raw) stored = JSON.parse(raw);
-        } catch { /* ignore */ }
-
-        const pvBV: number | null = stored.pvBV ?? uc.pv_business_value_score ?? null;
-        const pvDR: number | null = stored.pvDR ?? uc.pv_data_readiness_score ?? null;
-        const pvTC: number | null = stored.pvTC ?? uc.pv_technical_complexity_score ?? null;
+        const pvBV: number | null = uc.pv_business_value_score ?? null;
+        const pvDR: number | null = uc.pv_data_readiness_score ?? null;
+        const pvTC: number | null = uc.pv_technical_complexity_score ?? null;
 
         const riskFields: Record<string, string> = {
             data_privacy: 'risk_data_privacy_score',
@@ -151,18 +144,24 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
         };
         const rw = cfg.riskWeights as unknown as Record<string, number>;
         const riskEntries = Object.entries(riskFields)
-            .map(([key, field]) => [key, stored.riskScores?.[key] ?? uc[field] ?? null] as [string, number | null])
+            .map(([key, field]) => [key, uc[field] ?? null] as [string, number | null])
             .filter(([, s]) => s !== null) as [string, number][];
         const wTotal = riskEntries.reduce((sum, [k]) => sum + (rw[k] ?? 20), 0);
-        const riskComposite: number | null = riskEntries.length > 0 && wTotal > 0
+        const riskComposite: number | null = uc.risk_composite_score ?? (riskEntries.length > 0 && wTotal > 0
             ? +(riskEntries.reduce((sum, [k, s]) => sum + s * (rw[k] ?? 20), 0) / wTotal).toFixed(2)
-            : null;
+            : null);
 
         const pw = cfg.priorityWeights;
-        const priorityScore: number | null =
-            pvBV !== null && pvDR !== null && pvTC !== null && riskComposite !== null
+        const priorityScore: number | null = uc.priority_score ??
+            (pvBV !== null && pvDR !== null && pvTC !== null && riskComposite !== null
                 ? +((pvBV * pw.BV) + (pvDR * pw.DR) + ((6 - pvTC) * pw.TC) - (riskComposite * pw.RISK)).toFixed(2)
-                : null;
+                : null);
+
+        // Contribution points per dimension
+        const contribBV: number | null = pvBV !== null ? +(pvBV * pw.BV).toFixed(2) : null;
+        const contribDR: number | null = pvDR !== null ? +(pvDR * pw.DR).toFixed(2) : null;
+        const contribTC: number | null = pvTC !== null ? +((6 - pvTC) * pw.TC).toFixed(2) : null;
+        const contribRisk: number | null = riskComposite !== null ? +(-(riskComposite * pw.RISK)).toFixed(2) : null;
 
         let quadrant: { label: string; color: string } | null = null;
         if (pvTC !== null && riskComposite !== null) {
@@ -174,7 +173,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
             else                            quadrant = { label: 'Money Pit', color: '#A32D2D' };
         }
 
-        return { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant };
+        return { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk };
     };
 
     const metricDotColor = (value: number | null, positiveScale: boolean): string => {
@@ -243,7 +242,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         const relatedAgentCount = getRelatedAgentCount(uc);
                         const summary = getUseCaseSummary(uc);
                         const cardId = String(uc.id ?? uc.identifier ?? 'N/A').slice(0, 8);
-                        const { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant } = computeScores(uc);
+                        const { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk } = computeScores(uc);
                         const hasAnyScore = pvBV !== null || pvDR !== null || pvTC !== null || riskComposite !== null;
                         const navId = uc.identifier ?? uc.id;
 
@@ -280,24 +279,24 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                         <div className="flex items-center gap-1.5">
                                             {/* Priority Score chip */}
                                             {priorityScore !== null ? (
-                                                <div className={`flex flex-col items-center justify-center w-[72px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Score</span>
+                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
                                                     <span className={`text-sm font-black leading-none ${scoreValueColor}`}>{priorityScore.toFixed(1)}</span>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-center justify-center w-[72px] h-[46px] gap-0.5">
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Score</span>
+                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
                                                     <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                                 </div>
                                             )}
                                             {/* Quadrant chip */}
                                             {quadrant ? (
-                                                <div className={`flex flex-col items-center justify-center w-[72px] h-[46px] rounded-xl border gap-0.5 ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
+                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Quadrant</span>
                                                     <span className={`text-[10px] font-black leading-none text-center ${qStyle ? qStyle.value : 'text-slate-400'}`}>{quadrant.label}</span>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-center justify-center w-[72px] h-[46px] gap-0.5">
+                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Quadrant</span>
                                                     <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                                 </div>
@@ -319,16 +318,17 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                     {/* Metric pills row */}
                                     <div className="flex items-center gap-1.5 mt-auto flex-wrap">
                                         {([
-                                            { key: 'Business Value',  value: pvBV,          positive: true  },
-                                            { key: 'Data Readiness',  value: pvDR,          positive: true  },
-                                            { key: 'Tech Complexity', value: pvTC,          positive: false },
-                                            { key: 'Risk',            value: riskComposite, positive: false },
-                                        ] as { key: string; value: number | null; positive: boolean }[]).map(m => (
+                                            { key: 'Business Value',  contrib: contribBV   },
+                                            { key: 'Data Readiness',  contrib: contribDR   },
+                                            { key: 'Tech Complexity', contrib: contribTC   },
+                                            { key: 'Risk',            contrib: contribRisk },
+                                        ] as { key: string; contrib: number | null }[]).map(m => (
                                             <div key={m.key} className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-md">
-                                                {m.value !== null && <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${metricDotColor(m.value, m.positive)}`} />}
                                                 <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400">{m.key}</span>
-                                                {m.value !== null ? (
-                                                    <span className="text-[9px] font-black text-slate-700 dark:text-slate-200">{m.value.toFixed(1)}</span>
+                                                {m.contrib !== null ? (
+                                                    <span className={`text-[9px] font-black ${m.contrib >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                        {m.contrib >= 0 ? '+' : ''}{m.contrib.toFixed(2)}
+                                                    </span>
                                                 ) : (
                                                     <span className="text-[9px] text-slate-400 font-normal">—</span>
                                                 )}
@@ -358,7 +358,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         <div>Function</div>
                         <div>Status</div>
                         <div>Owner</div>
-                        <div>Score</div>
+                        <div>Priority Score</div>
                         <div>Quadrant</div>
                         <div>Business Value</div>
                         <div>Data Readiness</div>
@@ -372,7 +372,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                     >
                         {useCases.map(uc => {
                             const relatedAgentCount = getRelatedAgentCount(uc);
-                            const { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant } = computeScores(uc);
+                            const { priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk } = computeScores(uc);
                             const listNavId = uc.identifier ?? uc.id;
                             return (
                                 <div
@@ -436,31 +436,27 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                         })() : <span className="text-sm text-slate-400 font-normal">—</span>}
                                     </div>
                                     {/* BV */}
-                                    <div className="flex items-center gap-1">
-                                        {pvBV !== null && <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${metricDotColor(pvBV, true)}`} />}
-                                        <span className={`text-xs ${pvBV !== null ? `font-black ${pvBV >= 4 ? 'text-emerald-600' : pvBV >= 2.5 ? 'text-amber-500' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
-                                            {pvBV !== null ? pvBV.toFixed(1) : '—'}
+                                    <div className="flex items-center">
+                                        <span className={`text-xs ${contribBV !== null ? `font-black ${contribBV >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
+                                            {contribBV !== null ? `${contribBV >= 0 ? '+' : ''}${contribBV.toFixed(2)}` : '—'}
                                         </span>
                                     </div>
                                     {/* DR */}
-                                    <div className="flex items-center gap-1">
-                                        {pvDR !== null && <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${metricDotColor(pvDR, true)}`} />}
-                                        <span className={`text-xs ${pvDR !== null ? `font-black ${pvDR >= 4 ? 'text-emerald-600' : pvDR >= 2.5 ? 'text-amber-500' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
-                                            {pvDR !== null ? pvDR.toFixed(1) : '—'}
+                                    <div className="flex items-center">
+                                        <span className={`text-xs ${contribDR !== null ? `font-black ${contribDR >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
+                                            {contribDR !== null ? `${contribDR >= 0 ? '+' : ''}${contribDR.toFixed(2)}` : '—'}
                                         </span>
                                     </div>
                                     {/* TC */}
-                                    <div className="flex items-center gap-1">
-                                        {pvTC !== null && <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${metricDotColor(pvTC, false)}`} />}
-                                        <span className={`text-xs ${pvTC !== null ? `font-black ${pvTC <= 2 ? 'text-emerald-600' : pvTC <= 3.5 ? 'text-amber-500' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
-                                            {pvTC !== null ? pvTC.toFixed(1) : '—'}
+                                    <div className="flex items-center">
+                                        <span className={`text-xs ${contribTC !== null ? `font-black ${contribTC >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
+                                            {contribTC !== null ? `${contribTC >= 0 ? '+' : ''}${contribTC.toFixed(2)}` : '—'}
                                         </span>
                                     </div>
                                     {/* Risk */}
-                                    <div className="flex items-center gap-1">
-                                        {riskComposite !== null && <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${metricDotColor(riskComposite, false)}`} />}
-                                        <span className={`text-xs ${riskComposite !== null ? `font-black ${riskComposite <= 2 ? 'text-emerald-600' : riskComposite <= 3.5 ? 'text-amber-500' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
-                                            {riskComposite !== null ? riskComposite.toFixed(1) : '—'}
+                                    <div className="flex items-center">
+                                        <span className={`text-xs ${contribRisk !== null ? `font-black ${contribRisk >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
+                                            {contribRisk !== null ? `${contribRisk >= 0 ? '+' : ''}${contribRisk.toFixed(2)}` : '—'}
                                         </span>
                                     </div>
                                     <div className="flex justify-end pr-2 text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">

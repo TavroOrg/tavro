@@ -286,6 +286,7 @@ const mergeUseCaseWithRestDetail = (
   }
 
   return {
+    ...row,
     identifier: String(row.identifier ?? row.use_case_id ?? row.id ?? fallbackId),
     name: String(row.name ?? row.title ?? 'Unnamed Use Case'),
     description: row.description ?? null,
