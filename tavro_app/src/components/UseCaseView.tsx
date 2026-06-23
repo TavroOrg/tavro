@@ -705,38 +705,59 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 No description provided.
                             </div>
                         )}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>
-                                {isEditing ? (
-                                    <input
-                                        type="text"
-                                        value={editOwner ?? ''}
-                                        onChange={e => onEditOwnerChange?.(e.target.value)}
-                                        placeholder="Assign owner"
-                                        className="text-sm font-semibold text-slate-700 w-full border-b border-blue-400 bg-transparent outline-none"
-                                    />
-                                ) : inlineEdit?.field === 'owner' ? (
-                                    <div className="flex items-center gap-1">
+                        <div className="flex flex-col gap-3">
+                            {/* Row 1: Owner + Function */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>
+                                    {isEditing ? (
                                         <input
                                             type="text"
-                                            value={inlineEdit.value}
-                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            value={editOwner ?? ''}
+                                            onChange={e => onEditOwnerChange?.(e.target.value)}
+                                            placeholder="Assign owner"
                                             className="text-sm font-semibold text-slate-700 w-full border-b border-blue-400 bg-transparent outline-none"
-                                            autoFocus
                                         />
-                                        {renderInlineActions('owner')}
-                                    </div>
-                                ) : (
-                                    <span
-                                        onDoubleClick={() => onStartInlineEdit?.('owner', owner ?? '')}
-                                        title="Double-click to edit"
-                                        className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 cursor-text rounded hover:bg-blue-50/40 transition-colors"
-                                    >
-                                        <User size={13} className="text-slate-400" />
-                                        {owner || <span className="text-slate-400 font-normal">Unassigned</span>}
-                                    </span>
-                                )}
+                                    ) : inlineEdit?.field === 'owner' ? (
+                                        <div className="flex items-center gap-1">
+                                            <input
+                                                type="text"
+                                                value={inlineEdit.value}
+                                                onChange={e => onInlineValueChange?.(e.target.value)}
+                                                className="text-sm font-semibold text-slate-700 w-full border-b border-blue-400 bg-transparent outline-none"
+                                                autoFocus
+                                            />
+                                            {renderInlineActions('owner')}
+                                        </div>
+                                    ) : (
+                                        <span
+                                            onDoubleClick={() => onStartInlineEdit?.('owner', owner ?? '')}
+                                            title="Double-click to edit"
+                                            className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 cursor-text rounded hover:bg-blue-50/40 transition-colors"
+                                        >
+                                            <User size={13} className="text-slate-400" />
+                                            {owner || <span className="text-slate-400 font-normal">Unassigned</span>}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Function</span>
+                                    {uc.function
+                                        ? <span className="text-sm font-semibold text-slate-700">{String(uc.function)}</span>
+                                        : <span className="text-sm text-slate-400 font-normal">—</span>
+                                    }
+                                </div>
+                            </div>
+                            {/* Row 2: Created + Last Updated */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</span>
+                                    <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(createdAt)}</span>
+                                </div>
+                                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Last Updated</span>
+                                    <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(updatedAt)}</span>
+                                </div>
                             </div>
                             {proposedBy && (
                                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
@@ -744,21 +765,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Users size={13} className="text-slate-400" />{proposedBy}</span>
                                 </div>
                             )}
-                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Business Function</span>
-                                {uc.function
-                                    ? <span className="text-sm font-semibold text-slate-700">{String(uc.function)}</span>
-                                    : <span className="text-sm text-slate-400 font-normal">—</span>
-                                }
-                            </div>
-                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</span>
-                                <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(createdAt)}</span>
-                            </div>
-                            <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Last Updated</span>
-                                <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(updatedAt)}</span>
-                            </div>
                         </div>
                     </div>
                 )}
