@@ -9,6 +9,7 @@ import {
   Boxes,
   ClipboardList,
   Download,
+  Info,
   Link2,
   Loader2,
   Paperclip,
@@ -28,6 +29,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { mcpClient } from '../services/mcpClient';
 import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
@@ -69,7 +71,33 @@ const FIELD_KEYS: string[] = [
   'recert_outputs_same', 'recert_outputs_changed', 'recert_users_same', 'recert_users_changed',
   'recert_processing_same', 'recert_processing_changed', 'recert_training_completed',
   'recert_risk_assessment_done',
+  'business_criticality', 'emergency_tier',
 ];
+
+const MODEL_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
+];
+
+const MODEL_ARE_HINTS: Record<string, string> = {
+  agent_risk_exposure:
+    'ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.',
+  agent_risk_tier:
+    'ART indicates overall model risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
+  blended_risk_score:
+    'The highest current blended risk score across agents associated with this model.',
+  associated_agents:
+    'Indicates the total number of agents associated with this model.',
+};
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -111,9 +139,16 @@ const changedPayload = (current: FormState, next: FormState): AiModelUpsertPaylo
   return changed as AiModelUpsertPayload;
 };
 
-const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean }> = ({ label, children, full }) => (
+const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean; hint?: string }> = ({ label, children, full, hint }) => (
   <div className={`flex flex-col gap-1.5 ${full ? 'md:col-span-2' : ''}`}>
-    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</label>
+    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+      {label}
+      {hint && (
+        <span title={hint}>
+          <Info size={12} className="text-slate-400" />
+        </span>
+      )}
+    </label>
     {children}
   </div>
 );
@@ -314,6 +349,24 @@ const AiModelViewPage: React.FC = () => {
     };
     load();
   }, [id, isCreateMode]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = async () => {
+      mcpClient.invalidateCache();
+      try {
+        const data = await aiModelApi.getModel(id);
+        setModel(data);
+        setForm(formFromModel(data));
+      } catch {
+        // Keep current UI state on transient refresh failures.
+      }
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing]);
 
   const parentOptions = useMemo(
     () => allModels.filter(m => m.ai_model_id !== id),
@@ -935,6 +988,35 @@ const AiModelViewPage: React.FC = () => {
           <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
           <Field label="Parent Model">{parentField()}</Field>
           <Field label="Version Number">{text('version_number')}</Field>
+        </Section>
+
+        <Section title="Agent Risk Exposure">
+          <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
+          <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
+          <Field label="Agent Risk Exposure (ARE)" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
+            <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
+          </Field>
+          <Field label="Agent Risk Tier (ART)" hint={MODEL_ARE_HINTS.agent_risk_tier}>
+            <p className={`${valueBoxCls}`}>{model?.agent_risk_tier ?? 'None'}</p>
+          </Field>
+          <Field label="Blended Risk Score" hint={MODEL_ARE_HINTS.blended_risk_score}>
+            <p className={`${valueBoxCls}`}>{String(model?.blended_risk_score ?? 0)}</p>
+          </Field>
+          <Field label="# Of Associated Agents" hint={MODEL_ARE_HINTS.associated_agents}>
+            <p className={`${valueBoxCls}`}>{String(model?.no_of_associated_agents ?? 0)}</p>
+          </Field>
+          <Field label="Inherent Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.inherent_risk_classification || 'N/A'}</p>
+          </Field>
+          <Field label="Inherent Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.inherent_risk_classification_score ?? 0)}</p>
+          </Field>
+          <Field label="Residual Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.residual_risk_classification || 'N/A'}</p>
+          </Field>
+          <Field label="Residual Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.residual_risk_classification_score ?? 0)}</p>
+          </Field>
         </Section>
 
         <Section title="Intended Use and Decision Impact">

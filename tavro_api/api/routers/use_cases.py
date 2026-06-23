@@ -18,6 +18,7 @@ from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
@@ -50,6 +51,144 @@ def _tenant(request: Request) -> Optional[str]:
 
 def _norm_id(value: str) -> str:
     return (value or "").strip()
+
+
+def _art_from_are(are: float) -> str:
+    if are >= 9.0:
+        return "Critical"
+    if are >= 7.0:
+        return "High"
+    if are >= 3.0:
+        return "Medium"
+    return "Low"
+
+
+async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id: Optional[str]) -> int:
+    relation_tenant_filter = (
+        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+    use_case_tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    count_row = await db.execute(
+        text(
+            f"""
+            SELECT COUNT(DISTINCT rel.agent_id)::int AS link_count
+            FROM {CORE}.agent_ai_use_cases rel
+            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+              AND rel.agent_id IS NOT NULL
+              AND rel.agent_id <> ''
+              {relation_tenant_filter}
+            """
+        ),
+        {"uid": use_case_id, "tid": tenant_id},
+    )
+    associated_count = int(count_row.scalar() or 0)
+
+    risk_table = (
+        await db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": f"{CORE}.agent_risk_assessments"})
+    ).scalar()
+    max_brs = 0.0
+    worst_internal_id = None
+    if risk_table:
+        risk_row = await db.execute(
+            text(
+                f"""
+                SELECT brs.agent_internal_id, brs.blended_risk_score
+                FROM {CORE}.agent_ai_use_cases rel
+                JOIN LATERAL (
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    FROM {CORE}.agent_risk_assessments ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = rel.agent_id
+                        OR (
+                            rel.agent_internal_id IS NOT NULL
+                            AND rel.agent_internal_id <> ''
+                            AND ara.agent_internal_id = rel.agent_internal_id
+                        )
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND rel.agent_id IS NOT NULL
+                  AND rel.agent_id <> ''
+                  {relation_tenant_filter}
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
+                """
+            ),
+            {"uid": use_case_id, "tid": tenant_id},
+        )
+        worst_row = risk_row.mappings().first()
+        if worst_row:
+            max_brs = float(worst_row.get("blended_risk_score") or 0.0)
+            worst_internal_id = worst_row.get("agent_internal_id")
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    are = round(max_brs, 2)
+    art = _art_from_are(are) if associated_count > 0 else "None"
+
+    await db.execute(
+        text(
+            f"""
+            UPDATE {CORE}.ai_use_cases
+            SET
+                no_of_associated_agents = :cnt,
+                blended_risk_score = :max_brs,
+                agent_risk_exposure_are = :are,
+                agent_risk_tier_art = :art,
+                inherent_risk_classification = :inherent_class,
+                inherent_risk_classification_score = :inherent_score,
+                residual_risk_classification = :residual_class,
+                residual_risk_classification_score = :residual_score,
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+              {use_case_tenant_filter}
+            """
+        ),
+        {
+            "cnt": associated_count, "max_brs": max_brs, "are": are, "art": art,
+            "inherent_class": inherent_class, "inherent_score": inherent_score,
+            "residual_class": residual_class, "residual_score": residual_score,
+            "uid": use_case_id, "tid": tenant_id,
+        },
+    )
+    return associated_count
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +534,9 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
     application_entity_tenant_filter = "AND ba.tenant_id = :tid" if tenant_id else ""
     model_entity_tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     try:
+        await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
+        await db.commit()
+
         result = await db.execute(
             text(f"""
                 SELECT
@@ -404,6 +546,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     u.problem_statement, u.expected_benefits, u.priority,
                     u.status, u.solution_approach, u.created_ts, u.updated_ts,
                     u.agent_risk_exposure_are, u.no_of_associated_agents,
+                    u.blended_risk_score,
                     u.inherent_risk_classification, u.residual_risk_classification,
                     u.inherent_risk_classification_score, u.residual_risk_classification_score,
                     u.agent_risk_tier_art
@@ -738,19 +881,9 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             {"uid": normalized_use_case_id, "aid": agent_id, "tid": tenant_id},
         )
         if dup.first():
-            cnt = await db.execute(
-                text(
-                    f"""
-                    SELECT COUNT(DISTINCT rel.agent_id)
-                    FROM {CORE}.agent_ai_use_cases rel
-                    WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                      AND rel.agent_id IS NOT NULL
-                      {relation_tenant_filter}
-                    """
-                ),
-                {"uid": normalized_use_case_id, "tid": tenant_id},
-            )
-            return {"message": "Relationship already exists", "associated_count": cnt.scalar() or 0}
+            associated_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
+            await db.commit()
+            return {"message": "Relationship already exists", "associated_count": associated_count}
 
         await db.execute(
             text(
@@ -778,31 +911,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             },
         )
 
-        cnt_row = await db.execute(
-            text(
-                f"""
-                SELECT COUNT(DISTINCT rel.agent_id)
-                FROM {CORE}.agent_ai_use_cases rel
-                WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                  AND rel.agent_id IS NOT NULL
-                  {relation_tenant_filter}
-                """
-            ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
-        )
-        new_count = int(cnt_row.scalar() or 0)
-
-        await db.execute(
-            text(
-                f"""
-                UPDATE {CORE}.ai_use_cases
-                SET no_of_associated_agents = :cnt, updated_ts = CURRENT_TIMESTAMP
-                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
-                  {use_case_tenant_filter.replace('u.', '')}
-                """
-            ),
-            {"cnt": new_count, "uid": normalized_use_case_id, "tid": tenant_id},
-        )
+        new_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
         await db.commit()
         return {"message": "Relationship synchronized", "associated_count": new_count}
     except HTTPException:
@@ -877,18 +986,7 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
             ),
             {"uid": normalized_use_case_id, "aid": agent_id, "tid": tenant_id},
         )
-        new_count = max(len(linked_ids) - 1, 0)
-        await db.execute(
-            text(
-                f"""
-                UPDATE {CORE}.ai_use_cases
-                SET no_of_associated_agents = :cnt, updated_ts = CURRENT_TIMESTAMP
-                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
-                  {use_case_tenant_filter}
-                """
-            ),
-            {"cnt": new_count, "uid": normalized_use_case_id, "tid": tenant_id},
-        )
+        new_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
 
         await db.commit()
         return {"message": "Relationship removed", "associated_count": new_count}

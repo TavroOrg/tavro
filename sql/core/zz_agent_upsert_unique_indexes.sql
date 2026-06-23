@@ -772,4 +772,126 @@ BEGIN
         END IF;
     END IF;
 
+    -- ARE columns for core.ai_models
+    IF to_regclass('core.ai_models') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'business_criticality'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN business_criticality TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'emergency_tier'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN emergency_tier TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'blended_risk_score'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN blended_risk_score NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'agent_risk_exposure'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN agent_risk_exposure NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'agent_risk_tier'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN agent_risk_tier TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'inherent_risk_classification'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN inherent_risk_classification TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'residual_risk_classification'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN residual_risk_classification TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'inherent_risk_classification_score'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN inherent_risk_classification_score NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_models' AND column_name = 'residual_risk_classification_score'
+        ) THEN
+            ALTER TABLE core.ai_models ADD COLUMN residual_risk_classification_score NUMERIC;
+        END IF;
+    END IF;
+
+    -- ARE columns for core.business_integrations
+    IF to_regclass('core.business_integrations') IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'business_criticality'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN business_criticality TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'emergency_tier'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN emergency_tier TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'blended_risk_score'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN blended_risk_score NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'agent_risk_exposure'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN agent_risk_exposure NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'agent_risk_tier'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN agent_risk_tier TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'num_of_associated_agents'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN num_of_associated_agents INTEGER;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'inherent_risk_classification'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN inherent_risk_classification TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'residual_risk_classification'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN residual_risk_classification TEXT;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'inherent_risk_classification_score'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN inherent_risk_classification_score NUMERIC;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'business_integrations' AND column_name = 'residual_risk_classification_score'
+        ) THEN
+            ALTER TABLE core.business_integrations ADD COLUMN residual_risk_classification_score NUMERIC;
+        END IF;
+    END IF;
+
 END $$;

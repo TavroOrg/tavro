@@ -20,6 +20,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import { agentApi } from '../services/agentApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCatalog } from '../context/CatalogContext';
+import { mcpClient } from '../services/mcpClient';
 import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
@@ -62,6 +63,20 @@ const AVAILABILITY_STATUS_OPTIONS: Option[] = [
   { label: 'Unknown', value: 'Unknown' },
 ];
 
+const INT_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const INT_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
+];
+
 interface IntegrationFormState {
   integration_name: string;
   integration_description: string;
@@ -77,6 +92,8 @@ interface IntegrationFormState {
   sla: string;
   version: string;
   parent_application_id: string;
+  business_criticality: string;
+  emergency_tier: string;
 }
 
 type IntegrationInlineField =
@@ -93,7 +110,9 @@ type IntegrationInlineField =
   | 'data_sensitivity'
   | 'availability_status'
   | 'sla'
-  | 'parent_application_id';
+  | 'parent_application_id'
+  | 'business_criticality'
+  | 'emergency_tier';
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -124,6 +143,8 @@ const emptyForm = (): IntegrationFormState => ({
   sla: '',
   version: '',
   parent_application_id: '',
+  business_criticality: '',
+  emergency_tier: '',
 });
 
 const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => ({
@@ -141,6 +162,8 @@ const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => (
   sla: toText(item.sla),
   version: toText(item.version),
   parent_application_id: toText(item.parent_application_id),
+  business_criticality: toText(item.business_criticality),
+  emergency_tier: toText(item.emergency_tier),
 });
 
 const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertPayload => ({
@@ -158,6 +181,8 @@ const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertP
   sla: toNullable(form.sla),
   version: toNullable(form.version),
   parent_application_id: toNullable(form.parent_application_id),
+  business_criticality: toNullable(form.business_criticality),
+  emergency_tier: toNullable(form.emergency_tier),
 });
 
 const changedIntegrationPayload = (
@@ -263,6 +288,18 @@ const IntegrationViewPage: React.FC = () => {
     setEditing(false);
     load();
   }, [id, isCreateMode]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = () => {
+      mcpClient.invalidateCache();
+      load();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing]);
 
   const relatedAgentCount = useMemo(
     () => integration?.related_agents?.length ?? 0,
@@ -856,6 +893,63 @@ const IntegrationViewPage: React.FC = () => {
                   className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap',
                 })
               )}
+            </div>
+          </Section>
+
+          <Section title="Agent Risk Exposure">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Business Criticality" hint="Business Criticality defines how vital the integration is to core operations." />
+                {editing ? (
+                  <select value={form.business_criticality} onChange={(e) => setField('business_criticality', e.target.value)} className={inputCls}>
+                    {INT_BUSINESS_CRITICALITY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('business_criticality', form.business_criticality || 'N/A', { kind: 'select', options: INT_BUSINESS_CRITICALITY_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Emergency Tier" hint="The Emergency Tier categorizes an integration's crisis criticality to prioritize recovery execution order." />
+                {editing ? (
+                  <select value={form.emergency_tier} onChange={(e) => setField('emergency_tier', e.target.value)} className={inputCls}>
+                    {INT_EMERGENCY_TIER_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('emergency_tier', form.emergency_tier || 'N/A', { kind: 'select', options: INT_EMERGENCY_TIER_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Agent Risk Exposure (ARE)" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.agent_risk_exposure ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Agent Risk Tier (ART)" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Blended Risk Score" hint="The highest current blended risk score across agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.blended_risk_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="# Of Associated Agents" hint="Indicates the total number of agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.num_of_associated_agents ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.inherent_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.inherent_risk_classification_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.residual_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.residual_risk_classification_score ?? 0)}</p>
+              </div>
             </div>
           </Section>
 

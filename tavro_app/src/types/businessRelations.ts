@@ -251,6 +251,16 @@ export interface IntegrationRecord {
   related_agent_count: number;
   created_ts: string | null;
   updated_ts: string | null;
+  business_criticality: string | null;
+  emergency_tier: string | null;
+  blended_risk_score: number | null;
+  agent_risk_exposure: number | null;
+  agent_risk_tier: string | null;
+  inherent_risk_classification: string | null;
+  residual_risk_classification: string | null;
+  inherent_risk_classification_score: number | null;
+  residual_risk_classification_score: number | null;
+  num_of_associated_agents: number | null;
 }
 
 export interface IntegrationUpsertPayload {
@@ -270,4 +280,6 @@ export interface IntegrationUpsertPayload {
   version?: string | null;
   parent_application_id?: string | null;
   tags?: string[] | null;
+  business_criticality?: string | null;
+  emergency_tier?: string | null;
 }

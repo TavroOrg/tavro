@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from uuid import uuid4
 from typing import Any, Optional
 
@@ -15,6 +16,7 @@ from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 _TABLE_COLUMNS_CACHE: dict[tuple[str, str], set[str]] = {}
 _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
@@ -112,6 +114,8 @@ _INTEGRATION_EDITABLE_COLUMNS: set[str] = {
     "sla",
     "version",
     "parent_application_id",
+    "business_criticality",
+    "emergency_tier",
 }
 
 _INTEGRATION_READONLY_DEFAULTS: dict[str, Any] = {}
@@ -231,6 +235,8 @@ class Integration(BaseModel):
     version: Optional[str] = None
     parent_application_id: Optional[str] = None
     tags: Optional[list] = None
+    business_criticality: Optional[str] = None
+    emergency_tier: Optional[str] = None
 
 
 class IntegrationCreate(Integration):
@@ -1212,6 +1218,134 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
         {"business_application_id": business_application_id},
     )
 
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    app_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, emergency_tier
+            FROM core.business_applications
+            WHERE business_application_id = :business_application_id
+            LIMIT 1
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )
+    app = app_row.mappings().first()
+    if not app:
+        return
+
+    bc = (app.get("business_criticality") or "").strip().lower()
+    bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+    et = (app.get("emergency_tier") or "").strip().lower()
+    et_score = {"mission critical": 1.0, "business critical": 0.4, "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+    max_brs_row = await db.execute(
+        text(
+            """
+            SELECT brs.agent_internal_id, brs.blended_risk_score
+            FROM core.agent_business_applications aba
+            JOIN LATERAL (
+                SELECT ara.agent_internal_id, ara.blended_risk_score
+                FROM core.agent_risk_assessments ara
+                WHERE ara.agent_id = aba.agent_id
+                  AND ara.blended_risk_score IS NOT NULL
+                ORDER BY
+                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                    ara.assessment_ts DESC NULLS LAST,
+                    ara.updated_ts DESC NULLS LAST
+                LIMIT 1
+            ) brs ON TRUE
+            WHERE aba.business_application_id = :business_application_id
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_application_id": business_application_id},
+    )
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    criticality_avg = (bc_score + et_score) / 2.0
+    are = round(max_brs * criticality_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    app_cols = await _table_columns(db, "core", "business_applications")
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"business_application_id": business_application_id}
+
+    if "blended_risk_score" in app_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in app_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in app_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+    if "inherent_risk_classification" in app_cols:
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
+    if "inherent_risk_classification_score" in app_cols:
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in app_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
+    if "residual_risk_classification_score" in app_cols:
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_applications
+                SET {', '.join(set_parts)}
+                WHERE business_application_id = :business_application_id
+                """
+            ),
+            update_params,
+        )
+
 
 async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) -> None:
     await db.execute(
@@ -1232,6 +1366,316 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         ),
         {"business_process_id": business_process_id},
     )
+
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    proc_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, financial_impact, reputational_impact, regulatory_impact
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    proc = proc_row.mappings().first()
+    if not proc:
+        return
+
+    bc = (proc.get("business_criticality") or "").strip().lower()
+    bc_score = {
+        "tier 1 (systemic)": 1.0,
+        "tier 2 (core)": 0.7,
+        "tier 3 (operational)": 0.4,
+        "tier 4 (experimental)": 0.1,
+        "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+    }.get(bc, 0.0)
+
+    fi = (proc.get("financial_impact") or "").strip().lower()
+    fi_score = {
+        "systemic": 1.0, "1": 1.0,
+        "material": 0.7, "0.7": 0.7,
+        "absorbable": 0.4, "0.4": 0.4,
+        "immaterial": 0.1, "0.1": 0.1,
+    }.get(fi, 0.0)
+
+    ri = (proc.get("reputational_impact") or "").strip().lower()
+    ri_score = {
+        "toxic": 1.0, "1": 1.0,
+        "adverse": 0.7, "0.7": 0.7,
+        "private": 0.4, "0.4": 0.4,
+        "contained": 0.1, "0.1": 0.1,
+    }.get(ri, 0.0)
+
+    rgi = (proc.get("regulatory_impact") or "").strip().lower()
+    rgi_score = {
+        "restricted": 1.0, "1": 1.0,
+        "statutory": 0.7, "0.7": 0.7,
+        "governed": 0.4, "0.4": 0.4,
+        "unregulated": 0.1, "0.1": 0.1,
+    }.get(rgi, 0.0)
+
+    max_brs_row = await db.execute(
+        text(
+            """
+            SELECT brs.agent_internal_id, brs.blended_risk_score
+            FROM core.agent_business_processes abp
+            JOIN LATERAL (
+                SELECT ara.agent_internal_id, ara.blended_risk_score
+                FROM core.agent_risk_assessments ara
+                WHERE ara.agent_id = abp.agent_id
+                  AND ara.blended_risk_score IS NOT NULL
+                ORDER BY
+                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                    ara.assessment_ts DESC NULLS LAST,
+                    ara.updated_ts DESC NULLS LAST
+                LIMIT 1
+            ) brs ON TRUE
+            WHERE abp.business_process_id = :business_process_id
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": business_process_id},
+    )
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    impact_avg = (bc_score + fi_score + ri_score + rgi_score) / 4.0
+    are = round(max_brs * impact_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    proc_cols = await _table_columns(db, "core", "business_processes")
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"business_process_id": business_process_id}
+
+    if "blended_risk_score" in proc_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in proc_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in proc_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+    if "inherent_risk_classification" in proc_cols:
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
+    if "inherent_risk_classification_score" in proc_cols:
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in proc_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
+    if "residual_risk_classification_score" in proc_cols:
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_processes
+                SET {', '.join(set_parts)}
+                WHERE business_process_id = :business_process_id
+                """
+            ),
+            update_params,
+        )
+
+
+async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> None:
+    int_cols = await _table_columns(db, "core", "business_integrations")
+
+    await db.execute(
+        text(
+            """
+            UPDATE core.business_integrations bi
+            SET
+                num_of_associated_agents = (
+                    SELECT COUNT(DISTINCT abi.agent_id)
+                    FROM core.agent_business_integrations abi
+                    WHERE abi.integration_id = :integration_id
+                      AND abi.agent_id IS NOT NULL AND abi.agent_id <> ''
+                ),
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE bi.integration_id = :integration_id
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+
+    has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+    if not has_ara:
+        return
+
+    int_row = await db.execute(
+        text(
+            """
+            SELECT business_criticality, emergency_tier
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    integration = int_row.mappings().first()
+    if not integration:
+        return
+
+    bc = (integration.get("business_criticality") or "").strip().lower()
+    bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+    et = (integration.get("emergency_tier") or "").strip().lower()
+    et_score = {"mission critical": 1.0, "business critical": 0.4,
+                "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+    max_brs = 0.0
+    worst_internal_id = None
+    has_abi = await _table_exists(db, "core", "agent_business_integrations")
+    if has_abi:
+        max_brs_row = await db.execute(
+            text(
+                """
+                SELECT brs.agent_internal_id, brs.blended_risk_score
+                FROM core.agent_business_integrations abi
+                JOIN LATERAL (
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    FROM core.agent_risk_assessments ara
+                    WHERE ara.agent_id = abi.agent_id
+                      AND ara.blended_risk_score IS NOT NULL
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE abi.integration_id = :integration_id
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
+                """
+            ),
+            {"integration_id": integration_id},
+        )
+        worst_row = max_brs_row.mappings().first()
+        if worst_row:
+            max_brs = float(worst_row.get("blended_risk_score") or 0.0)
+            worst_internal_id = worst_row.get("agent_internal_id")
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    criticality_avg = (bc_score + et_score) / 2.0
+    are = round(max_brs * criticality_avg, 2)
+
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    set_parts: list[str] = []
+    update_params: dict[str, Any] = {"integration_id": integration_id}
+
+    if "blended_risk_score" in int_cols:
+        set_parts.append("blended_risk_score = :max_brs")
+        update_params["max_brs"] = max_brs
+    if "agent_risk_exposure" in int_cols:
+        set_parts.append("agent_risk_exposure = :are")
+        update_params["are"] = are
+    if "agent_risk_tier" in int_cols:
+        set_parts.append("agent_risk_tier = :art")
+        update_params["art"] = art
+    if "inherent_risk_classification" in int_cols:
+        set_parts.append("inherent_risk_classification = :inherent_class")
+        update_params["inherent_class"] = inherent_class
+    if "inherent_risk_classification_score" in int_cols:
+        set_parts.append("inherent_risk_classification_score = :inherent_score")
+        update_params["inherent_score"] = inherent_score
+    if "residual_risk_classification" in int_cols:
+        set_parts.append("residual_risk_classification = :residual_class")
+        update_params["residual_class"] = residual_class
+    if "residual_risk_classification_score" in int_cols:
+        set_parts.append("residual_risk_classification_score = :residual_score")
+        update_params["residual_score"] = residual_score
+
+    if set_parts:
+        await db.execute(
+            text(
+                f"""
+                UPDATE core.business_integrations
+                SET {', '.join(set_parts)}
+                WHERE integration_id = :integration_id
+                """
+            ),
+            update_params,
+        )
 
 
 async def _fetch_integrations(
@@ -1275,6 +1719,16 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "updated_ts"),
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
+        _col_expr("bi", int_cols, "business_criticality"),
+        _col_expr("bi", int_cols, "emergency_tier"),
+        _col_expr("bi", int_cols, "blended_risk_score"),
+        _col_expr("bi", int_cols, "agent_risk_exposure"),
+        _col_expr("bi", int_cols, "agent_risk_tier"),
+        _col_expr("bi", int_cols, "inherent_risk_classification"),
+        _col_expr("bi", int_cols, "residual_risk_classification"),
+        _col_expr("bi", int_cols, "inherent_risk_classification_score"),
+        _col_expr("bi", int_cols, "residual_risk_classification_score"),
+        _col_expr("bi", int_cols, "num_of_associated_agents"),
     ]
 
     where_parts: list[str] = []
@@ -2320,6 +2774,11 @@ async def update_integration(
         updates,
     )
     await db.commit()
+
+    if {"business_criticality", "emergency_tier"} & set(canonical.keys()):
+        await _refresh_integration_rollup(db, integration_id)
+        await db.commit()
+
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
@@ -2408,6 +2867,8 @@ async def add_agent_integration_relation(
         },
     )
     await db.commit()
+    await _refresh_integration_rollup(db, integration_id)
+    await db.commit()
 
     return {
         "status": "linked",
@@ -2446,6 +2907,8 @@ async def remove_agent_integration_relation(
             "agent_id": agent.get("agent_id"),
         },
     )
+    await db.commit()
+    await _refresh_integration_rollup(db, integration_id)
     await db.commit()
 
     return {
@@ -2636,6 +3099,10 @@ async def update_application(
         updates,
     )
     await db.commit()
+    are_trigger_fields = {"business_criticality", "emergency_tier"}
+    if are_trigger_fields & set(updates.keys()):
+        await _refresh_application_rollup(db, application_id)
+        await db.commit()
     rows = await _fetch_applications(db, application_id=application_id)
     return rows[0]
 
@@ -2913,6 +3380,10 @@ async def update_process(
         updates,
     )
     await db.commit()
+    are_trigger_fields = {"business_criticality", "financial_impact", "reputational_impact", "regulatory_impact"}
+    if are_trigger_fields & set(updates.keys()):
+        await _refresh_process_rollup(db, process_id)
+        await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
     return rows[0]
 
