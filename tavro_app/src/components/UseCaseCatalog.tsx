@@ -189,8 +189,25 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                         <div className="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl group-hover:scale-110 transition-transform">
                                             <ClipboardList size={24} />
                                         </div>
-                                        <div className="flex flex-col items-end gap-1.5">
-                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-800 px-2 py-0.5 rounded-full">
+                                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                            <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                                                ARE: {(uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0}
+                                            </span>
+                                            <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full border ${
+                                                (() => {
+                                                    const art = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? '';
+                                                    return art === 'Critical' || art === 'High'
+                                                        ? 'bg-red-50 text-red-700 border-red-200'
+                                                        : art === 'Medium'
+                                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                        : art === 'Low'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : 'bg-slate-50 text-slate-500 border-slate-200';
+                                                })()
+                                            }`}>
+                                                ART: {(uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None'}
+                                            </span>
+                                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-800 px-3 h-8 rounded-full">
                                                 <Bot size={20} />{relatedAgentCount}
                                             </span>
                                         </div>
@@ -221,12 +238,14 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                 </div>
             ) : (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                    <div className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_80px_100px_48px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <div>Use Case Name</div>
                         <div>Function</div>
                         <div>Status</div>
                         <div>Owner</div>
                         <div>Priority</div>
+                        <div>ARE</div>
+                        <div>ART</div>
                         <div></div>
                     </div>
                     <div
@@ -239,11 +258,13 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                             const priorityTone = getPriorityTone(uc.priority);
                             const priorityTheme = getPriorityTheme(priorityTone);
                             const listNavId = uc.identifier ?? uc.id;
+                            const ucAre = (uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0;
+                            const ucArt = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
                             return (
                                 <div
                                     key={uc.identifier ?? uc.id}
                                     onClick={() => listNavId ? navigate(`/use-case/${listNavId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
-                                    className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                                    className="grid grid-cols-[1.5fr_1fr_120px_1fr_140px_80px_100px_48px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
                                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
@@ -274,6 +295,18 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                             {priorityTone === 'low' || priorityTone === 'planning' ? <CheckCircle2 size={12} /> : <ShieldAlert size={12} />}
                                             {priorityLabel}
                                         </span>
+                                    </div>
+                                    <div className="text-sm font-semibold text-slate-700">{ucAre}</div>
+                                    <div>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                            ucArt === 'Critical' || ucArt === 'High'
+                                                ? 'bg-red-50 text-red-700 border-red-200'
+                                                : ucArt === 'Medium'
+                                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                : ucArt === 'Low'
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                : 'bg-slate-50 text-slate-500 border-slate-200'
+                                        }`}>{ucArt}</span>
                                     </div>
                                     <div className="flex justify-end pr-2 text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
                                         <ChevronRight size={18} className="transform group-hover:translate-x-1 transition-transform" />

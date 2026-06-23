@@ -397,6 +397,8 @@ async def list_use_cases(
                         u.solution_approach,
                         u.created_ts,
                         u.updated_ts,
+                        u.agent_risk_exposure_are,
+                        u.agent_risk_tier_art,
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel

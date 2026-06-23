@@ -255,6 +255,15 @@ const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
   return 'text-slate-600';
 };
 
+const getArtMeta = (value: string): HeaderMetricMeta => {
+  const label = value || 'N/A';
+  const normalized = label.toLowerCase();
+  if (normalized === 'critical' || normalized === 'high') return { label, tone: 'high' };
+  if (normalized === 'medium') return { label, tone: 'medium' };
+  if (normalized === 'low' || normalized === 'none') return { label, tone: 'low' };
+  return { label, tone: 'neutral' };
+};
+
 const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
@@ -873,6 +882,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
   const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
   const regulatoryImpactMeta = getImpactMeta(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS);
+  const artMeta = getArtMeta(form.agent_risk_tier);
 
   const selectableParents = allProcesses.filter(
     p => p.business_process_id !== currentProcessId,
@@ -956,7 +966,7 @@ const BusinessProcessViewPage: React.FC = () => {
             <div className="flex flex-col gap-1.5 min-w-0">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Process</span>
               <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{processTitle}</h2>
-              <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
+              <p className="text-xs font-mono text-slate-400 mt-1 truncate" title={processId}>{processId}</p>
               <p className="text-sm text-slate-600 line-clamp-2">
                 {form.process_description || 'No description available.'}
               </p>
@@ -964,7 +974,7 @@ const BusinessProcessViewPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                 Business Criticality
               </span>
@@ -974,7 +984,7 @@ const BusinessProcessViewPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                 Financial Impact
               </span>
@@ -984,7 +994,7 @@ const BusinessProcessViewPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                 Reputational Impact
               </span>
@@ -994,13 +1004,32 @@ const BusinessProcessViewPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                 Regulatory Impact
               </span>
               <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
                 {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
                 {regulatoryImpactMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                ARE
+              </span>
+              <span className="text-xs font-bold text-slate-700">
+                {form.agent_risk_exposure || 'N/A'}
+              </span>
+            </div>
+
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                ART
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
+                {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {artMeta.label}
               </span>
             </div>
           </div>
@@ -1255,7 +1284,7 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
-              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
+              <ReadValue label="ART" value={form.agent_risk_tier || 'N/A'} />
               <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'N/A'} />
               <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'N/A'} />
 
@@ -1301,7 +1330,7 @@ const BusinessProcessViewPage: React.FC = () => {
                 )}
               </div>
 
-              <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+              <ReadValue label="ARE" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
               <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
               <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
               <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
@@ -1452,8 +1481,8 @@ const BusinessProcessViewPage: React.FC = () => {
                     <div>Business Criticality</div>
                     <div>Process Health State</div>
                     <div># Of Associated Agents</div>
-                    <div>Agent Risk Exposure (ARE)</div>
-                    <div>Agent Risk Tier (ART)</div>
+                    <div>ARE</div>
+                    <div>ART</div>
                   </div>
                   <div className="divide-y divide-slate-100">
                     {relatedProcessRows.map((row) => {

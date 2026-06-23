@@ -266,9 +266,25 @@ const BusinessProcessesPage: React.FC = () => {
                     <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
                       <Workflow size={20} />
                     </div>
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                      <Bot size={20} /> {proc.related_agent_count}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                        ARE: {proc.agent_risk_exposure ?? 0}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full border ${
+                        proc.agent_risk_tier === 'Critical' || proc.agent_risk_tier === 'High'
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : proc.agent_risk_tier === 'Medium'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : proc.agent_risk_tier === 'Low'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-50 text-slate-500 border-slate-200'
+                      }`}>
+                        ART: {proc.agent_risk_tier ?? 'None'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        <Bot size={20} /> {proc.related_agent_count ?? 0}
+                      </span>
+                    </div>
                   </div>
 
                   <h3 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors line-clamp-1 mb-1">
@@ -307,12 +323,14 @@ const BusinessProcessesPage: React.FC = () => {
 
       {!error && viewMode === 'list' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="grid grid-cols-[1.6fr_1fr_150px_120px_150px_48px] items-center bg-slate-50 border-b border-slate-200 px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+          <div className="grid grid-cols-[1.6fr_1fr_150px_100px_150px_80px_100px_48px] items-center bg-slate-50 border-b border-slate-200 px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
             <div>Process</div>
             <div>Owner</div>
             <div>Criticality</div>
             <div>Related Agents</div>
             <div>Related Processes</div>
+            <div>ARE</div>
+            <div>ART</div>
             <div />
           </div>
           <div className="divide-y divide-slate-100">
@@ -322,7 +340,7 @@ const BusinessProcessesPage: React.FC = () => {
                 <button
                   key={proc.business_process_id}
                   onClick={() => navigate(`/processes/${encodeURIComponent(proc.business_process_id)}`)}
-                  className="grid grid-cols-[1.6fr_1fr_150px_120px_150px_48px] items-center px-6 py-4 hover:bg-slate-50 text-left transition-colors group w-full"
+                  className="grid grid-cols-[1.6fr_1fr_150px_100px_150px_80px_100px_48px] items-center px-6 py-4 hover:bg-slate-50 text-left transition-colors group w-full"
                 >
                   <div className="flex flex-col gap-0.5 pr-4 min-w-0">
                     <div className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors truncate">
@@ -336,8 +354,20 @@ const BusinessProcessesPage: React.FC = () => {
                       {displayCriticality(proc.business_criticality)}
                     </span>
                   </div>
-                  <div className="text-sm font-semibold text-blue-700">{proc.related_agent_count}</div>
+                  <div className="text-sm font-semibold text-blue-700">{proc.related_agent_count ?? 0}</div>
                   <div className="text-sm font-semibold text-blue-700">{relatedProcessCount}</div>
+                  <div className="text-sm font-semibold text-slate-700">{proc.agent_risk_exposure ?? 0}</div>
+                  <div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      proc.agent_risk_tier === 'Critical' || proc.agent_risk_tier === 'High'
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : proc.agent_risk_tier === 'Medium'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : proc.agent_risk_tier === 'Low'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}>{proc.agent_risk_tier ?? 'None'}</span>
+                  </div>
                   <div className="flex justify-end pr-2 text-slate-300 group-hover:text-blue-500 transition-colors">
                     <ChevronRight size={18} className="transform group-hover:translate-x-1 transition-transform" />
                   </div>

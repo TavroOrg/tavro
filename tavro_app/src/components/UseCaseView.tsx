@@ -353,11 +353,22 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                         </div>
-                        {headerActions && (
-                            <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
-                                {headerActions}
+                        <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">
+                            <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 flex flex-col items-center min-w-[150px]">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ARE</span>
+                                <span className="text-xs font-bold text-slate-700">{riskExposure}</span>
                             </div>
-                        )}
+                            <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 flex flex-col items-center min-w-[150px]">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ART</span>
+                                <span className={`text-xs font-bold ${
+                                    agentRiskTier === 'Critical' || agentRiskTier === 'High' ? 'text-red-600' :
+                                    agentRiskTier === 'Medium' ? 'text-amber-600' :
+                                    agentRiskTier === 'Low' ? 'text-emerald-600' :
+                                    'text-slate-600'
+                                }`}>{agentRiskTier}</span>
+                            </div>
+                            {headerActions && headerActions}
+                        </div>
                     </div>
 
                     {/* Metadata grid */}
@@ -416,6 +427,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 ? <span className="inline-flex items-center gap-1 text-slate-700"><Users size={12} className="text-slate-400" />{proposedBy}</span>
                                 : <span className="text-slate-400 text-xs">—</span>}
                         </MetaField>
+
                     </div>
                 </div>
             </div>
@@ -490,8 +502,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                         )}
                         <SectionCard icon={<ShieldAlert size={16} />} title="Agent Risk Exposure">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <ReadValue label="Agent Risk Exposure (ARE)" value={riskExposure} hint={ARE_HINTS.agent_risk_exposure} />
-                                <ReadValue label="Agent Risk Tier (ART)" value={agentRiskTier} hint={ARE_HINTS.agent_risk_tier} />
+                                <ReadValue label="ARE" value={riskExposure} hint={ARE_HINTS.agent_risk_exposure} />
+                                <ReadValue label="ART" value={agentRiskTier} hint={ARE_HINTS.agent_risk_tier} />
                                 <ReadValue label="# Of Associated Agents" value={associatedAgentCount} hint={ARE_HINTS.associated_agents} />
                                 <ReadValue label="Blended Risk Score" value={blendedRiskScore} hint={ARE_HINTS.blended_risk_score} />
                                 <ReadValue label="Inherent Risk Classification" value={inherentRiskClassification} />

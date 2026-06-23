@@ -216,15 +216,24 @@ const IntegrationsPage: React.FC = () => {
                     <div className="p-2 bg-violet-50 text-violet-600 rounded-xl group-hover:scale-110 transition-transform">
                       <Network size={20} />
                     </div>
-                    <div className="flex flex-col items-end gap-1.5">
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                        <Bot size={20} /> {item.related_agent_count}
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                        ARE: {item.agent_risk_exposure ?? 0}
                       </span>
-                      {item.availability_status && (
-                        <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${availMeta.className}`}>
-                          {item.availability_status}
-                        </span>
-                      )}
+                      <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full border ${
+                        item.agent_risk_tier === 'Critical' || item.agent_risk_tier === 'High'
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : item.agent_risk_tier === 'Medium'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : item.agent_risk_tier === 'Low'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-50 text-slate-500 border-slate-200'
+                      }`}>
+                        ART: {item.agent_risk_tier ?? 'None'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        <Bot size={20} /> {item.related_agent_count ?? 0}
+                      </span>
                     </div>
                   </div>
 
@@ -265,12 +274,14 @@ const IntegrationsPage: React.FC = () => {
 
       {!error && viewMode === 'list' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="grid grid-cols-[1.6fr_1fr_120px_140px_140px_48px] items-center bg-slate-50 border-b border-slate-200 px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+          <div className="grid grid-cols-[1.6fr_1fr_120px_140px_100px_80px_100px_48px] items-center bg-slate-50 border-b border-slate-200 px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
             <div>Integration</div>
             <div>Owner</div>
             <div>Protocol</div>
             <div>Availability</div>
             <div>Related Agents</div>
+            <div>ARE</div>
+            <div>ART</div>
             <div />
           </div>
           <div className="divide-y divide-slate-100">
@@ -280,7 +291,7 @@ const IntegrationsPage: React.FC = () => {
                 <button
                   key={item.integration_id}
                   onClick={() => navigate(`/integrations/${encodeURIComponent(item.integration_id)}`)}
-                  className="grid grid-cols-[1.6fr_1fr_120px_140px_140px_48px] items-center px-6 py-4 hover:bg-slate-50 text-left transition-colors group w-full"
+                  className="grid grid-cols-[1.6fr_1fr_120px_140px_100px_80px_100px_48px] items-center px-6 py-4 hover:bg-slate-50 text-left transition-colors group w-full"
                 >
                   <div className="flex flex-col gap-0.5 pr-4 min-w-0">
                     <div className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors truncate">
@@ -307,7 +318,19 @@ const IntegrationsPage: React.FC = () => {
                       <span className="text-sm text-slate-400">N/A</span>
                     )}
                   </div>
-                  <div className="text-sm font-semibold text-blue-700">{item.related_agent_count}</div>
+                  <div className="text-sm font-semibold text-blue-700">{item.related_agent_count ?? 0}</div>
+                  <div className="text-sm font-semibold text-slate-700">{item.agent_risk_exposure ?? 0}</div>
+                  <div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      item.agent_risk_tier === 'Critical' || item.agent_risk_tier === 'High'
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : item.agent_risk_tier === 'Medium'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : item.agent_risk_tier === 'Low'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}>{item.agent_risk_tier ?? 'None'}</span>
+                  </div>
                   <div className="flex justify-end pr-2 text-slate-300 group-hover:text-blue-500 transition-colors">
                     <ChevronRight size={18} className="transform group-hover:translate-x-1 transition-transform" />
                   </div>

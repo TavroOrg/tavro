@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Bot,
   Boxes,
+  CheckCircle2,
   ClipboardList,
   Download,
   Info,
@@ -17,6 +18,7 @@ import {
   PlusCircle,
   Save,
   Search,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Unlink2,
@@ -75,14 +77,14 @@ const FIELD_KEYS: string[] = [
 ];
 
 const MODEL_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
+  { label: 'Select...', value: '' },
   { label: 'High', value: 'High' },
   { label: 'Medium', value: 'Medium' },
   { label: 'Low', value: 'Low' },
 ];
 
 const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
+  { label: 'Select...', value: '' },
   { label: 'Mission Critical', value: 'Mission Critical' },
   { label: 'Business Critical', value: 'Business Critical' },
   { label: 'Non-Critical', value: 'Non-Critical' },
@@ -137,6 +139,35 @@ const changedPayload = (current: FormState, next: FormState): AiModelUpsertPaylo
     }
   });
   return changed as AiModelUpsertPayload;
+};
+
+type MetricTone = 'high' | 'medium' | 'low' | 'neutral';
+const metricToneClass = (tone: MetricTone) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+const getCriticalityTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low') return 'low';
+  return 'neutral';
+};
+const getEmergencyTierTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v.includes('mission critical')) return 'high';
+  if (v.includes('business critical')) return 'medium';
+  if (v.includes('non-critical')) return 'low';
+  return 'neutral';
+};
+const getArtTone = (value: string | null | undefined): MetricTone => {
+  const v = (value ?? '').toLowerCase();
+  if (v === 'critical' || v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low' || v === 'none') return 'low';
+  return 'neutral';
 };
 
 const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean; hint?: string }> = ({ label, children, full, hint }) => (
@@ -920,21 +951,31 @@ const AiModelViewPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            {[
-              { label: 'Status', value: form.status },
-              // { label: 'Provider', value: form.provider },
-              // { label: 'Vendor or In-house', value: form.vendor_or_inhouse },
-              { label: 'Risk Tier / Materiality', value: form.risk_tier_materiality },
-            ].map(metric => (
-              <div key={metric.label} className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                  {metric.label}
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-700">
-                  {metric.value?.trim() || 'N/A'}
-                </span>
-              </div>
-            ))}
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Emergency Tier</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getEmergencyTierTone(form.emergency_tier))}`}>
+                {getEmergencyTierTone(form.emergency_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.emergency_tier || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Business Criticality</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getCriticalityTone(form.business_criticality))}`}>
+                {getCriticalityTone(form.business_criticality) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.business_criticality || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ARE</span>
+              <span className="text-xs font-bold text-slate-700">{String(model?.agent_risk_exposure ?? 'N/A')}</span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ART</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(model?.agent_risk_tier))}`}>
+                {getArtTone(model?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {model?.agent_risk_tier ?? 'None'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -993,10 +1034,10 @@ const AiModelViewPage: React.FC = () => {
         <Section title="Agent Risk Exposure">
           <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
           <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
-          <Field label="Agent Risk Exposure (ARE)" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
+          <Field label="ARE" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
             <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
           </Field>
-          <Field label="Agent Risk Tier (ART)" hint={MODEL_ARE_HINTS.agent_risk_tier}>
+          <Field label="ART" hint={MODEL_ARE_HINTS.agent_risk_tier}>
             <p className={`${valueBoxCls}`}>{model?.agent_risk_tier ?? 'None'}</p>
           </Field>
           <Field label="Blended Risk Score" hint={MODEL_ARE_HINTS.blended_risk_score}>

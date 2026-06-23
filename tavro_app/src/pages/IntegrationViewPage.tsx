@@ -4,12 +4,14 @@ import {
   Network,
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
   Info,
   Loader2,
   Pencil,
   PlusCircle,
   Save,
   Search,
+  ShieldAlert,
   Trash2,
   Unlink2,
   XCircle,
@@ -111,6 +113,35 @@ type IntegrationInlineField =
   | 'parent_application_id'
   | 'business_criticality'
   | 'emergency_tier';
+
+type MetricTone = 'high' | 'medium' | 'low' | 'neutral';
+const metricToneClass = (tone: MetricTone) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+const getCriticalityTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low') return 'low';
+  return 'neutral';
+};
+const getEmergencyTierTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v.includes('mission critical')) return 'high';
+  if (v.includes('business critical')) return 'medium';
+  if (v.includes('non-critical')) return 'low';
+  return 'neutral';
+};
+const getArtTone = (value: string | null | undefined): MetricTone => {
+  const v = (value ?? '').toLowerCase();
+  if (v === 'critical' || v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low' || v === 'none') return 'low';
+  return 'neutral';
+};
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -682,6 +713,31 @@ const IntegrationViewPage: React.FC = () => {
                 <span className="text-xs font-bold text-slate-700">{form.availability_status}</span>
               </div>
             )}
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Emergency Tier</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getEmergencyTierTone(form.emergency_tier))}`}>
+                {getEmergencyTierTone(form.emergency_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.emergency_tier || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Business Criticality</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getCriticalityTone(form.business_criticality))}`}>
+                {getCriticalityTone(form.business_criticality) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.business_criticality || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ARE</span>
+              <span className="text-xs font-bold text-slate-700">{String(integration?.agent_risk_exposure ?? 'N/A')}</span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ART</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(integration?.agent_risk_tier))}`}>
+                {getArtTone(integration?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {integration?.agent_risk_tier ?? 'None'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -818,11 +874,11 @@ const IntegrationViewPage: React.FC = () => {
                 )}
               </div>
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Agent Risk Exposure (ARE)" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
+                <HintLabel label="ARE" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.agent_risk_exposure ?? 0)}</p>
               </div>
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Agent Risk Tier (ART)" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
+                <HintLabel label="ART" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
               </div>
               <div className="flex flex-col gap-1.5">
