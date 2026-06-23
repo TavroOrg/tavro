@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     ChevronRight, Play, RotateCcw, CheckCircle2, AlertCircle,
-    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save,
+    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save, Building2,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -34,16 +34,30 @@ interface ExtractedAgent {
     agent_name: string;
 }
 
+interface ExtractedApplication {
+    name:                     string;
+    business_application_id:  string;
+}
+
+interface ExtractedProcess {
+    name:                string;
+    business_process_id: string;
+}
+
 interface RunResult {
     status:            RunStatus;
     count?:            number;
     agents_extracted?: ExtractedAgent[];
     risk_queued?:      number;
+    applications?:     ExtractedApplication[];
+    processes?:        ExtractedProcess[];
     error?:            string;
     // legacy — not displayed
     files_saved?:      string[];
     logs?:             string;
 }
+
+type ServiceNowMode = 'agents' | 'business_applications' | 'business_processes';
 
 // ---------------------------------------------------------------------------
 // Static connector definitions (mirrors admin_connectors.py)
@@ -177,6 +191,7 @@ const AdminConnectorsPage: React.FC = () => {
     const [geminiAuthUrl, setGeminiAuthUrl] = useState<{ url?: string; loading: boolean; error?: string }>({ loading: false });
     const [credsLoading, setCredsLoading] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [snMode, setSnMode] = useState<ServiceNowMode>('agents');
 
     const selectedConnector = CONNECTORS.find(c => c.id === selected) ?? null;
 
@@ -218,6 +233,10 @@ const AdminConnectorsPage: React.FC = () => {
         } catch { setSaveState('error'); }
         finally { setTimeout(() => setSaveState('idle'), 3000); }
     };
+
+    // Company — must be selected before running any connector
+    const companyId   = localStorage.getItem('tavro_active_company_id')   ?? '';
+    const companyName = localStorage.getItem('tavro_active_company_name') ?? '';
 
     // Resolve tenant_id: prefer what was stored at login, fall back to decoding
     // the stored id_token so existing sessions don't need a re-login.
@@ -265,21 +284,44 @@ const AdminConnectorsPage: React.FC = () => {
     };
 
     const runConnector = async (connector: ConnectorDef) => {
+        // Company must be selected before running
+        if (!companyId) {
+            setRunState(prev => ({
+                ...prev,
+                [connector.id]: {
+                    status: 'error',
+                    result: { status: 'error', error: 'No company selected. Please go to the Company tab and select a company before running.' },
+                },
+            }));
+            return;
+        }
+
         // Persist credentials to .env before running
         await saveCredentials(connector.id);
         setRunState(prev => ({ ...prev, [connector.id]: { status: 'running' } }));
 
+        const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
+        const authHeaders = {
+            'Content-Type': 'application/json',
+            ...(tenantId    ? { 'x-tenant-id':    tenantId }               : {}),
+            ...(accessToken ? { 'Authorization':  `Bearer ${accessToken}` } : {}),
+            ...(companyId   ? { 'x-company-id':   companyId }              : {}),
+            ...(companyName ? { 'x-company-name': companyName }            : {}),
+        };
+
         try {
-            const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
-        const res = await fetch(`/api/v1/admin/connectors/${connector.id}/run`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(tenantId    ? { 'x-tenant-id':    tenantId }              : {}),
-                    ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
-                },
-                body: JSON.stringify({ config: credentials[connector.id] ?? {} }),
-            });
+            const snIntegrationUrl: Record<ServiceNowMode, string | null> = {
+                agents:                null,
+                business_applications: '/api/v1/admin/integrations/business-applications/run',
+                business_processes:    '/api/v1/admin/integrations/business-processes/run',
+            };
+            const integrationUrl = connector.id === 'servicenow' ? snIntegrationUrl[snMode] : null;
+            const url = integrationUrl ?? `/api/v1/admin/connectors/${connector.id}/run`;
+            const body = integrationUrl
+                ? undefined
+                : JSON.stringify({ config: credentials[connector.id] ?? {} });
+
+            const res = await fetch(url, { method: 'POST', headers: authHeaders, body });
             const data: RunResult = await res.json();
             setRunState(prev => ({ ...prev, [connector.id]: { status: data.status as RunStatus, result: data } }));
         } catch (err: unknown) {
@@ -485,6 +527,35 @@ const AdminConnectorsPage: React.FC = () => {
                         </div>
                     )}
 
+                    {/* ServiceNow: run mode selector */}
+                    {selectedConnector.id === 'servicenow' && (
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                                What to extract
+                            </h3>
+                            <div className="flex gap-2">
+                                {([
+                                    { mode: 'agents',                label: 'Agents',                icon: <FileJson size={14} /> },
+                                    { mode: 'business_applications', label: 'Business Applications', icon: <Building2 size={14} /> },
+                                    { mode: 'business_processes',    label: 'Business Processes',    icon: <Building2 size={14} /> },
+                                ] as { mode: ServiceNowMode; label: string; icon: React.ReactNode }[]).map(opt => (
+                                    <button
+                                        key={opt.mode}
+                                        onClick={() => { setSnMode(opt.mode); setRunState(prev => ({ ...prev, servicenow: { status: 'idle' } })); }}
+                                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold border transition-all
+                                            ${snMode === opt.mode
+                                                ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-300 dark:border-blue-500/40 text-blue-700 dark:text-blue-400'
+                                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                            }`}
+                                    >
+                                        {opt.icon}
+                                        <span className="truncate">{opt.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* run button — hidden for Gemini (shown inside the auth URL block instead) */}
                     {selectedConnector.id !== 'gemini' && (
                         <div className="flex items-center gap-3 pt-2 flex-wrap">
@@ -533,7 +604,12 @@ const AdminConnectorsPage: React.FC = () => {
                                 <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
                                     <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                                     <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                                        Completed — {state.result.count ?? 0} agent{(state.result.count ?? 0) !== 1 ? 's' : ''} extracted
+                                        {state.result.processes
+                                            ? `Completed — ${state.result.count ?? 0} process${(state.result.count ?? 0) !== 1 ? 'es' : ''} imported`
+                                            : state.result.applications
+                                                ? `Completed — ${state.result.count ?? 0} application${(state.result.count ?? 0) !== 1 ? 's' : ''} imported`
+                                                : `Completed — ${state.result.count ?? 0} agent${(state.result.count ?? 0) !== 1 ? 's' : ''} extracted`
+                                        }
                                     </span>
                                 </div>
                             )}
@@ -555,6 +631,42 @@ const AdminConnectorsPage: React.FC = () => {
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{a.agent_name || a.agent_id}</p>
                                                     <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{a.filename}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* imported business applications list */}
+                            {state.result.applications && state.result.applications.length > 0 && (
+                                <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Imported Applications</h4>
+                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                        {state.result.applications.map(app => (
+                                            <div key={app.business_application_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                <Building2 size={14} className="text-green-500 shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{app.name || '—'}</p>
+                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{app.business_application_id}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* imported business processes list */}
+                            {state.result.processes && state.result.processes.length > 0 && (
+                                <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Imported Processes</h4>
+                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                        {state.result.processes.map(proc => (
+                                            <div key={proc.business_process_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                <Building2 size={14} className="text-blue-500 shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{proc.name || '—'}</p>
+                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{proc.business_process_id}</p>
                                                 </div>
                                             </div>
                                         ))}

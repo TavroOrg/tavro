@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_configurations (
 	tenant_id TEXT,
+	company_id TEXT,
 	agent_id TEXT,
 	access_scope TEXT,
 	memory_type TEXT,

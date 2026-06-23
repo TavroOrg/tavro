@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_risk_assessments (
 	tenant_id TEXT,
+	company_id TEXT,
 	risk_assessment_id TEXT,
 	agent_id TEXT,
 	assessment_name TEXT,
