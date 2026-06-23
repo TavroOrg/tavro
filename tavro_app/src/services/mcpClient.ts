@@ -462,7 +462,7 @@ class McpClientService {
             ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
         };
 
-        appLogger.tool(`${name} -> request`, { headers: requestHeaders, body: requestBody });
+        appLogger.tool(`${name} -> request`, toolArgs);
 
         const executeToolCall = async (): Promise<any> => {
             const controller = new AbortController();
@@ -558,7 +558,7 @@ class McpClientService {
                     throw err;
                 }
             }
-            appLogger.tool(`${name} <- result`, { response: result, durationMs: Date.now() - t0 });
+            appLogger.tool(`${name} <- result`, result && typeof result === 'object' ? result : { value: result });
             return result;
         } catch (err: any) {
             appLogger.error(`callTool failed - ${name}`, { error: err.message });

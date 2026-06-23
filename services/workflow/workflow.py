@@ -92,7 +92,7 @@ class RiskManagerWorkflow:
 
         await workflow.execute_activity(
             update_cvss_activity,
-            args=[agent_internal_id, assessment_id, float(aars_result.get("aars_total_score")), cvss_result, tenant_id],            
+            args=[agent_internal_id, assessment_id, float(aars_result.get("aars_total_score")), cvss_result, risk_result.get("Risk Classification"), tenant_id],
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=retry_policy,
         )

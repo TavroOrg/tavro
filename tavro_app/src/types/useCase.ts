@@ -21,6 +21,13 @@ export interface UseCaseSummary {
     overall_risk?: string | null;
     related_agent_count?: number | string | null;
     no_of_associated_agents?: number | string | null;
+    agent_risk_exposure_are?: number | string | null;
+    agent_risk_tier_art?: string | null;
+    blended_risk_score?: number | string | null;
+    inherent_risk_classification?: string | null;
+    inherent_risk_classification_score?: number | string | null;
+    residual_risk_classification?: string | null;
+    residual_risk_classification_score?: number | string | null;
 }
 
 // ── Related entities on the detail page ───────────────────────────────────────

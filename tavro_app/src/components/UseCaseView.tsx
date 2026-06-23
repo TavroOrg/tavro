@@ -27,6 +27,17 @@ import {
 
 
 
+const ARE_HINTS: Record<string, string> = {
+    agent_risk_exposure:
+        'ARE represents use case risk. It is calculated as the highest blended risk score among related agents.',
+    agent_risk_tier:
+        'ART indicates overall use case risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
+    associated_agents:
+        'Indicates the total number of agents associated with this use case.',
+    blended_risk_score:
+        'The highest current blended risk score across agents associated with this use case.',
+};
+
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
     agentsComponent?: React.ReactNode;
@@ -123,6 +134,28 @@ function MetaField({ label, children }: { label: string; children: React.ReactNo
         <div className="flex flex-col gap-1">
             <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</dt>
             <dd className="text-sm text-slate-700">{children}</dd>
+        </div>
+    );
+}
+
+function HintLabel({ label, hint }: { label: string; hint?: string }) {
+    return (
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1.5">
+            {label}
+            {hint && (
+                <span title={hint}>
+                    <Info size={12} className="text-slate-400" />
+                </span>
+            )}
+        </div>
+    );
+}
+
+function ReadValue({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+    return (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <HintLabel label={label} hint={hint} />
+            <div className="mt-1 text-sm font-semibold text-slate-800">{value ?? 'N/A'}</div>
         </div>
     );
 }
@@ -400,6 +433,14 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
     const solutionApproach = uc.solution_approach ?? (uc as any).solution_approach ?? null;
+    const riskExposure = String((uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0);
+    const associatedAgentCount = String((uc as any).no_of_associated_agents ?? (uc as any).num_of_associated_agents ?? linkedAgentCount ?? 0);
+    const agentRiskTier = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
+    const blendedRiskScore = String((uc as any).blended_risk_score ?? 0);
+    const inherentRiskClassification = (uc as any).inherent_risk_classification || 'N/A';
+    const inherentRiskClassificationScore = String((uc as any).inherent_risk_classification_score ?? 0);
+    const residualRiskClassification = (uc as any).residual_risk_classification || 'N/A';
+    const residualRiskClassificationScore = String((uc as any).residual_risk_classification_score ?? 0);
 
     const REQUIRED_INLINE_FIELDS = new Set(['title', 'description']);
     const renderInlineActions = (field: string) => {
@@ -705,9 +746,20 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 No description provided.
                             </div>
                         )}
+                        <SectionCard icon={<ShieldAlert size={16} />} title="Agent Risk Exposure">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <ReadValue label="Agent Risk Exposure (ARE)" value={riskExposure} hint={ARE_HINTS.agent_risk_exposure} />
+                                <ReadValue label="Agent Risk Tier (ART)" value={agentRiskTier} hint={ARE_HINTS.agent_risk_tier} />
+                                <ReadValue label="# Of Associated Agents" value={associatedAgentCount} hint={ARE_HINTS.associated_agents} />
+                                <ReadValue label="Blended Risk Score" value={blendedRiskScore} hint={ARE_HINTS.blended_risk_score} />
+                                <ReadValue label="Inherent Risk Classification" value={inherentRiskClassification} />
+                                <ReadValue label="Inherent Risk Classification Score" value={inherentRiskClassificationScore} />
+                                <ReadValue label="Residual Risk Classification" value={residualRiskClassification} />
+                                <ReadValue label="Residual Risk Classification Score" value={residualRiskClassificationScore} />
+                            </div>
+                        </SectionCard>
                         <div className="flex flex-col gap-3">
-                            {/* Row 1: Owner + Function */}
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
                                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Owner</span>
                                     {isEditing ? (
@@ -741,15 +793,14 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     )}
                                 </div>
                                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Function</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">BUSINESS FUNCTION</span>
                                     {uc.function
                                         ? <span className="text-sm font-semibold text-slate-700">{String(uc.function)}</span>
                                         : <span className="text-sm text-slate-400 font-normal">—</span>
                                     }
                                 </div>
                             </div>
-                            {/* Row 2: Created + Last Updated */}
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-col gap-1">
                                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</span>
                                     <span className="text-sm text-slate-700 flex items-center gap-1.5"><CalendarDays size={13} className="text-slate-400" />{formatDate(createdAt)}</span>
