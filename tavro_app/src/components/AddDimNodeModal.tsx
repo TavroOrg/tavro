@@ -47,7 +47,6 @@ const DIM_CATEGORY_OPTIONS: DimCategory[] = [
   'application',
   'process',
   'integration',
-  'technology',
   'custom',
 ];
 

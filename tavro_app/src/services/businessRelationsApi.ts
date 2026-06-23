@@ -70,9 +70,12 @@ const V1 = `${BASE}/api/v1`;
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('tavro_access_token');
-  return token
-    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    : { 'Content-Type': 'application/json' };
+  const tenantId = localStorage.getItem('tavro_tenant_id');
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+  };
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -180,8 +183,9 @@ class BusinessRelationsApi {
     return (data?.total ?? 0) as number;
   }
 
-  async getApplication(applicationId: string): Promise<BusinessApplicationRecord> {
-    return req(`/applications/${encodeURIComponent(applicationId)}`);
+  async getApplication(applicationId: string, companyId?: string): Promise<BusinessApplicationRecord> {
+    const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/applications/${encodeURIComponent(applicationId)}${suffix}`);
   }
 
   async createApplication(payload: BusinessApplicationUpsertPayload, companyId?: string): Promise<BusinessApplicationRecord> {
@@ -241,8 +245,9 @@ class BusinessRelationsApi {
     return (data?.total ?? 0) as number;
   }
 
-  async getProcess(processId: string): Promise<BusinessProcessRecord> {
-    return req(`/processes/${encodeURIComponent(processId)}`);
+  async getProcess(processId: string, companyId?: string): Promise<BusinessProcessRecord> {
+    const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/processes/${encodeURIComponent(processId)}${suffix}`);
   }
 
   async createProcess(payload: BusinessProcessUpsertPayload, companyId?: string): Promise<BusinessProcessRecord> {
@@ -283,8 +288,11 @@ class BusinessRelationsApi {
     });
   }
 
-  async getAgentRelations(agentId: string): Promise<AgentRelationsPayload> {
-    return req(`/agents/${encodeURIComponent(agentId)}`);
+  async getAgentRelations(agentId: string, companyId?: string): Promise<AgentRelationsPayload> {
+    const params = new URLSearchParams();
+    if (companyId) params.set('company_id', companyId);
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return req(`/agents/${encodeURIComponent(agentId)}${suffix}`);
   }
 
   async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
@@ -500,8 +508,9 @@ class BusinessRelationsApi {
     return (data?.total ?? 0) as number;
   }
 
-  async getIntegration(integrationId: string): Promise<IntegrationRecord> {
-    return req(`/integrations/${encodeURIComponent(integrationId)}`);
+  async getIntegration(integrationId: string, companyId?: string): Promise<IntegrationRecord> {
+    const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    return req(`/integrations/${encodeURIComponent(integrationId)}${suffix}`);
   }
 
   async createIntegration(payload: IntegrationUpsertPayload, companyId?: string): Promise<IntegrationRecord> {

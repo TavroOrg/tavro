@@ -279,6 +279,7 @@ class AgentMetadataExporter:
                     db_rows = cls.execute_select(
                         f"""
                         SELECT a.agent_name, a.agent_description,
+                               COALESCE(a.agent_type, 'Config-driven') AS agent_type,
                                i.instruction, i.governance_status, i.role
                         FROM {cls.CORE_DB_NAME}.agents a
                         LEFT JOIN LATERAL (
@@ -301,6 +302,8 @@ class AgentMetadataExporter:
                             local_card["name"] = row["agent_name"]
                         if row.get("agent_description"):
                             local_card["description"] = row["agent_description"]
+                        if row.get("agent_type"):
+                            local_card["agent_type"] = row["agent_type"]
                         ident = local_card.get("identification") or {}
                         if row.get("instruction") is not None:
                             ident["instruction"] = row["instruction"]
@@ -722,6 +725,10 @@ class AgentMetadataExporter:
                 resp = requests.post(primary_url, json=payload, timeout=(2, 30))
                 if resp.status_code >= 400:
                     print(f"[risk-trigger] Primary endpoint returned {resp.status_code}: {resp.text[:300]}")
+            except requests.exceptions.ReadTimeout:
+                # The server received the request and started the workflow — do NOT
+                # fall back, because doing so would trigger a duplicate workflow.
+                print(f"[risk-trigger] Primary read timeout — workflow already started, skipping fallback")
             except Exception as e:
                 print(f"[risk-trigger] Primary endpoint failed ({primary_url}): {e}")
                 try:
@@ -844,6 +851,15 @@ class AgentMetadataExporter:
         for entry in data_sources or []:
             if not isinstance(entry, dict):
                 continue
+
+            # Simple format: {"table_name": str, "columns": [...]}
+            simple_table_name = cls._clean_text(entry.get("table_name") or entry.get("name"))
+            if simple_table_name and not entry.get("source_object_type") and not entry.get("target_object_type"):
+                key = f"name:{simple_table_name.lower()}"
+                table_map.setdefault(key, {"table_id": None, "name": simple_table_name, "tool_name": None, "tool_id": None})
+                continue
+
+            # Relationship format: {"source_object_type": ..., "target_object_type": ...}
             src_type = str(entry.get("source_object_type") or "").lower()
             tgt_type = str(entry.get("target_object_type") or "").lower()
             if src_type == "table" and tgt_type == "column":
@@ -882,6 +898,22 @@ class AgentMetadataExporter:
         for entry in data_sources or []:
             if not isinstance(entry, dict):
                 continue
+
+            # Simple format: {"table_name": str, "columns": [{"column_name": str}, ...]}
+            simple_table_name = cls._clean_text(entry.get("table_name") or entry.get("name"))
+            if simple_table_name and not entry.get("source_object_type") and not entry.get("target_object_type"):
+                for col in entry.get("columns") or []:
+                    if isinstance(col, str):
+                        col_name = cls._clean_text(col)
+                    elif isinstance(col, dict):
+                        col_name = cls._clean_text(col.get("column_name") or col.get("name"))
+                    else:
+                        continue
+                    if col_name:
+                        columns.append({"name": col_name, "table_id": None, "table_name": simple_table_name})
+                continue
+
+            # Relationship format
             src_type = str(entry.get("source_object_type") or "").lower()
             tgt_type = str(entry.get("target_object_type") or "").lower()
             if src_type != "table" or tgt_type != "column":
@@ -1446,6 +1478,7 @@ class AgentMetadataExporter:
                 (
                     {tenant_id_value}
                     '{tool_id}',
+                    {company_id_value}
                     '{name}',
                     '{desc}',
                     TIMESTAMP '{now}',
@@ -1485,6 +1518,7 @@ class AgentMetadataExporter:
             INSERT INTO {cls.CORE_DB_NAME}.tools (
                 {tenant_id_column}
                 tool_id,
+                company_id,
                 tool_name,
                 tool_description,
                 created_ts,
@@ -1531,6 +1565,7 @@ class AgentMetadataExporter:
             table_values.append(f"""
             (
                 {tenant_id_value}
+                {company_id_value}
                 '{table_id}',
                 '{table_name}',
                 TIMESTAMP '{now}',
@@ -1607,6 +1642,7 @@ class AgentMetadataExporter:
                 (
                     '{column_id}',
                     {tenant_id_value}
+                    {company_id_value}
                     '{clean_column}',
                     TIMESTAMP '{now}',
                     TIMESTAMP '{now}'
@@ -1661,7 +1697,7 @@ class AgentMetadataExporter:
                 i_assignee        = f"'{cls.sanitize(str(issue['assignee']))}'" if issue.get("assignee") else "NULL"
                 i_owner           = f"'{cls.sanitize(str(issue['owner']))}'" if issue.get("owner") else "NULL"
                 issue_rows_i.append(
-                    f"({tenant_id_value}'{identifier}', '{i_title}', "
+                    f"({tenant_id_value}{company_id_value}'{identifier}', '{i_title}', "
                     f"{i_description}, {i_issue_type}, {i_severity}, "
                     f"{i_source}, {i_detected_at}, {i_resolved_at}, "
                     f"{i_status}, {i_resolution_notes}, "
@@ -1691,7 +1727,7 @@ class AgentMetadataExporter:
             if issue_rows_i:
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.issues (
-                    {tenant_id_column}issue_id, title,
+                    {tenant_id_column}company_id, issue_id, title,
                     description, issue_type, severity,
                     source, detected_at, resolved_at,
                     status, resolution_notes,
@@ -1716,6 +1752,7 @@ class AgentMetadataExporter:
             queries.append(f"""
             INSERT INTO {cls.CORE_DB_NAME}.tables (
                 {tenant_id_column}
+                company_id,
                 table_id,
                 name,
                 created_ts,
@@ -1730,6 +1767,7 @@ class AgentMetadataExporter:
             INSERT INTO {cls.CORE_DB_NAME}.columns (
                 column_id,
                 {tenant_id_column}
+                company_id,
                 name,
                 created_ts,
                 updated_ts
@@ -1823,6 +1861,7 @@ class AgentMetadataExporter:
                 return f"ARRAY[{', '.join(escaped)}]" if escaped else "ARRAY[]::TEXT[]"
 
             tenant_id_lit = f"'{tenant_id}'" if tenant_id else "NULL"
+            company_id_lit = f"'{company_id}'" if company_id else "NULL"
             seen_skill_ids: set = set()
             for skill in skills:
                 if isinstance(skill, str):
@@ -1864,12 +1903,12 @@ class AgentMetadataExporter:
 
                 queries.append(f"""
                 INSERT INTO {cls.CORE_DB_NAME}.skills (
-                    tenant_id, skill_id, name, description,
+                    tenant_id, company_id, skill_id, name, description,
                     tags, input_modes, output_modes,
                     created_ts, updated_ts
                 )
                 VALUES (
-                    {tenant_id_lit}, '{sid}', '{sname}', '{sdesc}',
+                    {tenant_id_lit}, {company_id_lit}, '{sid}', '{sname}', '{sdesc}',
                     {_pg_array(tags)}, {_pg_array(input_modes)}, {_pg_array(output_modes)},
                     TIMESTAMP '{now}', TIMESTAMP '{now}'
                 )
@@ -3575,18 +3614,35 @@ class AgentMetadataExporter:
             record_range=record_range
         )
 
-        tenant_where = (
-            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
-            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
-            else ""
-        )
+        # ---------- Normalize tenant ----------
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_mode = "GLOBAL"
+            tenant_id = None
+        else:
+            tenant_mode = "TENANT"
+            tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        where_clause = ""
+        if tenant_mode == "TENANT":
+            where_clause = f"""
+            WHERE (
+                tenant_id = '{tenant_id}'
+                OR tenant_id IS NULL
+                OR tenant_id = ''
+                OR tenant_id = 'None'
+            )
+            """
 
         query = f"""
-            SELECT *,
-                ROW_NUMBER() OVER () AS rn,
-                COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_DB_NAME}.business_applications
-            {tenant_where}
+            SELECT *
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER () AS rn,
+                    COUNT(*) OVER () AS total_records
+                FROM {cls.CORE_DB_NAME}.business_applications
+                {where_clause}
+            ) AS catalog_page
+            WHERE rn BETWEEN {start} AND {end}
         """
 
         result_rows = cls.execute_select(query)
@@ -3594,12 +3650,11 @@ class AgentMetadataExporter:
         total = 0
         rows = []
         for row in result_rows:
-            if not total and row.get("total_records"):
+            if not total and row.get("total_records") is not None:
                 total = int(row["total_records"])
-            rn = int(row.pop("rn", 0))
+            row.pop("rn", None)
             row.pop("total_records", None)
-            if start <= rn <= end:
-                rows.append(row)
+            rows.append(row)
 
         return {
             "start_record": start,
@@ -3626,18 +3681,35 @@ class AgentMetadataExporter:
             record_range=record_range
         )
 
-        tenant_where = (
-            f"WHERE tenant_id = '{cls.sanitize(tenant_id)}'"
-            if tenant_id and str(tenant_id).strip().lower() not in ["none", "null", ""]
-            else ""
-        )
+        # ---------- Normalize tenant ----------
+        if not tenant_id or str(tenant_id).strip().lower() in ["none", "null", ""]:
+            tenant_mode = "GLOBAL"
+            tenant_id = None
+        else:
+            tenant_mode = "TENANT"
+            tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        where_clause = ""
+        if tenant_mode == "TENANT":
+            where_clause = f"""
+            WHERE (
+                tenant_id = '{tenant_id}'
+                OR tenant_id IS NULL
+                OR tenant_id = ''
+                OR tenant_id = 'None'
+            )
+            """
 
         query = f"""
-            SELECT *,
-                ROW_NUMBER() OVER () AS rn,
-                COUNT(*) OVER () AS total_records
-            FROM {cls.CORE_DB_NAME}.business_processes
-            {tenant_where}
+            SELECT *
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER () AS rn,
+                    COUNT(*) OVER () AS total_records
+                FROM {cls.CORE_DB_NAME}.business_processes
+                {where_clause}
+            ) AS catalog_page
+            WHERE rn BETWEEN {start} AND {end}
         """
 
         result_rows = cls.execute_select(query)
@@ -3645,12 +3717,11 @@ class AgentMetadataExporter:
         total = 0
         rows = []
         for row in result_rows:
-            if not total and row.get("total_records"):
+            if not total and row.get("total_records") is not None:
                 total = int(row["total_records"])
-            rn = int(row.pop("rn", 0))
+            row.pop("rn", None)
             row.pop("total_records", None)
-            if start <= rn <= end:
-                rows.append(row)
+            rows.append(row)
 
         return {
             "start_record": start,
@@ -3855,19 +3926,124 @@ class AgentMetadataExporter:
     }
 
     @staticmethod
-    def _markdown_to_pdf(markdown_content: str) -> bytes:
-        """Convert a markdown string to a PDF byte string using fpdf2."""
+    def _load_pdf_visual_format() -> Dict[str, Any]:
+        """Read PDF visual values from the canonical markdown template."""
+        defaults: Dict[str, Any] = {
+            "header_height": 48.0,
+            "header_background": (255, 255, 255),
+            "header_border": (226, 232, 240),
+            "accent": (203, 213, 225),
+            "accent_height": 0.0,
+            "name_color": (30, 41, 59),
+            "name_size": 18.0,
+            "name_y": 18.0,
+            "type_color": (71, 85, 105),
+            "type_size": 11.0,
+            "type_y": 25.0,
+            "subtitle_color": (100, 116, 139),
+            "subtitle_size": 7.5,
+            "subtitle_y": 31.0,
+            "date_color": (100, 116, 139),
+            "date_size": 7.5,
+            "date_y": 31.0,
+            "footer_background": (248, 250, 252),
+            "footer_border": (226, 232, 240),
+            "footer_text": (148, 163, 184),
+            "footer_height": 12.0,
+            "content_start_y": 52.0,
+        }
+        template_candidates = [
+            Path(os.getenv("TAVRO_PDF_TEMPLATE_PATH", "")),
+            Path(__file__).resolve().parent.parent / "templates" / "pdf-document-template.md",
+            Path(__file__).resolve().parent.parent
+            / "tavro_app" / "copilot-server" / "templates" / "pdf-document-template.md",
+        ]
+        text = ""
+        for template_path in template_candidates:
+            if not str(template_path):
+                continue
+            try:
+                if template_path.exists():
+                    text = template_path.read_text(encoding="utf-8")
+                    break
+            except Exception:
+                continue
+        if not text:
+            return defaults
+
+        config_match = re.search(
+            r"<!--\s*pdf-visual-config\s*\n([\s\S]+?)\n-->",
+            text,
+            re.IGNORECASE,
+        )
+        if config_match:
+            try:
+                cfg = json.loads(config_match.group(1))
+                key_map = {
+                    "headerHeight": "header_height",
+                    "accentHeight": "accent_height",
+                    "nameSize": "name_size",
+                    "nameY": "name_y",
+                    "typeSize": "type_size",
+                    "typeY": "type_y",
+                    "subtitleSize": "subtitle_size",
+                    "subtitleY": "subtitle_y",
+                    "dateSize": "date_size",
+                    "dateY": "date_y",
+                    "footerHeight": "footer_height",
+                    "contentStartY": "content_start_y",
+                }
+                for source_key, target_key in key_map.items():
+                    value = cfg.get(source_key)
+                    if isinstance(value, (int, float)):
+                        defaults[target_key] = float(value)
+            except Exception:
+                pass
+
+        def rgb_for(label: str, fallback):
+            match = re.search(label + r"[^\n]*rgb\s+(\d+)\s+(\d+)\s+(\d+)", text, re.IGNORECASE)
+            return tuple(int(match.group(i)) for i in range(1, 4)) if match else fallback
+
+        defaults.update({
+            "header_background": rgb_for("Background", defaults["header_background"]),
+            "header_border": rgb_for("Bottom border", defaults["header_border"]),
+            "accent": rgb_for("Header divider line", defaults["accent"]),
+            "name_color": rgb_for("Name", defaults["name_color"]),
+            "type_color": rgb_for("Type", defaults["type_color"]),
+            "subtitle_color": rgb_for("Subtitle", defaults["subtitle_color"]),
+            "date_color": rgb_for("Generation date", defaults["date_color"]),
+            "footer_background": rgb_for(r"Footer[\s\S]*?Background", defaults["footer_background"]),
+            "footer_border": rgb_for("Top border line", defaults["footer_border"]),
+            "footer_text": rgb_for("Page X of Y", defaults["footer_text"]),
+        })
+        return defaults
+
+    @staticmethod
+    def _markdown_to_pdf(markdown_content: str, agent_name: str = "", doc_type: str = "") -> bytes:
+        """Convert a markdown string to a PDF byte string using fpdf2.
+
+        When agent_name and doc_type are provided the header renders a
+        Name / Type / Platform layout matching the canonical pdf-document-template.md.
+        Otherwise falls back to the legacy single-title layout.
+        """
         for char, replacement in AgentMetadataExporter._UNICODE_REPLACEMENTS.items():
             markdown_content = markdown_content.replace(char, replacement)
         markdown_content = markdown_content.encode("latin-1", errors="replace").decode("latin-1")
+        _agent_name = agent_name.encode("latin-1", errors="replace").decode("latin-1")
+        _doc_type = doc_type.encode("latin-1", errors="replace").decode("latin-1")
 
         import os
         from datetime import date
         from fpdf import FPDF
 
         _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../utils/travo_logo.png")
+        _inter_regular = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../utils/fonts/Inter-Regular.ttf")
+        _inter_bold    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../utils/fonts/Inter-Bold.ttf")
+        _use_inter = os.path.exists(_inter_regular) and os.path.exists(_inter_bold)
+        _main_font = "Inter" if _use_inter else "Helvetica"
+        _visual = AgentMetadataExporter._load_pdf_visual_format()
 
-        # Extract the first # heading to use as the header title.
+        # Extract the first # heading for the legacy title fallback.
         _doc_title = ""
         for _ln in markdown_content.split("\n"):
             if _ln.strip().startswith("# "):
@@ -3879,73 +4055,109 @@ class AgentMetadataExporter:
         class _PDF(FPDF):
             doc_title: str = _doc_title
             today_str: str = _today_str
+            hdr_agent_name: str = _agent_name
+            hdr_doc_type: str = _doc_type
+            main_font: str = _main_font
+            visual: Dict[str, Any] = _visual
 
             def header(self):
                 if self.page_no() != 1:
                     return
 
-                # Dark navy background
-                self.set_fill_color(15, 23, 42)
-                self.rect(0, 0, self.w, 44, "F")
-                # Blue accent stripe
-                self.set_fill_color(59, 130, 246)
-                self.rect(0, 0, self.w, 3, "F")
-                # Darker strip at header bottom
-                self.set_fill_color(30, 41, 59)
-                self.rect(0, 41, self.w, 3, "F")
+                v = self.visual
+                # Dashboard-style light header
+                self.set_fill_color(*v["header_background"])
+                self.rect(0, 0, self.w, v["header_height"], "F")
+                self.set_draw_color(*v["header_border"])
+                self.set_line_width(0.3)
+                self.line(0, v["header_height"] - 0.3, self.w, v["header_height"] - 0.3)
+                if v["accent_height"] > 0:
+                    self.set_fill_color(*v["accent"])
+                    self.rect(20, v["header_height"] - v["accent_height"] - 1, self.w - 40, v["accent_height"], "F")
 
                 # Tavro logo from utils/travo_logo.png (Docker copies utils/)
                 # Logo is 469x463px (ratio ~1:1); with h=11mm, w≈11mm
                 logo_h = 11
-                logo_y = (44 - logo_h) / 2
+                logo_y = (v["header_height"] - logo_h) / 2
                 logo_w = min(round(logo_h * (469 / 463)), 38)
-                text_x = 20
+                logo_x = 20
+                # Logo rendered directly — no tile/card wrapper
+                text_x = logo_x + logo_w + 5
                 try:
                     if os.path.exists(_logo_path):
-                        self.image(_logo_path, x=20, y=logo_y, w=logo_w, h=logo_h, type="PNG")
-                        text_x = 20 + logo_w + 5
+                        self.image(_logo_path, x=logo_x, y=logo_y, w=logo_w, h=logo_h, type="PNG")
                 except Exception:
                     pass
 
-                # Document title — white bold, Y=19 (matches pdfGenerator.ts)
-                title = self.doc_title[:65] if self.doc_title else "Tavro Report"
-                self.set_font("Helvetica", "B", 13)
-                self.set_text_color(255, 255, 255)
-                self.set_xy(text_x, 19)
-                self.cell(self.w - text_x - 20, 7, title)
+                if self.hdr_agent_name and self.hdr_doc_type:
+                    # Name / Type / Platform layout (matches pdfGenerator.ts docType mode)
+                    name_display = self.hdr_agent_name[:65]
+                    self.set_font(self.main_font, "B", v["name_size"])
+                    self.set_text_color(*v["name_color"])
+                    self.set_xy(text_x, v["name_y"])
+                    self.cell(self.w - text_x - 20, 6, name_display)
 
-                # Subtitle — Y=27, 7.5pt (matches pdfGenerator.ts)
-                self.set_font("Helvetica", "", 7.5)
-                self.set_text_color(148, 163, 184)
-                self.set_xy(text_x, 27)
-                self.cell(self.w - text_x - 20, 5, "Tavro AI Governance Platform")
+                    self.set_font(self.main_font, "", v["type_size"])
+                    self.set_text_color(*v["type_color"])
+                    self.set_xy(text_x, v["type_y"])
+                    self.cell(self.w - text_x - 20, 5, self.hdr_doc_type)
 
-                # Date right-aligned — same Y=27 as subtitle (matches pdfGenerator.ts)
-                self.set_font("Helvetica", "", 7)
-                self.set_text_color(100, 116, 139)
-                self.set_xy(20, 27)
-                self.cell(self.w - 40, 5, self.today_str, align="R")
+                    self.set_font(self.main_font, "", v["subtitle_size"])
+                    self.set_text_color(*v["subtitle_color"])
+                    self.set_xy(text_x, v["subtitle_y"])
+                    self.cell(self.w - text_x - 20, 5, "Tavro AI Governance Platform")
+
+                    self.set_font(self.main_font, "", v["date_size"])
+                    self.set_text_color(*v["date_color"])
+                    self.set_xy(20, v["date_y"])
+                    self.cell(self.w - 40, 5, self.today_str, align="R")
+                else:
+                    # Legacy single-title layout
+                    title = self.doc_title[:65] if self.doc_title else "Tavro Report"
+                    self.set_font(self.main_font, "B", 13)
+                    self.set_text_color(*v["name_color"])
+                    self.set_xy(text_x, 19)
+                    self.cell(self.w - text_x - 20, 7, title)
+
+                    self.set_font(self.main_font, "", v["subtitle_size"])
+                    self.set_text_color(*v["subtitle_color"])
+                    self.set_xy(text_x, 27)
+                    self.cell(self.w - text_x - 20, 5, "Tavro AI Governance Platform")
+
+                    self.set_font(self.main_font, "", v["date_size"])
+                    self.set_text_color(*v["date_color"])
+                    self.set_xy(20, 27)
+                    self.cell(self.w - 40, 5, self.today_str, align="R")
 
             def footer(self):
+                v = self.visual
                 ph = self.h
-                self.set_fill_color(248, 250, 252)
-                self.rect(0, ph - 12, self.w, 12, "F")
-                self.set_draw_color(226, 232, 240)
+                self.set_fill_color(*v["footer_background"])
+                self.rect(0, ph - v["footer_height"], self.w, v["footer_height"], "F")
+                self.set_draw_color(*v["footer_border"])
                 self.set_line_width(0.3)
-                self.line(0, ph - 12, self.w, ph - 12)
-                self.set_font("Helvetica", "", 7)
-                self.set_text_color(148, 163, 184)
+                self.line(0, ph - v["footer_height"], self.w, ph - v["footer_height"])
+                self.set_font(self.main_font, "", 7)
+                self.set_text_color(*v["footer_text"])
                 self.set_xy(15, ph - 8)
                 self.cell(self.w - 30, 5, "Tavro AI Governance Platform  *  Confidential")
                 self.set_xy(15, ph - 8)
                 self.cell(self.w - 30, 5, f"Page {self.page_no()} of {{nb}}", align="R")
 
         pdf = _PDF()
+        if _use_inter:
+            try:
+                pdf.add_font("Inter", "", _inter_regular, uni=True)
+                pdf.add_font("Inter", "B", _inter_bold, uni=True)
+                pdf.add_font("Inter", "I", _inter_regular, uni=True)
+                pdf.add_font("Inter", "BI", _inter_bold, uni=True)
+            except Exception:
+                pdf.main_font = "Helvetica"
         pdf.alias_nb_pages()
         pdf.set_margins(20, 50, 20)
         pdf.set_auto_page_break(auto=True, margin=14)
         pdf.add_page()
-        pdf.set_y(50)       # header() leaves cursor inside the banner; reset to below it
+        pdf.set_y(_visual["content_start_y"])       # header() leaves cursor inside the banner; reset to below it
         pdf.set_top_margin(22)
 
         def _to_latin1(text: str) -> str:
@@ -3966,7 +4178,9 @@ class AgentMetadataExporter:
 
         lines = markdown_content.split("\n")
         i = 0
-        _first_h1_skipped = False
+        # When name/type header is active the H1 differs from the header name,
+        # so preserve it in the body.  In legacy mode skip it to avoid duplication.
+        _first_h1_skipped = bool(_agent_name and _doc_type)
         while i < len(lines):
             raw = lines[i]
             stripped = raw.strip()
@@ -3977,34 +4191,34 @@ class AgentMetadataExporter:
                     _first_h1_skipped = True
                     i += 1
                     continue
-                pdf.set_font("Helvetica", "B", 18)
+                pdf.set_font(_main_font, "B", 18)
                 pdf.set_text_color(30, 30, 30)
                 pdf.multi_cell(0, 10, _strip_inline(stripped[2:]))
                 pdf.ln(3)
 
             elif stripped.startswith("## "):
-                pdf.set_font("Helvetica", "B", 14)
+                pdf.set_font(_main_font, "B", 14)
                 pdf.set_text_color(40, 40, 40)
                 pdf.ln(3)
                 pdf.multi_cell(0, 8, _strip_inline(stripped[3:]))
                 pdf.ln(1)
 
             elif stripped.startswith("### "):
-                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_font(_main_font, "B", 12)
                 pdf.set_text_color(50, 50, 50)
                 pdf.ln(2)
                 pdf.multi_cell(0, 7, _strip_inline(stripped[4:]))
                 pdf.ln(1)
 
             elif stripped.startswith("#### "):
-                pdf.set_font("Helvetica", "BI", 11)
+                pdf.set_font(_main_font, "BI", 11)
                 pdf.set_text_color(60, 60, 60)
                 pdf.multi_cell(0, 6, _strip_inline(stripped[5:]))
 
             elif stripped.startswith("- [ ] ") or stripped.startswith("- [x] ") or stripped.startswith("- [X] "):
                 checked = stripped[3] in ("x", "X")
                 text = ("[x] " if checked else "[ ] ") + _strip_inline(stripped[6:])
-                pdf.set_font("Helvetica", "", 11)
+                pdf.set_font(_main_font, "", 11)
                 pdf.set_text_color(60, 60, 60)
                 pdf.set_x(26)
                 pdf.multi_cell(0, 6, text)
@@ -4012,7 +4226,7 @@ class AgentMetadataExporter:
             elif stripped.startswith("- ") or stripped.startswith("* "):
                 indent = len(raw) - len(raw.lstrip())
                 bullet_text = _strip_inline(stripped[2:])
-                pdf.set_font("Helvetica", "", 11)
+                pdf.set_font(_main_font, "", 11)
                 pdf.set_text_color(60, 60, 60)
                 left_margin = 20 + min(indent // 2, 3) * 4
                 pdf.set_x(left_margin)
@@ -4020,7 +4234,7 @@ class AgentMetadataExporter:
                 pdf.multi_cell(0, 6, bullet_text)
 
             elif stripped and stripped[0].isdigit() and ". " in stripped[:5]:
-                pdf.set_font("Helvetica", "", 11)
+                pdf.set_font(_main_font, "", 11)
                 pdf.set_text_color(60, 60, 60)
                 pdf.set_x(24)
                 pdf.multi_cell(0, 6, _strip_inline(stripped))
@@ -4044,7 +4258,7 @@ class AgentMetadataExporter:
                 padding = 1.0
 
                 def _render_row(col_texts, widths, font_style, fill_color, text_color, do_fill):
-                    pdf.set_font("Helvetica", font_style, 9)
+                    pdf.set_font(_main_font, font_style, 9)
                     space_w = pdf.get_string_width(" ")
 
                     # Simulate word-wrap to determine the required row height
@@ -4114,7 +4328,7 @@ class AgentMetadataExporter:
                     _render_row(cols, col_widths, "", (255, 255, 255), (60, 60, 60), False)
 
             elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
-                pdf.set_font("Helvetica", "B", 11)
+                pdf.set_font(_main_font, "B", 11)
                 pdf.set_text_color(40, 40, 40)
                 pdf.multi_cell(0, 6, _to_latin1(stripped[2:-2].strip()))
 
@@ -4128,7 +4342,7 @@ class AgentMetadataExporter:
                 pdf.ln(2)
 
             else:
-                pdf.set_font("Helvetica", "", 11)
+                pdf.set_font(_main_font, "", 11)
                 pdf.set_text_color(60, 60, 60)
                 pdf.multi_cell(0, 6, _strip_inline(stripped))
 

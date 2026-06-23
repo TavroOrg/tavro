@@ -4,14 +4,14 @@ import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles
 import { mcpClient } from '../services/mcpClient';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
-import { AgentData } from '../types/agent';
+import { AgentData, AGENT_TYPES } from '../types/agent';
 import { useBlueprint } from '../context/BlueprintContext';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
 
 type AgentForm = {
   name: string; description: string; instruction: string;
-  owner: string; role: string; environment: string;
+  owner: string; role: string; environment: string; agentType: string;
 };
 
 const CreateAgentPage: React.FC = () => {
@@ -21,7 +21,7 @@ const CreateAgentPage: React.FC = () => {
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
-    owner: '', role: '', environment: '',
+    owner: '', role: '', environment: '', agentType: 'Config-driven',
   });
   const [saving, setSaving] = useState(false);
   const [generatingDescription, setGeneratingDescription] = useState(false);
@@ -82,6 +82,7 @@ const CreateAgentPage: React.FC = () => {
           agent_name: form.name.trim(),
           description: form.description.trim(),
           instruction: form.instruction.trim() || form.description.trim() || form.name.trim(),
+          agent_type: form.agentType || 'Config-driven',
           ...(form.role.trim() && { role: form.role.trim() }),
           ...(form.environment.trim() && { environment: form.environment.trim() }),
           ...(form.owner.trim() && { owner: form.owner.trim() }),
@@ -291,6 +292,19 @@ const CreateAgentPage: React.FC = () => {
                 <option value="">Select…</option>
                 {ENVIRONMENTS.map(env => (
                   <option key={env} value={env}>{env}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className={labelCls}>Agent Type</label>
+              <select
+                value={form.agentType}
+                onChange={e => set('agentType', e.target.value)}
+                className={inputCls}
+              >
+                {AGENT_TYPES.map(t => (
+                  <option key={t} value={t}>{t}</option>
                 ))}
               </select>
             </div>

@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_identifications (
   tenant_id TEXT,
+  company_id TEXT,
   agent_id TEXT,
   goal_orientation TEXT,
   role TEXT,

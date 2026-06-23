@@ -9,7 +9,6 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
 import { useChatSync } from '../hooks/useChatSync';
-import AuditInitModal from '../components/audit/AuditInitModal';
 import { useCaseApi } from '../services/useCaseApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { aiModelApi } from '../services/aiModelApi';
@@ -39,6 +38,7 @@ interface ApplicationRelationsSectionProps {
 interface AiModelRelationsSectionProps {
   useCase: UseCaseDetail;
   onSilentRefetch: () => void;
+  companyId?: string;
 }
 
 const normalizeUseCaseAiModels = (
@@ -274,6 +274,8 @@ const mergeUseCaseWithRestDetail = (
     row.of_associated_agents ?? row.agents ?? [],
   );
 
+  const linkedAiModels = normalizeUseCaseAiModels(row.of_associated_ai_models ?? row.ai_models ?? []);
+
   if (base) {
     return {
       ...base,
@@ -283,6 +285,8 @@ const mergeUseCaseWithRestDetail = (
       applications: linkedApplications,
       business_processes: linkedProcesses,
       agents: linkedAgents.length > 0 ? linkedAgents : (base as any).agents,
+      of_associated_ai_models: linkedAiModels,
+      ai_models: linkedAiModels,
     } as UseCaseDetail;
   }
 
@@ -302,6 +306,8 @@ const mergeUseCaseWithRestDetail = (
     agents: linkedAgents,
     applications: linkedApplications,
     business_processes: linkedProcesses,
+    of_associated_ai_models: linkedAiModels,
+    ai_models: linkedAiModels,
   } as UseCaseDetail;
 };
 
@@ -1052,7 +1058,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   );
 };
 
-const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch }) => {
+const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCase, onSilentRefetch, companyId }) => {
   const { refresh: refreshUC } = useUseCases();
   const useCaseId = useCase.identifier ?? '';
   const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
@@ -1086,7 +1092,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
   const loadModelCatalog = async () => {
     setLoadingCatalog(true);
     try {
-      setAllModels(await aiModelApi.listModels());
+      setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
       setRelationError(err.message || 'Failed to load AI model catalog.');
     } finally {
@@ -1096,7 +1102,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
 
   useEffect(() => {
     loadModelCatalog();
-  }, []);
+  }, [companyId]);
 
   const handleLinkModel = async (modelId: string) => {
     if (!useCaseId || !modelId || linkedModelIds.has(modelId)) return;
@@ -1235,7 +1241,6 @@ const UseCaseViewPage: React.FC = () => {
   const location = useLocation();
   const [useCase, setUseCase] = useState<UseCaseDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -1293,7 +1298,7 @@ const UseCaseViewPage: React.FC = () => {
     setError(null);
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
@@ -1320,7 +1325,7 @@ const UseCaseViewPage: React.FC = () => {
     if (!id) return;
     try {
       const [restResult, applicationsResult, processesResult] = await Promise.allSettled([
-        useCaseApi.getUseCase(id),
+        useCaseApi.getUseCase(id, activeCompany?.id),
         businessRelationsApi.listApplications(undefined, activeCompany?.id),
         businessRelationsApi.listProcesses(undefined, activeCompany?.id),
       ]);
@@ -1562,12 +1567,6 @@ const UseCaseViewPage: React.FC = () => {
             ) : (
               <>
                 <button
-                  onClick={() => setAuditModalOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
-                >
-                  <ShieldCheck size={15} /> Audit
-                </button>
-                <button
                   onClick={() => setJsonOpen(true)}
                   title="AI Use Case Card"
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-slate-100 hover:bg-slate-700 transition-all border border-slate-700 shadow-sm"
@@ -1622,7 +1621,7 @@ const UseCaseViewPage: React.FC = () => {
             <div className="flex flex-col gap-6">
               <ApplicationRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
               <ProcessRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
-              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} />
+              <AiModelRelationsSection useCase={useCase} onSilentRefetch={fetchUseCaseSilently} companyId={activeCompany?.id} />
             </div>
           }
           isEditing={isEditing}
@@ -1649,14 +1648,6 @@ const UseCaseViewPage: React.FC = () => {
         />
       )}
 
-      <AuditInitModal
-        open={auditModalOpen}
-        onClose={() => setAuditModalOpen(false)}
-        onLaunched={(runId) => navigate(`/audit/${runId}`)}
-        prefillUseCaseId={useCase?.identifier ?? (useCase as any)?.id ?? ''}
-        prefillUseCaseName={(useCase as any)?.name ?? (useCase as any)?.title ?? ''}
-        mode="use_case"
-      />
 
       {/* JSON Inspector Modal */}
       {jsonOpen && useCase && (

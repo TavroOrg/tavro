@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.table_columns (
   tenant_id   TEXT,
+  company_id  TEXT,
   table_id    TEXT,
   table_name  TEXT,
   column_name TEXT,

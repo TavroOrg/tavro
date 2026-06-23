@@ -58,8 +58,8 @@ services:
   # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
   tavro-api:
     build:
-      context: .
-      dockerfile: tavro_api/Dockerfile
+      context: ..
+      dockerfile: tavro/Dockerfile.api.${BUILD_MODE:-oss}
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -83,6 +83,7 @@ services:
       AZURE_AI_FOUNDRY_API_VERSION: '${AZURE_AI_FOUNDRY_API_VERSION:-2024-02-15-preview}'
       AZURE_AI_FOUNDRY_DEPLOYMENT: '${AZURE_AI_FOUNDRY_DEPLOYMENT:-}'
       AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
+      AZURE_AI_FOUNDRY_HOSTED_ENDPOINT: '${AZURE_AI_FOUNDRY_HOSTED_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
       # DefaultAzureCredential uses these for local Docker runs. Azure deployments
       # can use managed identity instead.
@@ -96,6 +97,7 @@ services:
       PLAYGROUND_BEDROCK_REGION:     '${PLAYGROUND_BEDROCK_REGION:-us-east-2}'
       RESEARCH_MAX_OUTPUT_TOKENS: "4096"
       RESEARCH_MAX_SEARCH_TURNS:  "3"
+      BUILD_MODE: '${BUILD_MODE:-oss}'
       # Risk schema names
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated
@@ -112,6 +114,10 @@ services:
       AICT_MODEL_CATEGORY_SYS_ID: ${AICT_MODEL_CATEGORY_SYS_ID:-5383f164ffec2a10c0fbffffffffff82}
       AICT_ENABLED:         ${AICT_ENABLED:-true}
       ENV_FILE_PATH:        /app/.env
+      # Agent Playground — Publish to Git
+      GIT_PUBLISH_REPO_URL: '${GIT_PUBLISH_REPO_URL:-}'
+      GIT_PUBLISH_TOKEN:    '${GIT_PUBLISH_TOKEN:-}'
+      GIT_PUBLISH_BRANCH:   '${GIT_PUBLISH_BRANCH:-main}'
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -207,8 +213,8 @@ services:
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
-      context: ./tavro_app
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: tavro/Dockerfile.app.${BUILD_MODE:-oss}
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
@@ -524,6 +530,7 @@ services:
       COMPANY_API_BASE_URL:      ${COMPANY_API_BASE_URL}
       RISK_CLASSIFY_URL:         ${RISK_CLASSIFY_URL}
       RISK_CLASSIFY_FALLBACK_URL: ${RISK_CLASSIFY_FALLBACK_URL}
+      COPILOT_SERVER_URL:   ${VITE_COPILOT_API_URL}
       GITHUB_CLIENT_ID:     ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
@@ -546,6 +553,8 @@ services:
       zitadel-api:
         condition: service_healthy
       tavro-api:
+        condition: service_healthy
+      copilot-sdk:
         condition: service_healthy
       proxy:
         condition: service_started
