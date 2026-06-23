@@ -99,6 +99,7 @@ interface PlaygroundState {
   observations:  PlaygroundObservation[];
   isRunning:     boolean;
   sessionActive: boolean;
+  sessionEnded:  boolean;
   sessionStarting: boolean;
   sessionId:     string | null;
   tokenCount:    number;
@@ -108,8 +109,9 @@ interface PlaygroundState {
 
   setConfig:       (update: Partial<PlaygroundConfig>) => void;
   setProvider:     (provider: InfraProvider) => void;
-  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string, agentType?: string) => void;
+  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string) => void;
   resetConfig:     () => void;
+  reconnectSession: (sessionId: string) => Promise<void>;
 
   startSession:    () => Promise<void>;
   endSession:      () => Promise<void>;
@@ -131,6 +133,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [observations,   setObservations] = useState<PlaygroundObservation[]>([]);
   const [isRunning,      setIsRunning]    = useState(false);
   const [sessionActive,  setSessionActive] = useState(false);
+  const [sessionEnded,   setSessionEnded]  = useState(false);
   const [sessionStarting, setSessionStarting] = useState(false);
   const [sessionId,      setSessionId]    = useState<string | null>(null);
   const [tokenCount,     setTokenCount]   = useState(0);
@@ -150,13 +153,16 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, []);
 
-  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string) => {
+  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string) => {
     setConfigState(prev => ({
       ...prev,
       useCaseId:    id,
       useCaseTitle: name,
       agentName:    name,
       agentType:    agentType ?? prev.agentType,
+      agentInternalId:  agentInternalId ?? prev.agentInternalId,
+      agentId:          agentId ?? prev.agentId,
+      tenantId:         tenantId ?? prev.tenantId,
       systemPrompt: instruction?.trim()
         ? instruction.trim()
         : description
@@ -167,6 +173,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setObservations([]);
     setSummary(null);
     setSessionActive(false);
+    setSessionEnded(false);
     setSessionId(null);
     setTokenCount(0);
     setSessionError(null);
@@ -178,9 +185,54 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setObservations([]);
     setSummary(null);
     setSessionActive(false);
+    setSessionEnded(false);
     setSessionId(null);
     setTokenCount(0);
     setSessionError(null);
+  }, []);
+
+  const reconnectSession = useCallback(async (id: string) => {
+    setSessionId(id);
+    setSessionActive(true);
+    setSessionEnded(false);
+    setSummary(null);
+    setSessionError(null);
+    try {
+      const data = await apiGet<any>(`/session/${id}`);
+      // Mark as ended if the session came from the archive
+      if (data.ended_at) setSessionEnded(true);
+      // Restore messages (field was renamed messages → interactions in DB)
+      const restored: PlaygroundMessage[] = (data.interactions ?? data.messages ?? []).map((m: any) => ({
+        id:        m.id,
+        role:      m.role,
+        content:   m.content,
+        timestamp: new Date(m.timestamp),
+        tokens:    m.tokens,
+      }));
+      setMessages(restored);
+      setTokenCount(data.token_total ?? 0);
+      // Restore observations
+      if (data.observations?.length) {
+        setObservations((data.observations as any[]).map(o => ({
+          ...o,
+          createdAt: new Date(o.createdAt),
+        })));
+      }
+      // Restore cached summary if available — avoids re-generating on every visit
+      if (data.summary ?? data.cached_summary) {
+        setSummary((data.summary ?? data.cached_summary) as SessionSummary);
+      }
+      // Restore config (backend uses snake_case)
+      // Restore scalar identity fields returned directly from the DB row
+      setConfigState(prev => ({
+        ...prev,
+        agentName: data.agent_name ?? prev.agentName,
+        provider:  data.provider   ?? prev.provider,
+        model:     data.model      ?? prev.model,
+      }));
+    } catch {
+      setMessages([]);
+    }
   }, []);
 
   // ── Session lifecycle ──────────────────────────────────────────────────────
@@ -205,6 +257,9 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         company_name:   config.companyName,
         use_case_id:    config.useCaseId || config.agentName,
         use_case_title: config.useCaseTitle || config.agentName,
+        tenant_id:         config.tenantId,
+        agent_internal_id: config.agentInternalId,
+        agent_id:          config.agentId,
       });
 
       setSessionId(result.session_id);
@@ -234,12 +289,17 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const endSession = useCallback(async () => {
     if (sessionId) {
-      try { await apiDelete(`/session/${sessionId}`); } catch { /* best effort */ }
+      try {
+        // Persist observations before ending
+        await apiPost(`/session/${sessionId}/observations`, { observations });
+        await apiDelete(`/session/${sessionId}`);
+      } catch { /* best effort */ }
     }
     setSessionActive(false);
+    setSessionEnded(true);
     setIsRunning(false);
     setSessionError(null);
-  }, [sessionId]);
+  }, [sessionId, observations]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
@@ -314,21 +374,33 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // ── Observations ───────────────────────────────────────────────────────────
 
-  const addObservation = useCallback((obs: Omit<PlaygroundObservation, 'id' | 'createdAt'>) => {
-    setObservations(prev => [...prev, {
-      ...obs, id: `obs-${Date.now()}`, createdAt: new Date(),
-    }]);
+  const persistObservations = useCallback((next: PlaygroundObservation[], sid: string | null) => {
+    if (!sid) return;
+    apiPost(`/session/${sid}/observations`, { observations: next }).catch(() => {/* best effort */});
   }, []);
 
+  const addObservation = useCallback((obs: Omit<PlaygroundObservation, 'id' | 'createdAt'>) => {
+    const newObs = { ...obs, id: `obs-${Date.now()}`, createdAt: new Date() };
+    setObservations(prev => {
+      const next = [...prev, newObs];
+      persistObservations(next, sessionId);
+      return next;
+    });
+  }, [sessionId, persistObservations]);
+
   const removeObservation = useCallback((id: string) => {
-    setObservations(prev => prev.filter(o => o.id !== id));
-  }, []);
+    setObservations(prev => {
+      const next = prev.filter(o => o.id !== id);
+      persistObservations(next, sessionId);
+      return next;
+    });
+  }, [sessionId, persistObservations]);
 
   return (
     <PlaygroundContext.Provider value={{
-      config, messages, observations, isRunning, sessionActive, sessionStarting, sessionId,
+      config, messages, observations, isRunning, sessionActive, sessionEnded, sessionStarting, sessionId,
       tokenCount, summary, summaryLoading, sessionError,
-      setConfig, setProvider, loadFromAgent, resetConfig,
+      setConfig, setProvider, loadFromAgent, resetConfig, reconnectSession,
       startSession, endSession, sendMessage, clearMessages, generateSummary,
       addObservation, removeObservation,
     }}>

@@ -86,9 +86,9 @@ const PlaygroundPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
-    config, messages, observations, isRunning, sessionActive, sessionStarting, tokenCount,
+    config, messages, observations, isRunning, sessionActive, sessionEnded, sessionStarting, sessionId, tokenCount,
     summary, summaryLoading, sessionError,
-    setConfig, setProvider, loadFromAgent, resetConfig,
+    setConfig, setProvider, loadFromAgent, resetConfig, reconnectSession,
     startSession, endSession, sendMessage, clearMessages, generateSummary,
     addObservation, removeObservation,
   } = usePlayground();
@@ -97,19 +97,50 @@ const PlaygroundPage: React.FC = () => {
   // Sync chat context
   useChatSync('other', null);
 
-  // Load from URL params (launched from agent detail page)
+  // Load from URL params — re-runs whenever query params change so navigating
+  // back to the playground from the Sessions tab always picks up the new sessionId.
   useEffect(() => {
     const id          = searchParams.get('useCase');
     const title       = searchParams.get('title');
     const desc        = searchParams.get('desc');
     const instruction = searchParams.get('instruction');
-    if (id && title) loadFromAgent(
-      id,
-      decodeURIComponent(title),
-      desc ? decodeURIComponent(desc) : undefined,
-      instruction ? decodeURIComponent(instruction) : undefined,
-    );
-  }, []);
+    const sessionId       = searchParams.get('sessionId');
+    const tab             = searchParams.get('tab') as typeof activeTab | null;
+    const agentType       = searchParams.get('agentType') || undefined;
+    const agentInternalId = searchParams.get('agentInternalId') || undefined;
+    const tenantId        = searchParams.get('tenantId') || undefined;
+
+    if (sessionId) {
+      // Reconnecting to an existing session: restore agent config, session data,
+      // then switch to the requested tab (e.g. 'summary').
+      if (id && title) loadFromAgent(
+        id,
+        decodeURIComponent(title),
+        desc ? decodeURIComponent(desc) : undefined,
+        instruction ? decodeURIComponent(instruction) : undefined,
+        agentType,
+        agentInternalId,
+        id,
+        tenantId,
+      );
+      reconnectSession(sessionId).then(() => {
+        setActiveTab(tab ?? 'chat');
+      });
+    } else if (id && title) {
+      // Normal agent launch with no existing session.
+      loadFromAgent(
+        id,
+        decodeURIComponent(title),
+        desc ? decodeURIComponent(desc) : undefined,
+        instruction ? decodeURIComponent(instruction) : undefined,
+        agentType,
+        agentInternalId,
+        id,
+        tenantId,
+      );
+      if (tab) setActiveTab(tab);
+    }
+  }, [searchParams.get('sessionId'), searchParams.get('useCase'), searchParams.get('agentType')]);
 
   // Inject blueprint context into system prompt when company changes
   useEffect(() => {
@@ -150,6 +181,16 @@ const PlaygroundPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Auto-generate summary when landing on summary tab (e.g. from Playground Sessions).
+  // Depends on messages.length so it fires once messages have been restored by reconnectSession.
+  // Uses sessionId (not sessionActive) so it also fires for just-ended sessions.
+  useEffect(() => {
+    if ((activeTab as string) !== 'summary') return;
+    if (!sessionId || summary || summaryLoading) return;
+    const hasMessages = messages.some(m => m.role !== 'system');
+    if (hasMessages) generateSummary();
+  }, [activeTab, sessionId, messages.length, summary]);
+
   // Load agent catalog when dropdown opens
   useEffect(() => {
     if (!agentDropdown) {
@@ -186,11 +227,13 @@ const PlaygroundPage: React.FC = () => {
 
   const handleSelectAgent = (agent: any) => {
     const agentId     = agent.identification?.agent_id || agent.agent_id || '';
+    const agentInternalId = agent.agent_internal_id || undefined;
+    const tenantId        = agent.company_id || agent.tenant_id || undefined;
     const name        = agent.name || agent.agent_name || '';
     const description = agent.description || agent.agent_description || '';
     const instruction = agent.identification?.instruction || agent.instruction || '';
     const agentType   = agent.agent_type || undefined;
-    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType);
+    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType, agentInternalId, agentId, tenantId);
     setAgentDropdown(false);
     setAgentSearch('');
     setActiveTab('config');
@@ -383,10 +426,10 @@ const PlaygroundPage: React.FC = () => {
           </span>
 
           {/* Session controls */}
-          {!sessionActive ? (
+          {!sessionActive || sessionEnded ? (
             <button
               onClick={startSession}
-              disabled={!config.agentName.trim()}
+              disabled={!config.agentName.trim() || sessionStarting}
               className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={14} /> Start session
@@ -434,7 +477,7 @@ const PlaygroundPage: React.FC = () => {
             </span>
           )}
         </button>
-        <button className={navCls('summary' as any)} onClick={() => { setActiveTab('summary' as any); if (!summary && sessionActive) generateSummary(); }}>
+        <button className={navCls('summary' as any)} onClick={() => { setActiveTab('summary' as any); if (!summary && sessionId) generateSummary(); }}>
           <Loader2 size={13} className={summaryLoading ? 'animate-spin' : ''} /> Summary
           {summary && <span className="ml-1 text-[9px] font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full">Ready</span>}
         </button>
@@ -606,8 +649,10 @@ const PlaygroundPage: React.FC = () => {
               <div className="flex flex-col flex-1">
                 <div className="flex items-center justify-between px-8 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0">
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Session active</span>
+                    <span className={`w-2 h-2 rounded-full ${sessionEnded ? 'bg-slate-300' : 'bg-emerald-500 animate-pulse'}`} />
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      {sessionEnded ? 'Session ended' : 'Session active'}
+                    </span>
                     <span className="text-[10px] text-slate-400 dark:text-slate-500">
                       {messages.filter(m => m.role !== 'system').length} messages
                     </span>
@@ -709,6 +754,11 @@ const PlaygroundPage: React.FC = () => {
 
                 {/* Input */}
                 <div className="px-8 py-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0">
+                  {sessionEnded ? (
+                    <p className="text-xs text-center text-slate-400 dark:text-slate-500 py-1">
+                      This session has ended — start a new session to continue.
+                    </p>
+                  ) : (
                   <div className="flex flex-col gap-2">
                     <AttachmentPicker
                       attachments={attachments}
@@ -734,6 +784,7 @@ const PlaygroundPage: React.FC = () => {
                       </button>
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
             )}
@@ -845,7 +896,7 @@ const PlaygroundPage: React.FC = () => {
         ══════════════════════════════════════════════════════════════════════ */}
         {(activeTab as string) === 'summary' && (
           <div className="max-w-3xl mx-auto px-8 py-8 flex flex-col gap-5">
-            {!sessionActive && !summary ? (
+            {!sessionId && !summary ? (
               <div className="text-center py-16 text-slate-400 dark:text-slate-500">
                 <Loader2 size={28} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
                 <p className="font-medium text-slate-500 dark:text-slate-400">No session to summarise</p>

@@ -84,6 +84,11 @@ export interface PlaygroundConfig {
   companyId?:   string;
   companyName?: string;
 
+  // Identity / tenancy
+  tenantId?:         string;
+  agentInternalId?:  string;
+  agentId?:          string;
+
   // Agent type (drives Code tab visibility)
   agentType?:   string;
 }

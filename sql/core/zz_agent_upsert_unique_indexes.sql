@@ -34,6 +34,12 @@ ON core.agent_llm_models (agent_internal_id, name);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_processes
 ON core.agent_business_processes (agent_internal_id, business_process_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS playground_session_agent_idx
+    ON core.playground_session (agent_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS playground_session_status_updated_idx
+    ON core.playground_session (status, updated_at DESC);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_business_applications
 ON core.agent_business_applications (agent_internal_id, business_application_id);
 
