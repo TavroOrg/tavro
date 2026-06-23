@@ -138,48 +138,27 @@ async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id
     inherent_score = 0.0
     residual_class = ""
     residual_score = 0.0
-    all_agent_ids_sql = f"""
-            SELECT DISTINCT ara.agent_internal_id
-            FROM {CORE}.agent_ai_use_cases rel
-            JOIN {CORE}.agent_risk_assessments ara ON ara.agent_id = rel.agent_id
-            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
-              {relation_tenant_filter}
-    """
-
-    inh_row = (await db.execute(
-        text(
-            f"""
-            SELECT r.risk_classification, r.risk_classification_score
-            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
-            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
-              AND r.type_of_risk = 'Inherent Risk'
-            ORDER BY r.created_ts DESC NULLS LAST
-            LIMIT 1
-            """
-        ),
-        {"uid": use_case_id, "tid": tenant_id},
-    )).mappings().first()
-    if inh_row:
-        inherent_class = inh_row.get("risk_classification") or ""
-        inherent_score = float(inh_row.get("risk_classification_score") or 0.0)
-
-    res_row = (await db.execute(
-        text(
-            f"""
-            SELECT r.risk_classification, r.risk_classification_score
-            FROM {RISK_MANAGEMENT}.agent_risk_assessment r
-            WHERE r.agent_internal_id IN ({all_agent_ids_sql})
-              AND r.type_of_risk = 'Residual Risk'
-            ORDER BY r.created_ts DESC NULLS LAST
-            LIMIT 1
-            """
-        ),
-        {"uid": use_case_id, "tid": tenant_id},
-    )).mappings().first()
-    if res_row:
-        residual_class = res_row.get("risk_classification") or ""
-        residual_score = float(res_row.get("risk_classification_score") or 0.0)
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
 
     are = round(max_brs, 2)
     art = _art_from_are(are) if associated_count > 0 else "None"
