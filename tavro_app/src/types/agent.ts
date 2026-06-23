@@ -1,7 +1,17 @@
+// ── Agent types ───────────────────────────────────────────────────────────────
+
+export const AGENT_TYPES = [
+  'Config-driven',
+  'Code-driven',
+] as const;
+
+export type AgentType = typeof AGENT_TYPES[number];
+
 // ── Identification ────────────────────────────────────────────────────────────
 
 export interface AgentIdentification {
   agent_id: string;
+  agent_internal_id?: string | null;
   role: string | null;
   instruction: string | null;
   goal_orientation?: string | null;
@@ -168,6 +178,23 @@ export interface AgentSkill {
   output_modes?: string[] | null;
 }
 
+export interface AgentIssue {
+  identifier: string;
+  title: string;
+  description?: string | null;
+  issue_type?: string | null;
+  severity?: string | null;
+  source?: string | null;
+  detected_at?: string | null;
+  resolved_at?: string | null;
+  status?: string | null;
+  resolution_notes?: string | null;
+  assignee?: string | null;
+  owner?: string | null;
+  created_ts?: string | null;
+  updated_ts?: string | null;
+}
+
 // ── Instruction Set ───────────────────────────────────────────────────────────
 
 export interface InstructionSet {
@@ -252,6 +279,7 @@ export interface AgentData {
 
   // Skills & instructions
   skills?: AgentSkill[] | null;
+  issues?: AgentIssue[] | null;
   instruction_sets?: InstructionSet[] | null;
 
   // Business
@@ -270,7 +298,9 @@ export interface AgentData {
   // Metadata
   sys_id?: string;
   id?: string;
+  tenant_id?: string | null;
   latest_risk_score?: string | number | null;
   latest_risk_class?: string | null;
   latest_event_status?: string | null;
+  agent_type?: string | null;
 }

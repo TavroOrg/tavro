@@ -23,9 +23,12 @@ import {
   XCircle,
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
+import { agentApi } from '../services/agentApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
 
@@ -94,6 +97,18 @@ const buildPayload = (form: FormState): AiModelUpsertPayload => {
     payload[k] = v ? v : null;
   });
   return payload as AiModelUpsertPayload;
+};
+
+const changedPayload = (current: FormState, next: FormState): AiModelUpsertPayload => {
+  const currentPayload = buildPayload(current);
+  const nextPayload = buildPayload(next);
+  const changed: Record<string, string | null> = {};
+  FIELD_KEYS.forEach(key => {
+    if ((nextPayload as Record<string, string | null>)[key] !== (currentPayload as Record<string, string | null>)[key]) {
+      changed[key] = (nextPayload as Record<string, string | null>)[key] ?? null;
+    }
+  });
+  return changed as AiModelUpsertPayload;
 };
 
 const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean }> = ({ label, children, full }) => (
@@ -225,6 +240,7 @@ const AiModelViewPage: React.FC = () => {
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
   const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
+  const { activeCompany } = useBlueprint();
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [model, setModel] = useState<AiModelRecord | null>(null);
@@ -246,6 +262,8 @@ const AiModelViewPage: React.FC = () => {
   const [actingProcess, setActingProcess] = useState<string | null>(null);
   const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
+  const [companyUseCases, setCompanyUseCases] = useState<Array<{ identifier: string; name?: string; description?: string | null }>>([]);
+  const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
   const [editing, setEditing] = useState(isCreateMode);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
@@ -258,10 +276,18 @@ const AiModelViewPage: React.FC = () => {
   const editableActive = editing || isCreateMode;
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
-    businessRelationsApi.listApplications().then(setAllApplications).catch(() => setAllApplications([]));
-    businessRelationsApi.listProcesses().then(setAllProcesses).catch(() => setAllProcesses([]));
-  }, []);
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+    businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setAllApplications).catch(() => setAllApplications([]));
+    businessRelationsApi.listProcesses(undefined, activeCompany?.id).then(setAllProcesses).catch(() => setAllProcesses([]));
+    agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => setCompanyAgents([]));
+    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-500' })
+      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+        identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
+        name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
+        description: raw.description ?? null,
+      }))))
+      .catch(() => setCompanyUseCases([]));
+  }, [activeCompany?.id]);
 
   useEffect(() => {
     setEditing(isCreateMode);
@@ -277,7 +303,7 @@ const AiModelViewPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await aiModelApi.getModel(id!);
+        const data = await aiModelApi.getModel(id!, activeCompany?.id);
         setModel(data);
         setForm(formFromModel(data));
       } catch (err: any) {
@@ -317,7 +343,7 @@ const AiModelViewPage: React.FC = () => {
     try {
       const payload = buildPayload(form);
       if (isCreateMode) {
-        const created = await aiModelApi.createModel(payload);
+        const created = await aiModelApi.createModel(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
             await aiModelApi.linkAgent(created.ai_model_id, linkAgentId);
@@ -343,8 +369,14 @@ const AiModelViewPage: React.FC = () => {
         navigate(`/ai-models/${encodeURIComponent(created.ai_model_id)}`, { replace: true });
         return;
       }
-      await aiModelApi.updateModel(model!.ai_model_id, payload);
-      const fresh = await aiModelApi.getModel(model!.ai_model_id);
+      const changed = changedPayload(formFromModel(model!), form);
+      if (Object.keys(changed).length === 0) {
+        setEditing(false);
+        setInlineEdit(null);
+        return;
+      }
+      await aiModelApi.updateModel(model!.ai_model_id, changed, model!.model_name ?? undefined, activeCompany?.id);
+      const fresh = await aiModelApi.getModel(model!.ai_model_id, activeCompany?.id);
       setModel(fresh);
       setForm(formFromModel(fresh));
       setEditing(false);
@@ -400,7 +432,12 @@ const AiModelViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
-      await aiModelApi.updateModel(model.ai_model_id, buildPayload(nextForm));
+      const changed = changedPayload(formFromModel(model), nextForm);
+      if (Object.keys(changed).length === 0) {
+        setInlineEdit(null);
+        return;
+      }
+      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined);
       const fresh = await aiModelApi.getModel(model.ai_model_id);
       setModel(fresh);
       setForm(formFromModel(fresh));
@@ -429,7 +466,7 @@ const AiModelViewPage: React.FC = () => {
   );
   const availableAgents = useMemo(() => {
     const q = agentSearch.trim().toLowerCase();
-    return catalogAgents.filter(a => {
+    return companyAgents.filter(a => {
       const aid = a.identification?.agent_id ?? '';
       if (!aid || linkedAgentIds.has(aid)) return false;
       if (!q) return true;
@@ -439,7 +476,7 @@ const AiModelViewPage: React.FC = () => {
         (a.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [catalogAgents, agentSearch, linkedAgentIds]);
+  }, [companyAgents, agentSearch, linkedAgentIds]);
 
   const addAgent = async (agentId: string) => {
     if (!model) return;
@@ -474,9 +511,10 @@ const AiModelViewPage: React.FC = () => {
     () => new Set(linkedUseCases.map(u => u.ai_use_case_id).filter(Boolean)),
     [linkedUseCases],
   );
+  const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
   const availableUseCases = useMemo(() => {
     const q = useCaseSearch.trim().toLowerCase();
-    return allUseCases.filter(uc => {
+    return useCasesForLinking.filter(uc => {
       const id = uc.identifier ?? '';
       if (!id || linkedUseCaseIds.has(id)) return false;
       if (!q) return true;
@@ -486,7 +524,7 @@ const AiModelViewPage: React.FC = () => {
         (uc.description ?? '').toLowerCase().includes(q)
       );
     });
-  }, [allUseCases, useCaseSearch, linkedUseCaseIds]);
+  }, [useCasesForLinking, useCaseSearch, linkedUseCaseIds]);
 
   const addUseCase = async (useCaseId: string) => {
     if (!model) return;

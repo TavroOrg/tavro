@@ -25,11 +25,17 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 // ── Response shape (mirrors tavro_api/api/routers/insights.py) ────────────────
 
 export interface InsightsTotals {
+    sparkIdeas: number;
+    sparkIdeasThisWeek: number;
     totalAgents: number;
+    liveAgents: number;
     totalUseCases: number;
+    useCasesInProgress: number;
     criticalCount: number;
     highRiskCount: number;
     hitlOpen: number;
+    openIssues: number;
+    needReview: number;
 }
 
 export interface StageCount {
@@ -110,6 +116,21 @@ export interface InsightsCompanyProfile {
     refreshes: InsightsProfileRefresh[];
 }
 
+export interface HomeRecentActivityItem {
+    id: string;
+    text: string;
+    time: string;
+    dot: 'violet' | 'emerald' | 'amber' | string;
+}
+
+export interface HomeAttentionItem {
+    id: string;
+    badge: 'Risk' | 'Approval' | 'Issue' | 'Incomplete' | string;
+    text: string;
+    action: string;
+    route: string;
+}
+
 export interface InsightsSummary {
     totals: InsightsTotals;
     agentLifecycle: StageCount[];
@@ -123,6 +144,8 @@ export interface InsightsSummary {
     stageGateBlockers: InsightsGateItem[];
     successMetrics: InsightsSuccessMetric[];
     companyProfile: InsightsCompanyProfile;
+    homeRecentActivity?: HomeRecentActivityItem[];
+    homeAttentionItems?: HomeAttentionItem[];
 }
 
 export const insightsApi = {

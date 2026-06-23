@@ -5,7 +5,7 @@ import json
 from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,13 @@ _AGENT_ATTACHMENTS_READY = False
 _APPLICATION_ATTACHMENTS_READY = False
 _PROCESS_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
+_APPLICATIONS_READY = False
+_PROCESSES_READY = False
+
+
+def _tenant(request: Request) -> Optional[str]:
+    val = request.headers.get("x-tenant-id", "")
+    return val.strip() or None
 
 _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "application_name",
@@ -633,7 +640,11 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
             """
         )
     )
+    await db.execute(text(
+        "ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS tenant_id TEXT"
+    ))
     await db.commit()
+    _TABLE_COLUMNS_CACHE.pop(("core", "business_integrations"), None)
     _INTEGRATIONS_READY = True
 
 
@@ -1126,6 +1137,8 @@ async def _fetch_integrations(
     integration_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    filter_related_by_company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     await _ensure_integrations_table(db)
 
@@ -1162,16 +1175,22 @@ async def _fetch_integrations(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in int_cols:
+        where_parts.append("bi.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if integration_id is not None:
         where_parts.append("bi.integration_id = :integration_id")
         query_params["integration_id"] = integration_id
 
     if company_id is not None:
         if "company_id" in int_cols:
-            where_parts.append("bi.company_id = :filter_company_id")
+            where_parts.append("(bi.company_id = :filter_company_id OR bi.company_id IS NULL OR TRIM(CAST(bi.company_id AS text)) = '' OR bi.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
+
+    if filter_related_by_company_id:
+        query_params["related_company_id"] = filter_related_by_company_id
 
     search_clean = _clean(search)
     if search_clean:
@@ -1213,6 +1232,26 @@ async def _fetch_integrations(
             if "integration_id" in abi_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in abi_cols:
+            abi_filter += " AND abi.tenant_id = :tenant_id"
+
+        int_agent_company_join = ""
+        int_agent_company_filter = ""
+        int_agent_tenant_filter = ""
+        if filter_related_by_company_id or tenant_id:
+            agent_cols_check = await _table_columns(db, "core", "agents")
+            if "agent_internal_id" in agent_cols_check:
+                int_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abi.agent_internal_id"
+                if filter_related_by_company_id and "company_id" in agent_cols_check:
+                    int_agent_company_filter = (
+                        "AND (ag.company_id = :related_company_id"
+                        " OR ag.company_id IS NULL"
+                        " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                        " OR ag.company_id = 'None')"
+                    )
+                if tenant_id and "tenant_id" in agent_cols_check:
+                    int_agent_tenant_filter = "AND ag.tenant_id = :tenant_id"
+
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1231,7 +1270,10 @@ async def _fetch_integrations(
                         {abi_agent_internal_id_expr} AS agent_internal_id,
                         NULL::text AS agent_name
                     FROM core.agent_business_integrations abi
+                    {int_agent_company_join}
                     WHERE {abi_filter}
+                      {int_agent_company_filter}
+                      {int_agent_tenant_filter}
                 ) refs
             ) rel ON TRUE
         """
@@ -1265,6 +1307,8 @@ async def _fetch_applications(
     application_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    filter_related_by_company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     app_cols = await _table_columns(db, "core", "business_applications")
     if "business_application_id" not in app_cols:
@@ -1324,6 +1368,26 @@ async def _fetch_applications(
             if "business_application_id" in aba_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in aba_cols:
+            aba_filter += " AND aba.tenant_id = :tenant_id"
+
+        app_agent_company_join = ""
+        app_agent_company_filter = ""
+        app_agent_tenant_filter = ""
+        if filter_related_by_company_id or tenant_id:
+            agent_cols_check = await _table_columns(db, "core", "agents")
+            if "agent_internal_id" in agent_cols_check:
+                app_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = aba.agent_internal_id"
+                if filter_related_by_company_id and "company_id" in agent_cols_check:
+                    app_agent_company_filter = (
+                        "AND (ag.company_id = :related_company_id"
+                        " OR ag.company_id IS NULL"
+                        " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                        " OR ag.company_id = 'None')"
+                    )
+                if tenant_id and "tenant_id" in agent_cols_check:
+                    app_agent_tenant_filter = "AND ag.tenant_id = :tenant_id"
+
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1342,7 +1406,10 @@ async def _fetch_applications(
                         {aba_agent_internal_id_expr} AS agent_internal_id,
                         NULL::text AS agent_name
                     FROM core.agent_business_applications aba
+                    {app_agent_company_join}
                     WHERE {aba_filter}
+                      {app_agent_company_filter}
+                      {app_agent_tenant_filter}
                 ) refs
             ) rel ON TRUE
         """
@@ -1355,7 +1422,13 @@ async def _fetch_applications(
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
+    uc_app_tenant_filter = ""
+    if tenant_id and has_uc_app_rel:
+        uc_app_cols = await _table_columns(db, "core", "ai_use_case_business_applications")
+        if "tenant_id" in uc_app_cols:
+            uc_app_tenant_filter = "AND rel.tenant_id = :tenant_id"
     auc_order_sql = "ORDER BY 1"
+    auc_cols: set[str] = set()
     if has_auc:
         auc_cols = await _table_columns(db, "core", "ai_use_cases")
         order_parts: list[str] = []
@@ -1367,6 +1440,20 @@ async def _fetch_applications(
             order_parts.append("auc.ai_use_case_id")
         if order_parts:
             auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
+
+    app_uc_company_filter = ""
+    if filter_related_by_company_id and has_auc and "company_id" in auc_cols:
+        app_uc_company_filter = (
+            "AND EXISTS ("
+            "SELECT 1 FROM core.ai_use_cases auc_cf"
+            " WHERE auc_cf.ai_use_case_id = rel.ai_use_case_id"
+            " AND (auc_cf.company_id = :related_company_id"
+            "  OR auc_cf.company_id IS NULL"
+            "  OR TRIM(CAST(auc_cf.company_id AS text)) = ''"
+            "  OR auc_cf.company_id = 'None')"
+            ")"
+        )
+
     if has_uc_app_rel and has_auc:
         uc_rel_sql = f"""
             LEFT JOIN LATERAL (
@@ -1400,17 +1487,20 @@ async def _fetch_applications(
                             auc.status
                         FROM core.ai_use_cases auc
                         WHERE auc.ai_use_case_id = rel.ai_use_case_id
+                          {"AND auc.tenant_id = :tenant_id" if tenant_id else ""}
                         {auc_order_sql}
                         LIMIT 1
                     ) latest ON TRUE
                     WHERE rel.business_application_id = ba.business_application_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_app_tenant_filter}
+                      {app_uc_company_filter}
                 ) related
             ) uc_rel ON TRUE
         """
     elif has_uc_app_rel:
-        uc_rel_sql = """
+        uc_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
                     json_agg(
@@ -1430,6 +1520,7 @@ async def _fetch_applications(
                     WHERE rel.business_application_id = ba.business_application_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_app_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
@@ -1442,14 +1533,34 @@ async def _fetch_applications(
 
     has_mdl_app_rel = await _table_exists(db, "core", "ai_model_business_applications")
     has_models = await _table_exists(db, "core", "ai_models")
+    mdl_app_tenant_filter = ""
+    if tenant_id and has_mdl_app_rel:
+        mdl_app_cols = await _table_columns(db, "core", "ai_model_business_applications")
+        if "tenant_id" in mdl_app_cols:
+            mdl_app_tenant_filter = "AND rmdl.tenant_id = :tenant_id"
     if has_mdl_app_rel:
         mdl_name_expr = "m.model_name" if has_models else "NULL::text"
         mdl_desc_expr = "m.description" if has_models else "NULL::text"
         mdl_status_expr = "m.status" if has_models else "NULL::text"
+        _app_mdl_tenant = "AND m.tenant_id = :tenant_id" if tenant_id and has_models else ""
         mdl_join = (
-            "LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id))"
+            f"LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id)) {_app_mdl_tenant}"
             if has_models else ""
         )
+        app_mdl_company_filter = ""
+        if filter_related_by_company_id and has_models:
+            mdl_catalog_cols = await _table_columns(db, "core", "ai_models")
+            if "company_id" in mdl_catalog_cols:
+                app_mdl_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.ai_models m_cf"
+                    " WHERE m_cf.ai_model_id = rmdl.ai_model_id"
+                    " AND (m_cf.company_id = :related_company_id"
+                    "  OR m_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(m_cf.company_id AS text)) = ''"
+                    "  OR m_cf.company_id = 'None')"
+                    ")"
+                )
         mdl_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1473,6 +1584,8 @@ async def _fetch_applications(
                     WHERE rmdl.business_application_id = ba.business_application_id
                       AND rmdl.ai_model_id IS NOT NULL
                       AND rmdl.ai_model_id <> ''
+                      {mdl_app_tenant_filter}
+                      {app_mdl_company_filter}
                 ) related
             ) mdl_rel ON TRUE
         """
@@ -1492,16 +1605,22 @@ async def _fetch_applications(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in app_cols:
+        where_parts.append("ba.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if application_id is not None:
         where_parts.append("ba.business_application_id = :application_id")
         query_params["application_id"] = application_id
 
     if company_id is not None:
         if "company_id" in app_cols:
-            where_parts.append("ba.company_id = :filter_company_id")
+            where_parts.append("(ba.company_id = :filter_company_id OR ba.company_id IS NULL OR TRIM(CAST(ba.company_id AS text)) = '' OR ba.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
+
+    if filter_related_by_company_id:
+        query_params["related_company_id"] = filter_related_by_company_id
 
     if search_clean:
         search_clauses = ["ba.business_application_id ILIKE :search_like"]
@@ -1538,6 +1657,8 @@ async def _fetch_processes(
     process_id: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    filter_related_by_company_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     process_cols = await _table_columns(db, "core", "business_processes")
     if "business_process_id" not in process_cols:
@@ -1594,6 +1715,26 @@ async def _fetch_processes(
             if "business_process_id" in abp_cols
             else "FALSE"
         )
+        if tenant_id and "tenant_id" in abp_cols:
+            abp_filter += " AND abp.tenant_id = :tenant_id"
+
+        agent_company_join = ""
+        agent_company_filter = ""
+        agent_tenant_filter = ""
+        if filter_related_by_company_id or tenant_id:
+            agent_cols_check = await _table_columns(db, "core", "agents")
+            if "agent_internal_id" in agent_cols_check:
+                agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abp.agent_internal_id"
+                if filter_related_by_company_id and "company_id" in agent_cols_check:
+                    agent_company_filter = (
+                        "AND (ag.company_id = :related_company_id"
+                        " OR ag.company_id IS NULL"
+                        " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                        " OR ag.company_id = 'None')"
+                    )
+                if tenant_id and "tenant_id" in agent_cols_check:
+                    agent_tenant_filter = "AND ag.tenant_id = :tenant_id"
+
         rel_join_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1612,7 +1753,10 @@ async def _fetch_processes(
                         {abp_agent_internal_id_expr} AS agent_internal_id,
                         NULL::text AS agent_name
                     FROM core.agent_business_processes abp
+                    {agent_company_join}
                     WHERE {abp_filter}
+                      {agent_company_filter}
+                      {agent_tenant_filter}
                 ) refs
             ) rel ON TRUE
         """
@@ -1623,7 +1767,17 @@ async def _fetch_processes(
             ) rel ON TRUE
         """
 
-    proc_rel_sql = """
+    process_tree_tenant_filter = (
+        "AND child.tenant_id = bp.tenant_id"
+        if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_tenant_join = (
+        "AND parent.tenant_id = bp.tenant_id"
+        if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    proc_rel_sql = f"""
         LEFT JOIN LATERAL (
             SELECT
                 json_agg(
@@ -1641,6 +1795,7 @@ async def _fetch_processes(
                 SELECT child.business_process_id AS other_process_id, 'CHILD'::text AS relationship_type
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
+                  {process_tree_tenant_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -1651,7 +1806,13 @@ async def _fetch_processes(
 
     has_uc_proc_rel = await _table_exists(db, "core", "ai_use_case_business_processes")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
+    uc_proc_tenant_filter = ""
+    if tenant_id and has_uc_proc_rel:
+        uc_proc_cols = await _table_columns(db, "core", "ai_use_case_business_processes")
+        if "tenant_id" in uc_proc_cols:
+            uc_proc_tenant_filter = "AND rel.tenant_id = :tenant_id"
     auc_order_sql = "ORDER BY 1"
+    auc_cols: set[str] = set()
     if has_auc:
         auc_cols = await _table_columns(db, "core", "ai_use_cases")
         order_parts: list[str] = []
@@ -1663,6 +1824,20 @@ async def _fetch_processes(
             order_parts.append("auc.ai_use_case_id")
         if order_parts:
             auc_order_sql = f"ORDER BY {', '.join(order_parts)}"
+
+    uc_company_filter = ""
+    if filter_related_by_company_id and has_auc and "company_id" in auc_cols:
+        uc_company_filter = (
+            "AND EXISTS ("
+            "SELECT 1 FROM core.ai_use_cases auc_cf"
+            " WHERE auc_cf.ai_use_case_id = rel.ai_use_case_id"
+            " AND (auc_cf.company_id = :related_company_id"
+            "  OR auc_cf.company_id IS NULL"
+            "  OR TRIM(CAST(auc_cf.company_id AS text)) = ''"
+            "  OR auc_cf.company_id = 'None')"
+            ")"
+        )
+
     if has_uc_proc_rel and has_auc:
         uc_rel_sql = f"""
             LEFT JOIN LATERAL (
@@ -1696,17 +1871,20 @@ async def _fetch_processes(
                             auc.status
                         FROM core.ai_use_cases auc
                         WHERE auc.ai_use_case_id = rel.ai_use_case_id
+                          {"AND auc.tenant_id = :tenant_id" if tenant_id else ""}
                         {auc_order_sql}
                         LIMIT 1
                     ) latest ON TRUE
                     WHERE rel.business_process_id = bp.business_process_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_proc_tenant_filter}
+                      {uc_company_filter}
                 ) related
             ) uc_rel ON TRUE
         """
     elif has_uc_proc_rel:
-        uc_rel_sql = """
+        uc_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
                     json_agg(
@@ -1726,6 +1904,7 @@ async def _fetch_processes(
                     WHERE rel.business_process_id = bp.business_process_id
                       AND rel.ai_use_case_id IS NOT NULL
                       AND rel.ai_use_case_id <> ''
+                      {uc_proc_tenant_filter}
                 ) related
             ) uc_rel ON TRUE
         """
@@ -1738,14 +1917,34 @@ async def _fetch_processes(
 
     has_mdl_proc_rel = await _table_exists(db, "core", "ai_model_business_processes")
     has_models = await _table_exists(db, "core", "ai_models")
+    mdl_proc_tenant_filter = ""
+    if tenant_id and has_mdl_proc_rel:
+        mdl_proc_cols = await _table_columns(db, "core", "ai_model_business_processes")
+        if "tenant_id" in mdl_proc_cols:
+            mdl_proc_tenant_filter = "AND rmdl.tenant_id = :tenant_id"
     if has_mdl_proc_rel:
         mdl_name_expr = "m.model_name" if has_models else "NULL::text"
         mdl_desc_expr = "m.description" if has_models else "NULL::text"
         mdl_status_expr = "m.status" if has_models else "NULL::text"
+        _proc_mdl_tenant = "AND m.tenant_id = :tenant_id" if tenant_id and has_models else ""
         mdl_join = (
-            "LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id))"
+            f"LEFT JOIN core.ai_models m ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rmdl.ai_model_id)) {_proc_mdl_tenant}"
             if has_models else ""
         )
+        mdl_company_filter = ""
+        if filter_related_by_company_id and has_models:
+            mdl_catalog_cols = await _table_columns(db, "core", "ai_models")
+            if "company_id" in mdl_catalog_cols:
+                mdl_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.ai_models m_cf"
+                    " WHERE m_cf.ai_model_id = rmdl.ai_model_id"
+                    " AND (m_cf.company_id = :related_company_id"
+                    "  OR m_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(m_cf.company_id AS text)) = ''"
+                    "  OR m_cf.company_id = 'None')"
+                    ")"
+                )
         mdl_rel_sql = f"""
             LEFT JOIN LATERAL (
                 SELECT
@@ -1769,6 +1968,8 @@ async def _fetch_processes(
                     WHERE rmdl.business_process_id = bp.business_process_id
                       AND rmdl.ai_model_id IS NOT NULL
                       AND rmdl.ai_model_id <> ''
+                      {mdl_proc_tenant_filter}
+                      {mdl_company_filter}
                 ) related
             ) mdl_rel ON TRUE
         """
@@ -1788,16 +1989,22 @@ async def _fetch_processes(
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
+    if tenant_id and "tenant_id" in process_cols:
+        where_parts.append("bp.tenant_id = :tenant_id")
+        query_params["tenant_id"] = tenant_id
     if process_id is not None:
         where_parts.append("bp.business_process_id = :process_id")
         query_params["process_id"] = process_id
 
     if company_id is not None:
         if "company_id" in process_cols:
-            where_parts.append("bp.company_id = :filter_company_id")
+            where_parts.append("(bp.company_id = :filter_company_id OR bp.company_id IS NULL OR TRIM(CAST(bp.company_id AS text)) = '' OR bp.company_id = 'None')")
             query_params["filter_company_id"] = company_id
         else:
             return []
+
+    if filter_related_by_company_id:
+        query_params["related_company_id"] = filter_related_by_company_id
 
     if search_clean:
         search_clauses = ["bp.business_process_id ILIKE :search_like"]
@@ -1818,6 +2025,7 @@ async def _fetch_processes(
             FROM core.business_processes bp
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
+               {parent_tenant_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
@@ -1833,14 +2041,16 @@ async def _fetch_processes(
 
 @router.get("/integrations", tags=["Integrations"], summary="List Integrations")
 async def list_integrations(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_integrations(db, search=q, company_id=company_id)
+        all_items = await _fetch_integrations(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -1858,9 +2068,12 @@ async def list_integrations(
 @router.get("/integrations/{integration_id}", tags=["Integrations"], summary="Get Integration")
 async def get_integration(
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_integrations(db, integration_id=integration_id)
+    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -1871,6 +2084,7 @@ async def get_integration(
 
 @router.post("/integrations", status_code=201, tags=["Integrations"], summary="Create Integration")
 async def create_integration(
+    request: Request,
     body: IntegrationCreate = Body(default_factory=IntegrationCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs integration to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -1888,6 +2102,9 @@ async def create_integration(
 
     canonical = body.model_dump(exclude_unset=True)
     insert_values: dict[str, Any] = {"integration_id": integration_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in int_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,
@@ -2029,11 +2246,11 @@ async def add_agent_integration_relation(
         text(
             """
             INSERT INTO core.agent_business_integrations (
-                tenant_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
+                tenant_id, company_id, integration_id, agent_id, agent_internal_id, agent_name, integration_name,
                 created_ts, updated_ts
             )
             VALUES (
-                :tenant_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
+                :tenant_id, :company_id, :integration_id, :agent_id, :agent_internal_id, :agent_name, :integration_name,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             ON CONFLICT (agent_internal_id, integration_id)
@@ -2046,6 +2263,7 @@ async def add_agent_integration_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -2104,14 +2322,16 @@ async def remove_agent_integration_relation(
 
 @router.get("/applications", tags=["Applications"], summary="List Applications")
 async def list_applications(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_applications(db, search=q, company_id=company_id)
+        all_items = await _fetch_applications(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2129,9 +2349,12 @@ async def list_applications(
 @router.get("/applications/{application_id}", tags=["Applications"], summary="Get Application")
 async def get_application(
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_applications(db, application_id=application_id)
+    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -2159,6 +2382,7 @@ async def suggest_application_description(body: SuggestApplicationDescriptionReq
 
 @router.post("/applications", status_code=201, tags=["Applications"], summary="Create Application")
 async def create_application(
+    request: Request,
     body: ApplicationCreate = Body(default_factory=ApplicationCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs application to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -2175,6 +2399,9 @@ async def create_application(
         )
 
     insert_values: dict[str, Any] = {"business_application_id": app_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in app_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,
@@ -2333,14 +2560,16 @@ async def delete_application(
 
 @router.get("/processes", tags=["Processes"], summary="List Processes")
 async def list_processes(
+    request: Request,
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        all_items = await _fetch_processes(db, search=q, company_id=company_id)
+        all_items = await _fetch_processes(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
         items = all_items[offset : offset + limit]
         return {
@@ -2358,9 +2587,12 @@ async def list_processes(
 @router.get("/processes/{process_id}", tags=["Processes"], summary="Get Process")
 async def get_process(
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter related items by company"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_processes(db, process_id=process_id)
+    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -2388,6 +2620,7 @@ async def suggest_process_description(body: SuggestProcessDescriptionRequest):
 
 @router.post("/processes", status_code=201, tags=["Processes"], summary="Create Process")
 async def create_process(
+    request: Request,
     body: ProcessCreate = Body(default_factory=ProcessCreate),
     company_id: Optional[str] = Query(None, description="Company UUID — when provided, syncs process to Blueprint dimensions"),
     db: AsyncSession = Depends(get_db),
@@ -2417,6 +2650,9 @@ async def create_process(
         canonical["parent_process_id"] = parent_process_id
 
     insert_values: dict[str, Any] = {"business_process_id": process_id}
+    tenant_id = _tenant(request)
+    if tenant_id and "tenant_id" in process_cols:
+        insert_values["tenant_id"] = tenant_id
     insert_values.update(
         _pick_text_columns(
             canonical,
@@ -3027,13 +3263,35 @@ async def delete_process_attachment(
 )
 async def get_agent_relations(
     agent_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Filter linked use cases by company"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id: Optional[str] = agent.get("tenant_id")
+
+    def _agent_tf(col: str) -> str:
+        if not tenant_id:
+            return ""
+        return f"AND {col}.tenant_id = :agent_tid"
+
+    ba_cols = await _table_columns(db, "core", "business_applications")
+    app_company_filter = ""
+    app_params: dict[str, Any] = {"agent_internal_id": agent["agent_internal_id"]}
+    if tenant_id:
+        app_params["agent_tid"] = tenant_id
+    if company_id and "company_id" in ba_cols:
+        app_company_filter = (
+            "AND (ba.company_id = :filter_company_id"
+            " OR ba.company_id IS NULL"
+            " OR TRIM(CAST(ba.company_id AS text)) = ''"
+            " OR ba.company_id = 'None')"
+        )
+        app_params["filter_company_id"] = company_id
 
     app_rows = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 aba.business_application_id,
                 COALESCE(ba.application_name, aba.application_name) AS application_name,
@@ -3052,16 +3310,32 @@ async def get_agent_relations(
             LEFT JOIN core.business_applications ba
                 ON ba.business_application_id = aba.business_application_id
             WHERE aba.agent_internal_id = :agent_internal_id
+              {app_company_filter}
+              {_agent_tf('ba')}
             ORDER BY LOWER(COALESCE(ba.application_name, aba.application_name, aba.business_application_id))
             """
         ),
-        {"agent_internal_id": agent["agent_internal_id"]},
+        app_params,
     )
     applications = [dict(r._mapping) for r in app_rows]
 
+    bp_cols = await _table_columns(db, "core", "business_processes")
+    proc_company_filter = ""
+    proc_params: dict[str, Any] = {"agent_internal_id": agent["agent_internal_id"]}
+    if tenant_id:
+        proc_params["agent_tid"] = tenant_id
+    if company_id and "company_id" in bp_cols:
+        proc_company_filter = (
+            "AND (bp.company_id = :filter_company_id"
+            " OR bp.company_id IS NULL"
+            " OR TRIM(CAST(bp.company_id AS text)) = ''"
+            " OR bp.company_id = 'None')"
+        )
+        proc_params["filter_company_id"] = company_id
+
     process_rows = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 abp.business_process_id,
                 COALESCE(bp.process_name, abp.process_name) AS process_name,
@@ -3108,10 +3382,12 @@ async def get_agent_relations(
                   AND linked.other_process_id <> abp.business_process_id
             ) proc_rel ON TRUE
             WHERE abp.agent_internal_id = :agent_internal_id
+              {proc_company_filter}
+              {_agent_tf('bp')}
             ORDER BY LOWER(COALESCE(bp.process_name, abp.process_name, abp.business_process_id))
             """
         ),
-        {"agent_internal_id": agent["agent_internal_id"]},
+        proc_params,
     )
     business_processes = []
     for row in process_rows:
@@ -3141,7 +3417,7 @@ async def get_agent_relations(
                 match_parts.append("rel.agent_name = :agent_name")
             if "tenant_id" in rel_cols and agent.get("tenant_id"):
                 tenant_filter = (
-                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                    "AND rel.tenant_id = :tenant_id"
                 )
 
             if match_parts:
@@ -3171,6 +3447,16 @@ async def get_agent_relations(
                     """
                     uc_join = uc_join.format(tenant_join=tenant_join)
 
+                company_filter = ""
+                if company_id and "company_id" in use_case_cols:
+                    company_filter = (
+                        "AND (uc.company_id = :filter_company_id"
+                        " OR uc.company_id IS NULL"
+                        " OR TRIM(CAST(uc.company_id AS text)) = ''"
+                        " OR uc.company_id = 'None')"
+                    )
+                    params["filter_company_id"] = company_id
+
                 use_case_rows = await db.execute(
                     text(
                         f"""
@@ -3186,6 +3472,7 @@ async def get_agent_relations(
                         {uc_join}
                         WHERE ({' OR '.join(match_parts)})
                           {tenant_filter}
+                          {company_filter}
                           AND rel.ai_use_case_id IS NOT NULL
                           AND rel.ai_use_case_id <> ''
                         ORDER BY name
@@ -3217,7 +3504,7 @@ async def get_agent_relations(
                 match_parts.append("rel.agent_name = :agent_name")
             if "tenant_id" in rel_cols and agent.get("tenant_id"):
                 tenant_filter = (
-                    "AND (rel.tenant_id = :tenant_id OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                    "AND rel.tenant_id = :tenant_id"
                 )
 
             if match_parts:
@@ -3246,6 +3533,16 @@ async def get_agent_relations(
                     """
                     skill_join = skill_join.format(tenant_join=tenant_join)
 
+                skill_company_filter = ""
+                if company_id and "company_id" in skill_cols:
+                    skill_company_filter = (
+                        "AND (s.company_id = :filter_company_id"
+                        " OR s.company_id IS NULL"
+                        " OR TRIM(CAST(s.company_id AS text)) = ''"
+                        " OR s.company_id = 'None')"
+                    )
+                    params["filter_company_id"] = company_id
+
                 skill_rows = await db.execute(
                     text(
                         f"""
@@ -3273,6 +3570,7 @@ async def get_agent_relations(
                             {skill_join}
                             WHERE ({' OR '.join(match_parts)})
                               {tenant_filter}
+                              {skill_company_filter}
                               AND rel.skill_id IS NOT NULL
                               AND rel.skill_id <> ''
                             ORDER BY LOWER(TRIM(rel.skill_id))
@@ -3293,6 +3591,15 @@ async def get_agent_relations(
     if "parent_agent_internal_id" in agent_cols:
         name_expr = "agent_name" if "agent_name" in agent_cols else "NULL::text"
         desc_expr = "agent_description" if "agent_description" in agent_cols else "NULL::text"
+        _ca_incl = " OR {col}.company_id IS NULL OR TRIM(CAST({col}.company_id AS text)) = '' OR {col}.company_id = 'None'"
+        child_company_filter = (
+            f"AND (a.company_id = :company_id{_ca_incl.format(col='a')})"
+            if company_id and "company_id" in agent_cols else ""
+        )
+        parent_company_filter = (
+            f"AND (p.company_id = :company_id{_ca_incl.format(col='p')})"
+            if company_id and "company_id" in agent_cols else ""
+        )
         child_rows = await db.execute(
             text(
                 f"""
@@ -3309,6 +3616,8 @@ async def get_agent_relations(
                     FROM core.agents a
                     WHERE a.parent_agent_internal_id = :agent_internal_id
                       AND COALESCE(a.is_current, true) = true
+                      {child_company_filter}
+                      {_agent_tf('a')}
                     UNION
                     -- The agent that is my parent
                     SELECT
@@ -3322,14 +3631,20 @@ async def get_agent_relations(
                     JOIN core.agents p
                         ON p.agent_internal_id = me.parent_agent_internal_id
                         AND COALESCE(p.is_current, true) = true
+                        {parent_company_filter}
                     WHERE me.agent_internal_id = :agent_internal_id
                       AND COALESCE(me.is_current, true) = true
                       AND COALESCE(me.parent_agent_internal_id, '') <> ''
+                      {_agent_tf('p')}
                 ) rel
                 ORDER BY LOWER(COALESCE(agent_name, agent_id, ''))
                 """
             ),
-            {"agent_internal_id": agent["agent_internal_id"]},
+            {
+                "agent_internal_id": agent["agent_internal_id"],
+                "company_id": company_id,
+                **({"agent_tid": tenant_id} if tenant_id else {}),
+            },
         )
         child_agents = [dict(r._mapping) for r in child_rows]
 
@@ -3355,6 +3670,19 @@ async def get_agent_relations(
                     "LEFT JOIN core.ai_models m "
                     "ON LOWER(TRIM(m.ai_model_id)) = LOWER(TRIM(rel.ai_model_id))"
                 )
+            model_company_filter = ""
+            model_params: dict[str, Any] = {"agent_internal_id": agent["agent_internal_id"]}
+            if tenant_id:
+                model_params["agent_tid"] = tenant_id
+            if company_id and "company_id" in model_cols:
+                model_company_filter = (
+                    "AND (m.company_id = :filter_company_id"
+                    " OR m.company_id IS NULL"
+                    " OR TRIM(CAST(m.company_id AS text)) = ''"
+                    " OR m.company_id = 'None')"
+                )
+                model_params["filter_company_id"] = company_id
+
             model_rows = await db.execute(
                 text(
                     f"""
@@ -3369,22 +3697,38 @@ async def get_agent_relations(
                         FROM core.agent_ai_models rel
                         {join_sql}
                         WHERE rel.agent_internal_id = :agent_internal_id
+                          {model_company_filter}
+                          {_agent_tf('m')}
                           AND rel.ai_model_id IS NOT NULL
                           AND rel.ai_model_id <> ''
                     ) sub
                     ORDER BY LOWER(model_name)
                     """
                 ),
-                {"agent_internal_id": agent["agent_internal_id"]},
+                model_params,
             )
             ai_models = [dict(r._mapping) for r in model_rows]
 
     integrations: list[dict[str, Any]] = []
     has_abi = await _table_exists(db, "core", "agent_business_integrations")
     if has_abi:
+        bi_cols = await _table_columns(db, "core", "business_integrations")
+        int_company_filter = ""
+        int_params: dict[str, Any] = {"agent_internal_id": agent["agent_internal_id"]}
+        if tenant_id:
+            int_params["agent_tid"] = tenant_id
+        if company_id and "company_id" in bi_cols:
+            int_company_filter = (
+                "AND (bi.company_id = :filter_company_id"
+                " OR bi.company_id IS NULL"
+                " OR TRIM(CAST(bi.company_id AS text)) = ''"
+                " OR bi.company_id = 'None')"
+            )
+            int_params["filter_company_id"] = company_id
+
         int_rows = await db.execute(
             text(
-                """
+                f"""
                 SELECT
                     abi.integration_id,
                     COALESCE(bi.integration_name, abi.integration_name) AS integration_name,
@@ -3395,10 +3739,12 @@ async def get_agent_relations(
                 LEFT JOIN core.business_integrations bi
                     ON bi.integration_id = abi.integration_id
                 WHERE abi.agent_internal_id = :agent_internal_id
+                  {int_company_filter}
+                  {_agent_tf('bi')}
                 ORDER BY LOWER(COALESCE(bi.integration_name, abi.integration_name, abi.integration_id))
                 """
             ),
-            {"agent_internal_id": agent["agent_internal_id"]},
+            int_params,
         )
         integrations = [dict(r._mapping) for r in int_rows]
 
@@ -3484,11 +3830,11 @@ async def add_agent_application_relation(
         text(
             """
             INSERT INTO core.agent_business_applications (
-                tenant_id, business_application_id, agent_id, application_name, criticality,
+                tenant_id, company_id, business_application_id, agent_id, application_name, criticality,
                 created_ts, updated_ts, agent_internal_id
             )
             VALUES (
-                :tenant_id, :business_application_id, :agent_id, :application_name, :criticality,
+                :tenant_id, :company_id, :business_application_id, :agent_id, :application_name, :criticality,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
             )
             ON CONFLICT (agent_internal_id, business_application_id)
@@ -3501,6 +3847,7 @@ async def add_agent_application_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
@@ -3620,11 +3967,11 @@ async def add_agent_process_relation(
         text(
             """
             INSERT INTO core.agent_business_processes (
-                tenant_id, business_process_id, agent_id, process_name, criticality,
+                tenant_id, company_id, business_process_id, agent_id, process_name, criticality,
                 created_ts, updated_ts, agent_internal_id
             )
             VALUES (
-                :tenant_id, :business_process_id, :agent_id, :process_name, :criticality,
+                :tenant_id, :company_id, :business_process_id, :agent_id, :process_name, :criticality,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :agent_internal_id
             )
             ON CONFLICT (agent_internal_id, business_process_id)
@@ -3637,6 +3984,7 @@ async def add_agent_process_relation(
         ),
         {
             "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
             "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
@@ -3744,6 +4092,671 @@ async def add_child_agent_relation(
         "status": "linked",
         "parent_agent_id": agent_id,
         "child_agent_id": child_agent_id,
+    }
+
+
+@router.post(
+    "/agents/{agent_id}/tools/ensure-uuids",
+    tags=["Agents"],
+    summary="Assign real UUIDs to agent_tools rows that have null tool_id",
+)
+async def ensure_agent_tool_uuids(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    agent_name_val = agent.get("agent_name") or ""
+
+    # Delete fully-null rows (no tool_name, no tool_id) — nothing to fix there
+    await db.execute(
+        text(
+            """
+            DELETE FROM core.agent_tools
+            WHERE agent_internal_id = :agent_internal_id
+              AND (tool_id IS NULL OR tool_id = '')
+              AND (tool_name IS NULL OR tool_name = '')
+            """
+        ),
+        {"agent_internal_id": agent_internal_id},
+    )
+
+    # Find agent_tools rows with null tool_id but a known tool_name
+    rows = await db.execute(
+        text(
+            """
+            SELECT at2.tool_name,
+                   (SELECT t.tool_id FROM core.tools t
+                    WHERE LOWER(t.tool_name) = LOWER(at2.tool_name)
+                      AND t.tool_id IS NOT NULL AND t.tool_id != ''
+                    ORDER BY t.updated_ts DESC NULLS LAST
+                    LIMIT 1) AS existing_tool_id
+            FROM core.agent_tools at2
+            WHERE at2.agent_internal_id = :agent_internal_id
+              AND (at2.tool_id IS NULL OR at2.tool_id = '')
+              AND at2.tool_name IS NOT NULL AND at2.tool_name != ''
+            """
+        ),
+        {"agent_internal_id": agent_internal_id},
+    )
+    tools_to_fix = [dict(r) for r in rows.mappings()]
+    fixed = 0
+
+    for tool in tools_to_fix:
+        tool_name = tool.get("tool_name")
+        if not tool_name:
+            continue
+        resolved_id = tool.get("existing_tool_id")
+        if not resolved_id:
+            resolved_id = str(uuid4())
+            await db.execute(
+                text(
+                    """
+                    UPDATE core.tools
+                    SET tool_id = :new_id, updated_ts = CURRENT_TIMESTAMP
+                    WHERE (tool_id IS NULL OR tool_id = '')
+                      AND LOWER(tool_name) = LOWER(:name)
+                    """
+                ),
+                {"new_id": resolved_id, "name": tool_name},
+            )
+        await db.execute(
+            text(
+                """
+                UPDATE core.agent_tools
+                SET tool_id = :new_id,
+                    agent_name = CASE WHEN (agent_name IS NULL OR agent_name = '') THEN :aname ELSE agent_name END,
+                    updated_ts = CURRENT_TIMESTAMP
+                WHERE (tool_id IS NULL OR tool_id = '')
+                  AND LOWER(tool_name) = LOWER(:name)
+                  AND agent_internal_id = :agent_internal_id
+                """
+            ),
+            {"new_id": resolved_id, "name": tool_name,
+             "agent_internal_id": agent_internal_id, "aname": agent_name_val},
+        )
+        fixed += 1
+
+    if fixed or True:
+        await db.commit()
+    return {"fixed": fixed}
+
+
+@router.get(
+    "/agents/{agent_id}/tools",
+    tags=["Agents"],
+    summary="List all tools with link status for an agent",
+)
+async def list_agent_tools(
+    request: Request,
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+
+    params: dict[str, Any] = {"agent_internal_id": agent_internal_id}
+    search_catalog = ""
+    search_orphan = ""
+    if q and q.strip():
+        search_catalog = "AND (t.tool_name ILIKE :q OR t.tool_description ILIKE :q)"
+        search_orphan = "AND lk2.tool_name ILIKE :q"
+        params["q"] = f"%{q.strip()}%"
+
+    tenant_filter_catalog = ""
+    if tid:
+        tenant_filter_catalog = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    company_filter_catalog = ""
+    if cid:
+        company_filter_catalog = "AND t.company_id = :cid"
+        params["cid"] = cid
+
+    rows = await db.execute(
+        text(
+            f"""
+            WITH catalog AS (
+                -- Deduplicate core.tools by name, preferring rows that have a real UUID tool_id
+                SELECT DISTINCT ON (LOWER(COALESCE(t.tool_name, '')))
+                    COALESCE(t.tool_id, t.tool_name) AS effective_tool_id,
+                    t.tool_id,
+                    t.tool_name,
+                    t.tool_description
+                FROM core.tools t
+                WHERE 1=1 {search_catalog} {tenant_filter_catalog} {company_filter_catalog}
+                ORDER BY
+                    LOWER(COALESCE(t.tool_name, '')),
+                    (t.tool_id IS NOT NULL AND t.tool_id != '') DESC,
+                    t.updated_ts DESC NULLS LAST
+            ),
+            linked AS (
+                SELECT tool_id, tool_name
+                FROM core.agent_tools
+                WHERE agent_internal_id = :agent_internal_id
+            )
+            SELECT
+                c.effective_tool_id,
+                c.tool_id,
+                c.tool_name,
+                c.tool_description,
+                (
+                    lk_id.tool_id IS NOT NULL
+                    OR lk_nm.tool_name IS NOT NULL
+                ) AS is_linked
+            FROM catalog c
+            LEFT JOIN linked lk_id
+                ON lk_id.tool_id = c.tool_id
+                AND c.tool_id IS NOT NULL AND c.tool_id != ''
+            LEFT JOIN linked lk_nm
+                ON LOWER(lk_nm.tool_name) = LOWER(c.tool_name)
+
+            UNION ALL
+
+            -- Agent's linked tools that have no match in core.tools at all
+            SELECT
+                COALESCE(lk2.tool_id, lk2.tool_name) AS effective_tool_id,
+                lk2.tool_id,
+                lk2.tool_name,
+                NULL AS tool_description,
+                TRUE AS is_linked
+            FROM core.agent_tools lk2
+            WHERE lk2.agent_internal_id = :agent_internal_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.tools t5
+                  WHERE (lk2.tool_id IS NOT NULL AND t5.tool_id = lk2.tool_id)
+                     OR LOWER(t5.tool_name) = LOWER(lk2.tool_name)
+              )
+              {search_orphan}
+
+            ORDER BY is_linked DESC, tool_name ASC NULLS LAST
+            """
+        ),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/tools/{tool_id}",
+    tags=["Agents"],
+    summary="Link a tool to an agent",
+)
+async def add_agent_tool_relation(
+    agent_id: str,
+    tool_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    # Look up by UUID tool_id first; fall back to matching by tool_name (for null-tool_id rows)
+    tool_row = await db.execute(
+        text(
+            """
+            SELECT tool_id, tool_name
+            FROM core.tools
+            WHERE tool_id = :val
+               OR ((tool_id IS NULL OR tool_id = '') AND tool_name = :val)
+            ORDER BY (tool_id IS NOT NULL AND tool_id != '') DESC
+            LIMIT 1
+            """
+        ),
+        {"val": tool_id},
+    )
+    tool = tool_row.mappings().first()
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found")
+
+    tool_name_val = tool.get("tool_name") or tool_id
+    actual_tool_id = tool.get("tool_id") or None
+
+    # If the matched row has no real tool_id, assign a UUID now and persist it
+    # so the agent_tools record always stores a proper UUID, never a tool_name string
+    if not actual_tool_id or actual_tool_id.strip() == "":
+        actual_tool_id = str(uuid4())
+        await db.execute(
+            text(
+                """
+                UPDATE core.tools
+                SET tool_id = :new_id, updated_ts = CURRENT_TIMESTAMP
+                WHERE (tool_id IS NULL OR tool_id = '')
+                  AND tool_name = :name
+                """
+            ),
+            {"new_id": actual_tool_id, "name": tool_name_val},
+        )
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO core.agent_tools
+                (tenant_id, company_id, agent_internal_id, tool_id, agent_id, tool_name,
+                 created_ts, updated_ts)
+            VALUES
+                (:tenant_id, :company_id, :agent_internal_id, :tool_id, :agent_id, :tool_name,
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (agent_internal_id, tool_id) DO UPDATE SET
+                agent_id = EXCLUDED.agent_id,
+                tool_name = EXCLUDED.tool_name,
+                updated_ts = EXCLUDED.updated_ts
+            """
+        ),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "tool_id": actual_tool_id,
+            "agent_id": agent.get("agent_id"),
+            "tool_name": tool_name_val,
+        },
+    )
+    await db.commit()
+
+    return {"status": "linked", "agent_id": agent_id, "tool_id": actual_tool_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/tools/{tool_id}",
+    tags=["Agents"],
+    summary="Unlink a tool from an agent",
+)
+async def remove_agent_tool_relation(
+    agent_id: str,
+    tool_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM core.agent_tools
+            WHERE tool_id = :tool_id
+              AND (
+                    agent_internal_id = :agent_internal_id
+                    OR agent_id = :agent_id
+                  )
+            """
+        ),
+        {
+            "tool_id": tool_id,
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_id": agent.get("agent_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "tool_id": tool_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
+@router.get(
+    "/agents/{agent_id}/tables",
+    tags=["Agents"],
+    summary="List all tables with link status for an agent",
+)
+async def list_agent_tables(
+    request: Request,
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+
+    params: dict[str, Any] = {
+        "agent_id": agent.get("agent_id"),
+        "agent_internal_id": agent.get("agent_internal_id"),
+    }
+    search_clause = ""
+    if q and q.strip():
+        search_clause = "AND (t.name ILIKE :q OR t.country_of_provenance ILIKE :q)"
+        params["q"] = f"%{q.strip()}%"
+
+    tenant_filter = ""
+    if tid:
+        tenant_filter = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    company_filter = ""
+    if cid:
+        company_filter = "AND t.company_id = :cid"
+        params["cid"] = cid
+
+    rows = await db.execute(
+        text(
+            f"""
+            SELECT
+                t.table_id,
+                t.name AS table_name,
+                t.country_of_provenance,
+                (agt.table_id IS NOT NULL) AS is_linked
+            FROM core.tables t
+            LEFT JOIN core.agent_tables agt
+                ON agt.table_id = t.table_id
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            WHERE 1=1 {search_clause} {tenant_filter} {company_filter}
+            ORDER BY is_linked DESC, t.name ASC NULLS LAST
+            """
+        ),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/tables/{table_id}",
+    tags=["Agents"],
+    summary="Link a table to an agent",
+)
+async def add_agent_table_relation(
+    agent_id: str,
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    table_row = await db.execute(
+        text("SELECT table_id, name FROM core.tables WHERE table_id = :table_id LIMIT 1"),
+        {"table_id": table_id},
+    )
+    table = table_row.mappings().first()
+    if not table:
+        raise HTTPException(status_code=404, detail=f"Table '{table_id}' not found")
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO core.agent_tables
+                (tenant_id, company_id, agent_id, agent_name, agent_internal_id,
+                 table_id, table_name, created_ts, updated_ts)
+            VALUES
+                (:tenant_id, :company_id, :agent_id, :agent_name, :agent_internal_id,
+                 :table_id, :table_name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (tenant_id, agent_id, table_id) DO UPDATE SET
+                agent_name = EXCLUDED.agent_name,
+                table_name = EXCLUDED.table_name,
+                updated_ts = EXCLUDED.updated_ts
+            """
+        ),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
+            "agent_id": agent.get("agent_id"),
+            "agent_name": agent.get("agent_name"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "table_id": table_id,
+            "table_name": table.get("name") or table_id,
+        },
+    )
+    # Auto-link all columns that exist in table_columns for this table
+    await db.execute(
+        text("""
+            INSERT INTO core.agent_data_sources (
+                tenant_id, company_id, agent_internal_id, agent_id,
+                source_object_type, source_object_id, source_object_name,
+                target_object_type, target_object_id, target_object_name,
+                created_ts, updated_ts
+            )
+            SELECT
+                :tenant_id, :company_id, :agent_internal_id, :agent_id,
+                'Table', tc.table_id, :table_name,
+                'Column', tc.column_id, tc.column_name,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            FROM core.table_columns tc
+            WHERE tc.table_id = :table_id
+              AND tc.column_name IS NOT NULL AND tc.column_name != ''
+              AND tc.column_id IS NOT NULL AND tc.column_id != ''
+            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO NOTHING
+        """),
+        {
+            "tenant_id": agent.get("tenant_id"),
+            "company_id": agent.get("company_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+            "agent_id": agent.get("agent_id"),
+            "table_id": table_id,
+            "table_name": table.get("name") or table_id,
+        },
+    )
+    await db.commit()
+
+    return {"status": "linked", "agent_id": agent_id, "table_id": table_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/tables/{table_id}",
+    tags=["Agents"],
+    summary="Unlink a table from an agent",
+)
+async def remove_agent_table_relation(
+    agent_id: str,
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+
+    result = await db.execute(
+        text("""
+            DELETE FROM core.agent_tables
+            WHERE table_id = :table_id
+              AND (agent_id = :agent_id OR agent_internal_id = :agent_internal_id)
+        """),
+        {
+            "table_id": table_id,
+            "agent_id": agent.get("agent_id"),
+            "agent_internal_id": agent.get("agent_internal_id"),
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "table_id": table_id,
+        "rows_deleted": result.rowcount or 0,
+    }
+
+
+@router.get(
+    "/agents/{agent_id}/columns",
+    tags=["Agents"],
+    summary="List all columns with link status for an agent",
+)
+async def list_agent_columns(
+    request: Request,
+    agent_id: str,
+    q: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID; defaults to x-tenant-id header"),
+    company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+    tid = (tenant_id or "").strip() or _tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+
+    search_clause_linked = ""
+    search_clause_avail = ""
+    params: dict = {"agent_id": real_agent_id, "agent_internal_id": agent_internal_id}
+    if q and q.strip():
+        search_clause_linked = "AND (LOWER(ads.target_object_name) LIKE :q OR LOWER(ads.source_object_name) LIKE :q)"
+        search_clause_avail = "AND (LOWER(tc.column_name) LIKE :q OR LOWER(tc.table_name) LIKE :q)"
+        params["q"] = f"%{q.strip().lower()}%"
+
+    table_tenant_filter = ""
+    if tid:
+        table_tenant_filter = "AND t.tenant_id = :tid"
+        params["tid"] = tid
+    table_company_filter = ""
+    if cid:
+        table_company_filter = "AND t.company_id = :cid"
+        params["cid"] = cid
+
+    rows = await db.execute(
+        text(f"""
+            -- Linked columns: in agent_data_sources AND parent table is still in agent_tables
+            SELECT
+                COALESCE(ads.target_object_id, ads.target_object_name) AS column_id,
+                ads.target_object_name AS column_name,
+                ads.source_object_name AS table_name,
+                ads.source_object_id AS table_id,
+                false AS uses_pii,
+                false AS uses_phi,
+                false AS uses_pci,
+                true AS is_linked
+            FROM core.agent_data_sources ads
+            JOIN core.agent_tables agt
+                ON (agt.table_id = ads.source_object_id
+                    OR LOWER(agt.table_name) = LOWER(ads.source_object_name))
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            WHERE (ads.agent_internal_id = :agent_internal_id OR ads.agent_id = :agent_id)
+              AND LOWER(ads.target_object_type) = 'column'
+              AND ads.target_object_name IS NOT NULL AND ads.target_object_name != ''
+              {search_clause_linked}
+
+            UNION
+
+            -- Available columns: in table_columns for linked tables, NOT yet in agent_data_sources
+            SELECT
+                tc.column_id,
+                tc.column_name,
+                COALESCE(t.name, tc.table_name) AS table_name,
+                tc.table_id,
+                false AS uses_pii,
+                false AS uses_phi,
+                false AS uses_pci,
+                false AS is_linked
+            FROM core.table_columns tc
+            JOIN core.agent_tables agt
+                ON agt.table_id = tc.table_id
+                AND (agt.agent_id = :agent_id OR agt.agent_internal_id = :agent_internal_id)
+            LEFT JOIN core.tables t ON t.table_id = tc.table_id
+            WHERE tc.column_name IS NOT NULL AND tc.column_name != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.agent_data_sources ads2
+                  WHERE (ads2.agent_internal_id = :agent_internal_id OR ads2.agent_id = :agent_id)
+                    AND LOWER(ads2.target_object_type) = 'column'
+                    AND (ads2.target_object_id = tc.column_id
+                         OR LOWER(ads2.target_object_name) = LOWER(tc.column_name))
+              )
+              {search_clause_avail} {table_tenant_filter} {table_company_filter}
+        """),
+        params,
+    )
+    items = [dict(r) for r in rows.mappings()]
+    return {"items": items, "total": len(items)}
+
+
+@router.put(
+    "/agents/{agent_id}/columns/{column_id}",
+    tags=["Agents"],
+    summary="Link a column to an agent",
+)
+async def add_agent_column_relation(
+    agent_id: str,
+    column_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+    tenant_id = agent.get("tenant_id")
+
+    col_row = await db.execute(
+        text("""
+            SELECT tc.column_id, tc.column_name, tc.table_id,
+                   COALESCE(t.name, tc.table_name) AS table_name
+            FROM core.table_columns tc
+            LEFT JOIN core.tables t ON t.table_id = tc.table_id
+            WHERE tc.column_id = :column_id
+            LIMIT 1
+        """),
+        {"column_id": column_id},
+    )
+    col = col_row.mappings().first()
+    if not col:
+        raise HTTPException(status_code=404, detail=f"Column '{column_id}' not found")
+
+    await db.execute(
+        text("""
+            INSERT INTO core.agent_data_sources (
+                tenant_id, company_id, agent_internal_id, agent_id,
+                source_object_type, source_object_id, source_object_name,
+                target_object_type, target_object_id, target_object_name,
+                created_ts, updated_ts
+            )
+            VALUES (
+                :tid, :company_id, :aiid, :agent_id,
+                'Table', :table_id, :table_name,
+                'Column', :col_id, :col_name,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (agent_internal_id, source_object_id, target_object_id) DO UPDATE SET
+                source_object_name = EXCLUDED.source_object_name,
+                target_object_name = EXCLUDED.target_object_name,
+                updated_ts = EXCLUDED.updated_ts
+        """),
+        {
+            "tid": tenant_id,
+            "company_id": agent.get("company_id"),
+            "aiid": agent_internal_id,
+            "agent_id": real_agent_id,
+            "table_id": col.get("table_id"),
+            "table_name": col.get("table_name"),
+            "col_id": col.get("column_id"),
+            "col_name": col.get("column_name"),
+        },
+    )
+    await db.commit()
+    return {"status": "linked", "agent_id": agent_id, "column_id": column_id}
+
+
+@router.delete(
+    "/agents/{agent_id}/columns/{column_id}",
+    tags=["Agents"],
+    summary="Unlink a column from an agent",
+)
+async def remove_agent_column_relation(
+    agent_id: str,
+    column_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _resolve_agent(db, agent_id)
+    agent_internal_id = agent.get("agent_internal_id")
+    real_agent_id = agent.get("agent_id")
+
+    result = await db.execute(
+        text("""
+            DELETE FROM core.agent_data_sources
+            WHERE (agent_internal_id = :agent_internal_id OR agent_id = :agent_id)
+              AND LOWER(target_object_type) = 'column'
+              AND (target_object_id = :col_id OR LOWER(target_object_name) = LOWER(:col_id))
+        """),
+        {
+            "agent_internal_id": agent_internal_id,
+            "agent_id": real_agent_id,
+            "col_id": column_id,
+        },
+    )
+    await db.commit()
+    return {
+        "status": "unlinked",
+        "agent_id": agent_id,
+        "column_id": column_id,
+        "rows_deleted": result.rowcount or 0,
     }
 
 

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { UseCaseSummary } from '../types/useCase';
-import { mcpClient } from '../services/mcpClient';
+import { useCaseApi } from '../services/useCaseApi';
 
 const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache_v2';
 const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts_v2';
@@ -64,14 +64,26 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Only block the UI if there is no data yet or the user explicitly synced.
         const hasExistingData = Boolean(sessionStorage.getItem(USECASE_CACHE_KEY));
         if (!hasExistingData || shouldInvalidate) setLoading(true);
-        if (shouldInvalidate) mcpClient.invalidateCache();
 
         try {
-            const fresh = await mcpClient.getAllUseCases();
-            const freshIds = new Set(fresh.map((uc: UseCaseSummary) => uc.identifier));
-            const freshNames = new Set(
-                fresh.map((uc: UseCaseSummary) => (uc.name ?? '').toLowerCase().trim())
-            );
+            const PAGE_SIZE = 100;
+
+            const normalizeItem = (item: any): UseCaseSummary => ({
+                ...item,
+                identifier: item.identifier ?? item.use_case_id ?? item.id,
+                name: item.name ?? item.title ?? item.use_case_name,
+                description: item.description ?? item.short_description ?? item.summary,
+                status: item.status ?? item.state,
+                owner: item.owner ?? item.use_case_owner,
+                overall_risk: item.overall_risk ?? item.overall_risk_classification ?? item.risk_classification,
+            });
+
+            // Page 1: apply carry-over/delete merge and show data immediately.
+            const firstResponse = await useCaseApi.listUseCases({ startRecord: 1, recordRange: `1-${PAGE_SIZE}` });
+            const totalRecords = firstResponse.total_records ?? 0;
+            const firstBatch = (firstResponse.data ?? []).map(normalizeItem);
+            const firstIds = new Set(firstBatch.map((uc: UseCaseSummary) => uc.identifier));
+            const firstNames = new Set(firstBatch.map((uc: UseCaseSummary) => (uc.name ?? '').toLowerCase().trim()));
 
             setUseCases(prev => {
                 // Carry over optimistic additions not yet visible in fresh data.
@@ -79,12 +91,12 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 const carryOver = prev.filter(uc => {
                     if (!pendingAddIds.current.has(uc.identifier)) return false;
                     const nameKey = (uc.name ?? '').toLowerCase().trim();
-                    const confirmedById = freshIds.has(uc.identifier);
+                    const confirmedById = firstIds.has(uc.identifier);
                     // Only confirm by name when the fresh item sharing that name has the same
                     // identifier (or no identifier) — prevents a pre-existing use case with the
                     // same name from falsely confirming a newly-created one.
-                    const confirmedByName = nameKey !== '' && freshNames.has(nameKey) &&
-                        !fresh.some((f: UseCaseSummary) =>
+                    const confirmedByName = nameKey !== '' && firstNames.has(nameKey) &&
+                        !firstBatch.some((f: UseCaseSummary) =>
                             (f.name ?? '').toLowerCase().trim() === nameKey &&
                             f.identifier && f.identifier !== uc.identifier
                         );
@@ -97,21 +109,54 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 });
 
                 // Filter out optimistic deletions still present in fresh data.
-                const filtered = fresh.filter(
+                const filtered = firstBatch.filter(
                     (uc: UseCaseSummary) => !pendingDeleteIds.current.has(uc.identifier)
                 );
                 // Clean up pending-delete entries once server stops returning them.
                 for (const id of Array.from(pendingDeleteIds.current)) {
-                    if (!freshIds.has(id)) pendingDeleteIds.current.delete(id);
+                    if (!firstIds.has(id)) pendingDeleteIds.current.delete(id);
                 }
 
                 const next = [...carryOver, ...filtered];
-                const now = Date.now();
+                // Don't stamp the cache timestamp yet — wait until all pages arrive.
                 sessionStorage.setItem(USECASE_CACHE_KEY, JSON.stringify(next));
-                sessionStorage.setItem(USECASE_CACHE_TS_KEY, String(now));
-                setLastFetched(new Date(now));
                 return next;
             });
+            setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
+
+            // Pages 2–N: fire all concurrently, append new use cases as each arrives.
+            if (totalRecords > PAGE_SIZE) {
+                const pageStarts: number[] = [];
+                for (let start = PAGE_SIZE + 1; start <= totalRecords; start += PAGE_SIZE) {
+                    pageStarts.push(start);
+                }
+                await Promise.all(pageStarts.map(async start => {
+                    const end = Math.min(start + PAGE_SIZE - 1, totalRecords);
+                    try {
+                        const resp = await useCaseApi.listUseCases({ startRecord: start, recordRange: `${start}-${end}` });
+                        const batch = (resp.data ?? []).map(normalizeItem);
+                        setUseCases(prev => {
+                            const prevIds = new Set(prev.map((uc: UseCaseSummary) => uc.identifier));
+                            const fresh = batch.filter(
+                                (uc: UseCaseSummary) =>
+                                    !prevIds.has(uc.identifier) &&
+                                    !pendingDeleteIds.current.has(uc.identifier)
+                            );
+                            if (!fresh.length) return prev;
+                            const next = [...prev, ...fresh];
+                            sessionStorage.setItem(USECASE_CACHE_KEY, JSON.stringify(next));
+                            return next;
+                        });
+                    } catch {
+                        // Silently skip a failed page.
+                    }
+                }));
+            }
+
+            // All pages done — stamp cache as fully valid.
+            const now = Date.now();
+            sessionStorage.setItem(USECASE_CACHE_TS_KEY, String(now));
+            setLastFetched(new Date(now));
         } catch (err: any) {
             setError(err.message ?? 'Failed to load AI Use Case catalog');
         } finally {

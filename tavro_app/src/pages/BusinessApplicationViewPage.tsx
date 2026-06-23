@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { fetchAllPages } from '../utils/fetchAllPages';
 import { aiModelApi } from '../services/aiModelApi';
 import type {
   BusinessApplicationRecord,
@@ -222,6 +223,21 @@ const buildApplicationPayload = (form: ApplicationFormState): BusinessApplicatio
   latest_release_documentation_link: toNullable(form.latest_release_documentation_link),
 });
 
+const changedApplicationPayload = (
+  current: ApplicationFormState,
+  next: ApplicationFormState,
+): BusinessApplicationUpsertPayload => {
+  const currentPayload = buildApplicationPayload(current);
+  const nextPayload = buildApplicationPayload(next);
+  const changed: BusinessApplicationUpsertPayload = {};
+  (Object.keys(nextPayload) as Array<keyof BusinessApplicationUpsertPayload>).forEach(key => {
+    if (nextPayload[key] !== currentPayload[key]) {
+      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+    }
+  });
+  return changed;
+};
+
 const labelFromOptions = (value: string, options: Option[]): string => {
   if (!value) return 'N/A';
   const found = options.find(o => o.value === value);
@@ -307,16 +323,17 @@ const BusinessApplicationViewPage: React.FC = () => {
   }, [activeCompany?.id]);
 
   useEffect(() => {
-    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-200' })
-      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+    fetchAllPages(
+      (start, range) => useCaseApi.listUseCases({ companyId: activeCompany?.id, startRecord: start, recordRange: range }),
+      100,
+    ).then(rawData => setCompanyUseCases(rawData.map((raw: any) => ({
         identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
         name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
         description: raw.description ?? null,
         status: raw.status ?? null,
         priority: raw.priority ?? null,
         overall_risk: raw.overall_risk ?? null,
-      })))
-      ).catch(() => {});
+    })))).catch(() => {});
   }, [activeCompany?.id]);
 
   const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
@@ -348,8 +365,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
   useEffect(() => {
-    aiModelApi.listModels().then(setAllModels).catch(() => setAllModels([]));
-  }, []);
+    aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
 
   const linkedModels = application?.related_ai_models ?? [];
   const linkedModelIds = useMemo(
@@ -385,7 +402,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setRelationError(null);
     setUseCaseRelationError(null);
     try {
-      const data = await businessRelationsApi.getApplication(id);
+      const data = await businessRelationsApi.getApplication(id, activeCompany?.id);
       setApplication(data);
       setForm(formFromApplication(data));
       setAttemptedSave(false);
@@ -487,9 +504,15 @@ const BusinessApplicationViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
+      const changedPayload = changedApplicationPayload(formFromApplication(application), nextForm);
+      if (Object.keys(changedPayload).length === 0) {
+        setInlineEdit(null);
+        setAttemptedSave(false);
+        return;
+      }
       const updated = await businessRelationsApi.updateApplication(
         application.business_application_id,
-        buildApplicationPayload(nextForm),
+        changedPayload,
       );
       setApplication(updated);
       setForm(formFromApplication(updated));
@@ -636,7 +659,14 @@ const BusinessApplicationViewPage: React.FC = () => {
         return;
       }
       if (!application) return;
-      const updated = await businessRelationsApi.updateApplication(application.business_application_id, payload);
+      const changedPayload = changedApplicationPayload(formFromApplication(application), form);
+      if (Object.keys(changedPayload).length === 0) {
+        setAttemptedSave(false);
+        setInlineEdit(null);
+        setEditing(false);
+        return;
+      }
+      const updated = await businessRelationsApi.updateApplication(application.business_application_id, changedPayload);
       setApplication(updated);
       setForm(formFromApplication(updated));
       setAttemptedSave(false);

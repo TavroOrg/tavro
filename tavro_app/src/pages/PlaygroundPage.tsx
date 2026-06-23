@@ -1,13 +1,15 @@
 // ── src/pages/PlaygroundPage.tsx ─────────────────────────────────────────────
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   FlaskConical, Play, Square, RotateCcw, Plus, Send, Loader2,
-  ChevronDown, ChevronUp, Settings2, MessageSquare, ClipboardList,
-  Trash2, Download, Bot, User, Copy, Check, Info, FileText,
+  ChevronDown, Settings2, MessageSquare, ClipboardList,
+  Trash2, Download, Bot, User, Copy, Check, Info, FileText, Search, Code2,
 } from 'lucide-react';
-import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, extractPdfTitle } from '../utils/pdfGenerator';
+import { agentApi } from '../services/agentApi';
+import AgentClaudeSupportTab from '../components/AgentClaudeSupportTab';
+import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, inferDocType } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
 import type { AttachmentPayload } from '../context/PlaygroundContext';
 import AttachmentPicker from '../components/playground/AttachmentPicker';
@@ -126,20 +128,73 @@ const PlaygroundPage: React.FC = () => {
   }, [activeCompany?.id]);
 
   // UI state
-  const [activeTab,       setActiveTab]       = useState<'config' | 'chat' | 'observations' | 'summary'>('config');
+  const [activeTab,       setActiveTab]       = useState<'code' | 'config' | 'chat' | 'observations' | 'summary'>('config');
   const [input,           setInput]           = useState('');
   const [newObsType,      setNewObsType]      = useState<PlaygroundObservation['type']>('note');
   const [newObsText,      setNewObsText]      = useState('');
   const [showObsForm,     setShowObsForm]     = useState(false);
-  const [promptExpanded,  setPromptExpanded]  = useState(false);
   const [copied,          setCopied]          = useState(false);
   const [attachments,     setAttachments]     = useState<PendingAttachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLInputElement>(null);
 
+  // Agent selector state
+  const [agentDropdown,   setAgentDropdown]   = useState(false);
+  const [agentSearch,     setAgentSearch]     = useState('');
+  const [catalogAgents,   setCatalogAgents]   = useState<any[]>([]);
+  const [agentsLoading,   setAgentsLoading]   = useState(false);
+  const agentSearchRef = useRef<HTMLInputElement>(null);
+  const agentMenuRef   = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Load agent catalog when dropdown opens
+  useEffect(() => {
+    if (!agentDropdown) {
+      setAgentSearch('');
+      return;
+    }
+    const id = window.setTimeout(() => agentSearchRef.current?.focus(), 0);
+    const handlePointerDown = (e: MouseEvent) => {
+      if (!agentMenuRef.current?.contains(e.target as Node)) setAgentDropdown(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+
+    setAgentsLoading(true);
+    agentApi.getAgentCatalog(1, '1-100', activeCompany?.id)
+      .then(res => setCatalogAgents(res.data ?? []))
+      .catch(() => setCatalogAgents([]))
+      .finally(() => setAgentsLoading(false));
+
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [agentDropdown]);
+
+  const filteredAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    if (!q) return catalogAgents;
+    return catalogAgents.filter(a => {
+      const name = (a.name || a.agent_name || '').toLowerCase();
+      const desc = (a.description || a.agent_description || '').toLowerCase();
+      return name.includes(q) || desc.includes(q);
+    });
+  }, [catalogAgents, agentSearch]);
+
+  const handleSelectAgent = (agent: any) => {
+    const agentId     = agent.identification?.agent_id || agent.agent_id || '';
+    const name        = agent.name || agent.agent_name || '';
+    const description = agent.description || agent.agent_description || '';
+    const instruction = agent.identification?.instruction || agent.instruction || '';
+    const agentType   = agent.agent_type || undefined;
+    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType);
+    setAgentDropdown(false);
+    setAgentSearch('');
+    setActiveTab('config');
+  };
 
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isRunning) return;
@@ -154,9 +209,9 @@ const PlaygroundPage: React.FC = () => {
     setAttachments([]);
     const responseText = await sendMessage(text, atts);
     if (isPdf && responseText?.trim()) {
-      const body  = extractPdfBody(responseText);
-      const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
-      if (body.trim()) generateMarkdownPdf(title, body, `tavro-playground-${Date.now()}.pdf`);
+      const body = extractPdfBody(responseText);
+      const name = config.agentName || 'Agent Playground';
+      if (body.trim()) generateMarkdownPdf(name, body, `tavro-playground-${Date.now()}.pdf`, inferDocType(text));
     }
   };
 
@@ -231,10 +286,85 @@ const PlaygroundPage: React.FC = () => {
           <div>
             <h1 className="font-bold text-slate-800 dark:text-slate-100 text-lg">Agent Playground</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {config.useCaseTitle
-                ? `Prototyping: ${config.agentName}`
-                : 'Select an agent to start prototyping'}
+              {config.useCaseTitle ? `Prototyping: ${config.agentName}` : 'Select an agent to start prototyping'}
             </p>
+          </div>
+
+          {/* Agent selector */}
+          <div className="relative" ref={agentMenuRef}>
+            <button
+              onClick={() => setAgentDropdown(d => !d)}
+              className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600 px-3 py-2 rounded-lg transition-colors"
+              aria-haspopup="listbox"
+              aria-expanded={agentDropdown}
+            >
+              <Bot size={14} className="text-blue-600 dark:text-blue-400 flex-shrink-0" />
+              <span className="whitespace-nowrap">{config.useCaseTitle ? config.agentName : 'Select agent'}</span>
+              {config.useCaseTitle && config.agentType && (
+                <span className={`flex-shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${
+                  config.agentType === 'Code-driven'
+                    ? 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:border-violet-700'
+                    : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700'
+                }`}>
+                  {config.agentType}
+                </span>
+              )}
+              <ChevronDown size={13} className="text-slate-400 flex-shrink-0" />
+            </button>
+
+            {agentDropdown && (
+              <div className="absolute top-full left-0 mt-1 w-[300px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="p-2 border-b border-slate-100 dark:border-slate-700">
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+                    <input
+                      ref={agentSearchRef}
+                      value={agentSearch}
+                      onChange={e => setAgentSearch(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') setAgentDropdown(false);
+                        if (e.key === 'Enter' && filteredAgents.length === 1) handleSelectAgent(filteredAgents[0]);
+                      }}
+                      placeholder="Search agents..."
+                      className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 focus:border-blue-300 dark:focus:border-blue-600 text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 transition-all"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                  {agentsLoading ? (
+                    <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500 flex flex-col items-center gap-1.5">
+                      <Loader2 size={14} className="animate-spin" />
+                      Loading agents…
+                    </div>
+                  ) : filteredAgents.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                      {agentSearch.trim() ? 'No agents found' : 'No agents in catalog'}
+                    </div>
+                  ) : filteredAgents.map((a: any) => {
+                    const agentId = a.identification?.agent_id || a.agent_id || '';
+                    const name    = a.name || a.agent_name || 'Unnamed';
+                    const desc    = a.description || a.agent_description || '';
+                    const isSelected = config.useCaseId === agentId;
+                    return (
+                      <button
+                        key={agentId || name}
+                        onClick={() => handleSelectAgent(a)}
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                          isSelected
+                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-bold'
+                            : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <div className="font-semibold truncate">{name}</div>
+                        {desc && <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">{desc}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -280,6 +410,11 @@ const PlaygroundPage: React.FC = () => {
 
       {/* ── Tab nav ───────────────────────────────────────────────────────────── */}
       <div className="flex items-center border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-8 flex-shrink-0">
+        {(config.agentType === 'Code-driven') && (
+          <button className={navCls('code')} onClick={() => setActiveTab('code')}>
+            <Code2 size={13} /> Code
+          </button>
+        )}
         <button className={navCls('config')} onClick={() => setActiveTab('config')}>
           <Settings2 size={13} /> Configure
         </button>
@@ -307,6 +442,25 @@ const PlaygroundPage: React.FC = () => {
 
       {/* ── Tab content ───────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 transition-colors">
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            CODE TAB (Code-driven agents only)
+        ══════════════════════════════════════════════════════════════════════ */}
+        {activeTab === 'code' && (config.agentType === 'Code-driven') && (
+          <div className="h-full">
+            <AgentClaudeSupportTab agent={{
+              name:           config.agentName,
+              description:    config.systemPrompt,
+              version:        '1.0',
+              identification: { agent_id: config.useCaseId, role: null, instruction: config.systemPrompt },
+              configuration:  { autonomy_level: null },
+              tool:           [],
+              data_source:    [],
+              application:    [],
+              business_process: [],
+            }} />
+          </div>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════════
             CONFIG TAB
@@ -339,44 +493,6 @@ const PlaygroundPage: React.FC = () => {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
-            </Section>
-
-            {/* Agent identity */}
-            <Section title="Agent identity" icon={<Bot size={14} />}>
-              <Field label="Agent name">
-                <input
-                  value={config.agentName}
-                  onChange={e => setConfig({ agentName: e.target.value })}
-                  placeholder="e.g. Loan Origination Assistant"
-                  className={inputCls}
-                />
-              </Field>
-
-              <Field label="System prompt">
-                <div className="relative">
-                  <textarea
-                    value={config.systemPrompt}
-                    onChange={e => setConfig({ systemPrompt: e.target.value })}
-                    rows={promptExpanded ? 14 : 5}
-                    placeholder="Describe what this agent does, its persona, constraints, and how it should respond…"
-                    className={`${inputCls} resize-none`}
-                  />
-                  <button
-                    onClick={() => setPromptExpanded(p => !p)}
-                    className="absolute bottom-2 right-2 text-[10px] text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 transition-colors"
-                  >
-                    {promptExpanded ? <><ChevronUp size={10} /> Collapse</> : <><ChevronDown size={10} /> Expand</>}
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                  {config.companyName && (
-                    <span className="text-blue-500 dark:text-blue-400 font-semibold">
-                      Company blueprint from {config.companyName} is auto-injected.{' '}
-                    </span>
-                  )}
-                  This is what the agent sees as its instructions.
-                </p>
-              </Field>
             </Section>
 
             {/* Parameters */}
@@ -441,18 +557,6 @@ const PlaygroundPage: React.FC = () => {
               </div>
             </Section>
 
-            {/* CTA */}
-            {!sessionActive && (
-              <button
-                onClick={() => { startSession(); setActiveTab('chat'); }}
-                disabled={!config.agentName.trim() || sessionStarting}
-                className="flex items-center justify-center gap-2 w-full py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 dark:hover:bg-violet-500 rounded-xl shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {sessionStarting
-                  ? <><Loader2 size={15} className="animate-spin" /> Setting up session…</>
-                  : <><Play size={15} /> Start session and interact</>}
-              </button>
-            )}
           </div>
         )}
 
@@ -575,9 +679,12 @@ const PlaygroundPage: React.FC = () => {
                             ))}
                             <button
                               onClick={() => {
-                                const body  = extractPdfBody(msg.content);
-                                const title = extractPdfTitle(body, config.agentName || 'Agent Playground');
-                                if (body.trim()) generateMarkdownPdf(title, body, `tavro-response-${Date.now()}.pdf`);
+                                const body = extractPdfBody(msg.content);
+                                const name = config.agentName || 'Agent Playground';
+                                const allMsgs = messages.filter(m => m.role !== 'system');
+                                const idx = allMsgs.findIndex(m => m.id === msg.id);
+                                const prevUser = allMsgs.slice(0, idx).reverse().find(m => m.role === 'user');
+                                if (body.trim()) generateMarkdownPdf(name, body, `tavro-response-${Date.now()}.pdf`, inferDocType(prevUser?.content || ''));
                               }}
                               className="flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200 dark:hover:border-blue-700 transition-colors"
                               title="Download as PDF">

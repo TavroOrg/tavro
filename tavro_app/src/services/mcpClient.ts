@@ -166,6 +166,30 @@ function normalizeRiskAssessment(item: any): any {
     };
 }
 
+function normalizeProvider(item: any): { organization: string; url: string } {
+    const rawProvider = item?.provider;
+    if (rawProvider && typeof rawProvider === 'object') {
+        const organization = String(
+            rawProvider.organization ??
+            item.source_system ??
+            item.provider_name ??
+            'Tavro Internal'
+        ).trim() || 'Tavro Internal';
+        const url = String(rawProvider.url ?? '').trim();
+        return { organization, url };
+    }
+
+    const organization = String(
+        rawProvider ??
+        item?.source_system ??
+        item?.provider_name ??
+        item?.primary_ai_model_provider ??
+        'Tavro Internal'
+    ).trim() || 'Tavro Internal';
+
+    return { organization, url: '' };
+}
+
 function normaliseUseCase(raw: any): any {
     if (!raw) return raw;
     return Object.assign({}, raw, {
@@ -745,13 +769,14 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
 
             const activeCompanyId = context.blueprintData?.companyId;
             const activeCompanyName = context.blueprintData?.companyName;
+            const hasBlueprintDimensions = (context.blueprintData?.dimensions?.length ?? 0) > 0;
             yield* copilotOrchestrator.run(
                 baseSystemPrompt,
                 history.slice(-10),
                 userMessage,
                 toolDefs,
                 llmCfg,
-                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt, activeCompanyId, activeCompanyName),
+                (name, args, originalPrompt) => this._executeToolForRuntime(name, args, originalPrompt, activeCompanyId, activeCompanyName, hasBlueprintDimensions),
                 requestId,
             );
 
@@ -775,6 +800,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         originalPrompt: string,
         companyId?: string,
         companyName?: string,
+        hasBlueprintDimensions?: boolean,
     ): Promise<any> {
         const toolArgs: Record<string, any> = {
             ...args,
@@ -783,9 +809,29 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
         // Guarantee company_id/company_name are set for write tools — Claude may omit them even when instructed
-        if (name === 'create_agent' || name === 'create_ai_use_case') {
+        if (name === 'create_agent' || name === 'create_ai_use_case' || name === 'generate_spark_ideas' || name === 'convert_spark_idea') {
             if (companyId && !toolArgs.company_id) toolArgs.company_id = companyId;
             if (companyName && !toolArgs.company_name) toolArgs.company_name = companyName;
+        }
+
+        // Spark idea tools need an active company profile as context, exactly like the
+        // Spark page gate ("Set up your Company Blueprint first…"). Short-circuit here
+        // rather than letting the MCP server fail with a generic/internal error.
+        if (name === 'generate_spark_ideas' || name === 'convert_spark_idea') {
+            const effectiveCompanyId = (companyId && companyId.trim())
+                || (toolArgs.company_id && String(toolArgs.company_id).trim());
+            if (!effectiveCompanyId) {
+                return {
+                    error: 'NO_COMPANY_BLUEPRINT',
+                    message: 'Set up your Company Blueprint first — Spark uses your company profile as context for idea generation. Tell the user this in plain language and do not attempt to invent a company.',
+                };
+            }
+            if (name === 'generate_spark_ideas' && hasBlueprintDimensions === false) {
+                return {
+                    error: 'EMPTY_COMPANY_BLUEPRINT',
+                    message: 'This company\'s Blueprint has no processes, risks, applications, or other dimensions yet — Spark needs at least some blueprint context to generate grounded ideas. Tell the user to add to their Company Blueprint first, then try again.',
+                };
+            }
         }
         try {
             const result = await this.callTool(name, toolArgs);
@@ -959,6 +1005,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 ...item,
                 name: item.name || item.agent_name || 'Unnamed Agent',
                 description: item.description || item.agent_description || item.summary || '',
+                provider: normalizeProvider(item),
                 identification: {
                     ...item.identification,
                     agent_id: item.identification?.agent_id || item.agent_id || 'Unknown',
@@ -992,8 +1039,22 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
-            if (agent) this._agentDetailCache.set(id, agent);
-            return agent;
+            // Apply the same normalization as getCatalogPage so risk fields are
+            // consistent regardless of whether the catalog has loaded yet.
+            const normalized = {
+                ...agent,
+                risk_assessment: normalizeRiskAssessment(agent),
+                latest_risk_class:
+                    agent.latest_risk_class ??
+                    agent.risk_assessment?.blended_risk_class ??
+                    agent.risk_assessment?.blended_risk_classification ??
+                    normalizeRiskAssessment(agent).blended_risk_classification,
+                latest_risk_score:
+                    agent.latest_risk_score ??
+                    agent.risk_assessment?.blended_risk_score,
+            };
+            this._agentDetailCache.set(id, normalized);
+            return normalized;
         } catch { return undefined; }
     }
 
@@ -1216,12 +1277,15 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.skills ? { skills: args.skills } : {}),
             ...(args?.data_source ? { data_source: args.data_source } : {}),
             ...(args?.knowledge_source ? { knowledge_source: args.knowledge_source } : {}),
+            ...(args?.skills ? { skills: args.skills } : {}),
+            ...(args?.issues ? { issues: args.issues } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
             ...(companyId ? { company_id: companyId } : {}),
             ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
         return data;
     }
 

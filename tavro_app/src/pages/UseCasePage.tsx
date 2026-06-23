@@ -7,6 +7,7 @@ import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCaseApi } from '../services/useCaseApi';
+import { fetchPagesProgressive } from '../utils/fetchAllPages';
 
 const PAGE_SIZE = 10;
 
@@ -28,8 +29,7 @@ const UseCasePage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await useCaseApi.listUseCases({ recordRange: '1-500', companyId: activeCompany?.id });
-            setAllUseCases((response.data ?? []).map((item: any) => ({
+            const normalizeItem = (item: any) => ({
                 ...item,
                 id: item.id ?? item.use_case_id,
                 identifier: item.identifier ?? item.use_case_id,
@@ -39,7 +39,23 @@ const UseCasePage: React.FC = () => {
                 owner: item.owner ?? item.use_case_owner,
                 function: item['function'] ?? item.business_function,
                 priority: item.priority,
-            })));
+            });
+            await fetchPagesProgressive(
+                (start, range) => useCaseApi.listUseCases({ startRecord: start, recordRange: range, companyId: activeCompany?.id }),
+                (batch, isFirstPage) => {
+                    const normalized = batch.map(normalizeItem);
+                    if (isFirstPage) {
+                        setAllUseCases(normalized);
+                        setLoading(false);
+                    } else {
+                        setAllUseCases(prev => {
+                            const ids = new Set(prev.map((u: any) => u.identifier).filter(Boolean));
+                            return [...prev, ...normalized.filter((u: any) => !ids.has(u.identifier))];
+                        });
+                    }
+                },
+                100,
+            );
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Failed to load use case catalog');
         } finally {

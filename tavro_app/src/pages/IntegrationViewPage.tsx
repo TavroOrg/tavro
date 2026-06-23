@@ -158,6 +158,21 @@ const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertP
   parent_application_id: toNullable(form.parent_application_id),
 });
 
+const changedIntegrationPayload = (
+  current: IntegrationFormState,
+  next: IntegrationFormState,
+): IntegrationUpsertPayload => {
+  const currentPayload = buildIntegrationPayload(current);
+  const nextPayload = buildIntegrationPayload(next);
+  const changed: IntegrationUpsertPayload = {};
+  (Object.keys(nextPayload) as Array<keyof IntegrationUpsertPayload>).forEach(key => {
+    if (nextPayload[key] !== currentPayload[key]) {
+      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+    }
+  });
+  return changed;
+};
+
 const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
@@ -215,7 +230,7 @@ const IntegrationViewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await businessRelationsApi.getIntegration(id);
+      const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
       setIntegration(data);
       setForm(formFromIntegration(data));
       setAttemptedSave(false);
@@ -333,9 +348,15 @@ const IntegrationViewPage: React.FC = () => {
     setInlineSaving(inlineEdit.field);
     setActionError(null);
     try {
+      const changedPayload = changedIntegrationPayload(formFromIntegration(integration), nextForm);
+      if (Object.keys(changedPayload).length === 0) {
+        setInlineEdit(null);
+        setAttemptedSave(false);
+        return;
+      }
       const updated = await businessRelationsApi.updateIntegration(
         integration.integration_id,
-        buildIntegrationPayload(nextForm),
+        changedPayload,
         activeCompany?.id,
       );
       setIntegration(updated);
@@ -455,7 +476,13 @@ const IntegrationViewPage: React.FC = () => {
         return;
       }
       if (!integration) return;
-      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, payload, activeCompany?.id);
+      const changedPayload = changedIntegrationPayload(formFromIntegration(integration), form);
+      if (Object.keys(changedPayload).length === 0) {
+        setAttemptedSave(false);
+        setEditing(false);
+        return;
+      }
+      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, changedPayload, activeCompany?.id);
       setIntegration(updated);
       setForm(formFromIntegration(updated));
       setAttemptedSave(false);

@@ -1,4 +1,6 @@
 import { getValidToken } from './auth';
+import { portalActivity } from './portalActivity';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -54,6 +56,7 @@ export interface UseCaseCreatePayload {
 }
 
 export interface UseCaseUpdatePayload {
+    __activityName?: string;
     title?: string;
     description?: string;
     business_problem_statement?: string;
@@ -61,6 +64,18 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+}
+
+function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
+    const fields: string[] = [];
+    if (payload.title !== undefined) fields.push('title');
+    if (payload.description !== undefined) fields.push('description');
+    if (payload.business_problem_statement !== undefined) fields.push('problem statement');
+    if (payload.expected_benefits !== undefined) fields.push('expected benefits');
+    if (payload.priority !== undefined) fields.push('priority');
+    if (payload.solution_approach !== undefined) fields.push('solution approach');
+    if (payload.use_case_owner !== undefined) fields.push('owner');
+    return fields.length > 0 ? fields.join(', ') : 'details';
 }
 
 export interface UseCaseListResponse {
@@ -88,11 +103,27 @@ class UseCaseApiService {
         if (opts?.startRecord) params.set('start_record', String(opts.startRecord));
         if (opts?.recordRange) params.set('record_range', opts.recordRange);
         if (opts?.companyId) params.set('company_id', opts.companyId);
-        return req(`/use-cases/?${params}`);
+        appLogger.req('GET /api/v1/use-cases/', opts ?? {});
+        const t0 = Date.now();
+        const result = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        appLogger.res('GET /api/v1/use-cases/', { totalRecords: result.total_records, count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
-    async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`);
+    async countUseCases(companyId?: string): Promise<number> {
+        const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
+        if (companyId) params.set('company_id', companyId);
+        const data = await req<UseCaseListResponse>(`/use-cases/?${params}`);
+        return data?.total_records ?? 0;
+    }
+
+    async getUseCase(useCaseId: string, companyId?: string): Promise<UseCaseListResponse> {
+        appLogger.req(`GET /api/v1/use-cases/${useCaseId}`);
+        const t0 = Date.now();
+        const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+        const result = await req<UseCaseListResponse>(`/use-cases/${encodeURIComponent(useCaseId)}${suffix}`);
+        appLogger.res(`GET /api/v1/use-cases/${useCaseId}`, { count: result.data?.length }, Date.now() - t0);
+        return result;
     }
 
     async createUseCase(payload: UseCaseCreatePayload, companyId?: string, companyName?: string): Promise<{ message: string; use_case_id: string }> {
@@ -100,10 +131,13 @@ class UseCaseApiService {
         if (companyId) qs.set('company_id', companyId);
         if (companyName) qs.set('company_name', companyName);
         const params = qs.toString() ? `?${qs}` : '';
-        return req(`/use-cases/${params}`, {
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${params}`, {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+        portalActivity.record(`Created AI use case: ${payload.title}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+        return result;
     }
 
     async suggestDescription(title: string): Promise<{ description: string }> {
@@ -114,16 +148,23 @@ class UseCaseApiService {
     }
 
     async updateUseCase(useCaseId: string, payload: UseCaseUpdatePayload): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const { __activityName, ...body } = payload;
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'PUT',
-            body: JSON.stringify(payload),
+            body: JSON.stringify(body),
         });
+        const displayName = payload.title || __activityName || useCaseId;
+        portalActivity.record(`AI use case "${displayName}" — ${changedUseCaseFields(payload)} updated`, 'violet');
+        return result;
     }
 
     async deleteUseCase(useCaseId: string): Promise<{ message: string; use_case_id: string }> {
-        return req(`/use-cases/${encodeURIComponent(useCaseId)}`, {
+        const result = await req<{ message: string; use_case_id: string }>(`/use-cases/${encodeURIComponent(useCaseId)}`, {
             method: 'DELETE',
         });
+        portalActivity.record(`Deleted AI use case: ${useCaseId}`, 'amber');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+        return result;
     }
 
     async linkAgent(useCaseId: string, agentId: string): Promise<{ message: string; associated_count: number }> {
@@ -188,7 +229,11 @@ class UseCaseApiService {
         if (companyId) qp.set('company_id', companyId);
         if (companyName) qp.set('company_name', companyName);
         const qs = qp.toString() ? `?${qp}` : '';
-        return reqFormData(`/use-cases/upload${qs}`, formData);
+        const result = await reqFormData<{ uploaded_count: number; total_submitted: number; message: string }>(`/use-cases/upload${qs}`, formData);
+        const fileLabel = files.length === 1 ? ` from ${files[0].name}` : ` from ${files.length} files`;
+        portalActivity.record(`Loaded ${result.uploaded_count} AI use case${result.uploaded_count === 1 ? '' : 's'}${fileLabel}`, 'emerald');
+        window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+        return result;
     }
 
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {

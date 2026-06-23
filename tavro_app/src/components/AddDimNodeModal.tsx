@@ -8,6 +8,7 @@ import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import type { DimCategory, VisibilityLevel, DimType } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
+import { portalActivity } from '../services/portalActivity';
 
 interface AddDimNodeModalProps {
   onClose:   () => void;
@@ -35,6 +36,18 @@ const filterBySize = (files: File[], onReject: (names: string[]) => void): File[
 const REL_TYPES = [
   'depends_on', 'owned_by', 'supports', 'risks',
   'enables', 'part_of', 'governed_by', 'replaced_by', 'custom',
+];
+
+const DIM_CATEGORY_OPTIONS: DimCategory[] = [
+  'profile',
+  'strategy',
+  'organisation',
+  'finance',
+  'risk',
+  'application',
+  'process',
+  'integration',
+  'custom',
 ];
 
 const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
@@ -119,6 +132,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
       if (attachments.length > 0) {
         await Promise.all(attachments.map(f => blueprintApi.uploadAttachment(created.id, f)));
       }
+      portalActivity.record(`Added blueprint dimension: ${created.label || label.trim()}`, 'emerald');
       onCreated();
       onClose();
     } catch (err: any) {
@@ -159,7 +173,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
           {/* Category */}
           <Field label="Category" required>
             <div className="flex flex-wrap gap-1.5">
-              {(['strategy', 'organisation', 'finance', 'risk', 'application', 'process', 'integration', 'custom'] as DimCategory[]).map(cat => {
+              {DIM_CATEGORY_OPTIONS.map(cat => {
                 const p = CATEGORY_PALETTE[cat];
                 const active = category === cat;
                 return (

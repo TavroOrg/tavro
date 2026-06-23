@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_data_sources (
 	tenant_id TEXT,
+	company_id TEXT,
 	agent_id TEXT,
     access_level TEXT,
     contains_pii boolean,

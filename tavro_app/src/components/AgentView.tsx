@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import AgentHeader from './AgentHeader';
 import AgentIdentificationTab from './AgentIdentificationTab';
 import AgentTechConfigTab from './AgentTechConfigTab';
@@ -9,15 +9,19 @@ import type { AgentBusinessImpactSnapshot } from './AgentRelatedTab';
 import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
+import AgentIssuesTab from './AgentIssuesTab';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
 interface AgentViewProps {
     agent: AgentData;
     onBusinessImpactChange?: (snapshot: AgentBusinessImpactSnapshot) => void;
+    onIssuesChange?: (issues: AgentIssue[]) => void;
     isEditing?: boolean;
     editName?: string;
     onEditNameChange?: (v: string) => void;
+    editAgentType?: string;
+    onEditAgentTypeChange?: (v: string) => void;
     editDescription?: string;
     onEditDescriptionChange?: (v: string) => void;
     editInstruction?: string;
@@ -35,6 +39,7 @@ type TabType =
     | 'CONFIG'
     | 'IMPACT'
     | 'LINEAGE'
+    | 'ISSUES'
     | 'RISK'
     | 'CONTEXT';
 
@@ -45,11 +50,12 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'LINEAGE', label: 'Lineage Map' },
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
+    { id: 'ISSUES', label: 'Issues' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({
-    agent, onBusinessImpactChange,
-    isEditing, editName, onEditNameChange,
+    agent, onBusinessImpactChange, onIssuesChange,
+    isEditing, editName, onEditNameChange, editAgentType, onEditAgentTypeChange,
     editDescription, onEditDescriptionChange,
     editInstruction, onEditInstructionChange,
     inlineEdit, inlineSaving, onStartInlineEdit,
@@ -73,6 +79,8 @@ const AgentView: React.FC<AgentViewProps> = ({
                     isEditing={isEditing}
                     editName={editName}
                     onEditNameChange={onEditNameChange}
+                    editAgentType={editAgentType}
+                    onEditAgentTypeChange={onEditAgentTypeChange}
                     inlineEdit={inlineEdit}
                     inlineSaving={inlineSaving}
                     onStartInlineEdit={onStartInlineEdit}
@@ -133,7 +141,11 @@ const AgentView: React.FC<AgentViewProps> = ({
                 )}
 
                 {activeTab === 'LINEAGE' && (
-                    <div><AgentLineage agent={agent} /></div>
+                    <div><AgentLineage agent={agent} agentId={agentId} /></div>
+                )}
+
+                {activeTab === 'ISSUES' && (
+                    <div><AgentIssuesTab agent={agent} onIssuesChange={onIssuesChange} /></div>
                 )}
 
                 {activeTab === 'RISK' && agentId && (
@@ -148,6 +160,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                 {activeTab === 'CONTEXT' && (
                     <div><AgentContextGraph agent={agent} /></div>
                 )}
+
             </div>
         </div>
     );

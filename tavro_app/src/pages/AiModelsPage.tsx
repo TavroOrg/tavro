@@ -13,12 +13,14 @@ import {
   Bot,
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
+import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord } from '../types/aiModel';
 
 const PAGE_SIZE = 10;
 
 const AiModelsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { activeCompany } = useBlueprint();
   const [models, setModels] = useState<AiModelRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +33,7 @@ const AiModelsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await aiModelApi.listModels();
+        const data = await aiModelApi.listModels(undefined, activeCompany?.id);
         setModels(data);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load AI models');
@@ -40,7 +42,7 @@ const AiModelsPage: React.FC = () => {
       }
     };
     load();
-  }, []);
+  }, [activeCompany?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

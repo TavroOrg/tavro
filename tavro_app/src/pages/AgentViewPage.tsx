@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AgentData } from '../types/agent';
+import type { AgentData, AgentIssue } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import AgentView from '../components/AgentView';
 import type { AgentBusinessImpactSnapshot } from '../components/AgentRelatedTab';
 import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, ShieldCheck, Pencil, Trash2, CheckCircle2 } from 'lucide-react';
 import { useChatSync } from '../hooks/useChatSync';
-import AuditInitModal from '../components/audit/AuditInitModal';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
@@ -95,6 +95,9 @@ const firstNonEmptySkills = (...payloads: any[]): NonNullable<AgentData['skills'
     return [];
 };
 
+const slugifyForFilename = (value: string): string =>
+    value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'agent';
+
 const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     const applications = (agent.application ?? [])
         .map((app: any) => ({
@@ -134,6 +137,15 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
     const normalizedProcesses = processes.length ? processes : [EMPTY_PROCESS_CARD];
     const normalizedUseCases = aiUseCases.length ? aiUseCases : [EMPTY_USE_CASE_CARD];
 
+    const agentId = agent.identification?.agent_id || agent.name || '';
+    const agentName = agent.name ?? '';
+    const hasCode = agentId
+        ? localStorage.getItem(`tavro:agent-code:${agentId}`) !== null
+        : false;
+    const savedFilename = hasCode && agentId
+        ? `${slugifyForFilename(agentId)}_${slugifyForFilename(agentName)}.py`
+        : null;
+
     return {
         ...agent,
         application: normalizedApplications,
@@ -141,6 +153,7 @@ const buildAgentCardPayload = (agent: AgentData): Record<string, any> => {
         ai_use_case: normalizedUseCases,
         ai_use_cases: normalizedUseCases,
         skills: normalizeSkillsFromPayload(agent),
+        ...(savedFilename ? { code_file_name: savedFilename } : {}),
     };
 };
 
@@ -256,6 +269,7 @@ const AgentViewPage: React.FC = () => {
     const [editName, setEditName] = useState('');
     const [editDescription, setEditDescription] = useState('');
     const [editInstruction, setEditInstruction] = useState('');
+    const [editAgentType, setEditAgentType] = useState('');
     const [editSaving, setEditSaving] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
     const [inlineEdit, setInlineEdit] = useState<{ field: AgentInlineField; value: string } | null>(null);
@@ -264,8 +278,8 @@ const AgentViewPage: React.FC = () => {
     const [deleting, setDeleting] = useState(false);
     const [jsonOpen, setJsonOpen] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [auditModalOpen, setAuditModalOpen] = useState(false);
     const { agents: catalogAgents, refresh: refreshCatalog, upsertAgent } = useCatalog();
+    const { activeCompany } = useBlueprint();
     const recentEditRef = useRef<{
         name: string;
         description: string;
@@ -321,6 +335,7 @@ const AgentViewPage: React.FC = () => {
             configuration: { autonomy_level: null },
             tool: [],
             data_source: [],
+            issues: [],
             skills: [],
             application: [],
             business_process: [],
@@ -364,7 +379,7 @@ const AgentViewPage: React.FC = () => {
         try {
             const [mcpResult, apiResult] = await Promise.allSettled([
                 mcpClient.getAgentDetails(id),
-                agentApi.getAgentCard(id),
+                agentApi.getAgentCard(id, activeCompany?.id),
             ]);
 
             const mcpData = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
@@ -385,6 +400,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     name: apiData?.agent_name ?? mcpData.name,
                     description: apiData?.agent_description ?? mcpData.description,
+                    agent_type: apiData?.agent_type ?? mcpData.agent_type ?? 'Config-driven',
                     identification: {
                         ...mcpData.identification,
                         instruction: apiData?.instruction ?? mcpData.identification?.instruction,
@@ -392,6 +408,7 @@ const AgentViewPage: React.FC = () => {
                     },
                     latest_risk_score: mcpData.latest_risk_score ?? existingCatalog?.latest_risk_score,
                     latest_risk_class: mcpData.latest_risk_class ?? existingCatalog?.latest_risk_class,
+                    issues: apiData?.issues ?? mcpData.issues ?? existingCatalog?.issues ?? [],
                     skills: firstNonEmptySkills(apiData, mcpData, existingCatalog),
                 };
             } else if (apiData) {
@@ -405,8 +422,10 @@ const AgentViewPage: React.FC = () => {
                     name: apiData.agent_name ?? '',
                     description: apiData.agent_description ?? '',
                     version: '1.0',
+                    agent_type: apiData.agent_type ?? 'Config-driven',
                     identification: {
                         agent_id: apiData.agent_id ?? id,
+                        agent_internal_id: apiData.agent_internal_id ?? null,
                         role: apiData.role ?? null,
                         instruction: apiData.instruction ?? null,
                         governance_status: apiData.governance_status ??
@@ -418,9 +437,11 @@ const AgentViewPage: React.FC = () => {
                     skills: firstNonEmptySkills(apiData, apiCatalog),
                     application: apiCatalog?.application ?? [],
                     business_process: apiCatalog?.business_process ?? [],
+                    issues: apiData.issues ?? apiCatalog?.issues ?? [],
                     risk_assessment: apiCatalog?.risk_assessment ?? null,
                     latest_risk_score: apiCatalog?.latest_risk_score ?? null,
                     latest_risk_class: apiCatalog?.latest_risk_class ?? null,
+                    tenant_id: apiData.tenant_id ?? null,
                 };
             } else {
                 const fromCatalog = catalogAgents.find(a =>
@@ -449,18 +470,56 @@ const AgentViewPage: React.FC = () => {
     };
 
     useEffect(() => {
+        mcpClient.invalidateCache();
         fetchAgent();
-    // Only re-fetch when the agent ID changes (navigation).
+    // Re-fetch when the agent ID changes (navigation) or active company switches.
     // catalogAgents.length is intentionally omitted — catalog background
     // refreshes should not trigger concurrent detail fetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id]);
+    }, [id, activeCompany?.id]);
 
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;
         if (agent.identification.governance_status !== 'Risk Assessment is running') return;
-        const handleWorkflowUpdate = () => { fetchAgent(); };
+
+        const handleWorkflowUpdate = () => {
+            // Invalidate the MCP detail cache so fetchAgent() always gets fresh
+            // governance_status from the server rather than a stale cached response.
+            mcpClient.invalidateCache();
+            fetchAgent();
+        };
         window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+
+        // If the workflow already completed before the user navigated to this page,
+        // the tavro_temporal_workflow_update event may never fire again (snapshot is
+        // stable). Check the current snapshot now and proactively re-fetch if there
+        // is no running workflow for this agent.
+        try {
+            const raw = localStorage.getItem('tavro_temporal_workflows');
+            if (raw !== null) {
+                const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
+                const agentId = agent.identification.agent_id;
+                const agentName = agent.name ?? '';
+                const workflows = JSON.parse(raw) as Array<{
+                    status: string;
+                    agent_id?: string;
+                    agent_internal_id?: string;
+                    name?: string;
+                }>;
+                const hasRunning = workflows.some(
+                    w =>
+                        w.status === 'running' &&
+                        (norm(w.agent_id) === norm(agentId) ||
+                            norm(w.agent_internal_id) === norm(agentId) ||
+                            norm(w.name) === norm(agentName)),
+                );
+                if (!hasRunning) {
+                    mcpClient.invalidateCache();
+                    fetchAgent();
+                }
+            }
+        } catch { /* ignore */ }
+
         return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agent?.identification?.agent_id, agent?.identification?.governance_status]);
@@ -546,6 +605,7 @@ const AgentViewPage: React.FC = () => {
         setEditName(agent.name ?? '');
         setEditDescription(agent.description ?? '');
         setEditInstruction(agent.identification?.instruction ?? '');
+        setEditAgentType(agent.agent_type ?? 'Config-driven');
         setEditError(null);
         setInlineEdit(null);
         setIsEditing(true);
@@ -563,11 +623,19 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: editName.trim() || undefined,
-                description: editDescription.trim() || undefined,
-                instruction: editInstruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const currentAgentType = agent.agent_type ?? 'Config-driven';
+            const payload: import('../services/agentApi').AgentUpdatePayload = {};
+            if (editName.trim() !== currentName) payload.agent_name = editName.trim() || undefined;
+            if (editDescription.trim() !== currentDescription) payload.description = editDescription.trim() || undefined;
+            if (editInstruction.trim() !== currentInstruction) payload.instruction = editInstruction.trim() || undefined;
+            if (editAgentType !== currentAgentType) payload.agent_type = editAgentType;
+            await agentApi.updateAgent(agentId, payload, currentName);
+            if (editAgentType !== currentAgentType) {
+                setAgent(prev => prev ? { ...prev, agent_type: editAgentType } : prev);
+            }
             handleAgentSaved({
                 name: editName.trim(),
                 description: editDescription.trim(),
@@ -614,11 +682,12 @@ const AgentViewPage: React.FC = () => {
         setEditError(null);
         try {
             const agentId = agent.identification?.agent_id ?? agent.name;
-            await agentApi.updateAgent(agentId, {
-                agent_name: nextName || undefined,
-                description: nextDescription || undefined,
-                instruction: nextInstruction || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const inlinePayload: import('../services/agentApi').AgentUpdatePayload =
+                inlineEdit.field === 'name' ? { agent_name: nextName || undefined }
+                : inlineEdit.field === 'description' ? { description: nextDescription || undefined }
+                : { instruction: nextInstruction || undefined };
+            await agentApi.updateAgent(agentId, inlinePayload, currentName);
             handleAgentSaved({
                 name: nextName,
                 description: nextDescription,
@@ -659,6 +728,16 @@ const AgentViewPage: React.FC = () => {
             fetchAgent();
             refreshCatalog();
         }, 500);
+    };
+
+    const handleIssuesChange = (issues: AgentIssue[]) => {
+        mcpClient.invalidateCache();
+        setAgent(prev => {
+            if (!prev) return prev;
+            const next: AgentData = { ...prev, issues };
+            upsertAgent(next);
+            return next;
+        });
     };
 
     if (loading && !agent) {
@@ -725,12 +804,6 @@ const AgentViewPage: React.FC = () => {
                                 <FlaskConical size={15} /> Playground
                             </button>
                             <button
-                                onClick={() => setAuditModalOpen(true)}
-                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm"
-                            >
-                                <ShieldCheck size={15} /> Audit
-                            </button>
-                            <button
                                 onClick={handleRequestRiskAssessment}
                                 disabled={assessing}
                                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
@@ -776,9 +849,12 @@ const AgentViewPage: React.FC = () => {
             <AgentView
                 agent={agent}
                 onBusinessImpactChange={handleBusinessImpactChange}
+                onIssuesChange={handleIssuesChange}
                 isEditing={isEditing}
                 editName={editName}
                 onEditNameChange={setEditName}
+                editAgentType={editAgentType}
+                onEditAgentTypeChange={setEditAgentType}
                 editDescription={editDescription}
                 onEditDescriptionChange={setEditDescription}
                 editInstruction={editInstruction}
@@ -880,15 +956,6 @@ const AgentViewPage: React.FC = () => {
                 </div>
             )}
 
-            {/* Audit modal */}
-            <AuditInitModal
-                open={auditModalOpen}
-                onClose={() => setAuditModalOpen(false)}
-                onLaunched={(runId) => navigate(`/audit/${runId}`)}
-                prefillAgentId={agent.identification?.agent_id ?? agent.name}
-                prefillAgentName={agent.name}
-                mode="agent"
-            />
         </div>
     );
 };

@@ -4,9 +4,11 @@ import { ThemeProvider } from './context/ThemeContext';
 import AdminLogin from './pages/AdminLogin';
 import AuthCallback from './pages/AuthCallback';
 import AdminLayout from './pages/AdminLayout';
+import AdminHomePage from './pages/AdminHomePage';
 import AdminConnectorsPage from './pages/AdminConnectorsPage';
 import AdminContainerLogsPage from './pages/AdminContainerLogsPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
+import AdminCompanyPage from './pages/AdminCompanyPage';
 
 function isAuthenticated(): boolean {
     const token = localStorage.getItem('tavro_admin_access_token');
@@ -41,7 +43,8 @@ function App() {
                             </AdminRoute>
                         }
                     >
-                        <Route index element={<AdminConnectorsPage />} />
+                        <Route index element={<AdminHomePage />} />
+                        <Route path="company" element={<AdminCompanyPage />} />
                         <Route path="connectors" element={<AdminConnectorsPage />} />
                         <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />

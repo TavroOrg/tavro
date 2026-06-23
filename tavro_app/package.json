@@ -12,6 +12,7 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.10.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.14.0",

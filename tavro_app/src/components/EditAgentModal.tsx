@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Bot, Loader2, CheckCircle2 } from 'lucide-react';
-import { AgentData } from '../types/agent';
+import { AgentData, AGENT_TYPES } from '../types/agent';
 import { agentApi } from '../services/agentApi';
 
 interface EditAgentModalProps {
@@ -14,6 +14,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
     const [name, setName] = useState(agent.name ?? '');
     const [description, setDescription] = useState(agent.description ?? '');
     const [instruction, setInstruction] = useState(agent.identification?.instruction ?? '');
+    const [agentType, setAgentType] = useState(agent.agent_type || 'Config-driven');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
@@ -23,6 +24,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
         setName(agent.name ?? '');
         setDescription(agent.description ?? '');
         setInstruction(agent.identification?.instruction ?? '');
+        setAgentType(agent.agent_type || 'Config-driven');
         setError(null);
         setSaved(false);
     }, [agent, open]);
@@ -35,11 +37,15 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
         setSaving(true);
         setError(null);
         try {
-            await agentApi.updateAgent(agentId, {
-                agent_name: name.trim() || undefined,
-                description: description.trim() || undefined,
-                instruction: instruction.trim() || undefined,
-            });
+            const currentName = agent.name ?? '';
+            const currentDescription = agent.description ?? '';
+            const currentInstruction = agent.identification?.instruction ?? '';
+            const payload: { agent_name?: string; description?: string; instruction?: string; agent_type?: string } = {};
+            if (name.trim() !== currentName) payload.agent_name = name.trim() || undefined;
+            if (description.trim() !== currentDescription) payload.description = description.trim() || undefined;
+            if (instruction.trim() !== currentInstruction) payload.instruction = instruction.trim() || undefined;
+            if (agentType !== (agent.agent_type || 'Config-driven')) payload.agent_type = agentType;
+            await agentApi.updateAgent(agentId, payload, currentName);
             const updated = {
                 name: name.trim(),
                 description: description.trim(),
@@ -110,6 +116,19 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
                             rows={4}
                             className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all resize-none"
                         />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-slate-600 uppercase tracking-widest">Agent Type</label>
+                        <select
+                            value={agentType}
+                            onChange={e => setAgentType(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all bg-white"
+                        >
+                            {AGENT_TYPES.map(t => (
+                                <option key={t} value={t}>{t}</option>
+                            ))}
+                        </select>
                     </div>
                 </div>
 
