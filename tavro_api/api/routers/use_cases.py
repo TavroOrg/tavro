@@ -195,6 +195,7 @@ async def list_use_cases(
     title: Optional[str] = None,
     process_id: Optional[str] = None,
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
+    tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     start_record: int = 1,
     record_range: str = "1-10",
     db: AsyncSession = Depends(get_db),
@@ -205,13 +206,13 @@ async def list_use_cases(
     except Exception:
         start, end = start_record, start_record + 9
 
-    tenant_id = _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
     where_clauses: List[str] = []
     params: Dict[str, Any] = {}
 
     if tenant_id:
         where_clauses.append(
-            "(u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+            "u.tenant_id = :tid"
         )
         params["tid"] = tenant_id
     if company_id and company_id.strip():
@@ -225,7 +226,9 @@ async def list_use_cases(
                 {"schema": CORE, "tbl": "ai_use_cases"},
             )
             if col_check.first():
-                where_clauses.append("(CAST(u.company_id AS text) = :company_id OR u.company_id IS NULL OR CAST(u.company_id AS text) = '')")
+                where_clauses.append(
+                    "(CAST(u.company_id AS text) = :company_id OR u.company_id IS NULL OR TRIM(CAST(u.company_id AS text)) = '' OR u.company_id = 'None')"
+                )
                 params["company_id"] = company_id.strip()
         except Exception:
             pass
@@ -240,7 +243,7 @@ async def list_use_cases(
         ]
         if tenant_id:
             process_filter.append(
-                "(rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+                "rel.tenant_id = :tid"
             )
         where_clauses.append(
             "EXISTS (SELECT 1 FROM "
@@ -249,6 +252,15 @@ async def list_use_cases(
         params["process_id"] = normalized_process_id
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
+
+    # Company filter for the agent count subqueries — join agents table to apply company_id.
+    _has_company = "company_id" in params
+    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if _has_company else ""
+    _agent_cnt_cf = (
+        "AND (ag.company_id = :company_id OR ag.company_id IS NULL"
+        " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
+        if _has_company else ""
+    )
 
     try:
         result = await db.execute(
@@ -271,18 +283,22 @@ async def list_use_cases(
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
-                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                              {"AND rel.tenant_id = :tid" if tenant_id else ""}
+                              {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         COALESCE((
                             SELECT COUNT(DISTINCT rel.agent_id)
                             FROM {CORE}.agent_ai_use_cases rel
+                            {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
                               AND rel.agent_id IS NOT NULL
                               AND rel.agent_id <> ''
-                              {"AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')" if tenant_id else ""}
+                              {"AND rel.tenant_id = :tid" if tenant_id else ""}
+                              {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
                         u.function,
                         u.business_value_score        AS pv_business_value_score,
@@ -372,29 +388,46 @@ async def create_use_case(
 # ---------------------------------------------------------------------------
 
 @router.get("/{use_case_id}", summary="Get AI Use Case")
-async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = Depends(get_db), company_id: Optional[str] = Query(default=None)):
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     use_case_tenant_filter = (
-        "AND (u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+        "AND u.tenant_id = :tid"
         if tenant_id
         else ""
     )
     agent_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
     )
     process_tenant_filter = (
-        "AND (relp.tenant_id = :tid OR relp.tenant_id IS NULL OR relp.tenant_id = '' OR relp.tenant_id = 'None')"
+        "AND relp.tenant_id = :tid"
         if tenant_id
         else ""
     )
     application_tenant_filter = (
-        "AND (rela.tenant_id = :tid OR rela.tenant_id IS NULL OR rela.tenant_id = '' OR rela.tenant_id = 'None')"
+        "AND rela.tenant_id = :tid"
         if tenant_id
         else ""
     )
+    _ci = " OR {col}.company_id IS NULL OR TRIM(CAST({col}.company_id AS text)) = '' OR {col}.company_id = 'None'"
+    agent_company_filter = (
+        f"AND (ag.company_id = :company_id{_ci.format(col='ag')})" if company_id else ""
+    )
+    process_company_filter = (
+        f"AND (bp.company_id = :company_id{_ci.format(col='bp')})" if company_id else ""
+    )
+    application_company_filter = (
+        f"AND (ba.company_id = :company_id{_ci.format(col='ba')})" if company_id else ""
+    )
+    model_company_filter = (
+        f"AND (m.company_id = :company_id{_ci.format(col='m')})" if company_id else ""
+    )
+    agent_entity_tenant_filter = "AND ag.tenant_id = :tid" if tenant_id else ""
+    process_entity_tenant_filter = "AND bp.tenant_id = :tid" if tenant_id else ""
+    application_entity_tenant_filter = "AND ba.tenant_id = :tid" if tenant_id else ""
+    model_entity_tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     try:
         result = await db.execute(
             text(f"""
@@ -456,9 +489,11 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     AND COALESCE(ai.is_current, true) = true
                 WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid)) AND rel.agent_id IS NOT NULL
                   {agent_tenant_filter}
+                  {agent_company_filter}
+                  {agent_entity_tenant_filter}
                 ORDER BY name NULLS LAST
             """),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_agents = [dict(r) for r in agents_result.mappings().all()]
 
@@ -478,10 +513,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND relp.business_process_id IS NOT NULL
                   AND relp.business_process_id <> ''
                   {process_tenant_filter}
+                  {process_company_filter}
+                  {process_entity_tenant_filter}
                 ORDER BY process_sort_key
                 """
             ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_processes = [
             {
@@ -512,10 +549,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                   AND rela.business_application_id IS NOT NULL
                   AND rela.business_application_id <> ''
                   {application_tenant_filter}
+                  {application_company_filter}
+                  {application_entity_tenant_filter}
                 ORDER BY application_sort_key
                 """
             ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         linked_applications = [
             {
@@ -538,7 +577,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         ).scalar()
         if model_junction:
             model_tenant_filter = (
-                "AND (relm.tenant_id = :tid OR relm.tenant_id IS NULL OR relm.tenant_id = '' OR relm.tenant_id = 'None')"
+                "AND relm.tenant_id = :tid"
                 if tenant_id
                 else ""
             )
@@ -559,10 +598,12 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                       AND relm.ai_model_id IS NOT NULL
                       AND relm.ai_model_id <> ''
                       {model_tenant_filter}
+                      {model_company_filter}
+                      {model_entity_tenant_filter}
                     ORDER BY model_sort_key
                     """
                 ),
-                {"uid": normalized_use_case_id, "tid": tenant_id},
+                {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
             )
             linked_ai_models = [
                 {
@@ -768,12 +809,12 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
     normalized_use_case_id = _norm_id(use_case_id)
     tenant_id = _tenant(request)
     relation_tenant_filter = (
-        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        "AND rel.tenant_id = :tid"
         if tenant_id
         else ""
     )
     use_case_tenant_filter = (
-        "AND (u.tenant_id = :tid OR u.tenant_id IS NULL OR u.tenant_id = '' OR u.tenant_id = 'None')"
+        "AND u.tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -781,7 +822,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
         use_case_row = await db.execute(
             text(
                 f"""
-                SELECT ai_use_case_id, name
+                SELECT ai_use_case_id, name, company_id
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
@@ -836,9 +877,9 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             text(
                 f"""
                 INSERT INTO {CORE}.agent_ai_use_cases
-                    (tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
+                    (tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name, agent_internal_id, created_ts, updated_ts)
                 VALUES
-                    (:tid, :uid, :uname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (:tid, :cid, :uid, :uname, :aid, :aname, :iid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
@@ -849,6 +890,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             ),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "uname": str(use_case.get("name") or normalized_use_case_id),
                 "aid": agent_id,
@@ -900,12 +942,12 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
     tenant_id = _tenant(request)
     normalized_use_case_id = _norm_id(use_case_id)
     relation_tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
     use_case_tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -993,18 +1035,19 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
 
     try:
 
-        uc_exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+        uc_row = await db.execute(
+            text(f"SELECT ai_use_case_id, company_id FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
         )
-        if not uc_exists.first():
+        use_case = uc_row.mappings().first()
+        if not use_case:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
         application_row = await db.execute(
@@ -1048,14 +1091,15 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_use_case_business_applications (
-                    tenant_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
+                    tenant_id, company_id, ai_use_case_id, business_application_id, application_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    :tid, :cid, :uid, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
             """),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "aid": canonical_application_id,
                 "aname": application.get("application_name") or canonical_application_id,
@@ -1095,7 +1139,7 @@ async def unlink_application(use_case_id: str, application_id: str, request: Req
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
@@ -1217,17 +1261,18 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )
 
     try:
-        uc_exists = await db.execute(
-            text(f"SELECT 1 FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
+        uc_row = await db.execute(
+            text(f"SELECT ai_use_case_id, company_id FROM {CORE}.ai_use_cases WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid)) {tenant_filter} LIMIT 1"),
             {"uid": normalized_use_case_id, "tid": tenant_id},
         )
-        if not uc_exists.first():
+        use_case = uc_row.mappings().first()
+        if not use_case:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
         process_row = await db.execute(
@@ -1271,14 +1316,15 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
         await db.execute(
             text(f"""
                 INSERT INTO {CORE}.ai_use_case_business_processes (
-                    tenant_id, ai_use_case_id, business_process_id, process_name, created_ts, updated_ts
+                    tenant_id, company_id, ai_use_case_id, business_process_id, process_name, created_ts, updated_ts
                 )
                 VALUES (
-                    :tid, :uid, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    :tid, :cid, :uid, :pid, :pname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
             """),
             {
                 "tid": tenant_id,
+                "cid": use_case.get("company_id"),
                 "uid": normalized_use_case_id,
                 "pid": canonical_process_id,
                 "pname": process.get("process_name") or canonical_process_id,
@@ -1318,7 +1364,7 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
 
     tenant_id = _tenant(request)
     tenant_filter = (
-        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        "AND tenant_id = :tid"
         if tenant_id
         else ""
     )

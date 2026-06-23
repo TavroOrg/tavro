@@ -9,6 +9,7 @@ import { ArrowLeft, Code2, X, Copy, Check, ShieldAlert, Loader2, FlaskConical, S
 import { useChatSync } from '../hooks/useChatSync';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
+import { useBlueprint } from '../context/BlueprintContext';
 
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
@@ -278,6 +279,7 @@ const AgentViewPage: React.FC = () => {
     const [jsonOpen, setJsonOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const { agents: catalogAgents, refresh: refreshCatalog, upsertAgent } = useCatalog();
+    const { activeCompany } = useBlueprint();
     const recentEditRef = useRef<{
         name: string;
         description: string;
@@ -377,7 +379,7 @@ const AgentViewPage: React.FC = () => {
         try {
             const [mcpResult, apiResult] = await Promise.allSettled([
                 mcpClient.getAgentDetails(id),
-                agentApi.getAgentCard(id),
+                agentApi.getAgentCard(id, activeCompany?.id),
             ]);
 
             const mcpData = mcpResult.status === 'fulfilled' ? mcpResult.value : undefined;
@@ -470,11 +472,11 @@ const AgentViewPage: React.FC = () => {
     useEffect(() => {
         mcpClient.invalidateCache();
         fetchAgent();
-    // Only re-fetch when the agent ID changes (navigation).
+    // Re-fetch when the agent ID changes (navigation) or active company switches.
     // catalogAgents.length is intentionally omitted — catalog background
     // refreshes should not trigger concurrent detail fetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id]);
+    }, [id, activeCompany?.id]);
 
     useEffect(() => {
         if (!agent?.identification?.agent_id) return;

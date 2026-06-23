@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS core.spark_ideas (
     idea_id           TEXT PRIMARY KEY,
     company_id        TEXT NOT NULL,
+    tenant_id         TEXT,
     title             TEXT NOT NULL,
     description       TEXT,
     rationale         TEXT,

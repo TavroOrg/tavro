@@ -528,7 +528,7 @@ WHERE COALESCE(a.is_current, TRUE) = TRUE
 
 _USECASES_SQL = f"""
 SELECT ai_use_case_id, name, status, created_ts, updated_ts
-FROM {CORE}.ai_use_cases
+FROM {CORE}.ai_use_cases u
 WHERE (tenant_id = :tid OR tenant_id IS NULL)
 """
 
@@ -578,9 +578,43 @@ async def get_insights_summary(
     db: AsyncSession = Depends(get_db),
 ):
     tenant_id = _require_tenant(request)
+    cid = company_id.strip() if company_id and company_id.strip() else None
+    agent_sql = _AGENTS_SQL
+    usecase_sql = _USECASES_SQL
+    params: Dict[str, Any] = {"tid": tenant_id}
+
+    if cid:
+        params["cid"] = cid
+        try:
+            col_check = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                    LIMIT 1
+                """),
+                {"schema": CORE, "tbl": "agents"},
+            )
+            if col_check.first():
+                agent_sql += "\n  AND (CAST(a.company_id AS text) = :cid OR a.company_id IS NULL OR CAST(a.company_id AS text) = '')"
+        except Exception:
+            pass
+        try:
+            col_check = await db.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
+                    LIMIT 1
+                """),
+                {"schema": CORE, "tbl": "ai_use_cases"},
+            )
+            if col_check.first():
+                usecase_sql += "\n  AND (CAST(u.company_id AS text) = :cid OR u.company_id IS NULL OR CAST(u.company_id AS text) = '')"
+        except Exception:
+            pass
+
     try:
-        agent_rows = [dict(r) for r in (await db.execute(text(_AGENTS_SQL), {"tid": tenant_id})).mappings().all()]
-        uc_rows = [dict(r) for r in (await db.execute(text(_USECASES_SQL), {"tid": tenant_id})).mappings().all()]
+        agent_rows = [dict(r) for r in (await db.execute(text(agent_sql), params)).mappings().all()]
+        uc_rows = [dict(r) for r in (await db.execute(text(usecase_sql), params)).mappings().all()]
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -139,10 +139,11 @@ class UseCaseApiService {
         return data?.total_records ?? 0;
     }
 
-    async getUseCase(useCaseId: string): Promise<UseCaseListResponse> {
+    async getUseCase(useCaseId: string, companyId?: string): Promise<UseCaseListResponse> {
         appLogger.req(`GET /api/v1/use-cases/${useCaseId}`);
         const t0 = Date.now();
-        const result = await req<UseCaseListResponse>(`/use-cases/${encodeURIComponent(useCaseId)}`);
+        const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+        const result = await req<UseCaseListResponse>(`/use-cases/${encodeURIComponent(useCaseId)}${suffix}`);
         appLogger.res(`GET /api/v1/use-cases/${useCaseId}`, { count: result.data?.length }, Date.now() - t0);
         return result;
     }
