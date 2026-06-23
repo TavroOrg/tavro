@@ -123,7 +123,7 @@ const HINTS: Record<string, string> = {
   business_criticality:
     "Business Criticality defines how vital the application is to core operations and support/change prioritization.",
   agent_risk_exposure:
-    'ARE represents overall application risk using highest related agent AIVSS and business/emergency criticality factors.',
+    'ARE represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.',
   num_of_associated_agents:
     'Indicates the total number of agents associated with the application.',
   agent_risk_tier:
