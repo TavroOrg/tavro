@@ -279,6 +279,19 @@ async def _stream_anthropic(system: str, user: str) -> AsyncGenerator[str, None]
             yield text
 
 
+async def _stream_anthropic_with_heartbeat(
+    system: str, user: str, sse_queue: "asyncio.Queue[str | None]"
+) -> None:
+    """Run _stream_anthropic and push chunks onto sse_queue; push None when done."""
+    try:
+        async for chunk in _stream_anthropic(system, user):
+            await sse_queue.put(chunk)
+    except Exception as exc:
+        await sse_queue.put(exc)  # type: ignore[arg-type]
+    finally:
+        await sse_queue.put(None)
+
+
 # ── Claude Code CLI streaming (used for open-ended claude "<prompt>" commands) ─
 
 async def _run_claude_cli(prompt: str) -> AsyncGenerator[str, None]:
@@ -327,9 +340,21 @@ async def _handle_update(filename: str, instruction: str, current_code: str) -> 
     )
 
     try:
+        queue: asyncio.Queue = asyncio.Queue()
+        task = asyncio.create_task(_stream_anthropic_with_heartbeat(system, user, queue))
         code_lines: list[str] = []
-        async for chunk in _stream_anthropic(system, user):
-            code_lines.append(chunk)
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            code_lines.append(item)
+        await task
 
         code = _extract_code("".join(code_lines))
         line_count = code.count('\n') + 1
@@ -360,9 +385,21 @@ async def _handle_generate(agent_id: str) -> AsyncGenerator[str, None]:
     filename = f"{slugify(agent_id)}_{slugify(name)}.py"
 
     try:
+        queue: asyncio.Queue = asyncio.Queue()
+        task = asyncio.create_task(_stream_anthropic_with_heartbeat(system, user, queue))
         code_lines: list[str] = []
-        async for chunk in _stream_anthropic(system, user):
-            code_lines.append(chunk)
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            code_lines.append(item)
+        await task
 
         code = _extract_code("".join(code_lines))
         line_count = code.count('\n') + 1
