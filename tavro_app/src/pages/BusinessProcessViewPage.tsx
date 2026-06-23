@@ -210,7 +210,7 @@ const changedProcessPayload = (
   const changed: BusinessProcessUpsertPayload = {};
   (Object.keys(nextPayload) as Array<keyof BusinessProcessUpsertPayload>).forEach(key => {
     if (nextPayload[key] !== currentPayload[key]) {
-      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+      Object.assign(changed, { [key]: nextPayload[key] ?? null });
     }
   });
   return changed;
@@ -318,6 +318,9 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
@@ -411,6 +414,7 @@ const BusinessProcessViewPage: React.FC = () => {
       ]);
       setProcess(proc);
       setForm(formFromProcess(proc));
+      setTags(Array.isArray(proc.tags) ? proc.tags : []);
       setAllProcesses(processes);
       setAttemptedSave(false);
     } catch (err: any) {
@@ -424,6 +428,7 @@ const BusinessProcessViewPage: React.FC = () => {
     if (isCreateMode) {
       setProcess(null);
       setForm(emptyForm());
+      setTags([]);
       setEditing(true);
       setInlineEdit(null);
       setAttemptedSave(false);
@@ -548,6 +553,7 @@ const BusinessProcessViewPage: React.FC = () => {
       );
       setProcess(updated);
       setForm(formFromProcess(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
@@ -672,6 +678,7 @@ const BusinessProcessViewPage: React.FC = () => {
     try {
       const payload = buildProcessPayload(form);
       if (isCreateMode) {
+        if (tags.length > 0) payload.tags = tags;
         const created = await businessRelationsApi.createProcess(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
@@ -705,6 +712,7 @@ const BusinessProcessViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateProcess(process.business_process_id, changedPayload);
       setProcess(updated);
       setForm(formFromProcess(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setAttemptedSave(false);
       setInlineEdit(null);
       setEditing(false);
@@ -1142,6 +1150,56 @@ const BusinessProcessViewPage: React.FC = () => {
                     className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px]',
                   })
                 )}
+              </div>
+              <div className="flex flex-col gap-1.5 col-span-full">
+                <HintLabel label="Tags" />
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[32px] bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+                  {tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-semibold bg-white text-slate-600 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                      {tag}
+                      <button
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={async () => {
+                          const next = tags.filter(t => t !== tag);
+                          if (isCreateMode) { setTags(next); return; }
+                          if (!process) return;
+                          setTagSaving(true);
+                          try {
+                            const updated = await businessRelationsApi.updateProcess(process.business_process_id, { tags: next });
+                            setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                          } catch { setTags(next); }
+                          finally { setTagSaving(false); }
+                        }}
+                        className="text-slate-400 hover:text-red-400 leading-none ml-0.5"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={async e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const newTag = tagInput.trim().replace(/,$/, '');
+                        if (!newTag || tags.includes(newTag)) { setTagInput(''); return; }
+                        const next = [...tags, newTag];
+                        setTagInput('');
+                        if (isCreateMode) { setTags(next); return; }
+                        setTagSaving(true);
+                        try {
+                          const updated = await businessRelationsApi.updateProcess(process!.business_process_id, { tags: next });
+                          setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                        } catch { setTags(next); }
+                        finally { setTagSaving(false); }
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter…"
+                    disabled={tagSaving}
+                    className="text-[11px] bg-transparent outline-none text-slate-500 placeholder:text-slate-300 min-w-[60px]"
+                  />
+                </div>
               </div>
             </div>
           </Section>

@@ -57,6 +57,7 @@ export interface BusinessApplicationRecord {
   latest_released_version: string | null;
   latest_release_date: string | null;
   latest_release_documentation_link: string | null;
+  tags: string[];
   created_ts: string | null;
   updated_ts: string | null;
   related_agents: RelatedAgentReference[];
@@ -92,6 +93,7 @@ export interface BusinessProcessRecord {
   inherent_risk_classification_score: number | null;
   sla: string | null;
   process_health_state: string | null;
+  tags: string[];
   created_ts: string | null;
   updated_ts: string | null;
   related_agents: RelatedAgentReference[];
@@ -205,6 +207,7 @@ export interface BusinessApplicationUpsertPayload {
   latest_released_version?: string | null;
   latest_release_date?: string | null;
   latest_release_documentation_link?: string | null;
+  tags?: string[] | null;
 }
 
 export interface BusinessProcessUpsertPayload {
@@ -222,6 +225,7 @@ export interface BusinessProcessUpsertPayload {
   regulatory_impact?: string | null;
   sla?: string | null;
   process_health_state?: string | null;
+  tags?: string[] | null;
 }
 
 export interface IntegrationRecord {
@@ -242,6 +246,7 @@ export interface IntegrationRecord {
   version: string | null;
   parent_application_id: string | null;
   parent_application_name: string | null;
+  tags: string[];
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
   created_ts: string | null;
@@ -264,4 +269,5 @@ export interface IntegrationUpsertPayload {
   sla?: string | null;
   version?: string | null;
   parent_application_id?: string | null;
+  tags?: string[] | null;
 }
