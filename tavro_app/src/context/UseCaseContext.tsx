@@ -182,6 +182,12 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return () => window.removeEventListener('tavro:usecase-created', handler);
     }, [fetchUseCases]);
 
+    useEffect(() => {
+        const handler = () => fetchUseCases(true);
+        window.addEventListener('tavro:usecase-updated', handler);
+        return () => window.removeEventListener('tavro:usecase-updated', handler);
+    }, [fetchUseCases]);
+
     const refresh = useCallback(() => fetchUseCases(true), [fetchUseCases]);
 
     const upsertUseCase = useCallback((uc: UseCaseSummary) => {

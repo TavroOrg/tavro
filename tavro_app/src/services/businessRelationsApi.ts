@@ -269,6 +269,13 @@ class BusinessRelationsApi {
     });
   }
 
+  async suggestIntegrationDescription(integrationName: string): Promise<{ description: string }> {
+    return req('/integrations/suggest-description', {
+      method: 'POST',
+      body: JSON.stringify({ integration_name: integrationName }),
+    });
+  }
+
   async updateProcess(
     processId: string,
     payload: BusinessProcessUpsertPayload,
