@@ -153,6 +153,35 @@ INSERT INTO core.business_applications (
     :company_id, :company_name,
     :created_ts, :updated_ts
 )
+ON CONFLICT (tenant_id, company_id, business_application_id) DO UPDATE SET
+    application_name                   = EXCLUDED.application_name,
+    emergency_tier                     = EXCLUDED.emergency_tier,
+    business_owner                     = EXCLUDED.business_owner,
+    application_portfolio_manager      = EXCLUDED.application_portfolio_manager,
+    vendor_name                        = EXCLUDED.vendor_name,
+    business_criticality               = EXCLUDED.business_criticality,
+    it_application_owner               = EXCLUDED.it_application_owner,
+    application_description            = EXCLUDED.application_description,
+    agent_risk_exposure                = EXCLUDED.agent_risk_exposure,
+    num_of_associated_agents           = EXCLUDED.num_of_associated_agents,
+    inherent_risk_classification       = EXCLUDED.inherent_risk_classification,
+    residual_risk_classification       = EXCLUDED.residual_risk_classification,
+    agent_risk_tier                    = EXCLUDED.agent_risk_tier,
+    blended_risk_score                 = EXCLUDED.blended_risk_score,
+    inherent_risk_classification_score = EXCLUDED.inherent_risk_classification_score,
+    residual_risk_classification_score = EXCLUDED.residual_risk_classification_score,
+    embedded_ai                        = EXCLUDED.embedded_ai,
+    opt_out_option                     = EXCLUDED.opt_out_option,
+    privacy_policy_url                 = EXCLUDED.privacy_policy_url,
+    data_excluded_from_ai_training     = EXCLUDED.data_excluded_from_ai_training,
+    vendor_description                 = EXCLUDED.vendor_description,
+    current_installed_version          = EXCLUDED.current_installed_version,
+    is_current_version_supported       = EXCLUDED.is_current_version_supported,
+    latest_released_version            = EXCLUDED.latest_released_version,
+    latest_release_date                = EXCLUDED.latest_release_date,
+    latest_release_documentation_link  = EXCLUDED.latest_release_documentation_link,
+    company_name                       = EXCLUDED.company_name,
+    updated_ts                         = EXCLUDED.updated_ts
 """
 
 # User-reference fields in the business applications SN table
@@ -290,6 +319,30 @@ INSERT INTO core.business_processes (
     :company_id, :company_name,
     :created_ts, :updated_ts
 )
+ON CONFLICT (tenant_id, company_id, business_process_id) DO UPDATE SET
+    process_number                     = EXCLUDED.process_number,
+    process_name                       = EXCLUDED.process_name,
+    process_description                = EXCLUDED.process_description,
+    parent_process_id                  = EXCLUDED.parent_process_id,
+    owner                              = EXCLUDED.owner,
+    stakeholders                       = EXCLUDED.stakeholders,
+    operators                          = EXCLUDED.operators,
+    business_criticality               = EXCLUDED.business_criticality,
+    reputational_impact                = EXCLUDED.reputational_impact,
+    num_of_associated_agents           = EXCLUDED.num_of_associated_agents,
+    agent_risk_tier                    = EXCLUDED.agent_risk_tier,
+    residual_risk_classification       = EXCLUDED.residual_risk_classification,
+    inherent_risk_classification       = EXCLUDED.inherent_risk_classification,
+    financial_impact                   = EXCLUDED.financial_impact,
+    regulatory_impact                  = EXCLUDED.regulatory_impact,
+    agent_risk_exposure                = EXCLUDED.agent_risk_exposure,
+    blended_risk_score                 = EXCLUDED.blended_risk_score,
+    residual_risk_classification_score = EXCLUDED.residual_risk_classification_score,
+    inherent_risk_classification_score = EXCLUDED.inherent_risk_classification_score,
+    sla                                = EXCLUDED.sla,
+    process_health_state               = EXCLUDED.process_health_state,
+    company_name                       = EXCLUDED.company_name,
+    updated_ts                         = EXCLUDED.updated_ts
 """
 
 # User-reference fields in the business processes SN table
