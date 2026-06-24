@@ -259,6 +259,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
     const solutionApproach = uc.solution_approach ?? (uc as any).solution_approach ?? null;
+    const executiveSummary = (uc as any).executive_summary ?? null;
     const assumptions = (uc as any).assumptions ?? null;
     const quantifiedFinancialBenefits = (uc as any).quantified_financial_benefits ?? null;
     const totalFinancialImpactSummary = (uc as any).total_financial_impact_summary ?? null;
@@ -572,6 +573,45 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {/* Business Case tab */}
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
+
+                        {/* Executive Summary — full-width prominent card */}
+                        {inlineEdit?.field === 'executive_summary' ? (
+                            <SectionCard icon={<FileText size={16} />} title="Executive Summary">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('executive_summary')}
+                                </div>
+                            </SectionCard>
+                        ) : (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 border-b border-blue-100 flex items-center gap-2">
+                                    <span className="text-blue-600"><FileText size={16} /></span>
+                                    <span className="font-bold text-slate-800 text-sm">Executive Summary</span>
+                                </div>
+                                <div className="px-5 py-4">
+                                    {executiveSummary ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', executiveSummary)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-700 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-white/60 transition-colors p-1 -m-1"
+                                        >{executiveSummary}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-white/40 rounded-lg p-1 -m-1 transition-colors"
+                                        >Double-click to add an executive summary…</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Existing fields */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Problem Statement */}

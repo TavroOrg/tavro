@@ -30,5 +30,6 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   return_on_investment TEXT,
   risk_considerations TEXT,
   implementation_roadmap TEXT,
-  recommendation TEXT
+  recommendation TEXT,
+  executive_summary TEXT
 );

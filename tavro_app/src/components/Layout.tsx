@@ -274,6 +274,8 @@ const Layout: React.FC = () => {
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {/* Global artifact-ready notification — appears centered at top of viewport */}
             <TimedInfoToast storageKey="tavro_artifacts_notice" position="center" durationMs={8000} />
+            {/* Spark use-case enrichment notifications — bottom-right */}
+            <TimedInfoToast storageKey="tavro_spark_notice" position="bottom-right" durationMs={12000} />
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>

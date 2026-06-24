@@ -28,6 +28,7 @@ export interface UseCaseSummary {
     inherent_risk_classification_score?: number | string | null;
     residual_risk_classification?: string | null;
     residual_risk_classification_score?: number | string | null;
+    executive_summary?: string | null;
     assumptions?: string | null;
     quantified_financial_benefits?: string | null;
     total_financial_impact_summary?: string | null;

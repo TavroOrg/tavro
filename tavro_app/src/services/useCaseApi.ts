@@ -64,6 +64,7 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+    executive_summary?: string;
     assumptions?: string;
     quantified_financial_benefits?: string;
     total_financial_impact_summary?: string;
@@ -83,6 +84,7 @@ function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
     if (payload.priority !== undefined) fields.push('priority');
     if (payload.solution_approach !== undefined) fields.push('solution approach');
     if (payload.use_case_owner !== undefined) fields.push('owner');
+    if (payload.executive_summary !== undefined) fields.push('executive summary');
     if (payload.assumptions !== undefined) fields.push('assumptions');
     if (payload.quantified_financial_benefits !== undefined) fields.push('quantified financial benefits');
     if (payload.total_financial_impact_summary !== undefined) fields.push('total financial impact summary');

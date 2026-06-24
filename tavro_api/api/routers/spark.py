@@ -1619,6 +1619,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             "risk_considerations": "",
             "implementation_roadmap": "",
             "recommendation": "",
+            "executive_summary": "",
         }
         return SparkConvertResponse(
             use_case_fields=no_llm_fields,
@@ -1672,7 +1673,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         "- return_on_investment: ROI estimate or payback period based on costs vs benefits — plain string\n"
         "- risk_considerations: key financial or operational risks that could affect the business case — plain string\n"
         "- implementation_roadmap: phased timeline for delivery (e.g. Phase 1: …, Phase 2: …) — plain string\n"
-        "- recommendation: final recommendation on whether and how to proceed — plain string\n\n"
+        "- recommendation: final recommendation on whether and how to proceed — plain string\n"
+        "- executive_summary: concise 3-6 sentence executive-level summary of the entire business case covering problem, solution, and expected value — plain string\n\n"
         "All values must be plain strings — no JSON objects, no curly braces, no nested structures.\n"
         "Return ONLY the JSON object. No prose, no markdown fencing."
     )
@@ -1686,22 +1688,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         if not isinstance(fields, dict):
             raise ValueError("Non-dict response")
     except Exception as exc:
-        logger.warning("spark.convert_idea use-case expansion fallback: %s", exc)
-        fields = {
-            "title": request.title,
-            "description": request.description,
-            "business_problem_statement": request.rationale,
-            "expected_benefits": f"AI-driven improvements for: {request.title}",
-            "solution_approach": "",
-            "assumptions": "",
-            "quantified_financial_benefits": "",
-            "total_financial_impact_summary": "",
-            "implementation_cost_estimate": "",
-            "return_on_investment": "",
-            "risk_considerations": "",
-            "implementation_roadmap": "",
-            "recommendation": "",
-        }
+        logger.warning("spark.convert_idea enrichment failed: %s", exc)
+        raise HTTPException(status_code=503, detail=f"AI enrichment unavailable: {exc}")
 
     fields.setdefault("priority", priority)
 

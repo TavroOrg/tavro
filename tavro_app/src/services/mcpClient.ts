@@ -1229,6 +1229,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(fields?.impacted_business_applications ? { impacted_business_applications: fields.impacted_business_applications } : {}),
             ...(fields?.impacted_business_processes ? { impacted_business_processes: fields.impacted_business_processes } : {}),
             ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
+            ...(fields?.executive_summary ? { executive_summary: fields.executive_summary } : {}),
             ...(fields?.assumptions ? { assumptions: fields.assumptions } : {}),
             ...(fields?.quantified_financial_benefits ? { quantified_financial_benefits: fields.quantified_financial_benefits } : {}),
             ...(fields?.total_financial_impact_summary ? { total_financial_impact_summary: fields.total_financial_impact_summary } : {}),

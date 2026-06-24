@@ -285,6 +285,7 @@ const mergeUseCaseWithRestDetail = (
   };
 
   const businessCaseFields = {
+    executive_summary: row.executive_summary ?? (base as any)?.executive_summary ?? null,
     assumptions: row.assumptions ?? (base as any)?.assumptions ?? null,
     quantified_financial_benefits: row.quantified_financial_benefits ?? (base as any)?.quantified_financial_benefits ?? null,
     total_financial_impact_summary: row.total_financial_impact_summary ?? (base as any)?.total_financial_impact_summary ?? null,
@@ -1280,6 +1281,13 @@ const UseCaseViewPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState<false | 'loading' | 'failed'>(() => {
+    try {
+      const raw = localStorage.getItem('tavro_enriching_use_cases');
+      const ids: string[] = raw ? JSON.parse(raw) : [];
+      return ids.includes(id ?? '') ? 'loading' : false;
+    } catch { return false; }
+  });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
@@ -1370,6 +1378,26 @@ const UseCaseViewPage: React.FC = () => {
 
   useEffect(() => {
     fetchUseCase();
+  }, [id]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ use_case_id: string; title?: string; failed?: boolean }>).detail;
+      if (detail?.use_case_id !== id) return;
+      if (!detail.failed) {
+        setEnriching(false);
+        fetchUseCaseSilently();
+        refreshUseCases();
+        const name = detail.title || 'Use case';
+        window.dispatchEvent(new CustomEvent('tavro_notice', {
+          detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.` },
+        }));
+      } else {
+        setEnriching('failed');
+      }
+    };
+    window.addEventListener('tavro_usecase_enriched', handler);
+    return () => window.removeEventListener('tavro_usecase_enriched', handler);
   }, [id]);
 
   useEffect(() => {
@@ -1509,6 +1537,7 @@ const UseCaseViewPage: React.FC = () => {
       else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
       else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
       else if (field === 'solution_approach') payload.solution_approach = value.trim();
+      else if (field === 'executive_summary') payload.executive_summary = value.trim();
       else if (field === 'assumptions') payload.assumptions = value.trim();
       else if (field === 'quantified_financial_benefits') payload.quantified_financial_benefits = value.trim();
       else if (field === 'total_financial_impact_summary') payload.total_financial_impact_summary = value.trim();
@@ -1528,6 +1557,7 @@ const UseCaseViewPage: React.FC = () => {
         else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
         else if (field === 'expected_benefits') next.expected_benefits = value.trim();
         else if (field === 'solution_approach') next.solution_approach = value.trim();
+        else if (field === 'executive_summary') next.executive_summary = value.trim();
         else if (field === 'assumptions') next.assumptions = value.trim();
         else if (field === 'quantified_financial_benefits') next.quantified_financial_benefits = value.trim();
         else if (field === 'total_financial_impact_summary') next.total_financial_impact_summary = value.trim();
@@ -1677,6 +1707,24 @@ const UseCaseViewPage: React.FC = () => {
           </div>
           <button onClick={() => navigate('/use-cases')} className="text-sm font-medium text-violet-600 hover:underline">
             Return to Use Case Catalog
+          </button>
+        </div>
+      )}
+
+      {enriching === 'loading' && (
+        <div className="flex items-center gap-3 px-5 py-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-800 text-sm font-medium shadow-sm">
+          <RefreshCw size={15} className="animate-spin shrink-0 text-blue-500" />
+          <span>AI use case creation is in progress — we'll notify you once this is fully generated.</span>
+        </div>
+      )}
+      {enriching === 'failed' && (
+        <div className="flex items-center justify-between gap-3 px-5 py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium shadow-sm">
+          <span>AI business case generation failed — the use case was created but fields may be incomplete. You can edit each field manually.</span>
+          <button
+            className="shrink-0 text-amber-700 underline underline-offset-2 hover:text-amber-900"
+            onClick={() => setEnriching(false)}
+          >
+            Dismiss
           </button>
         </div>
       )}

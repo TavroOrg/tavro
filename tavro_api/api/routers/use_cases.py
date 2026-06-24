@@ -214,6 +214,7 @@ class UseCaseCreateRequest(BaseModel):
     risk_considerations: Optional[str] = None
     implementation_roadmap: Optional[str] = None
     recommendation: Optional[str] = None
+    executive_summary: Optional[str] = None
 
 
 class UseCaseUpdateRequest(BaseModel):
@@ -232,6 +233,7 @@ class UseCaseUpdateRequest(BaseModel):
     risk_considerations: Optional[str] = None
     implementation_roadmap: Optional[str] = None
     recommendation: Optional[str] = None
+    executive_summary: Optional[str] = None
 
 
 class LinkAgentRequest(BaseModel):
@@ -483,12 +485,12 @@ async def create_use_case(
                      solution_approach, created_ts, updated_ts, company_id, company_name,
                      assumptions, quantified_financial_benefits, total_financial_impact_summary,
                      implementation_cost_estimate, return_on_investment, risk_considerations,
-                     implementation_roadmap, recommendation)
+                     implementation_roadmap, recommendation, executive_summary)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
                      :problem, :benefits, :priority, 'New',
                      :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname,
-                     :assumptions, :qfb, :tfis, :ice, :roi, :risk_cons, :impl_roadmap, :recom)
+                     :assumptions, :qfb, :tfis, :ice, :roi, :risk_cons, :impl_roadmap, :recom, :exec_summary)
             """),
             {
                 "tid": tenant_id, "uid": use_case_id,
@@ -507,6 +509,7 @@ async def create_use_case(
                 "risk_cons": body.risk_considerations or "",
                 "impl_roadmap": body.implementation_roadmap or "",
                 "recom": body.recommendation or "",
+                "exec_summary": body.executive_summary or "",
             },
         )
         await db.commit()
@@ -580,7 +583,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     u.agent_risk_tier_art,
                     u.assumptions, u.quantified_financial_benefits, u.total_financial_impact_summary,
                     u.implementation_cost_estimate, u.return_on_investment, u.risk_considerations,
-                    u.implementation_roadmap, u.recommendation
+                    u.implementation_roadmap, u.recommendation, u.executive_summary
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
@@ -814,6 +817,9 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
         if body.recommendation is not None:
             sets.append("recommendation = :recommendation")
             params["recommendation"] = body.recommendation.strip()
+        if body.executive_summary is not None:
+            sets.append("executive_summary = :executive_summary")
+            params["executive_summary"] = body.executive_summary.strip()
 
         await db.execute(
             text(f"UPDATE {CORE}.ai_use_cases SET {', '.join(sets)} WHERE ai_use_case_id = :uid"),
