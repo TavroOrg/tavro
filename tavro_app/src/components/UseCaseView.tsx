@@ -386,7 +386,9 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     });
 
     const _doSave = React.useCallback((payload: Parameters<typeof useCaseApi.updateUseCase>[1]) => {
-        useCaseApi.updateUseCase(uc.identifier, payload).catch(() => {});
+        useCaseApi.updateUseCase(uc.identifier, payload)
+            .then(() => window.dispatchEvent(new CustomEvent('tavro:usecase-updated')))
+            .catch(() => {});
     }, [uc.identifier]);
 
     React.useEffect(() => {
