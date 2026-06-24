@@ -61,6 +61,8 @@ import IssueViewPage from './pages/IssueViewPage';
 import AgentEvalsPage from './pages/AgentEvalsPage';
 import RoadmapPage from './pages/RoadmapPage';
 import ErrorBoundary from './components/ErrorBoundary';
+import GuardrailsPage from './pages/GuardrailsPage';
+import IssuesPage from './pages/IssuesPage';
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 type AuthStatus = 'checking' | 'ok' | 'expired';
@@ -447,8 +449,8 @@ function App() {
 
                 <Route path="audit" element={<EnterpriseGate><AuditCenterPage /></EnterpriseGate>} />
                 <Route path="audit/:runId" element={<EnterpriseGate><AuditRunDetailPage /></EnterpriseGate>} />
-                <Route path="guardrails" element={<EnterpriseGate><div /></EnterpriseGate>} />
-                <Route path="issues" element={<EnterpriseGate><div /></EnterpriseGate>} />
+                <Route path="guardrails" element={<EnterpriseGate><GuardrailsPage /></EnterpriseGate>} />
+                <Route path="issues" element={<EnterpriseGate><IssuesPage /></EnterpriseGate>} />
                 <Route path="agent-evals" element={<EnterpriseGate><AgentEvalsPage /></EnterpriseGate>} />
                 <Route path="roadmap" element={<EnterpriseGate><RoadmapPage /></EnterpriseGate>} />
                 <Route path="applications" element={<BusinessApplicationsPage />} />

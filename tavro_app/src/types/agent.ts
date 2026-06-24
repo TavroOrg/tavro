@@ -298,6 +298,7 @@ export interface AgentData {
   // Metadata
   sys_id?: string;
   id?: string;
+  agent_internal_id?: string | null;
   tenant_id?: string | null;
   latest_risk_score?: string | number | null;
   latest_risk_class?: string | null;

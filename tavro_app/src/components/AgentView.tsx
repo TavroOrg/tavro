@@ -10,6 +10,7 @@ import AgentLineage from './AgentLineage';
 import AgentRiskSummary from './AgentRiskSummary';
 import AgentContextGraph from './AgentContextGraphRF';
 import AgentIssuesTab from './AgentIssuesTab';
+import AgentSessionsTab from './AgentSessionsTab';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -41,7 +42,8 @@ type TabType =
     | 'LINEAGE'
     | 'ISSUES'
     | 'RISK'
-    | 'CONTEXT';
+    | 'CONTEXT'
+    | 'SESSIONS';
 
 const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'IDENTIFICATION', label: 'Identification & Role' },
@@ -51,6 +53,7 @@ const BASE_TABS: { id: TabType; label: string }[] = [
     { id: 'RISK', label: 'AI Risk Assessment' },
     { id: 'CONTEXT', label: 'Context Graph' },
     { id: 'ISSUES', label: 'Issues' },
+    { id: 'SESSIONS', label: 'Playground Sessions' },
 ];
 
 const AgentView: React.FC<AgentViewProps> = ({
@@ -159,6 +162,16 @@ const AgentView: React.FC<AgentViewProps> = ({
 
                 {activeTab === 'CONTEXT' && (
                     <div><AgentContextGraph agent={agent} /></div>
+                )}
+
+                {activeTab === 'SESSIONS' && (
+                    <AgentSessionsTab
+                        agentId={agentId}
+                        agentName={agent.name ?? ''}
+                        agentDescription={agent.description ?? undefined}
+                        agentInstruction={agent.identification?.instruction ?? undefined}
+                        agentType={agent.agent_type ?? undefined}
+                    />
                 )}
 
             </div>

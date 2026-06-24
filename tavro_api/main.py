@@ -52,8 +52,10 @@ from services.activity.activities import (
     create_local_agent_card_activity,
 )
 
-TASK_QUEUE = "risk-classification-queue"
-TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+TASK_QUEUE        = "risk-classification-queue"
+AUDIT_TASK_QUEUE  = "audit-assessment-queue"
+TEMPORAL_ADDRESS  = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+_ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
 
 
 async def _run_temporal_worker():
@@ -81,6 +83,22 @@ async def _run_temporal_worker():
     await worker.run()
 
 
+async def _run_audit_temporal_worker():
+    from api.temporal.workflow import AuditWorkflow
+    from api.temporal.activities import run_audit_orchestrator_activity
+
+    print("Connecting enterprise audit Temporal worker...")
+    client = await Client.connect(TEMPORAL_ADDRESS)
+    worker = Worker(
+        client,
+        task_queue=AUDIT_TASK_QUEUE,
+        workflows=[AuditWorkflow],
+        activities=[run_audit_orchestrator_activity],
+    )
+    print(f"Audit Temporal worker listening on queue: {AUDIT_TASK_QUEUE}")
+    await worker.run()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize database tables
@@ -92,8 +110,17 @@ async def lifespan(app: FastAPI):
     await ensure_spark_table()
     await start_log_collector()
     worker_task = asyncio.create_task(_run_temporal_worker())
+    audit_worker_task = None
+    if _ENTERPRISE_ENABLED:
+        audit_worker_task = asyncio.create_task(_run_audit_temporal_worker())
     yield
     worker_task.cancel()
+    if audit_worker_task:
+        audit_worker_task.cancel()
+        try:
+            await audit_worker_task
+        except asyncio.CancelledError:
+            pass
     try:
         await worker_task
     except asyncio.CancelledError:
