@@ -23,6 +23,7 @@ import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import { toUserMessage } from '../utils/errorUtils';
 
 type Tab = 'overview' | 'related';
 type Option = { label: string; value: string };
@@ -260,7 +261,7 @@ const IntegrationViewPage: React.FC = () => {
       setForm(formFromIntegration(data));
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load integration');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -336,7 +337,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -350,7 +351,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -401,7 +402,7 @@ const IntegrationViewPage: React.FC = () => {
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -525,7 +526,7 @@ const IntegrationViewPage: React.FC = () => {
       setAttemptedSave(false);
       setEditing(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -553,7 +554,7 @@ const IntegrationViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/integrations');
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };

@@ -43,6 +43,7 @@ const getAttachmentErrorMessage = (error: unknown, fileName?: string): string =>
 
     if (
         error.message.includes('API 413') ||
+        error.message.includes('too large to upload') ||
         error.message.includes('Attachment exceeds 10 MB limit') ||
         error.message.includes('413 Request Entity Too Large')
     ) {

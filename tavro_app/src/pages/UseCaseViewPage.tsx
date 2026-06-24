@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import UseCaseView from '../components/UseCaseView';
@@ -441,7 +442,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingLinks(prev => prev.filter(a => (a.identification?.agent_id || a.name) !== aId));
-      setRelationError(err.message || 'Failed to link agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -459,7 +460,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingUnlinkIds(prev => { const next = new Set(prev); next.delete(linkedAgentId); return next; });
-      setRelationError(err.message || 'Failed to unlink agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -648,7 +649,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
       const data = await businessRelationsApi.listApplications(undefined, companyId);
       setAllApplications(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load application catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -679,7 +680,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -705,7 +706,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -903,7 +904,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
       const data = await businessRelationsApi.listProcesses(undefined, companyId);
       setAllProcesses(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load process catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -934,7 +935,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -960,7 +961,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1106,7 +1107,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
     try {
       setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load AI model catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -1125,7 +1126,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1140,7 +1141,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to unlink AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1297,7 +1298,7 @@ const UseCaseViewPage: React.FC = () => {
       refreshUseCases();
       navigate('/use-cases');
     } catch (err: any) {
-      setError(err.message || 'Failed to delete use case.');
+      setError(toUserMessage(err));
       setDeleteConfirm(false);
     } finally {
       setDeleting(false);
@@ -1327,7 +1328,7 @@ const UseCaseViewPage: React.FC = () => {
       if (!merged) throw new Error('Use Case not found');
       setUseCase(merged);
     } catch (err: any) {
-      setError(err.message || 'Failed to load use case details');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -1469,7 +1470,7 @@ const UseCaseViewPage: React.FC = () => {
       });
       setIsEditing(false);
     } catch (err: any) {
-      setEditError(err.message || 'Failed to update use case.');
+      setEditError(toUserMessage(err));
     } finally {
       setEditSaving(false);
     }

@@ -921,10 +921,10 @@ def _write_agent_card(
         card_path = card_dir / f"{agent_id}_agent_card.json"
         with card_path.open("w", encoding="utf-8") as f:
             json.dump(card, f, indent=2, ensure_ascii=False)
-        print(f"[create_agent] Agent card written: {card_path}")
+        _logger.info("Agent card written: %s", card_path)
 
     except Exception as e:
-        print(f"[create_agent] Warning: failed to write agent card file: {e}")
+        _logger.warning("Failed to write agent card file: %s", e)
 
 
 async def _get_agent_identity(db: AsyncSession, agent_id: str, tenant_id: str):

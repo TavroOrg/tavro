@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { Upload, X, FileJson, AlertCircle, CheckCircle2, Loader2, Trash2, FolderOpen, Link2 } from 'lucide-react';
 import { useCaseApi } from '../services/useCaseApi';
 import { driveApi } from '../services/driveApi';
@@ -86,7 +87,7 @@ const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSucc
             setFileEntries([]);
             onSuccess();
         } catch (err: any) {
-            setErrorMessage(err?.message ?? 'Upload failed. Please try again.');
+            setErrorMessage(toUserMessage(err));
         } finally {
             setUploading(false);
         }
@@ -110,7 +111,7 @@ const LoadAIUseCaseModal: React.FC<LoadAIUseCaseModalProps> = ({ onClose, onSucc
             }
             onSuccess();
         } catch (err: any) {
-            setDriveError(err?.message ?? 'Drive import failed. Please try again.');
+            setDriveError(toUserMessage(err));
         } finally {
             setDriveImporting(false);
         }

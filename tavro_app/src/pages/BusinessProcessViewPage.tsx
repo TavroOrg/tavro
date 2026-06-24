@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import {
   AlertCircle,
   ArrowLeft,
@@ -414,7 +415,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setAllProcesses(processes);
       setAttemptedSave(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to load business process');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -551,7 +552,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save process field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -652,7 +653,7 @@ const BusinessProcessViewPage: React.FC = () => {
         setField('process_description', result.description);
       }
     } catch (err: any) {
-      setActionError(err.message || 'Failed to generate process description');
+      setActionError(toUserMessage(err));
     } finally {
       setGeneratingDescription(false);
     }
@@ -709,7 +710,7 @@ const BusinessProcessViewPage: React.FC = () => {
       setInlineEdit(null);
       setEditing(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save process');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -742,7 +743,7 @@ const BusinessProcessViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/processes');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to delete process');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -755,7 +756,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -769,7 +770,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -784,7 +785,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to add AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -799,7 +800,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to remove AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -813,7 +814,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await aiModelApi.linkProcess(modelId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to link AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }
@@ -827,7 +828,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await aiModelApi.unlinkProcess(modelId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to remove AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }

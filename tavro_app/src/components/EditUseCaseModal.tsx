@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { X, ClipboardList, Loader2, CheckCircle2 } from 'lucide-react';
 import { UseCaseDetail } from '../types/useCase';
 import { useCaseApi } from '../services/useCaseApi';
@@ -99,7 +100,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                 onClose();
             }, 300);
         } catch (err: any) {
-            setError(err.message || 'Failed to update use case. Please try again.');
+            setError(toUserMessage(err));
         } finally {
             setSaving(false);
         }

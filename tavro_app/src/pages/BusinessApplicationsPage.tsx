@@ -18,6 +18,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
 
 const PAGE_SIZE = 10;
 
@@ -86,7 +87,7 @@ const BusinessApplicationsPage: React.FC = () => {
         const data = await businessRelationsApi.listApplications(undefined, activeCompany?.id);
         setApplications(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load applications');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }

@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { UseCaseSummary } from '../types/useCase';
 import { useCaseApi } from '../services/useCaseApi';
+import { toUserMessage } from '../utils/errorUtils';
 
 const USECASE_CACHE_KEY = 'tavro_catalog_usecases_cache_v2';
 const USECASE_CACHE_TS_KEY = 'tavro_catalog_usecases_cache_ts_v2';
@@ -158,7 +159,7 @@ export const UseCaseProvider: React.FC<{ children: React.ReactNode }> = ({ child
             sessionStorage.setItem(USECASE_CACHE_TS_KEY, String(now));
             setLastFetched(new Date(now));
         } catch (err: any) {
-            setError(err.message ?? 'Failed to load AI Use Case catalog');
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
             fetchingRef.current = false;

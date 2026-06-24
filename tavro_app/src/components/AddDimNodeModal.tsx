@@ -3,6 +3,7 @@
 // Triggered from the "+ Add dimension" button on BlueprintPage.
 
 import React, { useState, useEffect, useRef } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { X, Plus, RefreshCw, Shield, Eye, EyeOff, Sparkles, Paperclip } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -106,7 +107,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
       if (result.summary) setSummary(result.summary);
       if (result.tags?.length) setTags(result.tags);
     } catch (err: any) {
-      setError(err.message ?? 'AI suggestion failed');
+      setError(toUserMessage(err));
     } finally {
       setGenerating(false);
     }
@@ -136,7 +137,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
       onCreated();
       onClose();
     } catch (err: any) {
-      setError(err.message ?? 'Failed to create dimension');
+      setError(toUserMessage(err));
     } finally {
       setSaving(false);
     }

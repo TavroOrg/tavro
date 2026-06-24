@@ -246,15 +246,15 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
             # ── Step 1: Search EDGAR for the ticker's 10-K filings ───────────
             url1 = "https://efts.sec.gov/LATEST/search-index"
             params1 = {"q": f'"{ticker}"', "forms": "10-K", "dateRange": "custom", "startdt": "2021-01-01"}
-            print(f"[SEC/ticker] GET {url1} params={params1}", flush=True)
+            _logger.debug("[SEC/ticker] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
-            print(f"[SEC/ticker] step1 status={search_resp.status_code} body={search_resp.text[:800]}", flush=True)
+            _logger.debug("[SEC/ticker] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
             if search_resp.status_code != 200:
                 return result
 
             hits = search_resp.json().get("hits", {}).get("hits", [])
             if not hits:
-                print("[SEC/ticker] step1 — no hits returned", flush=True)
+                _logger.debug("[SEC/ticker] step1 — no hits returned")
                 return result
 
             src = hits[0]["_source"]
@@ -262,11 +262,11 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
             entity_name  = src.get("entity_name",  "")
             file_date    = src.get("file_date",    "")
             period       = src.get("period_of_report", "")
-            print(f"[SEC/ticker] step1 hit: entity={entity_name!r} acc_no={acc_no} date={file_date} period={period}", flush=True)
+            _logger.debug("[SEC/ticker] step1 hit: entity=%r acc_no=%s date=%s period=%s", entity_name, acc_no, file_date, period)
 
             cik_str = acc_no.split("-")[0] if "-" in acc_no else ""
             if not cik_str:
-                print("[SEC/ticker] step1 — could not parse CIK from accession_no", flush=True)
+                _logger.debug("[SEC/ticker] step1 — could not parse CIK from accession_no")
                 return result
             cik_int = int(cik_str)
 
@@ -283,9 +283,9 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
 
             # ── Step 2: Company submissions → richer metadata + doc URL ──────
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
-            print(f"[SEC/ticker] GET {url2}", flush=True)
+            _logger.debug("[SEC/ticker] GET %s", url2)
             subs_resp = await client.get(url2)
-            print(f"[SEC/ticker] step2 status={subs_resp.status_code} body_len={len(subs_resp.text)}", flush=True)
+            _logger.debug("[SEC/ticker] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
                 result["sic_description"]        = subs.get("sicDescription", "")
@@ -295,8 +295,8 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
                 result["hq"] = (
                     f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
                 )
-                print(f"[SEC/ticker] step2 parsed: sic={result['sic_description']!r} "
-                      f"hq={result['hq']!r} fy_end={result['fiscal_year_end']!r}", flush=True)
+                _logger.debug("[SEC/ticker] step2 parsed: sic=%r hq=%r fy_end=%r",
+                              result['sic_description'], result['hq'], result['fiscal_year_end'])
 
                 recent = subs.get("filings", {}).get("recent", {})
                 for form, acc, doc in zip(
@@ -310,13 +310,13 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
                             f"https://www.sec.gov/Archives/edgar/data/"
                             f"{cik_int}/{acc_clean}/{doc}"
                         )
-                        print(f"[SEC/ticker] 10-K doc_url={result['doc_url']}", flush=True)
+                        _logger.debug("[SEC/ticker] 10-K doc_url=%s", result['doc_url'])
                         break
 
     except Exception as exc:
-        print(f"[SEC/ticker] ERROR — {type(exc).__name__}: {exc}", flush=True)
+        _logger.error("[SEC/ticker] ERROR — %s: %s", type(exc).__name__, exc)
 
-    print(f"[SEC/ticker] final result keys: {list(result.keys())}", flush=True)
+    _logger.debug("[SEC/ticker] final result keys: %s", list(result.keys()))
     return result
 
 
@@ -335,15 +335,15 @@ async def _search_sec_by_name(company_name: str) -> dict:
             # ── Step 1: Full-text search for recent 10-K filings ─────────────
             url1 = "https://efts.sec.gov/LATEST/search-index"
             params1 = {"q": f'"{company_name}"', "forms": "10-K", "dateRange": "custom", "startdt": "2022-01-01"}
-            print(f"[SEC/name] GET {url1} params={params1}", flush=True)
+            _logger.debug("[SEC/name] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
-            print(f"[SEC/name] step1 status={search_resp.status_code} body={search_resp.text[:800]}", flush=True)
+            _logger.debug("[SEC/name] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
             if search_resp.status_code != 200:
                 return result
 
             hits = search_resp.json().get("hits", {}).get("hits", [])
             if not hits:
-                print("[SEC/name] step1 — no hits returned", flush=True)
+                _logger.debug("[SEC/name] step1 — no hits returned")
                 return result
 
             src       = hits[0]["_source"]
@@ -351,11 +351,11 @@ async def _search_sec_by_name(company_name: str) -> dict:
             entity    = src.get("entity_name",  "")
             file_date = src.get("file_date",    "")
             period    = src.get("period_of_report", "")
-            print(f"[SEC/name] step1 hit: entity={entity!r} acc_no={acc_no} date={file_date} period={period}", flush=True)
+            _logger.debug("[SEC/name] step1 hit: entity=%r acc_no=%s date=%s period=%s", entity, acc_no, file_date, period)
 
             cik_str = acc_no.split("-")[0] if "-" in acc_no else ""
             if not cik_str:
-                print("[SEC/name] step1 — could not parse CIK from accession_no", flush=True)
+                _logger.debug("[SEC/name] step1 — could not parse CIK from accession_no")
                 return result
             cik_int = int(cik_str)
 
@@ -372,9 +372,9 @@ async def _search_sec_by_name(company_name: str) -> dict:
 
             # ── Step 2: Submissions API → richer metadata + ticker + doc URL ─
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
-            print(f"[SEC/name] GET {url2}", flush=True)
+            _logger.debug("[SEC/name] GET %s", url2)
             subs_resp = await client.get(url2)
-            print(f"[SEC/name] step2 status={subs_resp.status_code} body_len={len(subs_resp.text)}", flush=True)
+            _logger.debug("[SEC/name] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
                 result["sic_description"]        = subs.get("sicDescription", "")
@@ -387,8 +387,8 @@ async def _search_sec_by_name(company_name: str) -> dict:
                 tickers = subs.get("tickers", [])
                 if tickers:
                     result["ticker"] = tickers[0]
-                print(f"[SEC/name] step2 parsed: sic={result['sic_description']!r} "
-                      f"hq={result['hq']!r} tickers={tickers}", flush=True)
+                _logger.debug("[SEC/name] step2 parsed: sic=%r hq=%r tickers=%s",
+                              result['sic_description'], result['hq'], tickers)
 
                 recent = subs.get("filings", {}).get("recent", {})
                 for form, acc, doc in zip(
@@ -402,13 +402,13 @@ async def _search_sec_by_name(company_name: str) -> dict:
                             f"https://www.sec.gov/Archives/edgar/data/"
                             f"{cik_int}/{acc_clean}/{doc}"
                         )
-                        print(f"[SEC/name] 10-K doc_url={result['doc_url']}", flush=True)
+                        _logger.debug("[SEC/name] 10-K doc_url=%s", result['doc_url'])
                         break
 
     except Exception as exc:
-        print(f"[SEC/name] ERROR — {type(exc).__name__}: {exc}", flush=True)
+        _logger.error("[SEC/name] ERROR — %s: %s", type(exc).__name__, exc)
 
-    print(f"[SEC/name] final result keys: {list(result.keys())}", flush=True)
+    _logger.debug("[SEC/name] final result keys: %s", list(result.keys()))
     return result
 
 
@@ -666,7 +666,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
         def log(msg: str) -> None:
             elapsed = time.monotonic() - t0
-            print(f"[Research {elapsed:5.1f}s] {msg}", flush=True)
+            _logger.debug("[Research %5.1fs] %s", elapsed, msg)
 
         async def emit(event: dict) -> None:
             log(event.get("message", event.get("type", "?")))
