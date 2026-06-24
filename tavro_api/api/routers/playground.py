@@ -93,6 +93,10 @@ def _resolve_bedrock_agent_model(model_id: str) -> str:
 # { session_id: { config, messages, created_at, updated_at } }
 session_store: dict[str, dict] = {}
 
+# ── Ended session archive ─────────────────────────────────────────────────────
+# Sessions moved here on DELETE so they remain visible in the Sessions tab.
+ended_sessions: dict[str, dict] = {}
+
 
 # =============================================================
 # Schemas
@@ -116,6 +120,9 @@ class SessionConfig(BaseModel):
     company_name:  str | None = None
     use_case_id:   str | None = None
     use_case_title: str | None = None
+    tenant_id:         str | None = None
+    agent_internal_id: str | None = None
+    agent_id:          str | None = None
 
 class Attachment(BaseModel):
     name:      str          # original filename
@@ -358,6 +365,36 @@ def _build_user_content(text_message: str, attachments: list["Attachment"]) -> l
         blocks.append({"type": "text", "text": text_message})
 
     return blocks
+
+
+async def _resolve_agent_identifiers(
+    agent_id: str | None, db: AsyncSession
+) -> tuple[str | None, str | None]:
+    """
+    Look up tenant_id and agent_internal_id from core.agents.
+    Returns (tenant_id, agent_internal_id) — either may be None if not found.
+    """
+    if not agent_id:
+        return None, None
+    try:
+        row = await db.execute(
+            text("""
+                SELECT tenant_id, company_id, agent_internal_id
+                FROM core.agents
+                WHERE agent_id = :aid AND is_current = true
+                LIMIT 1
+            """),
+            {"aid": agent_id},
+        )
+        r = row.mappings().first()
+        if not r:
+            return None, None
+        return (
+            r.get("tenant_id") or r.get("company_id"),
+            r.get("agent_internal_id"),
+        )
+    except Exception:
+        return None, None
 
 
 async def _fetch_company_dims(company_id: str, db: AsyncSession) -> list[dict]:
@@ -1665,6 +1702,219 @@ def _get_aws_account_id(access_key: str, secret_key: str) -> str:
 
 # =============================================================
 
+# =============================================================
+# DB helpers — persist sessions to core.playground_session
+# =============================================================
+
+def _parse_dt(v) -> "datetime | None":
+    """Convert an ISO string or None to a datetime object (required by asyncpg for timestamptz)."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    try:
+        return datetime.fromisoformat(str(v))
+    except (ValueError, TypeError):
+        return None
+
+
+async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
+    """Insert or update a session row in the database."""
+    import traceback
+    try:
+        interactions_json = json.dumps(session.get("messages", []))
+        summary_json      = json.dumps(session["cached_summary"]) if session.get("cached_summary") else None
+        observations_json = json.dumps(session.get("observations", []))
+
+        config = session.get("config") or {}
+        await db.execute(
+            text("""
+                INSERT INTO core.playground_session
+                    (session_id, tenant_id, company_id, agent_internal_id, agent_id,
+                     agent_name, provider, model,
+                     interactions, token_total, summary, observations,
+                     status, created_at, updated_at, ended_at)
+                VALUES
+                    (:session_id, :tenant_id, :company_id, :agent_internal_id, :agent_id,
+                     :agent_name, :provider, :model,
+                     CAST(:interactions AS jsonb), :token_total,
+                     CAST(:summary AS jsonb), CAST(:observations AS jsonb),
+                     :status, :created_at, :updated_at, :ended_at)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    interactions  = EXCLUDED.interactions,
+                    token_total   = EXCLUDED.token_total,
+                    summary       = EXCLUDED.summary,
+                    observations  = EXCLUDED.observations,
+                    status        = EXCLUDED.status,
+                    updated_at    = EXCLUDED.updated_at,
+                    ended_at      = EXCLUDED.ended_at
+            """),
+            {
+                "session_id":        session["session_id"],
+                "tenant_id":         session.get("tenant_id") or config.get("tenant_id"),
+                "company_id":        session.get("company_id") or config.get("company_id"),
+                "agent_internal_id": session.get("agent_internal_id"),
+                "agent_id":          session.get("agent_id"),
+                "agent_name":        config.get("agent_name"),
+                "provider":          config.get("provider"),
+                "model":             config.get("model"),
+                "interactions":      interactions_json,
+                "token_total":       session.get("token_total", 0),
+                "summary":           summary_json,
+                "observations":      observations_json,
+                "status":            session.get("status", "active"),
+                "created_at":        _parse_dt(session["created_at"]),
+                "updated_at":        _parse_dt(session["updated_at"]),
+                "ended_at":          _parse_dt(session.get("ended_at")),
+            },
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        print(f"[playground] DB upsert failed for session {session.get('session_id')}: {e}")
+        print(traceback.format_exc())
+
+
+async def _db_get_session(session_id: str, db: AsyncSession) -> dict | None:
+    """Fetch a single session row from the database."""
+    try:
+        row = await db.execute(
+            text("SELECT * FROM core.playground_session WHERE session_id = :sid"),
+            {"sid": session_id},
+        )
+        r = row.mappings().first()
+        if not r:
+            return None
+        return dict(r)
+    except Exception as e:
+        print(f"DB get session error: {e}")
+        return None
+
+
+async def _db_list_sessions(agent_id: str | None, db: AsyncSession, tenant_id: str | None = None, company_id: str | None = None) -> list[dict]:
+    """List sessions from the database, optionally filtered by agent_id, tenant_id, and company_id."""
+    try:
+        filters = []
+        params: dict = {}
+        if agent_id:
+            filters.append("agent_id = :aid")
+            params["aid"] = agent_id
+        if tenant_id:
+            filters.append("tenant_id = :tenant_id")
+            params["tenant_id"] = tenant_id
+        if company_id:
+            filters.append("company_id = :company_id")
+            params["company_id"] = company_id
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await db.execute(
+            text(f"""
+                SELECT session_id, agent_id, agent_name, provider, model,
+                       token_total, status, created_at, updated_at, ended_at,
+                       jsonb_array_length(COALESCE(interactions, '[]'::jsonb)) AS raw_count
+                FROM core.playground_session
+                {where}
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """),
+            params,
+        )
+        return [dict(r) for r in rows.mappings()]
+    except Exception as e:
+        print(f"DB list sessions error: {e}")
+        return []
+
+
+def _db_row_to_summary(r: dict) -> dict:
+    """Convert a DB row to the session-list summary shape."""
+    raw_count = r.get("raw_count") or 0
+    # messages column stores ALL messages; subtract system messages (estimate 1 per session)
+    msg_count = max(0, int(raw_count) - 1)
+    # A session with ended_at set is definitively over regardless of the status column
+    effective_status = "ended" if r.get("ended_at") else r.get("status", "ended")
+    return {
+        "session_id":    str(r["session_id"]),
+        "status":        effective_status,
+        "agent_name":    r.get("agent_name"),
+        "provider":      r.get("provider"),
+        "model":         r.get("model"),
+        "created_at":    r["created_at"].isoformat() if hasattr(r.get("created_at"), "isoformat") else str(r.get("created_at", "")),
+        "updated_at":    r["updated_at"].isoformat() if hasattr(r.get("updated_at"), "isoformat") else str(r.get("updated_at", "")),
+        "ended_at":      r["ended_at"].isoformat() if r.get("ended_at") and hasattr(r["ended_at"], "isoformat") else (str(r["ended_at"]) if r.get("ended_at") else None),
+        "token_total":   int(r.get("token_total") or 0),
+        "message_count": msg_count,
+    }
+
+
+# =============================================================
+# GET /sessions — list sessions (DB + active in-memory)
+# =============================================================
+
+@router.get("/sessions")
+async def list_sessions(
+    agent_id: str | None = None,
+    tenant_id: str | None = None,
+    company_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    # DB rows (ended + any active that were persisted)
+    db_rows = await _db_list_sessions(agent_id, db, tenant_id=tenant_id, company_id=company_id)
+    db_ids  = {r["session_id"] for r in db_rows}
+
+    # In-memory active sessions not yet in DB (just started, not yet flushed)
+    mem_active = list(session_store.values())
+    if agent_id:
+        mem_active = [s for s in mem_active if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_active = [s for s in mem_active if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_active = [s for s in mem_active if s.get("company_id") == company_id]
+
+    results = [_db_row_to_summary(r) for r in db_rows]
+
+    # Add any purely in-memory active sessions missing from DB
+    for s in mem_active:
+        if s["session_id"] not in db_ids:
+            results.append({
+                "session_id":    s["session_id"],
+                "status":        "active",
+                "agent_name":    s["config"].get("agent_name"),
+                "provider":      s["config"].get("provider"),
+                "model":         s["config"].get("model"),
+                "created_at":    s["created_at"],
+                "updated_at":    s["updated_at"],
+                "ended_at":      None,
+                "token_total":   s.get("token_total", 0),
+                "message_count": len([m for m in s.get("messages", []) if m["role"] in ("user", "assistant")]),
+            })
+
+    # Add any in-memory ended sessions missing from DB
+    # (covers the case where the DB write failed or the table doesn't exist yet)
+    mem_ended = list(ended_sessions.values())
+    if agent_id:
+        mem_ended = [s for s in mem_ended if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_ended = [s for s in mem_ended if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_ended = [s for s in mem_ended if s.get("company_id") == company_id]
+    for s in mem_ended:
+        if s["session_id"] not in db_ids and s["session_id"] not in {r["session_id"] for r in results}:
+            results.append({
+                "session_id":    s["session_id"],
+                "status":        "ended",
+                "agent_name":    s["config"].get("agent_name"),
+                "provider":      s["config"].get("provider"),
+                "model":         s["config"].get("model"),
+                "created_at":    s["created_at"],
+                "updated_at":    s.get("updated_at", s["created_at"]),
+                "ended_at":      s.get("ended_at"),
+                "token_total":   s.get("token_total", 0),
+                "message_count": len([m for m in s.get("messages", []) if m["role"] in ("user", "assistant")]),
+            })
+
+    results.sort(key=lambda x: x["updated_at"], reverse=True)
+    return results
+
+
 @router.post("/session", status_code=201)
 async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_db)):
     session_id = str(uuid.uuid4())
@@ -1679,8 +1929,18 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
     elif provider in ("aws_bedrock", "bedrock", "aws"):
         bedrock_agent = BedrockAgentProvisioning()
 
+    # Resolve tenant_id / agent_internal_id: prefer what the frontend sent,
+    # fall back to a DB lookup so active sessions are never missing these fields.
+    db_tenant_id, db_agent_internal_id = await _resolve_agent_identifiers(config.agent_id, db)
+    resolved_tenant_id       = config.tenant_id or config.company_id or db_tenant_id
+    resolved_agent_internal_id = config.agent_internal_id or db_agent_internal_id
+
     session_store[session_id] = {
         "session_id":  session_id,
+        "tenant_id":         resolved_tenant_id,
+        "company_id":        config.company_id,
+        "agent_internal_id": resolved_agent_internal_id,
+        "agent_id":          config.agent_id,
         "config":      config.model_dump(),
         "messages":    [],
         "created_at":  now,
@@ -1694,6 +1954,9 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
         await _ensure_azure_foundry_conversation(config, session_store[session_id])
     elif provider in ("aws_bedrock", "bedrock", "aws"):
         asyncio.create_task(_provision_bedrock_agent_background(session_id, config))
+
+    # Persist to DB
+    await _db_upsert_session({**session_store[session_id], "status": "active"}, db)
 
     return {
         "session_id": session_id,
@@ -1709,11 +1972,44 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
 # =============================================================
 
 @router.get("/session/{session_id}")
-async def get_session(session_id: str):
-    session = session_store.get(session_id)
-    if not session:
+async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    # Check in-memory first (active session)
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
+    if session:
+        return session
+    # Fall back to DB (survived a server restart / logout)
+    row = await _db_get_session(session_id, db)
+    if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    # Reconstruct the session dict from the DB row
+    interactions = row.get("interactions")
+    if isinstance(interactions, str):
+        interactions = json.loads(interactions or "[]")
+    elif not interactions:
+        interactions = []
+    summary = row.get("summary")
+    if summary and isinstance(summary, str):
+        summary = json.loads(summary)
+    obs = row.get("observations")
+    if obs and isinstance(obs, str):
+        obs = json.loads(obs)
+    elif not obs:
+        obs = []
+    ts = lambda v: v.isoformat() if hasattr(v, "isoformat") else str(v)
+    return {
+        "session_id":    str(row["session_id"]),
+        "agent_name":    row.get("agent_name"),
+        "provider":      row.get("provider"),
+        "model":         row.get("model"),
+        "interactions":  interactions,
+        "observations":  obs,
+        "token_total":   int(row.get("token_total") or 0),
+        "summary":       summary,
+        "status":        row.get("status", "ended"),
+        "created_at":    ts(row["created_at"]),
+        "updated_at":    ts(row["updated_at"]),
+        "ended_at":      ts(row["ended_at"]) if row.get("ended_at") else None,
+    }
 
 
 # =============================================================
@@ -1850,6 +2146,9 @@ async def send_message(
     session["token_total"] = session.get("token_total", 0) + tokens_used
     session["updated_at"]  = datetime.utcnow().isoformat()
 
+    # Persist updated messages + token total to DB
+    await _db_upsert_session({**session, "status": "active"}, db)
+
     if provider in ("azure_foundry", "azure", "azure_openai") and _azure_foundry_use_chat_completions():
         await _append_azure_foundry_conversation_items(
             config,
@@ -1886,10 +2185,19 @@ async def send_message(
 # =============================================================
 
 @router.delete("/session/{session_id}", status_code=200)
-async def end_session(session_id: str):
+async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = session_store.pop(session_id, None)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Archive in memory
+    session["ended_at"]  = datetime.utcnow().isoformat()
+    session["updated_at"] = session["ended_at"]
+    session["status"]    = "ended"
+    ended_sessions[session_id] = session
+
+    # Persist final state to DB
+    await _db_upsert_session({**session, "status": "ended"}, db)
 
     msg_count   = len([m for m in session["messages"] if m["role"] != "system"])
     token_total = session.get("token_total", 0)
@@ -1929,15 +2237,57 @@ async def end_session(session_id: str):
 
 
 # =============================================================
+# POST /session/{session_id}/observations — save observations
+# =============================================================
+
+class ObservationsPayload(BaseModel):
+    observations: list[dict] = []
+
+@router.post("/session/{session_id}/observations")
+async def save_observations(session_id: str, body: ObservationsPayload, db: AsyncSession = Depends(get_db)):
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session["observations"] = body.observations
+    session["updated_at"] = datetime.utcnow().isoformat()
+    status = "ended" if session_id in ended_sessions else session.get("status", "active")
+    await _db_upsert_session({**session, "status": status}, db)
+    return {"ok": True}
+
+
+# =============================================================
 # GET /session/{session_id}/summary — AI-generated session summary
 # Returns gaps, capabilities, info requirements found during session
 # =============================================================
 
 @router.get("/session/{session_id}/summary")
-async def get_session_summary(session_id: str):
-    session = session_store.get(session_id)
+async def get_session_summary(session_id: str, db: AsyncSession = Depends(get_db)):
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # Fall back to DB (server restarted, or session loaded from DB)
+        row = await _db_get_session(session_id, db)
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        interactions = row.get("interactions")
+        if isinstance(interactions, str):
+            interactions = json.loads(interactions or "[]")
+        elif not interactions:
+            interactions = []
+        summary_raw = row.get("summary")
+        if summary_raw and isinstance(summary_raw, str):
+            summary_raw = json.loads(summary_raw)
+        session = {
+            "session_id":   str(row["session_id"]),
+            "config":       {"agent_name": row.get("agent_name"), "provider": row.get("provider")},
+            "messages":     interactions,
+            "token_total":  int(row.get("token_total") or 0),
+            "cached_summary": summary_raw,
+            "status":       row.get("status", "ended"),
+        }
+
+    # Return cached summary if already generated
+    if session.get("cached_summary"):
+        return {"summary": session["cached_summary"], "token_total": session.get("token_total", 0), "cached": True}
 
     messages = [m for m in session["messages"] if m["role"] in ("user", "assistant")]
     if not messages:
@@ -2055,6 +2405,10 @@ Return ONLY a JSON object with this structure:
     raw = re.sub(r"\s*```$", "", raw).strip()
 
     try:
-        return {"summary": json.loads(raw), "token_total": session.get("token_total", 0)}
+        parsed = json.loads(raw)
+        session["cached_summary"] = parsed
+        await _db_upsert_session({**session, "status": session.get("status", "active")}, db)
+        return {"summary": parsed, "token_total": session.get("token_total", 0)}
     except json.JSONDecodeError:
+        session["cached_summary"] = raw
         return {"summary": raw, "token_total": session.get("token_total", 0)}
