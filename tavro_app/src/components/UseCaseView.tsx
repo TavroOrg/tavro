@@ -371,6 +371,20 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const _pendingScores = React.useRef<Parameters<typeof useCaseApi.updateUseCase>[1] | null>(null);
     const _apiSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // Track the last values successfully written to DB so we can diff for scoring_history
+    const _lastPersistedScores = React.useRef<Record<string, number | null>>({
+        business_value_score:             (uc as any).pv_business_value_score             ?? null,
+        data_readiness_score:             (uc as any).pv_data_readiness_score             ?? null,
+        technical_complexity_score:       (uc as any).pv_technical_complexity_score       ?? null,
+        risk_data_privacy_score:          (uc as any).risk_data_privacy_score             ?? null,
+        risk_operational_score:           (uc as any).risk_operational_score              ?? null,
+        risk_compliance_score:            (uc as any).risk_compliance_score               ?? null,
+        risk_ai_behavioral_score:         (uc as any).risk_ai_behavioral_score            ?? null,
+        risk_strategic_reputational_score:(uc as any).risk_strategic_reputational_score   ?? null,
+        risk_composite_score:             (uc as any).risk_composite_score                ?? null,
+        priority_score:                   (uc as any).priority_score                      ?? null,
+    });
+
     const _doSave = React.useCallback((payload: Parameters<typeof useCaseApi.updateUseCase>[1]) => {
         useCaseApi.updateUseCase(uc.identifier, payload).catch(() => {});
     }, [uc.identifier]);
@@ -394,11 +408,43 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
             ...(priorityScore !== null ? { priority_score: priorityScore } : {}),
             ...(quadrantKey ? { quadrant: quadrantKey } : {}),
         };
-        _pendingScores.current = payload;
+
+        // Build per-field history entries for any score that changed since last save
+        const TRACKED: Array<[string, number | null]> = [
+            ['business_value_score',              payload.business_value_score              ?? null],
+            ['data_readiness_score',              payload.data_readiness_score              ?? null],
+            ['technical_complexity_score',        payload.technical_complexity_score        ?? null],
+            ['risk_data_privacy_score',           payload.risk_data_privacy_score           ?? null],
+            ['risk_operational_score',            payload.risk_operational_score            ?? null],
+            ['risk_compliance_score',             payload.risk_compliance_score             ?? null],
+            ['risk_ai_behavioral_score',          payload.risk_ai_behavioral_score          ?? null],
+            ['risk_strategic_reputational_score', payload.risk_strategic_reputational_score ?? null],
+            ['risk_composite_score',              payload.risk_composite_score              ?? null],
+            ['priority_score',                    payload.priority_score                    ?? null],
+        ];
+        const ts = new Date().toISOString();
+        const historyEntries = TRACKED
+            .filter(([field, newVal]) => newVal !== null && newVal !== _lastPersistedScores.current[field])
+            .map(([field, newVal]) => ({
+                timestamp: ts,
+                field,
+                previous_value: _lastPersistedScores.current[field],
+                new_value: newVal,
+            }));
+
+        const finalPayload = historyEntries.length > 0
+            ? { ...payload, scoring_history_entries: historyEntries }
+            : payload;
+
+        _pendingScores.current = finalPayload;
         if (_apiSaveTimer.current) clearTimeout(_apiSaveTimer.current);
         _apiSaveTimer.current = setTimeout(() => {
             _pendingScores.current = null;
-            _doSave(payload);
+            // Optimistically update the persisted baseline before the API call
+            TRACKED.forEach(([field, newVal]) => {
+                if (newVal !== null) _lastPersistedScores.current[field] = newVal;
+            });
+            _doSave(finalPayload);
         }, 600);
         return () => {
             if (_apiSaveTimer.current) clearTimeout(_apiSaveTimer.current);

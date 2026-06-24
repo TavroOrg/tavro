@@ -86,6 +86,7 @@ export interface UseCaseUpdatePayload {
     time_horizon_rationale?: string;
     roadmap_approved?: boolean;
     scoring_history_entry?: Record<string, unknown>;
+    scoring_history_entries?: Record<string, unknown>[];
 }
 
 function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
