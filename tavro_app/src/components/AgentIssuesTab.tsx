@@ -74,13 +74,9 @@ const formatDate = (value?: string | null): string => {
   if (!value) return 'Not set';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  const dd = String(date.getDate()).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yyyy = date.getFullYear();
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  const ss = String(date.getSeconds()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${date.getFullYear()}`;
 };
 
 const toDateInputValue = (value?: string | null): string => {
@@ -644,12 +640,12 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Detected At</span>
-                <input type="date" value={form.detected_at} onChange={e => updateField('detected_at', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="date" lang="en-US" value={form.detected_at} onChange={e => updateField('detected_at', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </label>
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Resolved At</span>
-                <input type="date" value={form.resolved_at} onChange={e => updateField('resolved_at', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="date" lang="en-US" value={form.resolved_at} onChange={e => updateField('resolved_at', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </label>
 
               <label className="flex flex-col gap-1.5">
@@ -827,11 +823,11 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Detected At</span>
-                      <input type="date" value={issueForm.detected_at} onChange={e => updateIssueField('detected_at', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="date" lang="en-US" value={issueForm.detected_at} onChange={e => updateIssueField('detected_at', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Resolved At</span>
-                      <input type="date" value={issueForm.resolved_at} onChange={e => updateIssueField('resolved_at', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="date" lang="en-US" value={issueForm.resolved_at} onChange={e => updateIssueField('resolved_at', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </label>
                     <label className="md:col-span-2 flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Description</span>
