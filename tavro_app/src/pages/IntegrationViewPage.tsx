@@ -509,7 +509,7 @@ const IntegrationViewPage: React.FC = () => {
         setField('integration_description', result.description);
       }
     } catch (err: any) {
-      setActionError(err.message || 'Failed to generate integration description');
+      setActionError(toUserMessage(err));
     } finally {
       setGeneratingDescription(false);
     }
