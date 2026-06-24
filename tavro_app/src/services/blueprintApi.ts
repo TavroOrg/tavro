@@ -20,9 +20,11 @@ const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
 function buildHeaders(token: string | null): Record<string, string> {
-  return token
-    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    : { 'Content-Type': 'application/json' };
+  const tenantId = localStorage.getItem('tavro_tenant_id');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (tenantId) headers['x-tenant-id'] = tenantId;
+  return headers;
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     process_health_state TEXT,
     company_id TEXT,
     company_name TEXT,
+    tags JSONB DEFAULT '[]'::jsonb,
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );

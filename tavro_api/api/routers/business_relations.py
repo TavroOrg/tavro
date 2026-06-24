@@ -169,6 +169,7 @@ class Application(BaseModel):
     latest_released_version: Optional[str] = None
     latest_release_date: Optional[str] = None
     latest_release_documentation_link: Optional[str] = None
+    tags: Optional[list] = None
     # Backward-compatible aliases accepted by canonical mapping:
     are: Optional[str] = None
     associated_agents: Optional[str] = None
@@ -201,6 +202,7 @@ class Process(BaseModel):
     regulatory_impact: Optional[str] = None
     sla: Optional[str] = None
     process_health_state: Optional[str] = None
+    tags: Optional[list] = None
     # Backward-compatible aliases accepted by canonical mapping:
     number: Optional[str] = None
     name: Optional[str] = None
@@ -232,6 +234,7 @@ class Integration(BaseModel):
     sla: Optional[str] = None
     version: Optional[str] = None
     parent_application_id: Optional[str] = None
+    tags: Optional[list] = None
     business_criticality: Optional[str] = None
     emergency_tier: Optional[str] = None
 
@@ -267,6 +270,14 @@ class SuggestProcessDescriptionRequest(BaseModel):
 
 
 class SuggestProcessDescriptionResponse(BaseModel):
+    description: str
+
+
+class SuggestIntegrationDescriptionRequest(BaseModel):
+    integration_name: str
+
+
+class SuggestIntegrationDescriptionResponse(BaseModel):
     description: str
 
 
@@ -308,7 +319,27 @@ Format:
 }"""
 
 
+SUGGEST_INTEGRATION_DESCRIPTION_SYSTEM = """You are helping a user create a business integration record in Tavro.
+
+Given only an integration name, generate a short plain-text integration description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, endpoints, or credentials.
+- Focus on what systems the integration connects, what data or events it exchanges, and its likely business purpose.
+- Do not assume a specific technical approach such as webhooks, polling, streaming, or message queues unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence integration description"
+}"""
+
+
 _INTEGRATIONS_READY = False
+
 
 
 async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
@@ -330,6 +361,7 @@ async def _upsert_dim_node_for_entity(
     category: str,
     label: str,
     summary: Optional[str],
+    tags: Optional[list] = None,
 ) -> None:
     """Find the system dim_type for the given category and upsert a dim_node."""
     result = await db.execute(
@@ -352,17 +384,23 @@ async def _upsert_dim_node_for_entity(
     )
     existing_row = existing.mappings().first()
     if existing_row:
-        await db.execute(
-            text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
-            {"summary": summary, "id": str(existing_row["id"])},
-        )
+        if tags is not None:
+            await db.execute(
+                text("UPDATE twin.dim_node SET summary = :summary, tags = cast(:tags as jsonb), updated_at = NOW() WHERE id = :id"),
+                {"summary": summary, "tags": json.dumps(tags), "id": str(existing_row["id"])},
+            )
+        else:
+            await db.execute(
+                text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
+                {"summary": summary, "id": str(existing_row["id"])},
+            )
     else:
         await db.execute(
             text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary)
-                VALUES (:company_id, :dim_type_id, :label, :summary)
+                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags)
+                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb))
             """),
-            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary},
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary, "tags": json.dumps(tags or [])},
         )
 
 
@@ -375,6 +413,7 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
         desc = integration.get("integration_description") or ""
         caps = integration.get("capabilities") or ""
         summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
+        tags = _json_list(integration.get("tags")) or None
 
         company_name = await _get_company_name(db, company_id)
 
@@ -391,7 +430,7 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
                     {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal — don't break the integration save
@@ -404,6 +443,7 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
         if not name:
             return
         summary = (application.get("application_description") or "")[:800] or None
+        tags = _json_list(application.get("tags")) or None
         company_name = await _get_company_name(db, company_id)
 
         application_id = application.get("business_application_id")
@@ -419,7 +459,7 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
                     {"company_id": company_id, "company_name": company_name, "application_id": application_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -432,6 +472,7 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
         if not name:
             return
         summary = (process_record.get("process_description") or "")[:800] or None
+        tags = _json_list(process_record.get("tags")) or None
         company_name = await _get_company_name(db, company_id)
 
         process_id = process_record.get("business_process_id")
@@ -447,7 +488,7 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
                     {"company_id": company_id, "company_name": company_name, "process_id": process_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -460,15 +501,19 @@ async def sync_dim_node_to_business_entity(
     category: str,
     label: str,
     summary: Optional[str],
+    tags: Optional[list] = None,
+    tenant_id: Optional[str] = None,
 ) -> None:
     """
     Called from dim_nodes.py when a dim_node is created under application/process/integration.
-    Creates the corresponding business entity record if it doesn't already exist for this company.
+    Creates the corresponding business entity record if it doesn't already exist for this company,
+    or updates its tags if it does.
     """
     try:
         label = (label or "").strip()
         if not label:
             return
+
 
         if category == "application":
             app_cols = await _table_columns(db, "core", "business_applications")
@@ -481,7 +526,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in app_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_applications
+                                SET tags = cast(:tags as jsonb)
+                                WHERE business_application_id = :app_id
+                            """),
+                            {"tags": json.dumps(tags), "app_id": existing_row["business_application_id"]},
+                        )
+                        await db.commit()
                     return
 
             app_id = uuid4().hex
@@ -493,6 +549,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("application_description")
                 placeholders.append(":app_desc")
                 params["app_desc"] = summary
+            if "tenant_id" in app_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in app_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -501,6 +561,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in app_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in app_cols:
                     insert_cols.append(ts_col)
@@ -528,7 +592,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in proc_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_processes
+                                SET tags = cast(:tags as jsonb)
+                                WHERE business_process_id = :proc_id
+                            """),
+                            {"tags": json.dumps(tags), "proc_id": existing_row["business_process_id"]},
+                        )
+                        await db.commit()
                     return
 
             proc_id = uuid4().hex
@@ -540,6 +615,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("process_description")
                 placeholders.append(":proc_desc")
                 params["proc_desc"] = summary
+            if "tenant_id" in proc_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in proc_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -548,6 +627,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in proc_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in proc_cols:
                     insert_cols.append(ts_col)
@@ -576,7 +659,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in int_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_integrations
+                                SET tags = cast(:tags as jsonb)
+                                WHERE integration_id = :int_id
+                            """),
+                            {"tags": json.dumps(tags), "int_id": existing_row["integration_id"]},
+                        )
+                        await db.commit()
                     return
 
             int_id = uuid4().hex
@@ -588,6 +682,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("integration_description")
                 placeholders.append(":int_desc")
                 params["int_desc"] = summary
+            if "tenant_id" in int_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in int_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -596,6 +694,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in int_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in int_cols:
                     insert_cols.append(ts_col)
@@ -640,15 +742,13 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 parent_application_id TEXT,
                 company_id TEXT,
                 company_name TEXT,
+                tags JSONB DEFAULT '[]'::jsonb,
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
     )
-    await db.execute(text(
-        "ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS tenant_id TEXT"
-    ))
     await db.commit()
     _TABLE_COLUMNS_CACHE.pop(("core", "business_integrations"), None)
     _INTEGRATIONS_READY = True
@@ -819,6 +919,7 @@ _COMPANY_HIDDEN_FIELDS = {"company_id", "company_name"}
 def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    row["tags"] = _json_list(row.get("tags"))
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
     return row
@@ -848,6 +949,7 @@ def _normalize_related_ai_models(row: dict[str, Any]) -> None:
 
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
+    row["tags"] = _json_list(row.get("tags"))
     related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_use_cases: list[dict[str, Any]] = []
     seen_use_case_ids: set[str] = set()
@@ -878,6 +980,7 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
+    row["tags"] = _json_list(row.get("tags"))
     related_processes_raw = _json_list(row.get("related_processes"))
     related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_processes: list[dict[str, Any]] = []
@@ -1611,6 +1714,7 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "version"),
         _col_expr("bi", int_cols, "parent_application_id"),
         "pa.application_name AS parent_application_name",
+        _col_expr("bi", int_cols, "tags"),
         _col_expr("bi", int_cols, "created_ts"),
         _col_expr("bi", int_cols, "updated_ts"),
         "rel.related_agents",
@@ -1802,6 +1906,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "latest_released_version"),
         _col_expr("ba", app_cols, "latest_release_date"),
         _col_expr("ba", app_cols, "latest_release_documentation_link"),
+        _col_expr("ba", app_cols, "tags"),
         _col_expr("ba", app_cols, "created_ts"),
         _col_expr("ba", app_cols, "updated_ts"),
         "rel.related_agents",
@@ -2148,6 +2253,7 @@ async def _fetch_processes(
         _col_expr("bp", process_cols, "inherent_risk_classification_score"),
         _col_expr("bp", process_cols, "sla"),
         _col_expr("bp", process_cols, "process_health_state"),
+        _col_expr("bp", process_cols, "tags"),
         _col_expr("bp", process_cols, "created_ts"),
         _col_expr("bp", process_cols, "updated_ts"),
         "rel.related_agents",
@@ -2536,6 +2642,24 @@ async def get_integration(
     return rows[0]
 
 
+@router.post("/integrations/suggest-description", tags=["Integrations"], summary="Suggest Integration Description")
+async def suggest_integration_description(body: SuggestIntegrationDescriptionRequest):
+    integration_name = body.integration_name.strip()
+    if not integration_name:
+        raise HTTPException(status_code=400, detail="integration_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            integration_name,
+            SUGGEST_INTEGRATION_DESCRIPTION_SYSTEM,
+            "business integration",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestIntegrationDescriptionResponse(description=description)
+
+
 @router.post("/integrations", status_code=201, tags=["Integrations"], summary="Create Integration")
 async def create_integration(
     request: Request,
@@ -2567,6 +2691,10 @@ async def create_integration(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in int_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     if "created_ts" in int_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in int_cols:
@@ -2578,7 +2706,9 @@ async def create_integration(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -2619,11 +2749,17 @@ async def update_integration(
         allowed_columns=_INTEGRATION_EDITABLE_COLUMNS,
         existing_columns=int_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in int_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["integration_id"] = integration_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "integration_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "integration_id"
+    )
     if "updated_ts" in int_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
@@ -2873,6 +3009,10 @@ async def create_application(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in app_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     for col, default_value in _APPLICATION_READONLY_DEFAULTS.items():
         if col in app_cols:
             insert_values[col] = default_value
@@ -2893,7 +3033,9 @@ async def create_application(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -2932,11 +3074,17 @@ async def update_application(
         allowed_columns=_APPLICATION_EDITABLE_COLUMNS,
         existing_columns=app_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in app_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["business_application_id"] = application_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_application_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "business_application_id"
+    )
     if "updated_ts" in app_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
@@ -3128,6 +3276,10 @@ async def create_process(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in process_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
         if col in process_cols:
             insert_values[col] = default_value
@@ -3148,7 +3300,9 @@ async def create_process(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -3189,6 +3343,9 @@ async def update_process(
         allowed_columns=_PROCESS_EDITABLE_COLUMNS,
         existing_columns=process_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in process_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
@@ -3205,7 +3362,10 @@ async def update_process(
                 )
 
     updates["business_process_id"] = process_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_process_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "business_process_id"
+    )
     if "updated_ts" in process_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
