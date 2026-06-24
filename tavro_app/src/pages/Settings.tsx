@@ -145,7 +145,7 @@ const Settings: React.FC = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
                     <BotMessageSquare size={16} className="text-blue-500" />
-                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assitant Settings - Chat AI Configuration</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assistant Settings - Chat AI Configuration</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
