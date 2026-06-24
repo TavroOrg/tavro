@@ -1761,6 +1761,7 @@ const UseCaseViewPage: React.FC = () => {
           onInlineValueChange={(v) => setInlineEdit(prev => prev ? { ...prev, value: v } : null)}
           onSaveInlineEdit={handleSaveInlineEdit}
           onCancelInlineEdit={handleCancelInlineEdit}
+          enriching={enriching}
         />
       )}
 

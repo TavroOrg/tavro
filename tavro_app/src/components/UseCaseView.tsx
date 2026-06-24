@@ -22,7 +22,9 @@ import {
     DollarSign,
     Map,
     Lightbulb,
+    Download,
 } from 'lucide-react';
+import { generateBusinessCasePDF } from '../utils/businessCasePDF';
 
 const PRIORITY_OPTIONS = [
     '1 - Critical',
@@ -69,6 +71,7 @@ interface UseCaseViewProps {
     onInlineValueChange?: (v: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    enriching?: false | 'loading' | 'failed';
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -237,8 +240,36 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     editSolutionApproach, onEditSolutionApproachChange,
     inlineEdit, inlineSaving,
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+    enriching,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
+    const [downloadingPdf, setDownloadingPdf] = React.useState(false);
+
+    const handleDownloadBusinessCase = async () => {
+        setDownloadingPdf(true);
+        try {
+            await generateBusinessCasePDF({
+                title: uc.name ?? 'AI Use Case',
+                description: uc.description ?? null,
+                business_problem_statement: uc.problem_statement ?? null,
+                solution_approach: uc.solution_approach ?? null,
+                expected_benefits: uc.expected_benefits ?? null,
+                executive_summary: uc.executive_summary ?? null,
+                assumptions: uc.assumptions ?? null,
+                quantified_financial_benefits: uc.quantified_financial_benefits ?? null,
+                total_financial_impact_summary: uc.total_financial_impact_summary ?? null,
+                implementation_cost_estimate: uc.implementation_cost_estimate ?? null,
+                return_on_investment: uc.return_on_investment ?? null,
+                risk_considerations: uc.risk_considerations ?? null,
+                implementation_roadmap: uc.implementation_roadmap ?? null,
+                recommendation: uc.recommendation ?? null,
+            });
+        } catch (err) {
+            console.error('[UseCaseView] Business case PDF generation failed', err);
+        } finally {
+            setDownloadingPdf(false);
+        }
+    };
 
     const applications = uc.applications?.filter(Boolean) ?? [];
     const controls = uc.controls?.filter(Boolean) ?? [];
@@ -573,6 +604,28 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {/* Business Case tab */}
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
+
+                        {/* Download Report button — only available when enrichment is complete */}
+                        <div className="flex justify-end">
+                            {enriching === 'loading' ? (
+                                <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-400">
+                                    <Loader2 size={12} className="animate-spin" />
+                                    Generating business case…
+                                </span>
+                            ) : enriching === 'failed' ? null : (
+                                <button
+                                    onClick={handleDownloadBusinessCase}
+                                    disabled={downloadingPdf}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {downloadingPdf
+                                        ? <Loader2 size={12} className="animate-spin" />
+                                        : <Download size={12} />
+                                    }
+                                    Download Report
+                                </button>
+                            )}
+                        </div>
 
                         {/* Executive Summary — full-width prominent card */}
                         {inlineEdit?.field === 'executive_summary' ? (
