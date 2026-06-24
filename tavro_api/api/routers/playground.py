@@ -1730,12 +1730,12 @@ async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
         await db.execute(
             text("""
                 INSERT INTO core.playground_session
-                    (session_id, tenant_id, agent_internal_id, agent_id,
+                    (session_id, tenant_id, company_id, agent_internal_id, agent_id,
                      agent_name, provider, model,
                      interactions, token_total, summary, observations,
                      status, created_at, updated_at, ended_at)
                 VALUES
-                    (:session_id, :tenant_id, :agent_internal_id, :agent_id,
+                    (:session_id, :tenant_id, :company_id, :agent_internal_id, :agent_id,
                      :agent_name, :provider, :model,
                      CAST(:interactions AS jsonb), :token_total,
                      CAST(:summary AS jsonb), CAST(:observations AS jsonb),
@@ -1751,7 +1751,8 @@ async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
             """),
             {
                 "session_id":        session["session_id"],
-                "tenant_id":         session.get("tenant_id") or config.get("company_id"),
+                "tenant_id":         session.get("tenant_id") or config.get("tenant_id"),
+                "company_id":        session.get("company_id") or config.get("company_id"),
                 "agent_internal_id": session.get("agent_internal_id"),
                 "agent_id":          session.get("agent_id"),
                 "agent_name":        config.get("agent_name"),
@@ -1790,33 +1791,33 @@ async def _db_get_session(session_id: str, db: AsyncSession) -> dict | None:
         return None
 
 
-async def _db_list_sessions(agent_id: str | None, db: AsyncSession) -> list[dict]:
-    """List sessions from the database, optionally filtered by agent_id."""
+async def _db_list_sessions(agent_id: str | None, db: AsyncSession, tenant_id: str | None = None, company_id: str | None = None) -> list[dict]:
+    """List sessions from the database, optionally filtered by agent_id, tenant_id, and company_id."""
     try:
+        filters = []
+        params: dict = {}
         if agent_id:
-            rows = await db.execute(
-                text("""
-                    SELECT session_id, agent_id, agent_name, provider, model,
-                           token_total, status, created_at, updated_at, ended_at,
-                           jsonb_array_length(COALESCE(interactions, '[]'::jsonb)) AS raw_count
-                    FROM core.playground_session
-                    WHERE agent_id = :aid
-                    ORDER BY updated_at DESC
-                    LIMIT 100
-                """),
-                {"aid": agent_id},
-            )
-        else:
-            rows = await db.execute(
-                text("""
-                    SELECT session_id, agent_id, agent_name, provider, model,
-                           token_total, status, created_at, updated_at, ended_at,
-                           jsonb_array_length(COALESCE(interactions, '[]'::jsonb)) AS raw_count
-                    FROM core.playground_session
-                    ORDER BY updated_at DESC
-                    LIMIT 100
-                """),
-            )
+            filters.append("agent_id = :aid")
+            params["aid"] = agent_id
+        if tenant_id:
+            filters.append("tenant_id = :tenant_id")
+            params["tenant_id"] = tenant_id
+        if company_id:
+            filters.append("company_id = :company_id")
+            params["company_id"] = company_id
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await db.execute(
+            text(f"""
+                SELECT session_id, agent_id, agent_name, provider, model,
+                       token_total, status, created_at, updated_at, ended_at,
+                       jsonb_array_length(COALESCE(interactions, '[]'::jsonb)) AS raw_count
+                FROM core.playground_session
+                {where}
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """),
+            params,
+        )
         return [dict(r) for r in rows.mappings()]
     except Exception as e:
         print(f"DB list sessions error: {e}")
@@ -1849,15 +1850,24 @@ def _db_row_to_summary(r: dict) -> dict:
 # =============================================================
 
 @router.get("/sessions")
-async def list_sessions(agent_id: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    agent_id: str | None = None,
+    tenant_id: str | None = None,
+    company_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     # DB rows (ended + any active that were persisted)
-    db_rows = await _db_list_sessions(agent_id, db)
+    db_rows = await _db_list_sessions(agent_id, db, tenant_id=tenant_id, company_id=company_id)
     db_ids  = {r["session_id"] for r in db_rows}
 
     # In-memory active sessions not yet in DB (just started, not yet flushed)
     mem_active = list(session_store.values())
     if agent_id:
         mem_active = [s for s in mem_active if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_active = [s for s in mem_active if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_active = [s for s in mem_active if s.get("company_id") == company_id]
 
     results = [_db_row_to_summary(r) for r in db_rows]
 
@@ -1882,6 +1892,10 @@ async def list_sessions(agent_id: str | None = None, db: AsyncSession = Depends(
     mem_ended = list(ended_sessions.values())
     if agent_id:
         mem_ended = [s for s in mem_ended if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_ended = [s for s in mem_ended if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_ended = [s for s in mem_ended if s.get("company_id") == company_id]
     for s in mem_ended:
         if s["session_id"] not in db_ids and s["session_id"] not in {r["session_id"] for r in results}:
             results.append({
@@ -1924,6 +1938,7 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
     session_store[session_id] = {
         "session_id":  session_id,
         "tenant_id":         resolved_tenant_id,
+        "company_id":        config.company_id,
         "agent_internal_id": resolved_agent_internal_id,
         "agent_id":          config.agent_id,
         "config":      config.model_dump(),
