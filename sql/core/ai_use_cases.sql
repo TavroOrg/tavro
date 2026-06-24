@@ -22,5 +22,13 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   residual_risk_classification_score decimal(10, 2),
   solution_approach TEXT,
   company_id TEXT,
-  company_name TEXT
+  company_name TEXT,
+  assumptions TEXT,
+  quantified_financial_benefits TEXT,
+  total_financial_impact_summary TEXT,
+  implementation_cost_estimate TEXT,
+  return_on_investment TEXT,
+  risk_considerations TEXT,
+  implementation_roadmap TEXT,
+  recommendation TEXT
 );

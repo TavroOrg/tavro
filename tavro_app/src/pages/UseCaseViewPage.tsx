@@ -1496,6 +1496,14 @@ const UseCaseViewPage: React.FC = () => {
       else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
       else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
       else if (field === 'solution_approach') payload.solution_approach = value.trim();
+      else if (field === 'assumptions') payload.assumptions = value.trim();
+      else if (field === 'quantified_financial_benefits') payload.quantified_financial_benefits = value.trim();
+      else if (field === 'total_financial_impact_summary') payload.total_financial_impact_summary = value.trim();
+      else if (field === 'implementation_cost_estimate') payload.implementation_cost_estimate = value.trim();
+      else if (field === 'return_on_investment') payload.return_on_investment = value.trim();
+      else if (field === 'risk_considerations') payload.risk_considerations = value.trim();
+      else if (field === 'implementation_roadmap') payload.implementation_roadmap = value.trim();
+      else if (field === 'recommendation') payload.recommendation = value.trim();
       await useCaseApi.updateUseCase(id, payload);
       setUseCase(prev => {
         if (!prev) return prev;
@@ -1507,6 +1515,14 @@ const UseCaseViewPage: React.FC = () => {
         else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
         else if (field === 'expected_benefits') next.expected_benefits = value.trim();
         else if (field === 'solution_approach') next.solution_approach = value.trim();
+        else if (field === 'assumptions') next.assumptions = value.trim();
+        else if (field === 'quantified_financial_benefits') next.quantified_financial_benefits = value.trim();
+        else if (field === 'total_financial_impact_summary') next.total_financial_impact_summary = value.trim();
+        else if (field === 'implementation_cost_estimate') next.implementation_cost_estimate = value.trim();
+        else if (field === 'return_on_investment') next.return_on_investment = value.trim();
+        else if (field === 'risk_considerations') next.risk_considerations = value.trim();
+        else if (field === 'implementation_roadmap') next.implementation_roadmap = value.trim();
+        else if (field === 'recommendation') next.recommendation = value.trim();
         return next as UseCaseDetail;
       });
       setInlineEdit(null);

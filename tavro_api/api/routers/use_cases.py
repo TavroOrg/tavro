@@ -216,6 +216,14 @@ class UseCaseUpdateRequest(BaseModel):
     priority: Optional[str] = None
     solution_approach: Optional[str] = None
     use_case_owner: Optional[str] = None
+    assumptions: Optional[str] = None
+    quantified_financial_benefits: Optional[str] = None
+    total_financial_impact_summary: Optional[str] = None
+    implementation_cost_estimate: Optional[str] = None
+    return_on_investment: Optional[str] = None
+    risk_considerations: Optional[str] = None
+    implementation_roadmap: Optional[str] = None
+    recommendation: Optional[str] = None
 
 
 class LinkAgentRequest(BaseModel):
@@ -549,7 +557,10 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     u.blended_risk_score,
                     u.inherent_risk_classification, u.residual_risk_classification,
                     u.inherent_risk_classification_score, u.residual_risk_classification_score,
-                    u.agent_risk_tier_art
+                    u.agent_risk_tier_art,
+                    u.assumptions, u.quantified_financial_benefits, u.total_financial_impact_summary,
+                    u.implementation_cost_estimate, u.return_on_investment, u.risk_considerations,
+                    u.implementation_roadmap, u.recommendation
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
@@ -759,6 +770,30 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
         if body.use_case_owner and body.use_case_owner.strip():
             sets.append("owner = :owner")
             params["owner"] = body.use_case_owner.strip()
+        if body.assumptions is not None:
+            sets.append("assumptions = :assumptions")
+            params["assumptions"] = body.assumptions.strip()
+        if body.quantified_financial_benefits is not None:
+            sets.append("quantified_financial_benefits = :qfb")
+            params["qfb"] = body.quantified_financial_benefits.strip()
+        if body.total_financial_impact_summary is not None:
+            sets.append("total_financial_impact_summary = :tfis")
+            params["tfis"] = body.total_financial_impact_summary.strip()
+        if body.implementation_cost_estimate is not None:
+            sets.append("implementation_cost_estimate = :ice")
+            params["ice"] = body.implementation_cost_estimate.strip()
+        if body.return_on_investment is not None:
+            sets.append("return_on_investment = :roi")
+            params["roi"] = body.return_on_investment.strip()
+        if body.risk_considerations is not None:
+            sets.append("risk_considerations = :risk_cons")
+            params["risk_cons"] = body.risk_considerations.strip()
+        if body.implementation_roadmap is not None:
+            sets.append("implementation_roadmap = :impl_roadmap")
+            params["impl_roadmap"] = body.implementation_roadmap.strip()
+        if body.recommendation is not None:
+            sets.append("recommendation = :recommendation")
+            params["recommendation"] = body.recommendation.strip()
 
         await db.execute(
             text(f"UPDATE {CORE}.ai_use_cases SET {', '.join(sets)} WHERE ai_use_case_id = :uid"),

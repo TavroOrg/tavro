@@ -64,6 +64,14 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+    assumptions?: string;
+    quantified_financial_benefits?: string;
+    total_financial_impact_summary?: string;
+    implementation_cost_estimate?: string;
+    return_on_investment?: string;
+    risk_considerations?: string;
+    implementation_roadmap?: string;
+    recommendation?: string;
 }
 
 function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
@@ -75,6 +83,14 @@ function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
     if (payload.priority !== undefined) fields.push('priority');
     if (payload.solution_approach !== undefined) fields.push('solution approach');
     if (payload.use_case_owner !== undefined) fields.push('owner');
+    if (payload.assumptions !== undefined) fields.push('assumptions');
+    if (payload.quantified_financial_benefits !== undefined) fields.push('quantified financial benefits');
+    if (payload.total_financial_impact_summary !== undefined) fields.push('total financial impact summary');
+    if (payload.implementation_cost_estimate !== undefined) fields.push('implementation cost estimate');
+    if (payload.return_on_investment !== undefined) fields.push('return on investment');
+    if (payload.risk_considerations !== undefined) fields.push('risk considerations');
+    if (payload.implementation_roadmap !== undefined) fields.push('implementation roadmap');
+    if (payload.recommendation !== undefined) fields.push('recommendation');
     return fields.length > 0 ? fields.join(', ') : 'details';
 }
 
