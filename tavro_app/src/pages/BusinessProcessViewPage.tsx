@@ -120,7 +120,7 @@ const HINTS: Record<string, string> = {
   associated_agents:
     'Indicates the total number of agents associated with the process.',
   agent_risk_exposure:
-    'ARE represents process risk using highest related agent AIVSS and average criticality/financial/reputational/regulatory impacts.',
+    'ARE represents process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
 };
 
 const inputCls =

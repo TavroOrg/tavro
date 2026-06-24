@@ -20,7 +20,7 @@ COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
     @classmethod
     @contextmanager
@@ -2216,6 +2216,7 @@ class AgentMetadataExporter:
                     u.updated_ts,
                     u.agent_risk_exposure_are,
                     u.no_of_associated_agents,
+                    u.blended_risk_score,
                     u.inherent_risk_classification,
                     u.residual_risk_classification,
                     u.inherent_risk_classification_score,
@@ -2288,6 +2289,7 @@ class AgentMetadataExporter:
                     "updated_ts": row.get("updated_ts"),
                     "agent_risk_exposure_are": row.get("agent_risk_exposure_are"),
                     "no_of_associated_agents": row.get("no_of_associated_agents"),
+                    "blended_risk_score": row.get("blended_risk_score"),
                     "inherent_risk_classification": row.get("inherent_risk_classification"),
                     "residual_risk_classification": row.get("residual_risk_classification"),
                     "inherent_risk_classification_score": row.get("inherent_risk_classification_score"),
@@ -2431,11 +2433,11 @@ class AgentMetadataExporter:
                     agent_risk_exposure_are = 0,
                     blended_risk_score = 0,
                     no_of_associated_agents = 0,
-                    inherent_risk_classification = '',
-                    residual_risk_classification = '',
+                    inherent_risk_classification = 'None',
+                    residual_risk_classification = 'None',
                     inherent_risk_classification_score = 0,
                     residual_risk_classification_score = 0,
-                    agent_risk_tier_art = 'Low',
+                    agent_risk_tier_art = 'None',
                     updated_ts = TIMESTAMP '{now}'
                 WHERE ai_use_case_id = '{ai_use_case_id}'
                   {tenant_uc_where}
@@ -2445,19 +2447,29 @@ class AgentMetadataExporter:
 
         ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
         metrics_q = f"""
-            WITH risk_metrics AS (
+            WITH latest_agent_scores AS (
+                SELECT DISTINCT ON (agent_internal_id)
+                    agent_internal_id,
+                    blended_risk_score
+                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
+                WHERE agent_internal_id IN ({ids_sql})
+                  AND blended_risk_score IS NOT NULL
+                ORDER BY
+                    agent_internal_id,
+                    CASE WHEN is_current = TRUE THEN 0 ELSE 1 END,
+                    assessment_ts DESC NULLS LAST,
+                    updated_ts DESC NULLS LAST
+            ),
+            risk_metrics AS (
                 SELECT
                     MAX(blended_risk_score) AS max_score,
                     (
                         SELECT agent_internal_id
-                        FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                        WHERE agent_internal_id IN ({ids_sql})
-                        ORDER BY blended_risk_score DESC
+                        FROM latest_agent_scores
+                        ORDER BY blended_risk_score DESC NULLS LAST
                         LIMIT 1
                     ) AS worst_agent_id
-                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                WHERE agent_internal_id IN ({ids_sql})
-                  AND is_current = true
+                FROM latest_agent_scores
             )
             SELECT * FROM risk_metrics
         """
@@ -2467,21 +2479,26 @@ class AgentMetadataExporter:
         blended_score = float(metrics.get("max_score") or 0.0)
 
         inherent_class = ""
+        inherent_score = 0.0
         residual_class = ""
+        residual_score = 0.0
         if worst_agent_id and cls.RISK_MANAGEMENT_DB_NAME:
             risk_detail_q = f"""
-                SELECT type_of_risk, risk_classification
+                SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
                 WHERE agent_internal_id = '{cls.sanitize(str(worst_agent_id))}'
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC
             """
             risk_rows = cls.execute_select(risk_detail_q)
-            inherent_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Inherent Risk'), "")
-            residual_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Residual Risk'), "")
-
-        inherent_score = cls._regulatory_risk_score(inherent_class)
-        residual_score = cls._regulatory_risk_score(residual_class)
+            for r in risk_rows:
+                tor = r.get("type_of_risk")
+                if tor == "Inherent Risk" and not inherent_class:
+                    inherent_class = r.get("risk_classification") or ""
+                    inherent_score = float(r.get("risk_classification_score") or 0.0)
+                elif tor == "Residual Risk" and not residual_class:
+                    residual_class = r.get("risk_classification") or ""
+                    residual_score = float(r.get("risk_classification_score") or 0.0)
         risk_tier = cls._get_risk_tier(blended_score)
 
         sync_q = f"""

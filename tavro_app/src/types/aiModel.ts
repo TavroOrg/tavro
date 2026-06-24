@@ -45,6 +45,16 @@ export interface AiModelRecord {
   recert_processing_changed: string | null;
   recert_training_completed: string | null;
   recert_risk_assessment_done: string | null;
+  // ARE
+  business_criticality: string | null;
+  emergency_tier: string | null;
+  blended_risk_score: number | null;
+  agent_risk_exposure: number | null;
+  agent_risk_tier: string | null;
+  inherent_risk_classification: string | null;
+  residual_risk_classification: string | null;
+  inherent_risk_classification_score: number | null;
+  residual_risk_classification_score: number | null;
   // Meta
   no_of_associated_agents: number | null;
   related_agent_count?: number | null;

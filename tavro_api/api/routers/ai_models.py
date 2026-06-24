@@ -21,6 +21,7 @@ from api.error_handler import raise_server_error
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 # Catalog columns that may be supplied on create/update (everything except the
 # system-managed ones: tenant_id, ai_model_id, no_of_associated_agents,
@@ -30,6 +31,8 @@ _AI_MODEL_EDITABLE_COLUMNS: List[str] = [
     "model_name", "owner", "description", "department_executive",
     "business_functions", "vendor_or_inhouse", "provider", "status",
     "parent_model_id", "version_number",
+    # ARE
+    "business_criticality", "emergency_tier",
     # Intended Use & Decision Impact
     "use_case_value_drivers", "user_types", "decision_type", "automation_level",
     "regulatory_mapping", "consumer_impact", "risk_tier_materiality",
@@ -116,6 +119,8 @@ class AiModel(BaseModel):
     recert_processing_changed: Optional[str] = None
     recert_training_completed: Optional[str] = None
     recert_risk_assessment_done: Optional[str] = None
+    business_criticality: Optional[str] = None
+    emergency_tier: Optional[str] = None
 
 
 class AiModelCreate(AiModel):
@@ -324,8 +329,16 @@ async def create_ai_model(
     company_name = await _get_company_name(db, company_id) if company_id else None
 
     payload = body.model_dump(exclude_none=True)
-    columns = ["tenant_id", "ai_model_id", "no_of_associated_agents", "created_ts", "updated_ts"]
-    placeholders = [":tid", ":mid", "0", "CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP"]
+    columns = [
+        "tenant_id", "ai_model_id", "no_of_associated_agents", "blended_risk_score",
+        "agent_risk_exposure", "agent_risk_tier", "inherent_risk_classification",
+        "residual_risk_classification", "inherent_risk_classification_score",
+        "residual_risk_classification_score", "created_ts", "updated_ts",
+    ]
+    placeholders = [
+        ":tid", ":mid", "0", "0", "0", "'None'", "'None'",
+        "'None'", "0", "0", "CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP",
+    ]
     params: Dict[str, Any] = {"tid": tenant_id, "mid": ai_model_id}
     if company_id:
         columns += ["company_id", "company_name"]
@@ -528,6 +541,9 @@ async def update_ai_model(
             params,
         )
         await db.commit()
+        if {"business_criticality", "emergency_tier"} & set(payload.keys()):
+            await _refresh_model_rollup(db, mid)
+            await db.commit()
         return {"message": "AI Model updated successfully.", "ai_model_id": mid}
     except HTTPException:
         raise
@@ -925,6 +941,106 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
         """),
         {"mid": ai_model_id},
+    )
+
+    ara_exists = (await db.execute(
+        text("SELECT to_regclass(:t)"), {"t": f"{CORE}.agent_risk_assessments"}
+    )).scalar()
+    if not ara_exists:
+        return
+
+    model_row = await db.execute(
+        text(f"SELECT business_criticality, emergency_tier FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
+        {"mid": ai_model_id},
+    )
+    model = model_row.mappings().first()
+    if not model:
+        return
+
+    bc = (model.get("business_criticality") or "").strip().lower()
+    bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+
+    et = (model.get("emergency_tier") or "").strip().lower()
+    et_score = {"mission critical": 1.0, "business critical": 0.4,
+                "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+
+    max_brs_row = await db.execute(
+        text(f"""
+            SELECT brs.agent_internal_id, brs.blended_risk_score
+            FROM {CORE}.agent_ai_models rel
+            JOIN LATERAL (
+                SELECT ara.agent_internal_id, ara.blended_risk_score
+                FROM {CORE}.agent_risk_assessments ara
+                WHERE ara.agent_id = rel.agent_id
+                  AND ara.blended_risk_score IS NOT NULL
+                ORDER BY
+                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                    ara.assessment_ts DESC NULLS LAST,
+                    ara.updated_ts DESC NULLS LAST
+                LIMIT 1
+            ) brs ON TRUE
+            WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+            ORDER BY brs.blended_risk_score DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"mid": ai_model_id},
+    )
+    worst_row = max_brs_row.mappings().first()
+    max_brs = float(worst_row.get("blended_risk_score") or 0.0) if worst_row else 0.0
+    worst_internal_id = worst_row.get("agent_internal_id") if worst_row else None
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+            """),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    are = round(max_brs * (bc_score + et_score) / 2.0, 2)
+    if are >= 9.0:
+        art = "Critical"
+    elif are >= 7.0:
+        art = "High"
+    elif are >= 3.0:
+        art = "Medium"
+    else:
+        art = "Low"
+
+    await db.execute(
+        text(f"""
+            UPDATE {CORE}.ai_models
+            SET blended_risk_score = :max_brs,
+                agent_risk_exposure = :are,
+                agent_risk_tier = :art,
+                inherent_risk_classification = :inherent_class,
+                residual_risk_classification = :residual_class,
+                inherent_risk_classification_score = :inherent_score,
+                residual_risk_classification_score = :residual_score
+            WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
+        """),
+        {
+            "max_brs": max_brs, "are": are, "art": art, "mid": ai_model_id,
+            "inherent_class": inherent_class, "inherent_score": inherent_score,
+            "residual_class": residual_class, "residual_score": residual_score,
+        },
     )
 
 
