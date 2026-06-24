@@ -206,6 +206,14 @@ class UseCaseCreateRequest(BaseModel):
     use_case_owner: Optional[str] = None
     impacted_business_applications: Optional[List[str]] = None
     impacted_business_processes: Optional[List[str]] = None
+    assumptions: Optional[str] = None
+    quantified_financial_benefits: Optional[str] = None
+    total_financial_impact_summary: Optional[str] = None
+    implementation_cost_estimate: Optional[str] = None
+    return_on_investment: Optional[str] = None
+    risk_considerations: Optional[str] = None
+    implementation_roadmap: Optional[str] = None
+    recommendation: Optional[str] = None
 
 
 class UseCaseUpdateRequest(BaseModel):
@@ -472,11 +480,15 @@ async def create_use_case(
                 INSERT INTO {CORE}.ai_use_cases
                     (tenant_id, ai_use_case_id, name, description, owner,
                      problem_statement, expected_benefits, priority, status,
-                     solution_approach, created_ts, updated_ts, company_id, company_name)
+                     solution_approach, created_ts, updated_ts, company_id, company_name,
+                     assumptions, quantified_financial_benefits, total_financial_impact_summary,
+                     implementation_cost_estimate, return_on_investment, risk_considerations,
+                     implementation_roadmap, recommendation)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
                      :problem, :benefits, :priority, 'New',
-                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname)
+                     :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname,
+                     :assumptions, :qfb, :tfis, :ice, :roi, :risk_cons, :impl_roadmap, :recom)
             """),
             {
                 "tid": tenant_id, "uid": use_case_id,
@@ -487,6 +499,14 @@ async def create_use_case(
                 "priority": priority,
                 "solution": body.solution_approach or "",
                 "cid": cid, "cname": cname,
+                "assumptions": body.assumptions or "",
+                "qfb": body.quantified_financial_benefits or "",
+                "tfis": body.total_financial_impact_summary or "",
+                "ice": body.implementation_cost_estimate or "",
+                "roi": body.return_on_investment or "",
+                "risk_cons": body.risk_considerations or "",
+                "impl_roadmap": body.implementation_roadmap or "",
+                "recom": body.recommendation or "",
             },
         )
         await db.commit()

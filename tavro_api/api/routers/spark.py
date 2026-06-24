@@ -1611,6 +1611,14 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             "expected_benefits": f"AI-driven improvements for: {request.title}",
             "priority": priority,
             "solution_approach": "",
+            "assumptions": "",
+            "quantified_financial_benefits": "",
+            "total_financial_impact_summary": "",
+            "implementation_cost_estimate": "",
+            "return_on_investment": "",
+            "risk_considerations": "",
+            "implementation_roadmap": "",
+            "recommendation": "",
         }
         return SparkConvertResponse(
             use_case_fields=no_llm_fields,
@@ -1656,12 +1664,21 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         "- business_problem_statement: the specific business problem or gap being addressed\n"
         "- expected_benefits: plain text paragraph describing concrete outcomes (efficiency %, cost reduction, risk reduction, etc.). Must be a plain string — no JSON objects, no curly braces.\n"
         "- solution_approach: brief technical approach (model type, data sources, integration points)\n"
-        f"- priority: exactly one of '1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning' (suggest '{priority}' based on impact)\n\n"
+        f"- priority: exactly one of '1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning' (suggest '{priority}' based on impact)\n"
+        "- assumptions: key assumptions underpinning the financial and business projections (plain string)\n"
+        "- quantified_financial_benefits: specific measurable financial gains with concrete numbers where possible (e.g. cost savings $X, efficiency gain Y%, FTE reduction Z) — plain string\n"
+        "- total_financial_impact_summary: one concise paragraph summarising the overall net financial impact — plain string\n"
+        "- implementation_cost_estimate: estimated cost to implement covering technology, people, and time — plain string\n"
+        "- return_on_investment: ROI estimate or payback period based on costs vs benefits — plain string\n"
+        "- risk_considerations: key financial or operational risks that could affect the business case — plain string\n"
+        "- implementation_roadmap: phased timeline for delivery (e.g. Phase 1: …, Phase 2: …) — plain string\n"
+        "- recommendation: final recommendation on whether and how to proceed — plain string\n\n"
+        "All values must be plain strings — no JSON objects, no curly braces, no nested structures.\n"
         "Return ONLY the JSON object. No prose, no markdown fencing."
     )
 
     try:
-        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=1000)
+        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=2500)
         raw_text = "".join(
             block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"
         )
@@ -1676,6 +1693,14 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             "business_problem_statement": request.rationale,
             "expected_benefits": f"AI-driven improvements for: {request.title}",
             "solution_approach": "",
+            "assumptions": "",
+            "quantified_financial_benefits": "",
+            "total_financial_impact_summary": "",
+            "implementation_cost_estimate": "",
+            "return_on_investment": "",
+            "risk_considerations": "",
+            "implementation_roadmap": "",
+            "recommendation": "",
         }
 
     fields.setdefault("priority", priority)
