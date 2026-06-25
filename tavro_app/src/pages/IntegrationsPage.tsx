@@ -11,12 +11,14 @@ import {
   Plus,
   Search,
   Bot,
+  Upload,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { IntegrationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { toUserMessage } from '../utils/errorUtils';
+import LoadIntegrationsModal from '../components/LoadIntegrationsModal';
 
 const PAGE_SIZE = 10;
 
@@ -44,6 +46,7 @@ const IntegrationsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(1);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   useEffect(() => {
     if (catalogLoading) {
@@ -120,6 +123,13 @@ const IntegrationsPage: React.FC = () => {
 
         {!isSearching && (
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-all shadow-sm"
+            >
+              <Upload size={16} />
+              Load Integrations
+            </button>
             <button
               onClick={() => navigate('/integrations/new')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
@@ -348,6 +358,17 @@ const IntegrationsPage: React.FC = () => {
             <ChevronRight size={16} />
           </button>
         </div>
+      )}
+
+      {showUploadModal && (
+        <LoadIntegrationsModal
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={() => {
+            businessRelationsApi.listIntegrations(undefined, activeCompany?.id).then(setIntegrations).catch(() => {});
+          }}
+          companyId={activeCompany?.id}
+          companyName={activeCompany?.name}
+        />
       )}
     </div>
   );
