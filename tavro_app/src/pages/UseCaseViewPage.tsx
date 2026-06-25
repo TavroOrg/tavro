@@ -1714,7 +1714,7 @@ const UseCaseViewPage: React.FC = () => {
       {enriching === 'loading' && (
         <div className="flex items-center gap-3 px-5 py-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-800 text-sm font-medium shadow-sm">
           <RefreshCw size={15} className="animate-spin shrink-0 text-blue-500" />
-          <span>AI use case creation is in progress — we'll notify you once this is fully generated.</span>
+          <span>Enriching AI use case and creating an appropriate agent.</span>
         </div>
       )}
       {enriching === 'failed' && (
