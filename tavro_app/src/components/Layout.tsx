@@ -128,14 +128,14 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(),
+            aiModelApi.countModels(companyId),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {
             if (apps.status === 'fulfilled') setAppCount(apps.value);
             if (processes.status === 'fulfilled') setProcessCount(processes.value);
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
-            if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+            if (models.status === 'fulfilled') setAiModelCount(models.value);
             if (agents.status === 'fulfilled') setAgentCount(agents.value);
             if (useCases.status === 'fulfilled') setUseCaseCount(useCases.value);
         });
