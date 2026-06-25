@@ -128,7 +128,7 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(),
+            aiModelApi.listModels(undefined, companyId),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {

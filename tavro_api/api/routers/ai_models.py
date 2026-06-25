@@ -273,8 +273,13 @@ async def list_ai_models(
     # Company filter for the agent count subquery — join agents table to apply company_id.
     _agent_cnt_join = (
         f"""JOIN {CORE}.agents ag
-                ON ag.agent_id = rel.agent_id
-                OR ag.agent_internal_id = rel.agent_internal_id"""
+                ON (
+                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
+                    OR (
+                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                        AND ag.agent_internal_id = rel.agent_internal_id
+                    )
+                )"""
         if company_id else ""
     )
     _agent_cnt_cf = (
@@ -330,12 +335,23 @@ async def list_ai_models(
                                 (array_agg(COALESCE(ag2.agent_internal_id, rel2.agent_internal_id) ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
                             FROM {CORE}.agent_ai_models rel2
                             JOIN {CORE}.agents ag2
-                                ON ag2.agent_id = rel2.agent_id
-                                OR ag2.agent_internal_id = rel2.agent_internal_id
+                                ON (
+                                    (rel2.agent_id IS NOT NULL AND rel2.agent_id <> '' AND ag2.agent_id = rel2.agent_id)
+                                    OR (
+                                        rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
+                                        AND ag2.agent_internal_id = rel2.agent_internal_id
+                                    )
+                                )
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM {CORE}.agent_risk_assessments ara
-                                WHERE (ara.agent_id = rel2.agent_id OR ara.agent_internal_id = rel2.agent_internal_id)
+                                WHERE (
+                                    (rel2.agent_id IS NOT NULL AND rel2.agent_id <> '' AND ara.agent_id = rel2.agent_id)
+                                    OR (
+                                        rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
+                                        AND ara.agent_internal_id = rel2.agent_internal_id
+                                    )
+                                )
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY
                                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -547,11 +563,23 @@ async def get_ai_model(
 
     agent_catalog_join = (
         f"""JOIN {CORE}.agents a
-                ON (a.agent_internal_id = rel.agent_internal_id OR a.agent_id = rel.agent_id)
+                ON (
+                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND a.agent_id = rel.agent_id)
+                    OR (
+                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                        AND a.agent_internal_id = rel.agent_internal_id
+                    )
+                )
                 AND COALESCE(a.is_current, true) = true"""
         if company_id
         else f"""LEFT JOIN {CORE}.agents a
-                ON (a.agent_internal_id = rel.agent_internal_id OR a.agent_id = rel.agent_id)
+                ON (
+                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND a.agent_id = rel.agent_id)
+                    OR (
+                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                        AND a.agent_internal_id = rel.agent_internal_id
+                    )
+                )
                 AND COALESCE(a.is_current, true) = true"""
     )
 
@@ -644,8 +672,13 @@ async def get_ai_model(
     if company_id:
         _agent_join = f"""
             JOIN {CORE}.agents ag
-                ON ag.agent_id = rel.agent_id
-                OR ag.agent_internal_id = rel.agent_internal_id
+                ON (
+                    (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
+                    OR (
+                        rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                        AND ag.agent_internal_id = rel.agent_internal_id
+                    )
+                )
         """
         _ci_agent = (" OR ag.company_id IS NULL OR TRIM(CAST(ag.company_id AS text)) = ''"
                      " OR ag.company_id = 'None'")
@@ -684,7 +717,13 @@ async def get_ai_model(
                         SELECT COALESCE(ara.agent_internal_id, ag.agent_internal_id, rel.agent_internal_id) AS agent_internal_id,
                                ara.blended_risk_score
                         FROM {CORE}.agent_risk_assessments ara
-                        WHERE (ara.agent_id = rel.agent_id OR ara.agent_internal_id = rel.agent_internal_id)
+                        WHERE (
+                            (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ara.agent_id = rel.agent_id)
+                            OR (
+                                rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                                AND ara.agent_internal_id = rel.agent_internal_id
+                            )
+                        )
                           AND ara.blended_risk_score IS NOT NULL
                         ORDER BY
                             CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
