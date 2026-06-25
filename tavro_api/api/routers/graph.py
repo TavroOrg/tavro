@@ -10,14 +10,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.dependencies import require_tenant
 from api.schemas import GraphResponse, GraphNode, GraphEdge
 
 router = APIRouter()
 
 
+async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
+    row = await db.execute(
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        {"cid": company_id, "tid": tenant_id},
+    )
+    if not row.scalar():
+        raise HTTPException(status_code=404, detail="Company not found")
+
+
+async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> None:
+    row = await db.execute(
+        text("""
+            SELECT 1 FROM twin.dim_node n
+            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            WHERE n.id = :nid AND n.valid_to IS NULL
+        """),
+        {"nid": node_id, "tid": tenant_id},
+    )
+    if not row.scalar():
+        raise HTTPException(status_code=404, detail="Node not found")
+
+
 @router.get("/company/{company_id}", response_model=GraphResponse)
 async def get_company_graph(
     company_id: UUID,
+    tenant_id: str = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -25,6 +49,8 @@ async def get_company_graph(
     Used by the React graph visualiser as its primary data source.
     Fetched from Postgres relational tables (reliable, no AGE quirks).
     """
+    await _assert_company_owned(db, str(company_id), tenant_id)
+
     # Nodes
     node_rows = await db.execute(
         text("""
@@ -75,6 +101,7 @@ async def get_company_graph(
 @router.get("/node/{node_id}/neighbourhood", response_model=GraphResponse)
 async def get_node_neighbourhood(
     node_id: UUID,
+    tenant_id: str = Depends(require_tenant),
     hops:    int = Query(default=2, ge=1, le=3),
     db: AsyncSession = Depends(get_db),
 ):
@@ -83,6 +110,8 @@ async def get_node_neighbourhood(
     Uses a recursive CTE — no AGE dependency, works reliably.
     Used when a user clicks a node in the visualiser to expand context.
     """
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     rows = await db.execute(
         text("""
             WITH RECURSIVE neighbourhood AS (
@@ -149,6 +178,7 @@ async def get_node_neighbourhood(
 @router.get("/node/{node_id}/paths", response_model=GraphResponse)
 async def get_paths_to_risks(
     node_id: UUID,
+    tenant_id: str = Depends(require_tenant),
     target_category: str = Query(default="risk"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -156,6 +186,8 @@ async def get_paths_to_risks(
     Find all paths from a given node to nodes of a target category
     (default: risk). Useful for 'what risks does this process touch?'
     """
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     rows = await db.execute(
         text("""
             WITH RECURSIVE paths AS (

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db, engine as _shared_engine
+from api.dependencies import require_tenant
 
 router = APIRouter()
 _background_tasks: set = set()
@@ -66,10 +67,16 @@ def _row(r) -> dict:
         return dict(r)
 
 
-async def _fetch_company(db: AsyncSession, company_id: str) -> dict | None:
-    r = await db.execute(
-        text("SELECT * FROM twin.company WHERE id = :id"), {"id": company_id}
-    )
+async def _fetch_company(db: AsyncSession, company_id: str, tenant_id: str | None = None) -> dict | None:
+    if tenant_id:
+        r = await db.execute(
+            text("SELECT * FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+            {"id": company_id, "tid": tenant_id},
+        )
+    else:
+        r = await db.execute(
+            text("SELECT * FROM twin.company WHERE id = :id"), {"id": company_id}
+        )
     row = r.mappings().first()
     return dict(row) if row else None
 
@@ -279,6 +286,7 @@ async def _run_orchestrator(
             ), {"id": audit_run_id})
             await db.commit()
 
+            # Orchestrator fetches company without tenant check (already validated at request time)
             company    = await _fetch_company(db, request.company_id)
             blueprint  = await _fetch_blueprint_dims(db, request.company_id)
             comp_items = await _fetch_compliance_items(db, request.company_id, request.compliance_item_id)
@@ -418,11 +426,17 @@ async def _run_orchestrator(
 # =============================================================
 
 @router.post("/runs", response_model=AuditRunResponse, status_code=202)
-async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_db)):
+async def initiate_audit(body: AuditInitRequest, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
     if body.scope_type == "single" and not (body.use_case_id or body.agent_id):
         raise HTTPException(400, "scope_type=single requires use_case_id or agent_id")
     if body.scope_type in ("single","catalog_single") and not body.compliance_item_id:
         raise HTTPException(400, "This scope requires compliance_item_id")
+
+    # Validate the company belongs to this tenant
+    company = await _fetch_company(db, body.company_id, tenant_id)
+    if not company:
+        raise HTTPException(404, "Company not found")
 
     comp_items = await _fetch_compliance_items(db, body.company_id, body.compliance_item_id)
     if not comp_items:
@@ -477,7 +491,7 @@ async def initiate_audit(body: AuditInitRequest, db: AsyncSession = Depends(get_
 # =============================================================
 
 @router.get("/runs/{run_id}/stream")
-async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db)):
+async def stream_audit_progress(run_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
 
     async def generate() -> AsyncGenerator[str, None]:
         seen_finding_ids: set[str] = set()
@@ -489,6 +503,15 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
             )
             run = run_row.mappings().first()
             if not run:
+                yield f"data: {json.dumps({'type':'error','message':'Audit run not found'})}\n\n"
+                return
+
+            # Verify this run's company belongs to the calling tenant
+            company_check = await db.execute(
+                text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+                {"cid": run["company_id"], "tid": tenant_id},
+            )
+            if not company_check.scalar():
                 yield f"data: {json.dumps({'type':'error','message':'Audit run not found'})}\n\n"
                 return
 
@@ -540,9 +563,16 @@ async def stream_audit_progress(run_id: str, db: AsyncSession = Depends(get_db))
 @router.get("/runs")
 async def list_runs(
     company_id: str = Query(...),
+    tenant_id: str = Depends(require_tenant),
     limit:      int = Query(20),
     db: AsyncSession = Depends(get_db),
 ):
+
+    # Validate the company belongs to this tenant
+    company = await _fetch_company(db, company_id, tenant_id)
+    if not company:
+        raise HTTPException(404, "Company not found")
+
     rows = await db.execute(text("""
         SELECT ar.*,
                (SELECT count(*) FROM twin.audit_finding af
@@ -562,13 +592,19 @@ async def list_runs(
 # =============================================================
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
+async def get_run(run_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
     run_row = await db.execute(
         text("SELECT * FROM twin.audit_run WHERE id=:id"), {"id": run_id}
     )
     run = run_row.mappings().first()
     if not run: raise HTTPException(404, "Audit run not found")
     run_dict = dict(run)
+
+    # Verify this run's company belongs to the calling tenant
+    company = await _fetch_company(db, run_dict["company_id"], tenant_id)
+    if not company:
+        raise HTTPException(404, "Audit run not found")
 
     findings_rows = await db.execute(text("""
         SELECT * FROM twin.audit_finding
@@ -584,7 +620,18 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
 # =============================================================
 
 @router.delete("/runs/{run_id}", status_code=200)
-async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
+async def cancel_run(run_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    run_row = await db.execute(
+        text("SELECT company_id FROM twin.audit_run WHERE id=:id"), {"id": run_id}
+    )
+    run = run_row.mappings().first()
+    if not run: raise HTTPException(404, "Audit run not found")
+
+    company = await _fetch_company(db, run["company_id"], tenant_id)
+    if not company:
+        raise HTTPException(404, "Audit run not found")
+
     await db.execute(text("""
         UPDATE twin.audit_run SET status='cancelled', updated_at=now() WHERE id=:id
     """), {"id": run_id})
@@ -597,11 +644,14 @@ async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
 # =============================================================
 
 @router.get("/runs/{run_id}/findings/{finding_id}")
-async def get_finding(run_id: str, finding_id: str, db: AsyncSession = Depends(get_db)):
+async def get_finding(run_id: str, finding_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
     row = await db.execute(text("""
-        SELECT * FROM twin.audit_finding
-        WHERE id=:fid AND audit_run_id=:rid
-    """), {"fid": finding_id, "rid": run_id})
+        SELECT af.* FROM twin.audit_finding af
+        JOIN twin.audit_run ar ON ar.id = af.audit_run_id
+        JOIN twin.company c ON c.id = ar.company_id AND c.tenant_id = :tid
+        WHERE af.id=:fid AND af.audit_run_id=:rid
+    """), {"fid": finding_id, "rid": run_id, "tid": tenant_id})
     finding = row.mappings().first()
     if not finding: raise HTTPException(404, "Finding not found")
     return dict(finding)

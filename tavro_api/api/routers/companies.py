@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.dependencies import require_tenant
 from api.schemas import Company, CompanyCreate, CompanyUpdate, Page
 
 router = APIRouter()
@@ -15,26 +16,31 @@ router = APIRouter()
 
 @router.get("", response_model=Page)
 async def list_companies(
+    tenant_id: str = Depends(require_tenant),
     offset: int = Query(0, ge=0),
     limit:  int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    count_result = await db.execute(text("SELECT count(*) FROM twin.company"))
+
+    count_result = await db.execute(
+        text("SELECT count(*) FROM twin.company WHERE tenant_id = :tid"),
+        {"tid": tenant_id},
+    )
     total = count_result.scalar()
 
     rows = await db.execute(
-        text("SELECT * FROM twin.company ORDER BY name LIMIT :limit OFFSET :offset"),
-        {"limit": limit, "offset": offset},
+        text("SELECT * FROM twin.company WHERE tenant_id = :tid ORDER BY name LIMIT :limit OFFSET :offset"),
+        {"tid": tenant_id, "limit": limit, "offset": offset},
     )
     items = [dict(r._mapping) for r in rows]
     return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 
 @router.get("/{company_id}", response_model=Company)
-async def get_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_company(company_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
-        text("SELECT * FROM twin.company WHERE id = :id"),
-        {"id": str(company_id)},
+        text("SELECT * FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(company_id), "tid": tenant_id},
     )
     result = row.mappings().first()
     if not result:
@@ -43,14 +49,14 @@ async def get_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=Company, status_code=201)
-async def create_company(body: CompanyCreate, db: AsyncSession = Depends(get_db)):
+async def create_company(body: CompanyCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
         text("""
-            INSERT INTO twin.company (name, industry, region, legal_entity)
-            VALUES (:name, :industry, :region, :legal_entity)
+            INSERT INTO twin.company (name, industry, region, legal_entity, tenant_id)
+            VALUES (:name, :industry, :region, :legal_entity, :tenant_id)
             RETURNING *
         """),
-        body.model_dump(),
+        {**body.model_dump(), "tenant_id": tenant_id},
     )
     await db.commit()
     return dict(row.mappings().first())
@@ -60,6 +66,7 @@ async def create_company(body: CompanyCreate, db: AsyncSession = Depends(get_db)
 async def update_company(
     company_id: UUID,
     body: CompanyUpdate,
+    tenant_id: str = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -68,9 +75,10 @@ async def update_company(
 
     set_clause = ", ".join(f"{k} = :{k}" for k in updates)
     updates["id"] = str(company_id)
+    updates["tid"] = tenant_id
 
     row = await db.execute(
-        text(f"UPDATE twin.company SET {set_clause} WHERE id = :id RETURNING *"),
+        text(f"UPDATE twin.company SET {set_clause} WHERE id = :id AND tenant_id = :tid RETURNING *"),
         updates,
     )
     await db.commit()
@@ -81,7 +89,7 @@ async def update_company(
 
 
 @router.delete("/{company_id}", status_code=200)
-async def delete_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_company(company_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     """
     Delete a company and all related objects.
 
@@ -98,10 +106,10 @@ async def delete_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
     """
     cid = str(company_id)
 
-    # Verify company exists first
+    # Verify company exists and belongs to this tenant
     row = await db.execute(
-        text("SELECT name FROM twin.company WHERE id = :id"),
-        {"id": cid},
+        text("SELECT name FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        {"id": cid, "tid": tenant_id},
     )
     company = row.mappings().first()
     if not company:
@@ -170,8 +178,8 @@ async def delete_company(company_id: UUID, db: AsyncSession = Depends(get_db)):
 
     # Delete the company — Postgres cascades handle dim_node, dim_edge, source_ref
     await db.execute(
-        text("DELETE FROM twin.company WHERE id = :id"),
-        {"id": cid},
+        text("DELETE FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        {"id": cid, "tid": tenant_id},
     )
     await db.commit()
 

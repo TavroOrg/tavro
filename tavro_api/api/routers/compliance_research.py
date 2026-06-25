@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.dependencies import require_tenant
 from api.llm import (
     _resolve_compliance_llm,
     _call_anthropic,
@@ -313,12 +314,12 @@ of this policy. The impact dimension is MANDATORY. Return ONLY the JSON object."
 
 
 @router.post("/research/policy")
-async def research_policy(body: PolicyResearchRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def research_policy(body: PolicyResearchRequest, background_tasks: BackgroundTasks, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     provider, api_key = _resolve_compliance_llm()
 
     company_row = await db.execute(
-        text("SELECT name, industry, region FROM twin.company WHERE id = :id"),
-        {"id": body.company_id}
+        text("SELECT name, industry, region FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        {"id": body.company_id, "tid": tenant_id}
     )
     company = company_row.mappings().first()
     co_ctx  = f"Company: {company['name']} | Industry: {company['industry']}" if company else ""

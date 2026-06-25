@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.dependencies import require_tenant
 from api.llm import _resolve_agent_llm, _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
@@ -171,6 +172,15 @@ def _parse_date(val: str | None):
     from datetime import date
     return date.fromisoformat(val)
 
+async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
+    """Raise 404 if the company does not exist or belongs to a different tenant."""
+    row = await db.execute(
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        {"cid": company_id, "tid": tenant_id},
+    )
+    if not row.scalar():
+        raise HTTPException(status_code=404, detail="Company not found")
+
 async def _generate_compliance_description(body: ComplianceDescriptionSuggest) -> str:
     item_type = body.item_type.strip().lower()
     provider, api_key = _resolve_agent_llm()
@@ -239,6 +249,7 @@ async def suggest_description(body: ComplianceDescriptionSuggest):
 
 @router.get('/items')
 async def list_items(
+    tenant_id: str = Depends(require_tenant),
     item_type:  str | None = Query(None),
     company_id: str | None = Query(None),
     status:     str | None = Query(None),
@@ -247,10 +258,18 @@ async def list_items(
     limit:      int = Query(50),
     db: AsyncSession = Depends(get_db),
 ):
+
+    # When a company_id is provided, validate it belongs to the calling tenant
+    if company_id:
+        await _assert_company_owned(db, company_id, tenant_id)
+
     where = ['1=1']
     params: dict[str, Any] = {'offset': offset, 'limit': limit}
     if item_type:   where.append('ci.item_type = :item_type');   params['item_type']   = item_type
-    if company_id:  where.append('(ci.company_id = :company_id OR ci.company_id IS NULL)'); params['company_id'] = company_id
+    if company_id:
+        # Show regulations (company_id IS NULL) and this company's policies
+        where.append('(ci.company_id = :company_id OR ci.company_id IS NULL)')
+        params['company_id'] = company_id
     if status:      where.append('ci.status = :status');         params['status']      = status
     if search:      where.append("ci.name ILIKE :search");       params['search']      = f'%{search}%'
 
@@ -284,7 +303,12 @@ async def get_item(item_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post('/items', status_code=201)
-async def create_item(body: ComplianceItemCreate, db: AsyncSession = Depends(get_db)):
+async def create_item(body: ComplianceItemCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    # If this item is company-specific (a policy), validate company ownership
+    if body.company_id:
+        await _assert_company_owned(db, body.company_id, tenant_id)
+
     row = await db.execute(text("""
         INSERT INTO twin.compliance_item
             (item_type, scope, name, short_name, description, issuing_body,
@@ -336,10 +360,16 @@ async def update_item(item_id: str, body: ComplianceItemUpdate, db: AsyncSession
 
 
 @router.delete('/items/{item_id}', status_code=200)
-async def delete_item(item_id: str, db: AsyncSession = Depends(get_db)):
-    row = await db.execute(text("SELECT name FROM twin.compliance_item WHERE id = :id"), {'id': item_id})
+async def delete_item(item_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    row = await db.execute(text("SELECT name, company_id FROM twin.compliance_item WHERE id = :id"), {'id': item_id})
     item = row.mappings().first()
     if not item: raise HTTPException(404, 'Not found')
+
+    # Company-specific items may only be deleted by their owning tenant
+    if item['company_id']:
+        await _assert_company_owned(db, item['company_id'], tenant_id)
+
     await db.execute(text("DELETE FROM twin.compliance_item WHERE id = :id"), {'id': item_id})
     await db.commit()
     return {'deleted': item['name']}
@@ -438,9 +468,14 @@ async def delete_dimension(dim_id: str, db: AsyncSession = Depends(get_db)):
 @router.get('/items/{item_id}/impacts')
 async def list_impacts(
     item_id:    str,
+    tenant_id: str = Depends(require_tenant),
     company_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+
+    if company_id:
+        await _assert_company_owned(db, company_id, tenant_id)
+
     q = """
         SELECT ci.*, dn.label AS dim_node_label, dt.category AS dim_category
         FROM twin.compliance_impact ci
@@ -458,7 +493,9 @@ async def list_impacts(
 
 
 @router.post('/impacts', status_code=201)
-async def create_impact(body: ComplianceImpactCreate, db: AsyncSession = Depends(get_db)):
+async def create_impact(body: ComplianceImpactCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+    await _assert_company_owned(db, body.company_id, tenant_id)
+
     row = await db.execute(text("""
         INSERT INTO twin.compliance_impact
             (compliance_item_id, company_id, dim_node_id, impact_level, impact_type,
@@ -500,7 +537,20 @@ async def create_impact(body: ComplianceImpactCreate, db: AsyncSession = Depends
 
 
 @router.patch('/impacts/{impact_id}')
-async def update_impact(impact_id: str, body: ComplianceImpactUpdate, db: AsyncSession = Depends(get_db)):
+async def update_impact(impact_id: str, body: ComplianceImpactUpdate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    # Verify the impact's company belongs to this tenant
+    check = await db.execute(
+        text("""
+            SELECT 1 FROM twin.compliance_impact ci
+            JOIN twin.company c ON c.id = ci.company_id AND c.tenant_id = :tid
+            WHERE ci.id = :id
+        """),
+        {"id": impact_id, "tid": tenant_id},
+    )
+    if not check.scalar():
+        raise HTTPException(404, 'Impact not found')
+
     updates = body.model_dump(exclude_none=True)
     if not updates: raise HTTPException(400, 'No fields')
     set_parts = []
@@ -521,7 +571,19 @@ async def update_impact(impact_id: str, body: ComplianceImpactUpdate, db: AsyncS
 
 
 @router.delete('/impacts/{impact_id}', status_code=200)
-async def delete_impact(impact_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_impact(impact_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    check = await db.execute(
+        text("""
+            SELECT 1 FROM twin.compliance_impact ci
+            JOIN twin.company c ON c.id = ci.company_id AND c.tenant_id = :tid
+            WHERE ci.id = :id
+        """),
+        {"id": impact_id, "tid": tenant_id},
+    )
+    if not check.scalar():
+        raise HTTPException(404, 'Impact not found')
+
     await db.execute(text("DELETE FROM twin.compliance_impact WHERE id = :id"), {'id': impact_id})
     await db.commit()
     return {'deleted': impact_id}
@@ -599,7 +661,9 @@ async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
 # =============================================================
 
 @router.get('/company/{company_id}/summary')
-async def company_compliance_summary(company_id: str, db: AsyncSession = Depends(get_db)):
+async def company_compliance_summary(company_id: str, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+    await _assert_company_owned(db, company_id, tenant_id)
+
     rows = await db.execute(text("""
         SELECT
             ci.id, ci.item_type, ci.name, ci.short_name, ci.status,

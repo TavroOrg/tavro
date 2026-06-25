@@ -4,22 +4,48 @@
 
 from uuid import UUID
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import json
 
 from api.database import get_db
+from api.dependencies import require_tenant
 from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
 from api.routers.business_relations import sync_dim_node_to_business_entity
 
 router = APIRouter()
 
 
+async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
+    """Raise 404 if the company does not exist or belongs to a different tenant."""
+    row = await db.execute(
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        {"cid": company_id, "tid": tenant_id},
+    )
+    if not row.scalar():
+        raise HTTPException(status_code=404, detail="Company not found")
+
+
+async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> None:
+    """Raise 404 if the node does not exist or its company belongs to a different tenant."""
+    row = await db.execute(
+        text("""
+            SELECT 1 FROM twin.dim_node n
+            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            WHERE n.id = :nid
+        """),
+        {"nid": node_id, "tid": tenant_id},
+    )
+    if not row.scalar():
+        raise HTTPException(status_code=404, detail="Node not found")
+
+
 @router.get("", response_model=Page)
 async def list_dim_nodes(
     company_id:  UUID,
+    tenant_id: str = Depends(require_tenant),
     dim_type_id: Optional[UUID]  = None,
     category:    Optional[str]   = None,
     search:      Optional[str]   = None,
@@ -28,6 +54,8 @@ async def list_dim_nodes(
     limit:       int             = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
+    await _assert_company_owned(db, str(company_id), tenant_id)
+
     filters = ["n.company_id = :company_id"]
     params: dict = {"company_id": str(company_id)}
 
@@ -76,7 +104,7 @@ async def list_dim_nodes(
 
 
 @router.get("/{node_id}", response_model=DimNode)
-async def get_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
         text("""
             SELECT n.*,
@@ -84,9 +112,10 @@ async def get_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)):
                    t.category AS category
             FROM twin.dim_node n
             JOIN twin.dim_type t ON t.id = n.dim_type_id
+            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
             WHERE n.id = :id
         """),
-        {"id": str(node_id)},
+        {"id": str(node_id), "tid": tenant_id},
     )
     result = row.mappings().first()
     if not result:
@@ -95,7 +124,9 @@ async def get_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=DimNode, status_code=201)
-async def create_dim_node(request: Request, body: DimNodeCreate, db: AsyncSession = Depends(get_db)):
+async def create_dim_node(body: DimNodeCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+    await _assert_company_owned(db, str(body.company_id), tenant_id)
+
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_node
@@ -130,7 +161,6 @@ async def create_dim_node(request: Request, body: DimNodeCreate, db: AsyncSessio
             )
             company = company_row.mappings().first()
             company_name = company["name"] if company else None
-            tenant_id = (request.headers.get("x-tenant-id", "") or "").strip() or None
             await sync_dim_node_to_business_entity(
                 db,
                 str(body.company_id),
@@ -151,8 +181,11 @@ async def create_dim_node(request: Request, body: DimNodeCreate, db: AsyncSessio
 async def update_dim_node(
     node_id: UUID,
     body: DimNodeUpdate,
+    tenant_id: str = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -181,8 +214,10 @@ async def update_dim_node(
 
 
 @router.delete("/{node_id}", status_code=204)
-async def soft_delete_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)):
+async def soft_delete_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     """Soft delete — sets valid_to = now() rather than deleting the row."""
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     await db.execute(
         text("UPDATE twin.dim_node SET valid_to = now() WHERE id = :id AND valid_to IS NULL"),
         {"id": str(node_id)},
@@ -193,7 +228,9 @@ async def soft_delete_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)
 # ── Attachments ──────────────────────────────────────────────────────────────
 
 @router.get("/{node_id}/attachments", response_model=List[AttachmentOut])
-async def list_attachments(node_id: UUID, db: AsyncSession = Depends(get_db)):
+async def list_attachments(node_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     rows = await db.execute(
         text("""
             SELECT id, node_id, filename, content_type, size_bytes, uploaded_at
@@ -210,8 +247,11 @@ async def list_attachments(node_id: UUID, db: AsyncSession = Depends(get_db)):
 async def upload_attachment(
     node_id: UUID,
     file: UploadFile = File(...),
+    tenant_id: str = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    await _assert_node_owned(db, str(node_id), tenant_id)
+
     data = await file.read()
     row = await db.execute(
         text("""
@@ -232,14 +272,17 @@ async def upload_attachment(
 
 
 @router.get("/attachments/{attachment_id}/download")
-async def download_attachment(attachment_id: UUID, db: AsyncSession = Depends(get_db)):
+async def download_attachment(attachment_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
     row = await db.execute(
         text("""
-            SELECT filename, content_type, data
-            FROM twin.dim_node_attachment
-            WHERE id = :id
+            SELECT a.filename, a.content_type, a.data
+            FROM twin.dim_node_attachment a
+            JOIN twin.dim_node n ON n.id = a.node_id
+            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            WHERE a.id = :id
         """),
-        {"id": str(attachment_id)},
+        {"id": str(attachment_id), "tid": tenant_id},
     )
     result = row.mappings().first()
     if not result:
@@ -252,7 +295,21 @@ async def download_attachment(attachment_id: UUID, db: AsyncSession = Depends(ge
 
 
 @router.delete("/attachments/{attachment_id}", status_code=204)
-async def delete_attachment(attachment_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
+
+    # Validate ownership before deleting
+    check = await db.execute(
+        text("""
+            SELECT 1 FROM twin.dim_node_attachment a
+            JOIN twin.dim_node n ON n.id = a.node_id
+            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            WHERE a.id = :id
+        """),
+        {"id": str(attachment_id), "tid": tenant_id},
+    )
+    if not check.scalar():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
     await db.execute(
         text("DELETE FROM twin.dim_node_attachment WHERE id = :id"),
         {"id": str(attachment_id)},
