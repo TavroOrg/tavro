@@ -180,8 +180,8 @@ app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Grap
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
-# BUILD_MODE=enterprise means the entrypoint copied enterprise routers into
-# /app/api/routers/ before uvicorn started.  Any other value uses stubs.
+# BUILD_MODE=enterprise means PYTHONPATH=/enterprise:/app so these modules
+# resolve from the enterprise image layer.  Any other value uses stubs.
 _ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
 if _ENTERPRISE_ENABLED:
     from api.routers import compliance, compliance_research, audit

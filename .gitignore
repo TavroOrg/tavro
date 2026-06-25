@@ -225,6 +225,12 @@ config.yaml
 
 agent_cards/
 
+# Enterprise-only routers injected at container start by entrypoint.enterprise.sh
+tavro_api/api/llm.py
+tavro_api/api/routers/audit.py
+tavro_api/api/routers/compliance.py
+tavro_api/api/routers/compliance_research.py
+
 # Node.js / Frontend
 node_modules/
 tavro_admin/dist/
