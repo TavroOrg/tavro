@@ -16,6 +16,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { IntegrationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
 
 const PAGE_SIZE = 10;
 
@@ -68,7 +69,7 @@ const IntegrationsPage: React.FC = () => {
         const data = await businessRelationsApi.listIntegrations(undefined, activeCompany?.id);
         setIntegrations(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load integrations');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }

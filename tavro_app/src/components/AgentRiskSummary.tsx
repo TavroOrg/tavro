@@ -1,4 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { mcpClient } from '../services/mcpClient';
 import { ShieldCheck, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, RefreshCw, ShieldOff, Download, Info } from 'lucide-react';
 import { generateRiskReportPDF } from '../utils/riskReportPDF';
@@ -102,7 +103,7 @@ const AgentRiskSummary: React.FC<AgentRiskSummaryProps> = ({ agentId }) => {
             await generateRiskReportPDF(data.agent_name, data.agent_id, headline.level, headline.aivss, data.risk_summary);
         } catch (err: any) {
             console.error('[AgentRiskSummary] PDF generation failed', err);
-            setError(err?.message || 'Failed to generate risk report PDF.');
+            setError(toUserMessage(err));
         } finally {
             setDownloading(false);
         }

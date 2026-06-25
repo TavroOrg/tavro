@@ -4,12 +4,15 @@
 # =============================================================
 
 import json
+import logging
 import uuid
 import base64
 from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+_logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -229,7 +232,8 @@ async def suggest_description(body: ComplianceDescriptionSuggest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return ComplianceDescriptionSuggestResponse(description=description)
 

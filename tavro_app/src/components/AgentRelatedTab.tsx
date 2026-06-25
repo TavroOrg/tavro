@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { Link } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import {
@@ -519,7 +520,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.linkAgentToApplication(agentId, businessApplicationId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link application.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -534,7 +535,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.unlinkAgentFromApplication(agentId, businessApplicationId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink application.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -549,7 +550,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.linkAgentToProcess(agentId, businessProcessId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link process.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -564,7 +565,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.unlinkAgentFromProcess(agentId, businessProcessId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink process.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -579,7 +580,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.linkAgentToChildAgent(agentId, childId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link child agent.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -594,7 +595,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.unlinkAgentFromChildAgent(agentId, childId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink child agent.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -609,7 +610,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await aiModelApi.linkAgent(modelId, agentId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link AI model.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -624,7 +625,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await aiModelApi.unlinkAgent(modelId, agentId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink AI model.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -639,7 +640,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.linkAgentToIntegration(agentId, integrationId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link integration.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -654,7 +655,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       await businessRelationsApi.unlinkAgentFromIntegration(agentId, integrationId);
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink integration.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -675,7 +676,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       }
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to link AI use case.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }
@@ -691,7 +692,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
       setLinkedUseCases(prev => prev.filter(uc => uc.identifier !== useCaseId));
       await refreshRelations();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to unlink AI use case.');
+      setActionError(toUserMessage(err));
     } finally {
       setActingKey(null);
     }

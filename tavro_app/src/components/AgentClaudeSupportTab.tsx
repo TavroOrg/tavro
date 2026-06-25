@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import Editor from '@monaco-editor/react';
 import {
     Check,
@@ -170,7 +171,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
                 pushLines([{ kind: 'error', text: `DB save failed (${resp.status}) — saved to local only` }]);
             }
         } catch (err) {
-            pushLines([{ kind: 'error', text: `Save failed: ${err}` }]);
+            pushLines([{ kind: 'error', text: `Save failed: ${toUserMessage(err)}` }]);
         }
     };
 
@@ -267,7 +268,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
                 }
             }
         } catch (err) {
-            pushLines([{ kind: 'error', text: `Connection error: ${err}` }]);
+            pushLines([{ kind: 'error', text: `Connection error: ${toUserMessage(err)}` }]);
         } finally {
             setRunning(false);
             scrollTerminal();
@@ -366,7 +367,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
                 }
             }
         } catch (err) {
-            pushLines([{ kind: 'error', text: `Deploy error: ${err}` }]);
+            pushLines([{ kind: 'error', text: `Deploy error: ${toUserMessage(err)}` }]);
         } finally {
             setRunning(false);
             setDeploying(false);
@@ -400,7 +401,7 @@ const AgentClaudeSupportTab: React.FC<AgentClaudeSupportTabProps> = ({ agent }) 
                 ]);
             }
         } catch (err) {
-            pushLines([{ kind: 'error', text: `Publish error: ${err}` }]);
+            pushLines([{ kind: 'error', text: `Publish error: ${toUserMessage(err)}` }]);
         } finally {
             setPublishing(false);
             scrollTerminal();

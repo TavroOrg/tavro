@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     latest_release_documentation_link TEXT,
     company_id TEXT,
     company_name TEXT,
+    tags JSONB DEFAULT '[]'::jsonb,
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );

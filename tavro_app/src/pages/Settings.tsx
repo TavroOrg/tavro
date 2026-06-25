@@ -4,8 +4,13 @@ import {
     Settings2, Moon, Sun, Monitor,
     CheckCircle2, Code2,
     BotMessageSquare, Trash2, Terminal,
-    Database
+    Database, Map, RotateCcw
 } from 'lucide-react';
+import type { RoadmapConfig } from '../services/roadmapConfig';
+import {
+    readRoadmapConfig, saveRoadmapConfig,
+    DEFAULT_CONFIG, priorityWeightsSum, riskWeightsSum,
+} from '../services/roadmapConfig';
 import { useInspectJson } from '../hooks/useInspectJson';
 import { useShowLogs } from '../hooks/useShowLogs';
 import {
@@ -33,6 +38,19 @@ const Settings: React.FC = () => {
     const [inspectJson, setInspectJson] = useInspectJson();
     const [saved, setSaved] = useState(false);
     const [showLogs, setShowLogs] = useShowLogs();
+
+    // Roadmap configuration
+    const [roadmapCfg, setRoadmapCfg] = useState<RoadmapConfig>(() => readRoadmapConfig());
+    const [roadmapSaved, setRoadmapSaved] = useState(false);
+    const pwSum  = +(priorityWeightsSum(roadmapCfg.priorityWeights) * 100).toFixed(1);
+    const rwSum  = riskWeightsSum(roadmapCfg.riskWeights);
+
+    const handleSaveRoadmap = () => {
+        saveRoadmapConfig(roadmapCfg);
+        setRoadmapSaved(true);
+        setTimeout(() => setRoadmapSaved(false), 2000);
+    };
+    const handleResetRoadmap = () => setRoadmapCfg(DEFAULT_CONFIG);
 
     // LLM config — per-provider
     type ByokType = 'github' | 'openai' | 'azure' | 'anthropic';
@@ -127,7 +145,7 @@ const Settings: React.FC = () => {
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
                 <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
                     <BotMessageSquare size={16} className="text-blue-500" />
-                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assitant Settings - Chat AI Configuration</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100">Tavro AI Assistant Settings - Chat AI Configuration</span>
                 </div>
                 <div className="p-5 flex flex-col gap-6">
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -335,6 +353,119 @@ const Settings: React.FC = () => {
                         >
                             <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${showLogs ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
+                    </div>
+
+                </div>
+            </div>
+
+            {/* Roadmap Configuration */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
+                <div className="p-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <Map size={16} className="text-violet-500" />
+                        <span className="font-bold text-slate-800 dark:text-white">Roadmap Configuration</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={handleResetRoadmap}
+                            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                            <RotateCcw size={12} /> Reset defaults
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSaveRoadmap}
+                            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all ${
+                                roadmapSaved
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-violet-600 text-white hover:bg-violet-700'
+                            }`}
+                        >
+                            {roadmapSaved ? <><CheckCircle2 size={12} /> Saved</> : 'Save weights'}
+                        </button>
+                    </div>
+                </div>
+                <div className="p-5 flex flex-col gap-6">
+
+                    {/* Priority formula weights */}
+                    <div>
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Priority Score Formula Weights</p>
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                    Score = (BV × {(roadmapCfg.priorityWeights.BV * 100).toFixed(0)}%) + (DR × {(roadmapCfg.priorityWeights.DR * 100).toFixed(0)}%) + ((6−TC) × {(roadmapCfg.priorityWeights.TC * 100).toFixed(0)}%) − (Risk × {(roadmapCfg.priorityWeights.RISK * 100).toFixed(0)}%)
+                                </p>
+                            </div>
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border shrink-0 ${Math.abs(pwSum - 100) < 0.1 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                                {pwSum}% {Math.abs(pwSum - 100) >= 0.1 && '— must equal 100%'}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {([
+                                { key: 'BV',   label: 'Business Value',     hint: 'Positive contribution' },
+                                { key: 'DR',   label: 'Data Readiness',     hint: 'Positive contribution' },
+                                { key: 'TC',   label: 'Technical Complexity', hint: 'Applied as (6 − score) × weight' },
+                                { key: 'RISK', label: 'Risk',               hint: 'Subtracted from score' },
+                            ] as { key: keyof typeof roadmapCfg.priorityWeights; label: string; hint: string }[]).map(({ key, label, hint }) => (
+                                <div key={key} className="flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{label}</label>
+                                        <span className="text-xs font-bold text-violet-600">{(roadmapCfg.priorityWeights[key] * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <input
+                                        type="range" min={0} max={60} step={5}
+                                        value={roadmapCfg.priorityWeights[key] * 100}
+                                        onChange={e => setRoadmapCfg(prev => ({
+                                            ...prev,
+                                            priorityWeights: { ...prev.priorityWeights, [key]: Number(e.target.value) / 100 },
+                                        }))}
+                                        className="w-full accent-violet-600"
+                                    />
+                                    <p className="text-[10px] text-slate-400">{hint}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="border-t border-slate-100 dark:border-slate-800" />
+
+                    {/* Risk category weights */}
+                    <div>
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Risk Category Weights</p>
+                                <p className="text-xs text-slate-400 mt-0.5">Each category's contribution to the composite risk score.</p>
+                            </div>
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border shrink-0 ${rwSum === 100 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                                {rwSum}% {rwSum !== 100 && '— must equal 100%'}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {([
+                                { key: 'data_privacy',           label: 'Data & Privacy Risk' },
+                                { key: 'operational',            label: 'Operational Risk' },
+                                { key: 'compliance',             label: 'Compliance Risk' },
+                                { key: 'ai_behavioral',          label: 'AI Behavioral Risk' },
+                                { key: 'strategic_reputational', label: 'Strategic & Reputational Risk' },
+                            ] as { key: keyof typeof roadmapCfg.riskWeights; label: string }[]).map(({ key, label }) => (
+                                <div key={key} className="flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">{label}</label>
+                                        <span className={`text-xs font-bold ${roadmapCfg.riskWeights[key] === 20 ? 'text-slate-400' : 'text-violet-600'}`}>{roadmapCfg.riskWeights[key]}%</span>
+                                    </div>
+                                    <input
+                                        type="range" min={0} max={60} step={5}
+                                        value={roadmapCfg.riskWeights[key]}
+                                        onChange={e => setRoadmapCfg(prev => ({
+                                            ...prev,
+                                            riskWeights: { ...prev.riskWeights, [key]: Number(e.target.value) },
+                                        }))}
+                                        className="w-full accent-violet-600"
+                                    />
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
                 </div>

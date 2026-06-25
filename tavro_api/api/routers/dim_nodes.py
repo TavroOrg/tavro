@@ -4,7 +4,7 @@
 
 from uuid import UUID
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -95,7 +95,7 @@ async def get_dim_node(node_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=DimNode, status_code=201)
-async def create_dim_node(body: DimNodeCreate, db: AsyncSession = Depends(get_db)):
+async def create_dim_node(request: Request, body: DimNodeCreate, db: AsyncSession = Depends(get_db)):
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_node
@@ -130,6 +130,7 @@ async def create_dim_node(body: DimNodeCreate, db: AsyncSession = Depends(get_db
             )
             company = company_row.mappings().first()
             company_name = company["name"] if company else None
+            tenant_id = (request.headers.get("x-tenant-id", "") or "").strip() or None
             await sync_dim_node_to_business_entity(
                 db,
                 str(body.company_id),
@@ -137,6 +138,8 @@ async def create_dim_node(body: DimNodeCreate, db: AsyncSession = Depends(get_db
                 type_result["category"],
                 body.label,
                 body.summary,
+                body.tags,
+                tenant_id,
             )
     except Exception:
         pass  # Non-fatal — dim_node was already committed

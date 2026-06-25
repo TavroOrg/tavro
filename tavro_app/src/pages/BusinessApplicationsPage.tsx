@@ -13,11 +13,14 @@ import {
   Search,
   ShieldAlert,
   Bot,
+  Upload,
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessApplicationRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
+import LoadApplicationsModal from '../components/LoadApplicationsModal';
 
 const PAGE_SIZE = 10;
 
@@ -61,6 +64,7 @@ const BusinessApplicationsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(1);
+  const [showLoadModal, setShowLoadModal] = useState(false);
 
   useEffect(() => {
     if (catalogLoading) {
@@ -86,13 +90,17 @@ const BusinessApplicationsPage: React.FC = () => {
         const data = await businessRelationsApi.listApplications(undefined, activeCompany?.id);
         setApplications(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load applications');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }
     };
     load();
   }, [catalogLoading, catalogError, lastFetched, activeCompany?.id]);
+
+  const reload = () => {
+    businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setApplications).catch(() => {});
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -136,6 +144,13 @@ const BusinessApplicationsPage: React.FC = () => {
 
         {!isSearching && (
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLoadModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-all shadow-sm"
+            >
+              <Upload size={16} />
+              Load Applications
+            </button>
             <button
               onClick={() => navigate('/applications/new')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm"
@@ -368,6 +383,15 @@ const BusinessApplicationsPage: React.FC = () => {
             <ChevronRight size={16} />
           </button>
         </div>
+      )}
+
+      {showLoadModal && (
+        <LoadApplicationsModal
+          companyId={activeCompany?.id}
+          companyName={activeCompany?.name}
+          onClose={() => setShowLoadModal(false)}
+          onSuccess={() => reload()}
+        />
       )}
     </div>
   );
