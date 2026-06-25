@@ -689,11 +689,11 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         <div key={item.label} className="flex flex-col gap-1 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[100px]">
                                             <div className="group relative flex items-center gap-1 w-fit">
                                                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
-                                                <div className="absolute bottom-full left-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                                                    <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-44 leading-snug">
+                                                <div className="absolute bottom-full right-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                                                    <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-52 leading-snug">
                                                         {item.tooltip}
                                                     </div>
-                                                    <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 ml-2" />
+                                                    <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 mr-2 ml-auto" />
                                                 </div>
                                             </div>
                                             <span className={`text-base font-black leading-none ${contribColor}`}>
@@ -1326,7 +1326,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
                         {/* ── Section A: Scoring Dimensions ── */}
                         <div className="flex flex-col gap-2">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Section A — Scoring Dimensions</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Scoring Dimensions</p>
 
                             {/* Business Value */}
                             {([
