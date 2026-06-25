@@ -2334,9 +2334,19 @@ async def _fetch_processes(
         if tenant_id and "tenant_id" in process_cols
         else ""
     )
+    process_tree_company_filter = (
+        "AND child.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
+        else ""
+    )
     parent_tenant_join = (
         "AND parent.tenant_id = bp.tenant_id"
         if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_company_join = (
+        "AND parent.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
         else ""
     )
     proc_rel_sql = f"""
@@ -2358,6 +2368,7 @@ async def _fetch_processes(
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
                   {process_tree_tenant_filter}
+                  {process_tree_company_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -2588,6 +2599,7 @@ async def _fetch_processes(
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
                {parent_tenant_join}
+               {parent_company_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
