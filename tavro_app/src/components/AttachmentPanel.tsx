@@ -68,13 +68,8 @@ const AttachmentRow: React.FC<{
         return '📎';
     };
 
-    const timeStr = attachment.uploadedAt.toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
-    const dateStr = attachment.uploadedAt.toLocaleDateString();
+    const d = attachment.uploadedAt;
+    const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`;
 
     return (
         <div className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors px-3 py-2 flex items-center gap-2">
@@ -82,7 +77,7 @@ const AttachmentRow: React.FC<{
             <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-slate-800 truncate">{attachment.name}</p>
                 <p className="text-[10px] text-slate-400">
-                    {formatFileSize(attachment.size)} • {dateStr} {timeStr}
+                    {formatFileSize(attachment.size)} • {dateStr}
                 </p>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">

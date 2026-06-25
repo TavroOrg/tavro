@@ -406,7 +406,7 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
 
                   {ref.last_synced && (
                     <div className="px-3 pb-2 text-[10px] text-slate-400 dark:text-slate-500">
-                      Last synced {new Date(ref.last_synced).toLocaleString()}
+                      Last synced {(() => { const d = new Date(ref.last_synced); const mm = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0'); return `${mm}/${dd}/${d.getFullYear()}`; })()}
                     </div>
                   )}
                 </div>
@@ -498,8 +498,8 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
           <div className="flex flex-col gap-1.5">
             {[
               ['ID',         node.id],
-              ['Valid from', new Date(node.valid_from).toLocaleDateString()],
-              ['Updated',    new Date(node.updated_at).toLocaleString()],
+              ['Valid from', (() => { const d = new Date(node.valid_from); return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`; })()],
+              ['Updated',    (() => { const d = new Date(node.updated_at); return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`; })()],
             ].map(([k, v]) => (
               <div key={k} className="flex gap-3 text-[11px]">
                 <span className="text-slate-400 dark:text-slate-500 w-20 flex-shrink-0">{k}</span>

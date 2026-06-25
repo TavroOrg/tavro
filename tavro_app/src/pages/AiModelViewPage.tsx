@@ -791,17 +791,22 @@ const AiModelViewPage: React.FC = () => {
 
   const dateField = (k: string) => {
     if (editableActive) {
-      return <input type="date" className={inputCls} value={form[k]} onChange={e => setField(k, e.target.value)} />;
+      return <input type="date" lang="en-US" className={inputCls} value={form[k]} onChange={e => setField(k, e.target.value)} />;
     }
     if (inlineEdit?.field === k) {
       return (
         <div className="flex items-start gap-2">
-          <input type="date" autoFocus className={inputCls} value={inlineEdit.value} onChange={e => setInlineEdit({ field: k, value: e.target.value })} />
+          <input type="date" lang="en-US" autoFocus className={inputCls} value={inlineEdit.value} onChange={e => setInlineEdit({ field: k, value: e.target.value })} />
           {inlineControls(k)}
         </div>
       );
     }
-    return readOnly(k, form[k]);
+    const raw = form[k];
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [yyyy, mm, dd] = raw.split('-');
+      return readOnly(k, `${mm}/${dd}/${yyyy}`);
+    }
+    return readOnly(k, raw);
   };
 
   const parentField = () => {
