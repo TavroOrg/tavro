@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -342,7 +343,7 @@ const AiModelViewPage: React.FC = () => {
         setModel(data);
         setForm(formFromModel(data));
       } catch (err: any) {
-        setError(err.message || 'Failed to load AI model');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }
@@ -380,7 +381,7 @@ const AiModelViewPage: React.FC = () => {
       const res = await aiModelApi.suggestDescription(form.model_name.trim());
       setField('description', res.description);
     } catch (e: any) {
-      setActionError(e.message || 'Failed to generate description.');
+      setActionError(toUserMessage(e));
     } finally {
       setGenerating(false);
     }
@@ -435,7 +436,7 @@ const AiModelViewPage: React.FC = () => {
       setEditing(false);
       setInlineEdit(null);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save AI model');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -460,7 +461,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.deleteModel(model.ai_model_id);
       navigate('/ai-models');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to delete AI model');
+      setActionError(toUserMessage(err));
       setDeleting(false);
       setDeleteConfirm(false);
     }
@@ -496,7 +497,7 @@ const AiModelViewPage: React.FC = () => {
       setForm(formFromModel(fresh));
       setInlineEdit(null);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -539,7 +540,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkAgent(model.ai_model_id, agentId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to attach agent.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -553,7 +554,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkAgent(model.ai_model_id, agentId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove agent.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -587,7 +588,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkUseCase(model.ai_model_id, useCaseId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to attach AI use case.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -601,7 +602,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkUseCase(model.ai_model_id, useCaseId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove AI use case.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -633,7 +634,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkApplication(model.ai_model_id, applicationId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingApplication(null);
     }
@@ -647,7 +648,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkApplication(model.ai_model_id, applicationId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingApplication(null);
     }
@@ -679,7 +680,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkProcess(model.ai_model_id, processId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingProcess(null);
     }
@@ -693,7 +694,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkProcess(model.ai_model_id, processId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingProcess(null);
     }

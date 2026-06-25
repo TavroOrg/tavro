@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, CalendarDays, Loader2, RefreshCw, UserRound } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
 import type { AgentIssue } from '../types/agent';
+import { toUserMessage } from '../utils/errorUtils';
 
 type IssueDetail = AgentIssue & {
   linked_agents?: Array<{ agent_id: string; agent_name: string }>;
@@ -53,7 +54,7 @@ const IssueViewPage: React.FC = () => {
       const data = await agentApi.getIssue(id);
       setIssue(data as IssueDetail);
     } catch (err: any) {
-      setError(err.message || 'Failed to load issue.');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }

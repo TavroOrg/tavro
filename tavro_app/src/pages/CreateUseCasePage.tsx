@@ -4,6 +4,7 @@ import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sp
 import { useUseCases } from '../context/UseCaseContext';
 import { useCaseApi } from '../services/useCaseApi';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
 
 const PRIORITIES = [
     '1 - Critical',
@@ -54,7 +55,7 @@ const CreateUseCasePage: React.FC = () => {
             const result = await useCaseApi.suggestDescription(form.name.trim());
             if (result.description) set('description', result.description);
         } catch (err: any) {
-            setError(err.message || 'Failed to generate description.');
+            setError(toUserMessage(err));
         } finally {
             setGeneratingDescription(false);
         }
@@ -119,7 +120,7 @@ const CreateUseCasePage: React.FC = () => {
                 navigate('/use-cases');
             }, 1200);
         } catch (err: any) {
-            setError(err.message || 'Failed to create use case. Please try again.');
+            setError(toUserMessage(err));
         } finally {
             setSaving(false);
         }

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip } from 'lucide-react';
@@ -724,7 +725,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             } catch (err: any) {
                 setMessages(prev => {
                     const next = [...prev.filter(m => m.id !== assistantId),
-                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: `Reconnection failed: ${err?.message ?? 'unknown error'}. Please try again.`, timestamp: new Date() }];
+                        { id: `err-${Date.now()}`, role: 'assistant' as const, text: `Reconnection failed: ${toUserMessage(err)}`, timestamp: new Date() }];
                     latestMessages.current = next;
                     persist(next);
                     return next;
@@ -911,7 +912,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             const errMsg: Message = {
                 id: `err-${Date.now()}`,
                 role: 'assistant',
-                text: `Something went wrong: ${err?.message ?? 'unknown error'}. Please try again.`,
+                text: `Something went wrong: ${toUserMessage(err)}`,
                 timestamp: new Date(),
             };
             const withErr = [...latestMessages.current, errMsg];

@@ -18,6 +18,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import type { BusinessProcessRecord } from '../types/businessRelations';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
 import LoadProcessesModal from '../components/LoadProcessesModal';
 
 const PAGE_SIZE = 10;
@@ -116,7 +117,7 @@ const BusinessProcessesPage: React.FC = () => {
         const data = await businessRelationsApi.listProcesses(undefined, activeCompany?.id);
         setProcesses(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load processes');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }

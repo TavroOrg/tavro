@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { AlertTriangle, ArrowLeft, CalendarDays, Check, Loader2, Pencil, Plus, Save, Trash2, X, XCircle } from 'lucide-react';
 import type { AgentData, AgentIssue } from '../types/agent';
 import { agentApi, type AgentIssuePayload } from '../services/agentApi';
@@ -265,7 +266,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
       } catch (err: any) {
         if (!cancelled) {
           setSelectedIssue(null);
-          setDetailError(err.message || 'Failed to load issue.');
+          setDetailError(toUserMessage(err));
         }
       } finally {
         if (!cancelled) setDetailLoading(false);
@@ -358,7 +359,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
       onIssuesChange?.(nextIssues);
       return true;
     } catch (err: any) {
-      setDetailActionError(err.message || 'Failed to update issue.');
+      setDetailActionError(toUserMessage(err));
       return false;
     } finally {
       setSaving(false);
@@ -406,7 +407,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
       onIssuesChange?.(nextIssues);
       closeIssue();
     } catch (err: any) {
-      setDetailActionError(err.message || 'Failed to delete issue.');
+      setDetailActionError(toUserMessage(err));
     } finally {
       setDeletingIssue(false);
     }
@@ -460,7 +461,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
       onIssuesChange?.(nextIssues);
       closeForm();
     } catch (err: any) {
-      setFormError(err.message || 'Failed to create issue.');
+      setFormError(toUserMessage(err));
     } finally {
       setSaving(false);
     }

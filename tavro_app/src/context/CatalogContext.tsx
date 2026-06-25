@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { AgentData } from '../types/agent';
 import { hasResolvedAgentRisk } from '../utils/agentRisk';
 import { agentApi, RiskWorkflowStatus } from '../services/agentApi';
+import { toUserMessage } from '../utils/errorUtils';
 
 const AGENT_CACHE_KEY = 'tavro_catalog_agents_cache';
 const AGENT_CACHE_TS_KEY = 'tavro_catalog_agents_cache_ts';
@@ -408,8 +409,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const now = Date.now();
             sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
             setLastFetched(new Date(now));
-        } catch (err: any) {
-            setError(err.message ?? 'Failed to load agent catalog');
+        } catch (err: unknown) {
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
             fetchingRef.current = false;

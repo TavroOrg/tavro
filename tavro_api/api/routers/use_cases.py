@@ -1,8 +1,11 @@
 from __future__ import annotations
 import json
+import logging
 import os
 import base64
 import re
+
+_logger = logging.getLogger(__name__)
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -319,7 +323,8 @@ Return ONLY the JSON object with the "description" field."""
     try:
         parsed = json.loads(_extract_json(raw))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestUseCaseDescriptionResponse(
         description=str(parsed.get("description", "")).strip(),
@@ -470,7 +475,7 @@ async def list_use_cases(
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +526,7 @@ async def create_use_case(
         return {"message": "AI Use Case registered successfully.", "use_case_id": use_case_id}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +781,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -926,7 +931,7 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -974,7 +979,7 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1074,7 +1079,7 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1150,7 +1155,7 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1254,7 +1259,7 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1376,7 +1381,7 @@ async def unlink_application(use_case_id: str, application_id: str, request: Req
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1479,7 +1484,7 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1602,7 +1607,7 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 # ---------------------------------------------------------------------------
 # Attachments

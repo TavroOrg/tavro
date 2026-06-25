@@ -60,6 +60,7 @@ import UserGuidePage from './pages/UserGuidePage';
 import IssueViewPage from './pages/IssueViewPage';
 import AgentEvalsPage from './pages/AgentEvalsPage';
 import RoadmapPage from './pages/RoadmapPage';
+import ErrorBoundary from './components/ErrorBoundary';
 import GuardrailsPage from './pages/GuardrailsPage';
 import IssuesPage from './pages/IssuesPage';
 // ── Auth guard ────────────────────────────────────────────────────────────────
@@ -389,6 +390,7 @@ function SessionExpiredHandler() {
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <ThemeProvider>
         <ChatSessionProvider>
@@ -477,6 +479,7 @@ function App() {
         </ChatSessionProvider>
       </ThemeProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

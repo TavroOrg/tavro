@@ -10,6 +10,7 @@ import { useChatSync } from '../hooks/useChatSync';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage, notifyError } from '../utils/errorUtils';
 
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
@@ -569,7 +570,7 @@ const AgentViewPage: React.FC = () => {
             refreshCatalog();
             navigate('/catalog');
         } catch (err: any) {
-            alert(err.message || 'Failed to delete agent.');
+            notifyError(toUserMessage(err));
         } finally {
             setDeleting(false);
             setDeleteConfirm(false);
@@ -594,7 +595,7 @@ const AgentViewPage: React.FC = () => {
             unregisterPendingAssessment(previousAgent, id);
             setAgent(previousAgent);
             upsertAgent(previousAgent);
-            alert("Failed to request risk assessment.");
+            notifyError('Failed to request risk assessment. Please try again.');
         } finally {
             setAssessing(false);
         }
@@ -644,7 +645,7 @@ const AgentViewPage: React.FC = () => {
             setInlineEdit(null);
             setIsEditing(false);
         } catch (err: any) {
-            setEditError(err.message || 'Failed to update agent. Please try again.');
+            setEditError(toUserMessage(err));
         } finally {
             setEditSaving(false);
         }
@@ -695,7 +696,7 @@ const AgentViewPage: React.FC = () => {
             });
             setInlineEdit(null);
         } catch (err: any) {
-            setEditError(err.message || 'Failed to update agent field. Please try again.');
+            setEditError(toUserMessage(err));
         } finally {
             setInlineSaving(null);
         }

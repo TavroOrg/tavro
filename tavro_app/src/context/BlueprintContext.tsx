@@ -5,6 +5,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { blueprintApi } from '../services/blueprintApi';
 import type { Company, DimType, DimNode, GraphData } from '../types/blueprint';
+import { toUserMessage } from '../utils/errorUtils';
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setCompanies(companiesPage.items);
       setError(null);
     } catch (err: any) {
-      setError(err.message ?? 'Failed to load companies');
+      setError(toUserMessage(err));
     }
   }, []);
 
@@ -90,7 +91,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const saved = companiesPage.items.find(c => c.id === savedId) ?? companiesPage.items[0] ?? null;
         if (saved) setActiveCompany(saved);
       } catch (err: any) {
-        setError(err.message ?? 'Failed to load blueprint data');
+        setError(toUserMessage(err));
       }
     })();
   }, []);
@@ -106,7 +107,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setNodes(page.items);
       setLastFetched(new Date());
     } catch (err: any) {
-      setError(err.message ?? 'Failed to load dimensions');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
       fetchingRef.current = false;
@@ -121,7 +122,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setGraph(g);
     } catch (err: any) {
       // Graph errors are non-fatal — nodes list still works
-      console.warn('[Blueprint] Graph fetch failed:', err.message);
+      console.warn('[Blueprint] Graph fetch failed:', toUserMessage(err));
     } finally {
       setGraphLoading(false);
     }

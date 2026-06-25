@@ -14,6 +14,7 @@ import {
     type LabelDistribution,
     type InsightsRiskAgent,
 } from '../services/insightsApi';
+import { toUserMessage } from '../utils/errorUtils';
 
 // All page data is now computed by the backend (GET /api/v1/insights/summary),
 // which aggregates live over the core.* / twin.* tables. This page only fetches
@@ -707,7 +708,7 @@ const InsightsPage: React.FC = () => {
             const summary = await insightsApi.getSummary(companyId);
             setData(summary);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load insights');
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
         }
