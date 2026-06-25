@@ -394,7 +394,7 @@ const Settings: React.FC = () => {
                             <div>
                                 <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Priority Score Formula Weights</p>
                                 <p className="text-xs text-slate-400 mt-0.5">
-                                    Score = (BV × {(roadmapCfg.priorityWeights.BV * 100).toFixed(0)}%) + (DR × {(roadmapCfg.priorityWeights.DR * 100).toFixed(0)}%) + ((6−TC) × {(roadmapCfg.priorityWeights.TC * 100).toFixed(0)}%) − (Risk × {(roadmapCfg.priorityWeights.RISK * 100).toFixed(0)}%)
+                                    Score = (BV × {(roadmapCfg.priorityWeights.BV * 100).toFixed(0)}%) + ((6−TC) × {(roadmapCfg.priorityWeights.TC * 100).toFixed(0)}%) − (Risk × {(roadmapCfg.priorityWeights.RISK * 100).toFixed(0)}%)
                                 </p>
                             </div>
                             <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border shrink-0 ${Math.abs(pwSum - 100) < 0.1 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
@@ -403,9 +403,8 @@ const Settings: React.FC = () => {
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {([
-                                { key: 'BV',   label: 'Business Value',     hint: 'Positive contribution' },
-                                { key: 'DR',   label: 'Data Readiness',     hint: 'Positive contribution' },
-                                { key: 'TC',   label: 'Technical Complexity', hint: 'Applied as (6 − score) × weight' },
+                                { key: 'BV',   label: 'Business Value',       hint: 'Positive contribution' },
+                                { key: 'TC',   label: 'Effort',               hint: 'Applied as (6 − score) × weight' },
                                 { key: 'RISK', label: 'Risk',               hint: 'Subtracted from score' },
                             ] as { key: keyof typeof roadmapCfg.priorityWeights; label: string; hint: string }[]).map(({ key, label, hint }) => (
                                 <div key={key} className="flex flex-col gap-1.5">
