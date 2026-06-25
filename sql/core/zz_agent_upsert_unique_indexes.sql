@@ -894,4 +894,18 @@ BEGIN
         END IF;
     END IF;
 
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'risk_management' AND table_name = 'agent_risk_assessment' AND column_name = 'company_id'
+    ) THEN
+        ALTER TABLE risk_management.agent_risk_assessment ADD COLUMN company_id TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'risk_management' AND table_name = 'agent_risk_scenarios' AND column_name = 'company_id'
+    ) THEN
+        ALTER TABLE risk_management.agent_risk_scenarios ADD COLUMN company_id TEXT;
+    END IF;
+
 END $$;

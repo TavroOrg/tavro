@@ -266,12 +266,124 @@ async def list_ai_models(
     )
 
     # Company filter for the agent count subquery — join agents table to apply company_id.
-    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if company_id else ""
+    _agent_cnt_join = (
+        f"""JOIN {CORE}.agents ag
+                ON ag.agent_id = rel.agent_id
+                OR ag.agent_internal_id = rel.agent_internal_id"""
+        if company_id else ""
+    )
     _agent_cnt_cf = (
         "AND (ag.company_id = :cid OR ag.company_id IS NULL"
         " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
         if company_id else ""
     )
+
+    # Build dynamic ARE/ART lateral when company_id is provided (mirrors _fetch_applications).
+    _company_risk_lateral_sql = ""
+    _company_risk_class_lateral_sql = ""
+    _has_dynamic_risk = False
+    _c_tid_filter = "AND rel2.tenant_id = :tid" if tenant_id else ""
+    _agent_company_filter = (
+        "AND (ag2.company_id = :cid OR ag2.company_id IS NULL"
+        " OR TRIM(CAST(ag2.company_id AS text)) = '' OR ag2.company_id = 'None')"
+    )
+
+    if company_id:
+        ara_exists = (await db.execute(
+            text("SELECT to_regclass(:t)"), {"t": f"{CORE}.agent_risk_assessments"}
+        )).scalar()
+        if ara_exists:
+            _has_dynamic_risk = True
+            _company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score AS cmp_brs,
+                        base.worst_agent_internal_id,
+                        base.company_are AS cmp_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS cmp_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                CASE LOWER(TRIM(m.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(m.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END
+                            ) / 2.0)::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(COALESCE(ag2.agent_internal_id, rel2.agent_internal_id) ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM {CORE}.agent_ai_models rel2
+                            JOIN {CORE}.agents ag2
+                                ON ag2.agent_id = rel2.agent_id
+                                OR ag2.agent_internal_id = rel2.agent_internal_id
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM {CORE}.agent_risk_assessments ara
+                                WHERE (ara.agent_id = rel2.agent_id OR ara.agent_internal_id = rel2.agent_internal_id)
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY
+                                    CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                                    ara.assessment_ts DESC NULLS LAST,
+                                    ara.updated_ts DESC NULLS LAST
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE LOWER(TRIM(rel2.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
+                              AND COALESCE(rel2.agent_id, rel2.agent_internal_id) IS NOT NULL
+                              AND COALESCE(rel2.agent_id, rel2.agent_internal_id) <> ''
+                              {_agent_company_filter}
+                              {_c_tid_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+            rm_exists = (await db.execute(
+                text("SELECT to_regclass(:t)"), {"t": f"{RISK_MANAGEMENT}.agent_risk_assessment"}
+            )).scalar()
+            if rm_exists:
+                _company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS cmp_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS cmp_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS cmp_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS cmp_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                _company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS cmp_inherent_class,
+                            0.0::double precision AS cmp_inherent_score,
+                            NULL::text AS cmp_residual_class,
+                            0.0::double precision AS cmp_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
+    _dynamic_risk_cols = """,
+                        company_risk.cmp_brs AS _cmp_brs,
+                        company_risk.cmp_are AS _cmp_are,
+                        company_risk.cmp_art AS _cmp_art,
+                        company_risk_class.cmp_inherent_class AS _cmp_inherent_class,
+                        company_risk_class.cmp_inherent_score AS _cmp_inherent_score,
+                        company_risk_class.cmp_residual_class AS _cmp_residual_class,
+                        company_risk_class.cmp_residual_score AS _cmp_residual_score
+                    """ if _has_dynamic_risk else ""
 
     try:
         result = await db.execute(
@@ -285,14 +397,17 @@ async def list_ai_models(
                             FROM {CORE}.agent_ai_models rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(m.ai_model_id))
-                              AND rel.agent_id IS NOT NULL
-                              AND rel.agent_id <> ''
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
                               {rel_tenant_filter}
                               {_agent_cnt_cf}
-                        ), 0) AS related_agent_count,
+                        ), 0) AS related_agent_count
+                        {_dynamic_risk_cols},
                         ROW_NUMBER() OVER (ORDER BY m.created_ts DESC NULLS LAST) AS rn,
                         COUNT(*) OVER () AS total_records
                     FROM {CORE}.ai_models m
+                    {_company_risk_lateral_sql}
+                    {_company_risk_class_lateral_sql}
                     WHERE {where_sql}
                 ) t
                 WHERE rn BETWEEN :start AND :end
@@ -301,7 +416,23 @@ async def list_ai_models(
         )
         rows = result.mappings().all()
         total = int(rows[0]["total_records"]) if rows else 0
-        data = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in rows]
+        data = []
+        for r in rows:
+            row = {k: v for k, v in r.items() if k not in (
+                "rn", "total_records", "_cmp_brs", "_cmp_are", "_cmp_art",
+                "_cmp_inherent_class", "_cmp_inherent_score", "_cmp_residual_class", "_cmp_residual_score",
+            )}
+            if company_id:
+                row["no_of_associated_agents"] = r["related_agent_count"]
+            if _has_dynamic_risk:
+                row["blended_risk_score"] = r["_cmp_brs"]
+                row["agent_risk_exposure"] = r["_cmp_are"]
+                row["agent_risk_tier"] = r["_cmp_art"]
+                row["inherent_risk_classification"] = r["_cmp_inherent_class"]
+                row["inherent_risk_classification_score"] = r["_cmp_inherent_score"]
+                row["residual_risk_classification"] = r["_cmp_residual_class"]
+                row["residual_risk_classification_score"] = r["_cmp_residual_score"]
+            data.append(row)
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "items": data, "data": data}
     except Exception as e:
@@ -409,6 +540,16 @@ async def get_ai_model(
     if tenant_id:
         rel_params["tid"] = tenant_id
 
+    agent_catalog_join = (
+        f"""JOIN {CORE}.agents a
+                ON (a.agent_internal_id = rel.agent_internal_id OR a.agent_id = rel.agent_id)
+                AND COALESCE(a.is_current, true) = true"""
+        if company_id
+        else f"""LEFT JOIN {CORE}.agents a
+                ON (a.agent_internal_id = rel.agent_internal_id OR a.agent_id = rel.agent_id)
+                AND COALESCE(a.is_current, true) = true"""
+    )
+
     agent_rows = await db.execute(
         text(f"""
             SELECT
@@ -416,11 +557,10 @@ async def get_ai_model(
                 rel.agent_internal_id,
                 COALESCE(a.agent_name, rel.agent_name, rel.agent_id) AS agent_name
             FROM {CORE}.agent_ai_models rel
-            LEFT JOIN {CORE}.agents a
-                ON a.agent_internal_id = rel.agent_internal_id
-                AND COALESCE(a.is_current, true) = true
+            {agent_catalog_join}
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
               {_tf('rel')}
               {_company_filter('a')}
               {_tf('a')}
@@ -495,6 +635,120 @@ async def get_ai_model(
     result["ai_use_cases"] = [dict(r._mapping) for r in use_case_rows]
     result["applications"] = [dict(r._mapping) for r in application_rows]
     result["processes"] = [dict(r._mapping) for r in process_rows]
+
+    if company_id:
+        _agent_join = f"""
+            JOIN {CORE}.agents ag
+                ON ag.agent_id = rel.agent_id
+                OR ag.agent_internal_id = rel.agent_internal_id
+        """
+        _ci_agent = (" OR ag.company_id IS NULL OR TRIM(CAST(ag.company_id AS text)) = ''"
+                     " OR ag.company_id = 'None'")
+        _rel_cf = f"AND (ag.company_id = :company_id{_ci_agent})"
+        _rel_tf = "AND rel.tenant_id = :tid" if tenant_id else ""
+        risk_params: dict[str, Any] = {"mid": mid, "company_id": company_id}
+        if tenant_id:
+            risk_params["tid"] = tenant_id
+
+        cnt_row = await db.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))::int AS cnt
+                FROM {CORE}.agent_ai_models rel
+                {_agent_join}
+                WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+                  AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                  AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                  {_rel_cf}
+                  {_rel_tf}
+            """),
+            risk_params,
+        )
+        result["no_of_associated_agents"] = int(cnt_row.scalar() or 0)
+
+        ara_exists = (await db.execute(
+            text("SELECT to_regclass(:t)"), {"t": f"{CORE}.agent_risk_assessments"}
+        )).scalar()
+
+        if ara_exists:
+            worst_row = await db.execute(
+                text(f"""
+                    SELECT brs.agent_internal_id, brs.blended_risk_score
+                    FROM {CORE}.agent_ai_models rel
+                    {_agent_join}
+                    JOIN LATERAL (
+                        SELECT COALESCE(ara.agent_internal_id, ag.agent_internal_id, rel.agent_internal_id) AS agent_internal_id,
+                               ara.blended_risk_score
+                        FROM {CORE}.agent_risk_assessments ara
+                        WHERE (ara.agent_id = rel.agent_id OR ara.agent_internal_id = rel.agent_internal_id)
+                          AND ara.blended_risk_score IS NOT NULL
+                        ORDER BY
+                            CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                            ara.assessment_ts DESC NULLS LAST,
+                            ara.updated_ts DESC NULLS LAST
+                        LIMIT 1
+                    ) brs ON TRUE
+                    WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
+                      AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                      AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                      {_rel_cf}
+                      {_rel_tf}
+                    ORDER BY brs.blended_risk_score DESC NULLS LAST
+                    LIMIT 1
+                """),
+                risk_params,
+            )
+            worst = worst_row.mappings().first()
+            max_brs = float(worst.get("blended_risk_score") or 0.0) if worst else 0.0
+            worst_internal_id = worst.get("agent_internal_id") if worst else None
+
+            bc = (result.get("business_criticality") or "").strip().lower()
+            bc_score = {"high": 1.0, "medium": 0.4, "low": 0.1}.get(bc, 0.0)
+            et = (result.get("emergency_tier") or "").strip().lower()
+            et_score = {"mission critical": 1.0, "business critical": 0.4,
+                        "non-critical": 0.1, "non critical": 0.1}.get(et, 0.0)
+            are = round(max_brs * (bc_score + et_score) / 2.0, 2)
+            if are >= 9.0: art = "Critical"
+            elif are >= 7.0: art = "High"
+            elif are >= 3.0: art = "Medium"
+            else: art = "Low"
+
+            result["blended_risk_score"] = max_brs
+            result["agent_risk_exposure"] = are
+            result["agent_risk_tier"] = art
+
+            inherent_class, inherent_score, residual_class, residual_score = "", 0.0, "", 0.0
+            if worst_internal_id:
+                rm_exists = (await db.execute(
+                    text("SELECT to_regclass(:t)"), {"t": f"{RISK_MANAGEMENT}.agent_risk_assessment"}
+                )).scalar()
+                if rm_exists:
+                    rc_rows = await db.execute(
+                        text(f"""
+                            SELECT type_of_risk, risk_classification, risk_classification_score
+                            FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                            WHERE agent_internal_id = :aid
+                              AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                            ORDER BY created_ts DESC NULLS LAST
+                        """),
+                        {"aid": worst_internal_id},
+                    )
+                    for rc in rc_rows.mappings():
+                        tor = rc.get("type_of_risk")
+                        if tor == "Inherent Risk" and not inherent_class:
+                            inherent_class = rc.get("risk_classification") or ""
+                            inherent_score = float(rc.get("risk_classification_score") or 0.0)
+                        elif tor == "Residual Risk" and not residual_class:
+                            residual_class = rc.get("risk_classification") or ""
+                            residual_score = float(rc.get("risk_classification_score") or 0.0)
+            result["inherent_risk_classification"] = inherent_class
+            result["inherent_risk_classification_score"] = inherent_score
+            result["residual_risk_classification"] = residual_class
+            result["residual_risk_classification_score"] = residual_score
+        else:
+            result["blended_risk_score"] = 0.0
+            result["agent_risk_exposure"] = 0.0
+            result["agent_risk_tier"] = "Low"
+
     return result
 
 

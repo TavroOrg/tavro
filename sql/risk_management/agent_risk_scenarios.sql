@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS risk_management.agent_risk_scenarios (
   tenant_id TEXT,
+  company_id TEXT,
   risk_scenario_id TEXT,
   assessment_id TEXT,
   attack_complexity_ac TEXT,

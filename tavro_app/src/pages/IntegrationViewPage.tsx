@@ -728,11 +728,21 @@ const IntegrationViewPage: React.FC = () => {
               </span>
             </div>
             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ARE</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
               <span className="text-xs font-bold text-slate-700">{String(integration?.agent_risk_exposure ?? 'N/A')}</span>
             </div>
             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ART</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
               <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(integration?.agent_risk_tier))}`}>
                 {getArtTone(integration?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
                 {integration?.agent_risk_tier ?? 'None'}

@@ -1624,7 +1624,7 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "residual_risk_classification"),
         _col_expr("bi", int_cols, "inherent_risk_classification_score"),
         _col_expr("bi", int_cols, "residual_risk_classification_score"),
-        _col_expr("bi", int_cols, "num_of_associated_agents"),
+        _col_expr("bi", int_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
     ]
 
     where_parts: list[str] = []
@@ -1666,6 +1666,10 @@ async def _fetch_integrations(
         if "integration_name" in int_cols
         else "LOWER(bi.integration_id)"
     )
+
+    has_ara_int = False
+    int_company_risk_lateral_sql = ""
+    int_company_risk_class_lateral_sql = ""
 
     has_ba = await _table_exists(db, "core", "business_applications")
     ba_join_sql = (
@@ -1731,12 +1735,117 @@ async def _fetch_integrations(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_int = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_int:
+            ara_cols_int = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_int: list[str] = []
+            if "is_current" in ara_cols_int:
+                ara_order_parts_int.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_int:
+                ara_order_parts_int.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_int.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_int = ", ".join(ara_order_parts_int)
+
+            int_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bi.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bi.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abi.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_integrations abi
+                            {int_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE ara.agent_id = abi.agent_id
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_int}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE abi.integration_id = bi.integration_id
+                              {int_agent_company_filter}
+                              {int_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_int = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_int:
+                int_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                int_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_int:
+        def _replace_int_col(cols: list, col_name: str, new_expr: str) -> None:
+            for i, c in enumerate(cols):
+                if c.endswith(f" AS {col_name}"):
+                    cols[i] = new_expr
+                    return
+        _replace_int_col(select_cols, "blended_risk_score",
+                         "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_int_col(select_cols, "agent_risk_exposure",
+                         "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_int_col(select_cols, "agent_risk_tier",
+                         "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_int_col(select_cols, "inherent_risk_classification",
+                         "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_int_col(select_cols, "inherent_risk_classification_score",
+                         "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_int_col(select_cols, "residual_risk_classification",
+                         "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_int_col(select_cols, "residual_risk_classification_score",
+                         "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     rows = await db.execute(
         text(
@@ -1746,6 +1855,8 @@ async def _fetch_integrations(
             FROM core.business_integrations bi
             {ba_join_sql}
             {rel_join_sql}
+            {int_company_risk_lateral_sql}
+            {int_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1785,7 +1896,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "it_application_owner"),
         _col_expr("ba", app_cols, "application_description"),
         _col_expr("ba", app_cols, "agent_risk_exposure"),
-        _col_expr("ba", app_cols, "num_of_associated_agents"),
+        _col_expr("ba", app_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("ba", app_cols, "inherent_risk_classification"),
         _col_expr("ba", app_cols, "residual_risk_classification"),
         _col_expr("ba", app_cols, "agent_risk_tier"),
@@ -1809,6 +1920,10 @@ async def _fetch_applications(
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
     ]
+
+    has_ara = False
+    company_risk_lateral_sql = ""
+    company_risk_class_lateral_sql = ""
 
     has_aba = await _table_exists(db, "core", "agent_business_applications")
     if has_aba:
@@ -1867,12 +1982,117 @@ async def _fetch_applications(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara:
+            ara_cols = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts: list[str] = []
+            if "is_current" in ara_cols:
+                ara_order_parts.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols:
+                ara_order_parts.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts.append("ara.updated_ts DESC NULLS LAST")
+            ara_order = ", ".join(ara_order_parts)
+
+            company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(ba.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(ba.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(aba.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_applications aba
+                            {app_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE ara.agent_id = aba.agent_id
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE aba.business_application_id = ba.business_application_id
+                              {app_agent_company_filter}
+                              {app_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table:
+                company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara:
+        def _replace_col(cols: list, col_name: str, new_expr: str) -> None:
+            for i, c in enumerate(cols):
+                if c.endswith(f" AS {col_name}"):
+                    cols[i] = new_expr
+                    return
+        _replace_col(select_cols, "blended_risk_score",
+                     "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_col(select_cols, "agent_risk_exposure",
+                     "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_col(select_cols, "agent_risk_tier",
+                     "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_col(select_cols, "inherent_risk_classification",
+                     "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_col(select_cols, "inherent_risk_classification_score",
+                     "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_col(select_cols, "residual_risk_classification",
+                     "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_col(select_cols, "residual_risk_classification_score",
+                     "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
@@ -2096,6 +2316,8 @@ async def _fetch_applications(
             {rel_join_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {company_risk_lateral_sql}
+            {company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -2136,7 +2358,7 @@ async def _fetch_processes(
         _col_expr("bp", process_cols, "operators"),
         _col_expr("bp", process_cols, "business_criticality"),
         _col_expr("bp", process_cols, "reputational_impact"),
-        _col_expr("bp", process_cols, "num_of_associated_agents"),
+        _col_expr("bp", process_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("bp", process_cols, "agent_risk_tier"),
         _col_expr("bp", process_cols, "residual_risk_classification"),
         _col_expr("bp", process_cols, "inherent_risk_classification"),
@@ -2156,6 +2378,10 @@ async def _fetch_processes(
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
     ]
+
+    has_ara_proc = False
+    proc_company_risk_lateral_sql = ""
+    proc_company_risk_class_lateral_sql = ""
 
     has_abp = await _table_exists(db, "core", "agent_business_processes")
     if has_abp:
@@ -2214,12 +2440,137 @@ async def _fetch_processes(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_proc = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_proc:
+            ara_cols_proc = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_proc: list[str] = []
+            if "is_current" in ara_cols_proc:
+                ara_order_parts_proc.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_proc:
+                ara_order_parts_proc.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_proc.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_proc = ", ".join(ara_order_parts_proc)
+
+            proc_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bp.business_criticality))
+                                    WHEN 'tier 1 (systemic)' THEN 1.0 WHEN 'tier 2 (core)' THEN 0.7
+                                    WHEN 'tier 3 (operational)' THEN 0.4 WHEN 'tier 4 (experimental)' THEN 0.1
+                                    WHEN '1.0' THEN 1.0 WHEN '0.7' THEN 0.7 WHEN '0.4' THEN 0.4 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.financial_impact))
+                                    WHEN 'systemic' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'material' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'absorbable' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'immaterial' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.reputational_impact))
+                                    WHEN 'toxic' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'adverse' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'private' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'contained' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.regulatory_impact))
+                                    WHEN 'restricted' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'statutory' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'governed' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'unregulated' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END) / 4.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abp.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_processes abp
+                            {agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE ara.agent_id = abp.agent_id
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_proc}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE abp.business_process_id = bp.business_process_id
+                              {agent_company_filter}
+                              {agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_proc = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_proc:
+                proc_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                proc_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_proc:
+        def _replace_proc_col(cols: list, col_name: str, new_expr: str) -> None:
+            for i, c in enumerate(cols):
+                if c.endswith(f" AS {col_name}"):
+                    cols[i] = new_expr
+                    return
+        _replace_proc_col(select_cols, "blended_risk_score",
+                          "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_proc_col(select_cols, "agent_risk_exposure",
+                          "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_proc_col(select_cols, "agent_risk_tier",
+                          "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_proc_col(select_cols, "inherent_risk_classification",
+                          "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_proc_col(select_cols, "inherent_risk_classification_score",
+                          "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_proc_col(select_cols, "residual_risk_classification",
+                          "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_proc_col(select_cols, "residual_risk_classification_score",
+                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     process_tree_tenant_filter = (
         "AND child.tenant_id = bp.tenant_id"
@@ -2484,6 +2835,8 @@ async def _fetch_processes(
             {proc_rel_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {proc_company_risk_lateral_sql}
+            {proc_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """

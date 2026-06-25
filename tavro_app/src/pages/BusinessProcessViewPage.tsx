@@ -120,7 +120,7 @@ const HINTS: Record<string, string> = {
   associated_agents:
     'Indicates the total number of agents associated with the process.',
   agent_risk_exposure:
-    'ARE represents process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
+    'ARE represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
 };
 
 const inputCls =
@@ -973,65 +973,71 @@ const BusinessProcessViewPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Business Criticality
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
-                {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {businessCriticalityMeta.label}
-              </span>
-            </div>
+          <div className="grid grid-cols-3 gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Business Criticality
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
+                  {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {businessCriticalityMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Financial Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
-                {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {financialImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Financial Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
+                  {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {financialImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Reputational Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
-                {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {reputationalImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Reputational Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
+                  {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {reputationalImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Regulatory Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
-                {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {regulatoryImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Regulatory Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
+                  {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {regulatoryImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                ARE
-              </span>
-              <span className="text-xs font-bold text-slate-700">
-                {form.agent_risk_exposure || 'N/A'}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ARE
+                  <span title="ARE (Agent Risk Exposure) represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className="text-xs font-bold text-slate-700">
+                  {form.agent_risk_exposure || 'N/A'}
+                </span>
+              </div>
 
-            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                ART
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
-                {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {artMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ART
+                  <span title="ART (Agent Risk Tier) indicates overall process risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
+                  {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {artMeta.label}
+                </span>
+              </div>
           </div>
         </div>
       </div>
@@ -1241,6 +1247,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
           <Section title="Business Criticality and Impact">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row 1: Business Criticality | Financial Impact */}
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
                 {editing ? (
@@ -1263,32 +1270,6 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
-                {editing ? (
-                  <select
-                    value={form.reputational_impact}
-                    onChange={(e) => setField('reputational_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
-                    kind: 'select',
-                    options: REPUTATIONAL_IMPACT_OPTIONS,
-                  })
-                )}
-              </div>
-
-              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
-              <ReadValue label="ART" value={form.agent_risk_tier || 'N/A'} />
-              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'N/A'} />
-              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'N/A'} />
-
-              <div className="flex flex-col gap-1.5">
                 <HintLabel label="Financial Impact" hint={HINTS.financial_impact} />
                 {editing ? (
                   <select
@@ -1305,6 +1286,28 @@ const BusinessProcessViewPage: React.FC = () => {
                   renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS), {
                     kind: 'select',
                     options: FINANCIAL_IMPACT_OPTIONS,
+                  })
+                )}
+              </div>
+
+              {/* Row 2: Reputational Impact | Regulatory Impact */}
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
+                {editing ? (
+                  <select
+                    value={form.reputational_impact}
+                    onChange={(e) => setField('reputational_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: REPUTATIONAL_IMPACT_OPTIONS,
                   })
                 )}
               </div>
@@ -1330,9 +1333,20 @@ const BusinessProcessViewPage: React.FC = () => {
                 )}
               </div>
 
-              <ReadValue label="ARE" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+              {/* Row 3: # Of Associated Agents | ARE */}
+              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
+              <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+
+              {/* Row 4: ART | Blended Risk Score */}
+              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
               <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
+
+              {/* Row 5: Residual Risk Classification | Residual Risk Classification Score */}
+              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
+
+              {/* Row 6: Inherent Risk Classification | Inherent Risk Classification Score */}
+              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
             </div>
           </Section>

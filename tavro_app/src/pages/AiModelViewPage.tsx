@@ -387,7 +387,7 @@ const AiModelViewPage: React.FC = () => {
     const handleWorkflowUpdate = async () => {
       mcpClient.invalidateCache();
       try {
-        const data = await aiModelApi.getModel(id);
+        const data = await aiModelApi.getModel(id, activeCompany?.id);
         setModel(data);
         setForm(formFromModel(data));
       } catch {
@@ -397,7 +397,7 @@ const AiModelViewPage: React.FC = () => {
 
     window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
     return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
-  }, [id, isCreateMode, editing]);
+  }, [id, isCreateMode, editing, activeCompany?.id]);
 
   const parentOptions = useMemo(
     () => allModels.filter(m => m.ai_model_id !== id),
@@ -521,8 +521,8 @@ const AiModelViewPage: React.FC = () => {
         setInlineEdit(null);
         return;
       }
-      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined);
-      const fresh = await aiModelApi.getModel(model.ai_model_id);
+      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined, activeCompany?.id);
+      const fresh = await aiModelApi.getModel(model.ai_model_id, activeCompany?.id);
       setModel(fresh);
       setForm(formFromModel(fresh));
       setInlineEdit(null);
@@ -536,7 +536,7 @@ const AiModelViewPage: React.FC = () => {
   const reloadModel = async () => {
     if (!model) return;
     try {
-      const fresh = await aiModelApi.getModel(model.ai_model_id);
+      const fresh = await aiModelApi.getModel(model.ai_model_id, activeCompany?.id);
       setModel(fresh);
     } catch {
       /* ignore */
@@ -966,11 +966,21 @@ const AiModelViewPage: React.FC = () => {
               </span>
             </div>
             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ARE</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
               <span className="text-xs font-bold text-slate-700">{String(model?.agent_risk_exposure ?? 'N/A')}</span>
             </div>
             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">ART</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
               <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(model?.agent_risk_tier))}`}>
                 {getArtTone(model?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
                 {model?.agent_risk_tier ?? 'None'}
