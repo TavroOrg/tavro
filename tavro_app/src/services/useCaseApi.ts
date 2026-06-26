@@ -254,6 +254,10 @@ class UseCaseApiService {
         return result;
     }
 
+    async generateUseCaseReport(useCaseId: string): Promise<{ message: string; attachment: UseCaseAttachmentRecord }> {
+        return req(`/use-cases/${encodeURIComponent(useCaseId)}/generate-report`, { method: 'POST' });
+    }
+
     async deleteUseCaseAttachment(useCaseId: string, attachmentId: string): Promise<void> {
         await req(`/use-cases/${encodeURIComponent(useCaseId)}/attachments/${encodeURIComponent(attachmentId)}`, {
             method: 'DELETE',

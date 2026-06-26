@@ -4,6 +4,7 @@ import os
 import base64
 import re
 import uuid
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -1623,3 +1624,175 @@ async def delete_use_case_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.commit()
     return {"status": "deleted", "attachment_id": attachment_id}
+
+
+# ---------------------------------------------------------------------------
+# POST /{use_case_id}/generate-report  — generate business case PDF via AI
+# ---------------------------------------------------------------------------
+
+_BUSINESS_CASE_REPORT_SYSTEM = """You are a business analyst generating a Business Case Report for an AI use case.
+
+Generate a complete Business Case Report in clean markdown using ONLY the data provided by the user.
+Do not invent financial figures, timelines, vendors, risks, or outcomes not present in the source data.
+If a field is blank or absent, omit that subsection.
+Use ASCII characters only. Output only the report markdown — no preamble, commentary, or closing remarks.
+
+Structure the report with exactly these sections (skip any section whose source field is empty):
+
+# {use_case_name} — Business Case Report
+
+## 1. Executive Summary
+(from executive_summary)
+
+## 2. Problem Statement
+(from business_problem_statement and expected_benefits)
+
+## 3. Proposed Solution
+(from description and solution_approach)
+
+## 4. Financial Benefits
+
+### 4.1 Assumptions
+(from assumptions)
+
+### 4.2 Quantified Financial Benefits
+(from quantified_financial_benefits)
+
+### 4.3 Total Financial Impact Summary
+(from total_financial_impact_summary)
+
+### 4.4 Implementation Cost Estimate
+(from implementation_cost_estimate)
+
+### 4.5 Return on Investment
+(from return_on_investment)
+
+## 5. Risk Considerations
+(from risk_considerations)
+
+## 6. Implementation Roadmap
+(from implementation_roadmap)
+
+## 7. Recommendation
+(from recommendation)
+"""
+
+
+@router.post("/{use_case_id}/generate-report", summary="Generate Business Case Report PDF", status_code=201)
+async def generate_use_case_report(
+    use_case_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = request.headers.get("x-tenant-id") or None
+    tenant_filter = "AND tenant_id = :tid" if tenant_id else ""
+
+    uc_row = await db.execute(
+        text(f"""
+            SELECT name, description, problem_statement, solution_approach,
+                   expected_benefits, executive_summary, assumptions,
+                   quantified_financial_benefits, total_financial_impact_summary,
+                   implementation_cost_estimate, return_on_investment,
+                   risk_considerations, implementation_roadmap, recommendation
+            FROM {CORE}.ai_use_cases
+            WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+              {tenant_filter}
+            LIMIT 1
+        """),
+        {"uid": use_case_id, "tid": tenant_id},
+    )
+    uc = uc_row.mappings().first()
+    if not uc:
+        raise HTTPException(status_code=404, detail=f"Use case '{use_case_id}' not found.")
+
+    use_case_name: str = str(uc.get("name") or use_case_id)
+
+    def _field(key: str) -> str:
+        v = uc.get(key)
+        return str(v).strip() if v else ""
+
+    user_msg_parts = [
+        f"Use Case: {use_case_name}",
+        f"Description: {_field('description')}",
+        f"Business Problem Statement: {_field('problem_statement')}",
+        f"Expected Benefits: {_field('expected_benefits')}",
+        f"Solution Approach: {_field('solution_approach')}",
+        f"Executive Summary: {_field('executive_summary')}",
+        f"Assumptions: {_field('assumptions')}",
+        f"Quantified Financial Benefits: {_field('quantified_financial_benefits')}",
+        f"Total Financial Impact Summary: {_field('total_financial_impact_summary')}",
+        f"Implementation Cost Estimate: {_field('implementation_cost_estimate')}",
+        f"Return on Investment: {_field('return_on_investment')}",
+        f"Risk Considerations: {_field('risk_considerations')}",
+        f"Implementation Roadmap: {_field('implementation_roadmap')}",
+        f"Recommendation: {_field('recommendation')}",
+    ]
+    user_message = "\n".join(user_msg_parts)
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AI report generation is unavailable (no API key configured).")
+
+    try:
+        system_prompt = _BUSINESS_CASE_REPORT_SYSTEM.replace("{use_case_name}", use_case_name)
+        claude_resp = await _call_anthropic(
+            api_key=api_key,
+            messages=[{"role": "user", "content": user_message}],
+            system=system_prompt,
+            max_tokens=4000,
+        )
+        report_markdown = _collect_text(claude_resp)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI report generation failed: {exc}") from exc
+
+    if not report_markdown or not report_markdown.strip():
+        raise HTTPException(status_code=503, detail="AI returned an empty report. Please try again.")
+
+    try:
+        from api.pdf_utils import markdown_to_pdf
+        pdf_bytes = markdown_to_pdf(
+            report_markdown,
+            agent_name=use_case_name,
+            doc_type="Business Case Report",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    if not pdf_bytes:
+        raise HTTPException(status_code=500, detail="PDF generation produced no output. Please try again.")
+
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", use_case_name).strip("_") or "Business_Case"
+    filename = f"{safe_name}_Business_Case_{date.today().isoformat()}.pdf"
+
+    try:
+        row = await db.execute(
+            text("""
+                INSERT INTO public.use_case_attachment
+                    (use_case_id, filename, mime_type, file_size_bytes, file_data)
+                VALUES
+                    (:use_case_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                RETURNING id, use_case_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """),
+            {
+                "use_case_id": use_case_id,
+                "filename": filename,
+                "mime_type": "application/pdf",
+                "file_size_bytes": len(pdf_bytes),
+                "file_data": pdf_bytes,
+            },
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save report attachment: {exc}") from exc
+
+    attachment_row = row.mappings().first()
+    if not attachment_row:
+        raise HTTPException(status_code=500, detail="Report was generated but could not be saved. Please try again.")
+
+    attachment = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in dict(attachment_row).items()}
+    return {
+        "message": f"Business case report generated and attached for '{filename}'.",
+        "attachment": attachment,
+    }
+

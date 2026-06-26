@@ -659,14 +659,15 @@ const IdeaModal: React.FC<{
 
         } catch (enrichErr) {
           console.error('[Spark] Background enrichment failed for use case', useCaseId, enrichErr);
-          // Remove marker and notify the detail page to show an error state
+          // Clean up the enriching marker silently — the use case was already created
           try {
             const raw = localStorage.getItem('tavro_enriching_use_cases');
             const enriching: string[] = raw ? JSON.parse(raw) : [];
             localStorage.setItem('tavro_enriching_use_cases', JSON.stringify(enriching.filter(id => id !== useCaseId)));
           } catch { /* best-effort */ }
+          // Dismiss the loading banner without showing an error
           window.dispatchEvent(new CustomEvent('tavro_usecase_enriched', {
-            detail: { use_case_id: useCaseId, title: idea.title, failed: true },
+            detail: { use_case_id: useCaseId, title: idea.title },
           }));
         }
       })();

@@ -1281,11 +1281,11 @@ const UseCaseViewPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
-  const [enriching, setEnriching] = useState<false | 'loading' | 'failed'>(() => {
+  const [enriching, setEnriching] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem('tavro_enriching_use_cases');
       const ids: string[] = raw ? JSON.parse(raw) : [];
-      return ids.includes(id ?? '') ? 'loading' : false;
+      return ids.includes(id ?? '');
     } catch { return false; }
   });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -1382,19 +1382,15 @@ const UseCaseViewPage: React.FC = () => {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ use_case_id: string; title?: string; failed?: boolean }>).detail;
+      const detail = (e as CustomEvent<{ use_case_id: string; title?: string }>).detail;
       if (detail?.use_case_id !== id) return;
-      if (!detail.failed) {
-        setEnriching(false);
-        fetchUseCaseSilently();
-        refreshUseCases();
-        const name = detail.title || 'Use case';
-        window.dispatchEvent(new CustomEvent('tavro_notice', {
-          detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.` },
-        }));
-      } else {
-        setEnriching('failed');
-      }
+      setEnriching(false);
+      fetchUseCaseSilently();
+      refreshUseCases();
+      const name = detail.title || 'Use case';
+      window.dispatchEvent(new CustomEvent('tavro_notice', {
+        detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.` },
+      }));
     };
     window.addEventListener('tavro_usecase_enriched', handler);
     return () => window.removeEventListener('tavro_usecase_enriched', handler);
@@ -1711,21 +1707,10 @@ const UseCaseViewPage: React.FC = () => {
         </div>
       )}
 
-      {enriching === 'loading' && (
+      {enriching && (
         <div className="flex items-center gap-3 px-5 py-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-800 text-sm font-medium shadow-sm">
           <RefreshCw size={15} className="animate-spin shrink-0 text-blue-500" />
-          <span>Enriching AI use case and creating an appropriate agent.</span>
-        </div>
-      )}
-      {enriching === 'failed' && (
-        <div className="flex items-center justify-between gap-3 px-5 py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium shadow-sm">
-          <span>AI business case generation failed — the use case was created but fields may be incomplete. You can edit each field manually.</span>
-          <button
-            className="shrink-0 text-amber-700 underline underline-offset-2 hover:text-amber-900"
-            onClick={() => setEnriching(false)}
-          >
-            Dismiss
-          </button>
+          <span>Enriching AI Use Case and creating an appropriate agent.</span>
         </div>
       )}
 
