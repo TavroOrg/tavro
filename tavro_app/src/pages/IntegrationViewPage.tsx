@@ -8,8 +8,10 @@ import {
   Loader2,
   Pencil,
   PlusCircle,
+  RefreshCw,
   Save,
   Search,
+  Sparkles,
   Trash2,
   Unlink2,
   XCircle,
@@ -23,6 +25,7 @@ import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import { toUserMessage } from '../utils/errorUtils';
 
 type Tab = 'overview' | 'related';
 type Option = { label: string; value: string };
@@ -192,7 +195,7 @@ const changedIntegrationPayload = (
   const changed: IntegrationUpsertPayload = {};
   (Object.keys(nextPayload) as Array<keyof IntegrationUpsertPayload>).forEach(key => {
     if (nextPayload[key] !== currentPayload[key]) {
-      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+      Object.assign(changed, { [key]: nextPayload[key] ?? null });
     }
   });
   return changed;
@@ -235,6 +238,9 @@ const IntegrationViewPage: React.FC = () => {
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
   const [form, setForm] = useState<IntegrationFormState>(emptyForm);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -249,6 +255,7 @@ const IntegrationViewPage: React.FC = () => {
   const [searchAgents, setSearchAgents] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   const load = async () => {
     if (!id || isCreateMode) return;
@@ -258,9 +265,10 @@ const IntegrationViewPage: React.FC = () => {
       const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
       setIntegration(data);
       setForm(formFromIntegration(data));
+      setTags(Array.isArray(data.tags) ? data.tags : []);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load integration');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -270,6 +278,7 @@ const IntegrationViewPage: React.FC = () => {
     if (isCreateMode) {
       setIntegration(null);
       setForm(emptyForm());
+      setTags([]);
       setEditing(true);
       setAttemptedSave(false);
       setLoading(false);
@@ -336,7 +345,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -350,7 +359,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -398,10 +407,11 @@ const IntegrationViewPage: React.FC = () => {
       );
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -486,6 +496,25 @@ const IntegrationViewPage: React.FC = () => {
 
   // ── Bulk save / cancel ─────────────────────────────────────────────────────
 
+  const handleSuggestDescription = async () => {
+    if (!form.integration_name.trim()) {
+      setActionError('Integration Name is required before generating the description.');
+      return;
+    }
+    setGeneratingDescription(true);
+    setActionError(null);
+    try {
+      const result = await businessRelationsApi.suggestIntegrationDescription(form.integration_name.trim());
+      if (result.description) {
+        setField('integration_description', result.description);
+      }
+    } catch (err: any) {
+      setActionError(toUserMessage(err));
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const handleSave = async () => {
     setAttemptedSave(true);
     if (isNameMissing) {
@@ -498,6 +527,7 @@ const IntegrationViewPage: React.FC = () => {
     try {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
+        if (tags.length > 0) payload.tags = tags;
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         if (linkAgentId) {
@@ -522,10 +552,11 @@ const IntegrationViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateIntegration(integration.integration_id, changedPayload, activeCompany?.id);
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setAttemptedSave(false);
       setEditing(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -553,7 +584,7 @@ const IntegrationViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/integrations');
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -754,13 +785,34 @@ const IntegrationViewPage: React.FC = () => {
               </div>
 
               <div className="md:col-span-2 flex flex-col gap-1.5">
-                <HintLabel label="Integration Description" />
+                <div className="flex items-center justify-between">
+                  <HintLabel label="Integration Description" />
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={handleSuggestDescription}
+                      disabled={generatingDescription || !form.integration_name.trim()}
+                      title={form.integration_name.trim() ? 'Generate description with AI' : 'Enter an integration name first'}
+                      className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                        generatingDescription
+                          ? 'bg-violet-50 border-violet-200 text-violet-500 cursor-wait'
+                          : form.integration_name.trim()
+                            ? 'bg-violet-50 border-violet-200 text-violet-600 hover:bg-violet-100 hover:border-violet-300'
+                            : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                      }`}
+                    >
+                      {generatingDescription ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                      {generatingDescription ? 'Generating...' : 'AI assist'}
+                    </button>
+                  )}
+                </div>
                 {editing ? (
                   <textarea
                     value={form.integration_description}
                     onChange={(e) => setField('integration_description', e.target.value)}
                     rows={3}
-                    className={textAreaCls}
+                    className={`${textAreaCls} ${generatingDescription ? 'opacity-50' : ''}`}
+                    disabled={generatingDescription}
                   />
                 ) : (
                   renderInlineEditable('integration_description', form.integration_description || 'N/A', {
@@ -768,6 +820,56 @@ const IntegrationViewPage: React.FC = () => {
                     className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap',
                   })
                 )}
+              </div>
+              <div className="flex flex-col gap-1.5 col-span-full">
+                <HintLabel label="Tags" />
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[32px] bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+                  {tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-semibold bg-white text-slate-600 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                      {tag}
+                      <button
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={async () => {
+                          const next = tags.filter(t => t !== tag);
+                          if (isCreateMode) { setTags(next); return; }
+                          if (!integration) return;
+                          setTagSaving(true);
+                          try {
+                            const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { tags: next }, activeCompany?.id);
+                            setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                          } catch { setTags(next); }
+                          finally { setTagSaving(false); }
+                        }}
+                        className="text-slate-400 hover:text-red-400 leading-none ml-0.5"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={async e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const newTag = tagInput.trim().replace(/,$/, '');
+                        if (!newTag || tags.includes(newTag)) { setTagInput(''); return; }
+                        const next = [...tags, newTag];
+                        setTagInput('');
+                        if (isCreateMode) { setTags(next); return; }
+                        setTagSaving(true);
+                        try {
+                          const updated = await businessRelationsApi.updateIntegration(integration!.integration_id, { tags: next }, activeCompany?.id);
+                          setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                        } catch { setTags(next); }
+                        finally { setTagSaving(false); }
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter…"
+                    disabled={tagSaving}
+                    className="text-[11px] bg-transparent outline-none text-slate-500 placeholder:text-slate-300 min-w-[60px]"
+                  />
+                </div>
               </div>
             </div>
           </Section>

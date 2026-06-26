@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import csv
+import io
 import json
+import logging
 import os
 from uuid import uuid4
-from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+_logger = logging.getLogger(__name__)
+from typing import Any, List, Optional
+
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,6 +174,7 @@ class Application(BaseModel):
     latest_released_version: Optional[str] = None
     latest_release_date: Optional[str] = None
     latest_release_documentation_link: Optional[str] = None
+    tags: Optional[list] = None
     # Backward-compatible aliases accepted by canonical mapping:
     are: Optional[str] = None
     associated_agents: Optional[str] = None
@@ -201,6 +207,7 @@ class Process(BaseModel):
     regulatory_impact: Optional[str] = None
     sla: Optional[str] = None
     process_health_state: Optional[str] = None
+    tags: Optional[list] = None
     # Backward-compatible aliases accepted by canonical mapping:
     number: Optional[str] = None
     name: Optional[str] = None
@@ -232,6 +239,7 @@ class Integration(BaseModel):
     sla: Optional[str] = None
     version: Optional[str] = None
     parent_application_id: Optional[str] = None
+    tags: Optional[list] = None
     business_criticality: Optional[str] = None
     emergency_tier: Optional[str] = None
 
@@ -267,6 +275,14 @@ class SuggestProcessDescriptionRequest(BaseModel):
 
 
 class SuggestProcessDescriptionResponse(BaseModel):
+    description: str
+
+
+class SuggestIntegrationDescriptionRequest(BaseModel):
+    integration_name: str
+
+
+class SuggestIntegrationDescriptionResponse(BaseModel):
     description: str
 
 
@@ -308,7 +324,27 @@ Format:
 }"""
 
 
+SUGGEST_INTEGRATION_DESCRIPTION_SYSTEM = """You are helping a user create a business integration record in Tavro.
+
+Given only an integration name, generate a short plain-text integration description.
+
+Rules:
+- Return ONLY a JSON object.
+- No markdown, no code fences.
+- Write 2-3 sentences.
+- Be specific and practical, but do not invent company-specific facts, endpoints, or credentials.
+- Focus on what systems the integration connects, what data or events it exchanges, and its likely business purpose.
+- Do not assume a specific technical approach such as webhooks, polling, streaming, or message queues unless that is explicit in the name.
+- If the name is ambiguous, keep the description generic and conservative.
+
+Format:
+{
+  "description": "2-3 sentence integration description"
+}"""
+
+
 _INTEGRATIONS_READY = False
+
 
 
 async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
@@ -330,6 +366,7 @@ async def _upsert_dim_node_for_entity(
     category: str,
     label: str,
     summary: Optional[str],
+    tags: Optional[list] = None,
 ) -> None:
     """Find the system dim_type for the given category and upsert a dim_node."""
     result = await db.execute(
@@ -352,17 +389,23 @@ async def _upsert_dim_node_for_entity(
     )
     existing_row = existing.mappings().first()
     if existing_row:
-        await db.execute(
-            text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
-            {"summary": summary, "id": str(existing_row["id"])},
-        )
+        if tags is not None:
+            await db.execute(
+                text("UPDATE twin.dim_node SET summary = :summary, tags = cast(:tags as jsonb), updated_at = NOW() WHERE id = :id"),
+                {"summary": summary, "tags": json.dumps(tags), "id": str(existing_row["id"])},
+            )
+        else:
+            await db.execute(
+                text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
+                {"summary": summary, "id": str(existing_row["id"])},
+            )
     else:
         await db.execute(
             text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary)
-                VALUES (:company_id, :dim_type_id, :label, :summary)
+                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags)
+                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb))
             """),
-            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary},
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary, "tags": json.dumps(tags or [])},
         )
 
 
@@ -375,6 +418,7 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
         desc = integration.get("integration_description") or ""
         caps = integration.get("capabilities") or ""
         summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
+        tags = _json_list(integration.get("tags")) or None
 
         company_name = await _get_company_name(db, company_id)
 
@@ -391,7 +435,7 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
                     {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal — don't break the integration save
@@ -404,6 +448,7 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
         if not name:
             return
         summary = (application.get("application_description") or "")[:800] or None
+        tags = _json_list(application.get("tags")) or None
         company_name = await _get_company_name(db, company_id)
 
         application_id = application.get("business_application_id")
@@ -419,7 +464,7 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
                     {"company_id": company_id, "company_name": company_name, "application_id": application_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -432,6 +477,7 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
         if not name:
             return
         summary = (process_record.get("process_description") or "")[:800] or None
+        tags = _json_list(process_record.get("tags")) or None
         company_name = await _get_company_name(db, company_id)
 
         process_id = process_record.get("business_process_id")
@@ -447,7 +493,7 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
                     {"company_id": company_id, "company_name": company_name, "process_id": process_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary)
+        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags)
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -460,15 +506,19 @@ async def sync_dim_node_to_business_entity(
     category: str,
     label: str,
     summary: Optional[str],
+    tags: Optional[list] = None,
+    tenant_id: Optional[str] = None,
 ) -> None:
     """
     Called from dim_nodes.py when a dim_node is created under application/process/integration.
-    Creates the corresponding business entity record if it doesn't already exist for this company.
+    Creates the corresponding business entity record if it doesn't already exist for this company,
+    or updates its tags if it does.
     """
     try:
         label = (label or "").strip()
         if not label:
             return
+
 
         if category == "application":
             app_cols = await _table_columns(db, "core", "business_applications")
@@ -481,7 +531,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in app_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_applications
+                                SET tags = cast(:tags as jsonb)
+                                WHERE business_application_id = :app_id
+                            """),
+                            {"tags": json.dumps(tags), "app_id": existing_row["business_application_id"]},
+                        )
+                        await db.commit()
                     return
 
             app_id = uuid4().hex
@@ -493,6 +554,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("application_description")
                 placeholders.append(":app_desc")
                 params["app_desc"] = summary
+            if "tenant_id" in app_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in app_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -501,6 +566,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in app_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in app_cols:
                     insert_cols.append(ts_col)
@@ -528,7 +597,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in proc_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_processes
+                                SET tags = cast(:tags as jsonb)
+                                WHERE business_process_id = :proc_id
+                            """),
+                            {"tags": json.dumps(tags), "proc_id": existing_row["business_process_id"]},
+                        )
+                        await db.commit()
                     return
 
             proc_id = uuid4().hex
@@ -540,6 +620,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("process_description")
                 placeholders.append(":proc_desc")
                 params["proc_desc"] = summary
+            if "tenant_id" in proc_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in proc_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -548,6 +632,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in proc_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in proc_cols:
                     insert_cols.append(ts_col)
@@ -576,7 +664,18 @@ async def sync_dim_node_to_business_entity(
                     """),
                     {"name": label, "cid": company_id},
                 )
-                if existing.mappings().first():
+                existing_row = existing.mappings().first()
+                if existing_row:
+                    if tags and "tags" in int_cols:
+                        await db.execute(
+                            text("""
+                                UPDATE core.business_integrations
+                                SET tags = cast(:tags as jsonb)
+                                WHERE integration_id = :int_id
+                            """),
+                            {"tags": json.dumps(tags), "int_id": existing_row["integration_id"]},
+                        )
+                        await db.commit()
                     return
 
             int_id = uuid4().hex
@@ -588,6 +687,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("integration_description")
                 placeholders.append(":int_desc")
                 params["int_desc"] = summary
+            if "tenant_id" in int_cols:
+                insert_cols.append("tenant_id")
+                placeholders.append(":tenant_id")
+                params["tenant_id"] = tenant_id
             if "company_id" in int_cols:
                 insert_cols.append("company_id")
                 placeholders.append(":cid")
@@ -596,6 +699,10 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("company_name")
                 placeholders.append(":cname")
                 params["cname"] = company_name
+            if "tags" in int_cols:
+                insert_cols.append("tags")
+                placeholders.append("cast(:tags as jsonb)")
+                params["tags"] = json.dumps(tags if tags is not None else [])
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in int_cols:
                     insert_cols.append(ts_col)
@@ -640,15 +747,13 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 parent_application_id TEXT,
                 company_id TEXT,
                 company_name TEXT,
+                tags JSONB DEFAULT '[]'::jsonb,
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
     )
-    await db.execute(text(
-        "ALTER TABLE core.business_integrations ADD COLUMN IF NOT EXISTS tenant_id TEXT"
-    ))
     await db.commit()
     _TABLE_COLUMNS_CACHE.pop(("core", "business_integrations"), None)
     _INTEGRATIONS_READY = True
@@ -819,6 +924,7 @@ _COMPANY_HIDDEN_FIELDS = {"company_id", "company_name"}
 def _normalize_integration_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
+    row["tags"] = _json_list(row.get("tags"))
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
     return row
@@ -848,6 +954,7 @@ def _normalize_related_ai_models(row: dict[str, Any]) -> None:
 
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
+    row["tags"] = _json_list(row.get("tags"))
     related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_use_cases: list[dict[str, Any]] = []
     seen_use_case_ids: set[str] = set()
@@ -878,6 +985,7 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
+    row["tags"] = _json_list(row.get("tags"))
     related_processes_raw = _json_list(row.get("related_processes"))
     related_use_cases_raw = _json_list(row.get("related_use_cases"))
     normalized_related_processes: list[dict[str, Any]] = []
@@ -1611,6 +1719,7 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "version"),
         _col_expr("bi", int_cols, "parent_application_id"),
         "pa.application_name AS parent_application_name",
+        _col_expr("bi", int_cols, "tags"),
         _col_expr("bi", int_cols, "created_ts"),
         _col_expr("bi", int_cols, "updated_ts"),
         "rel.related_agents",
@@ -1802,6 +1911,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "latest_released_version"),
         _col_expr("ba", app_cols, "latest_release_date"),
         _col_expr("ba", app_cols, "latest_release_documentation_link"),
+        _col_expr("ba", app_cols, "tags"),
         _col_expr("ba", app_cols, "created_ts"),
         _col_expr("ba", app_cols, "updated_ts"),
         "rel.related_agents",
@@ -2148,6 +2258,7 @@ async def _fetch_processes(
         _col_expr("bp", process_cols, "inherent_risk_classification_score"),
         _col_expr("bp", process_cols, "sla"),
         _col_expr("bp", process_cols, "process_health_state"),
+        _col_expr("bp", process_cols, "tags"),
         _col_expr("bp", process_cols, "created_ts"),
         _col_expr("bp", process_cols, "updated_ts"),
         "rel.related_agents",
@@ -2226,9 +2337,19 @@ async def _fetch_processes(
         if tenant_id and "tenant_id" in process_cols
         else ""
     )
+    process_tree_company_filter = (
+        "AND child.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
+        else ""
+    )
     parent_tenant_join = (
         "AND parent.tenant_id = bp.tenant_id"
         if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_company_join = (
+        "AND parent.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
         else ""
     )
     proc_rel_sql = f"""
@@ -2250,6 +2371,7 @@ async def _fetch_processes(
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
                   {process_tree_tenant_filter}
+                  {process_tree_company_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -2480,6 +2602,7 @@ async def _fetch_processes(
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
                {parent_tenant_join}
+               {parent_company_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
@@ -2516,7 +2639,8 @@ async def list_integrations(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list integrations: {exc}")
+        _logger.error("Failed to list integrations: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve integrations. Please try again.")
 
 
 @router.get("/integrations/{integration_id}", tags=["Integrations"], summary="Get Integration")
@@ -2534,6 +2658,24 @@ async def get_integration(
             detail=f"Integration '{integration_id}' not found",
         )
     return rows[0]
+
+
+@router.post("/integrations/suggest-description", tags=["Integrations"], summary="Suggest Integration Description")
+async def suggest_integration_description(body: SuggestIntegrationDescriptionRequest):
+    integration_name = body.integration_name.strip()
+    if not integration_name:
+        raise HTTPException(status_code=400, detail="integration_name is required")
+
+    try:
+        description = await _suggest_single_description(
+            integration_name,
+            SUGGEST_INTEGRATION_DESCRIPTION_SYSTEM,
+            "business integration",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+
+    return SuggestIntegrationDescriptionResponse(description=description)
 
 
 @router.post("/integrations", status_code=201, tags=["Integrations"], summary="Create Integration")
@@ -2567,6 +2709,10 @@ async def create_integration(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in int_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     if "created_ts" in int_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in int_cols:
@@ -2578,7 +2724,9 @@ async def create_integration(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -2619,11 +2767,17 @@ async def update_integration(
         allowed_columns=_INTEGRATION_EDITABLE_COLUMNS,
         existing_columns=int_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in int_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["integration_id"] = integration_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "integration_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "integration_id"
+    )
     if "updated_ts" in int_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
@@ -2806,7 +2960,8 @@ async def list_applications(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list business applications: {exc}")
+        _logger.error("Failed to list business applications: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve business applications. Please try again.")
 
 
 @router.get("/applications/{application_id}", tags=["Applications"], summary="Get Application")
@@ -2838,7 +2993,8 @@ async def suggest_application_description(body: SuggestApplicationDescriptionReq
             "business application",
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestApplicationDescriptionResponse(description=description)
 
@@ -2873,6 +3029,10 @@ async def create_application(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in app_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     for col, default_value in _APPLICATION_READONLY_DEFAULTS.items():
         if col in app_cols:
             insert_values[col] = default_value
@@ -2893,7 +3053,9 @@ async def create_application(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -2932,11 +3094,17 @@ async def update_application(
         allowed_columns=_APPLICATION_EDITABLE_COLUMNS,
         existing_columns=app_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in app_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["business_application_id"] = application_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_application_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "business_application_id"
+    )
     if "updated_ts" in app_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
@@ -3025,6 +3193,236 @@ async def delete_application(
     return {"status": "deleted", "application_id": application_id}
 
 
+# ─── CSV helpers shared by both upload endpoints ──────────────────────────────
+
+def _get_upload_tenant(request: Request) -> Optional[str]:
+    val = request.headers.get("x-tenant-id", "")
+    return val.strip() or None
+
+
+def _parse_csv_rows(filename: str, content: bytes) -> list[dict]:
+    text_data = content.decode("utf-8-sig", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text_data[:4096], delimiters=",\t")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(text_data), dialect=dialect)
+    rows = []
+    for row in reader:
+        rows.append({k.strip(): (v.strip() if v else "") for k, v in row.items() if k and k.strip()})
+    if not rows:
+        raise ValueError(f"No data rows found in '{filename}'")
+    return rows
+
+
+_APP_UPLOAD_TEXT_COLS: set[str] = {
+    "application_name", "emergency_tier", "business_owner", "application_portfolio_manager",
+    "vendor_name", "business_criticality", "it_application_owner", "application_description",
+    "inherent_risk_classification", "residual_risk_classification", "agent_risk_tier",
+    "embedded_ai", "opt_out_option", "privacy_policy_url", "data_excluded_from_ai_training",
+    "vendor_description", "current_installed_version", "is_current_version_supported",
+    "latest_released_version", "latest_release_date", "latest_release_documentation_link",
+}
+
+_APP_UPLOAD_FLOAT_COLS: set[str] = {
+    "agent_risk_exposure", "blended_risk_score",
+    "inherent_risk_classification_score", "residual_risk_classification_score",
+}
+
+_APP_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
+
+_PROC_UPLOAD_TEXT_COLS: set[str] = {
+    "business_process_id", "process_number", "process_name", "process_description",
+    "parent_process_id", "owner", "stakeholders", "operators", "business_criticality",
+    "reputational_impact", "agent_risk_tier", "residual_risk_classification",
+    "inherent_risk_classification", "financial_impact", "regulatory_impact",
+    "sla", "process_health_state",
+}
+
+_PROC_UPLOAD_FLOAT_COLS: set[str] = {
+    "agent_risk_exposure", "blended_risk_score",
+    "residual_risk_classification_score", "inherent_risk_classification_score",
+}
+
+_PROC_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
+
+
+@router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")
+async def upload_applications_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business applications from one or more CSV or TSV files.
+    Only application_name is mandatory per row; all other fields are optional.
+    tenant_id is read from the x-tenant-id request header.
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    app_cols = await _table_columns(db, "core", "business_applications")
+
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_names = [_text_or_none(r.get("application_name", "")) for r in all_rows]
+    csv_names = [n for n in csv_names if n]
+
+    seen: set[str] = set()
+    blocked_app_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_names:
+        key = n.lower()
+        if key in seen:
+            blocked_app_names.add(key)    # appears more than once in CSV
+        seen.add(key)
+
+    if csv_names:
+        name_params: dict = {f"n{i}": n for i, n in enumerate(csv_names)}
+        name_params["tid"] = tenant_id
+        if cid:
+            name_params["cid"] = cid
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_result = await db.execute(text(db_check_sql), name_params)
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_app_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    uploaded_count = 0
+    errors: list[str] = []
+
+    for row in all_rows:
+        app_name = _text_or_none(row.get("application_name", ""))
+        if not app_name:
+            errors.append("Skipped a row: application_name is required")
+            continue
+
+        if app_name.lower() in blocked_app_names:
+            errors.append(f"Skipped '{app_name}': already exists for this tenant/company or is duplicated in the CSV")
+            continue
+
+        app_id = uuid4().hex
+        insert_values: dict[str, Any] = {"business_application_id": app_id}
+
+        for col in _APP_UPLOAD_TEXT_COLS:
+            if col in app_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+        for col in _APP_UPLOAD_FLOAT_COLS:
+            if col in app_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = float(raw_val)
+                    except ValueError:
+                        pass
+        for col in _APP_UPLOAD_INT_COLS:
+            if col in app_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = int(float(raw_val))
+                    except ValueError:
+                        pass
+
+        for col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
+            if col in app_cols and col not in insert_values:
+                insert_values[col] = default_val
+
+        if "tenant_id" in app_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in app_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in app_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in app_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in app_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in app_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        try:
+            await db.execute(
+                text(
+                    f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"
+                    f" ON CONFLICT (tenant_id, company_id, business_application_id) DO NOTHING"
+                ),
+                params,
+            )
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_applications(db, application_id=app_id)
+                if rows_fetched:
+                    await _sync_application_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{app_name}': {exc}")
+
+    if errors:
+        print(f"[WARN] application upload: {len(errors)} row(s) failed — {errors[:3]}")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Application" if uploaded_count == 1 else "Applications"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+    }
+
+
 @router.get("/processes", tags=["Processes"], summary="List Processes")
 async def list_processes(
     request: Request,
@@ -3048,7 +3446,8 @@ async def list_processes(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to list business processes: {exc}")
+        _logger.error("Failed to list business processes: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve business processes. Please try again.")
 
 
 @router.get("/processes/{process_id}", tags=["Processes"], summary="Get Process")
@@ -3080,7 +3479,8 @@ async def suggest_process_description(body: SuggestProcessDescriptionRequest):
             "business process",
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestProcessDescriptionResponse(description=description)
 
@@ -3128,6 +3528,10 @@ async def create_process(
         )
     )
 
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in process_cols:
+        insert_values["tags"] = json.dumps(raw_tags)
+
     for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
         if col in process_cols:
             insert_values[col] = default_value
@@ -3148,7 +3552,9 @@ async def create_process(
 
     columns_sql = ", ".join(insert_columns)
     values_sql = ", ".join(
-        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+        "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
+        else "cast(:tags as jsonb)" if col == "tags"
+        else f":{col}"
         for col in insert_columns
     )
     await db.execute(
@@ -3189,6 +3595,9 @@ async def update_process(
         allowed_columns=_PROCESS_EDITABLE_COLUMNS,
         existing_columns=process_cols,
     )
+    raw_tags = canonical.get("tags")
+    if raw_tags is not None and "tags" in process_cols:
+        updates["tags"] = json.dumps(raw_tags)
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
@@ -3205,7 +3614,10 @@ async def update_process(
                 )
 
     updates["business_process_id"] = process_id
-    set_clause = ", ".join(f"{col} = :{col}" for col in updates.keys() if col != "business_process_id")
+    set_clause = ", ".join(
+        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        for col in updates.keys() if col != "business_process_id"
+    )
     if "updated_ts" in process_cols:
         set_clause = f"{set_clause}, updated_ts = CURRENT_TIMESTAMP"
 
@@ -3305,6 +3717,229 @@ async def delete_process(
         )
     await db.commit()
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.post("/processes/upload", status_code=200, tags=["Processes"], summary="Bulk Upload Processes CSV")
+async def upload_processes_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business processes from one or more CSV or TSV files.
+    Only process_name is mandatory per row; business_process_id is auto-generated if absent.
+    tenant_id is read from the x-tenant-id request header.
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    proc_cols = await _table_columns(db, "core", "business_processes")
+
+    # ── Name uniqueness checks ────────────────────────────────────────────────
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_proc_names = [_text_or_none(r.get("process_name", "")) for r in all_rows]
+    csv_proc_names = [n for n in csv_proc_names if n]
+
+    seen_proc: set[str] = set()
+    blocked_proc_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_proc_names:
+        key = n.lower()
+        if key in seen_proc:
+            blocked_proc_names.add(key)    # appears more than once in CSV
+        seen_proc.add(key)
+
+    if csv_proc_names:
+        proc_name_params: dict = {f"n{i}": n for i, n in enumerate(csv_proc_names)}
+        proc_name_params["tid"] = tenant_id
+        if cid:
+            proc_name_params["cid"] = cid
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_proc_result = await db.execute(text(proc_db_check_sql), proc_name_params)
+        for (existing_lower,) in existing_proc_result.fetchall():
+            blocked_proc_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    uploaded_count = 0
+    errors: list[str] = []
+    warnings: list[str] = []
+    # Defer parent_process_id to avoid FK violation when the parent is also in the same CSV
+    deferred_parents: list[tuple[str, str, str]] = []  # (proc_id, parent_pid, proc_name)
+
+    for row in all_rows:
+        proc_name = _text_or_none(row.get("process_name", ""))
+        if not proc_name:
+            errors.append("Skipped a row: process_name is required")
+            continue
+
+        if proc_name.lower() in blocked_proc_names:
+            errors.append(f"Skipped '{proc_name}': already exists for this tenant/company or is duplicated in the CSV")
+            continue
+
+        proc_id = _text_or_none(row.get("business_process_id", "")) or uuid4().hex
+        insert_values: dict[str, Any] = {"business_process_id": proc_id}
+
+        parent_pid = _text_or_none(row.get("parent_process_id", ""))
+        if parent_pid:
+            deferred_parents.append((proc_id, parent_pid, proc_name))
+
+        for col in _PROC_UPLOAD_TEXT_COLS - {"business_process_id", "parent_process_id"}:
+            if col in proc_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+        for col in _PROC_UPLOAD_FLOAT_COLS:
+            if col in proc_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = float(raw_val)
+                    except ValueError:
+                        pass
+        for col in _PROC_UPLOAD_INT_COLS:
+            if col in proc_cols:
+                raw_val = (row.get(col) or "").strip()
+                if raw_val:
+                    try:
+                        insert_values[col] = int(float(raw_val))
+                    except ValueError:
+                        pass
+
+        for col, default_val in _PROCESS_READONLY_DEFAULTS.items():
+            if col in proc_cols and col not in insert_values:
+                insert_values[col] = default_val
+
+        if "tenant_id" in proc_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in proc_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in proc_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in proc_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in proc_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in proc_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        non_id_cols = [c for c in col_names if c != "business_process_id"]
+        conflict_set = ", ".join(
+            "updated_ts = CURRENT_TIMESTAMP" if c == "updated_ts" else f"{c} = EXCLUDED.{c}"
+            for c in non_id_cols
+        )
+        upsert_sql = (
+            f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO UPDATE SET {conflict_set}"
+            if conflict_set else
+            f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO NOTHING"
+        )
+
+        try:
+            await db.execute(text(upsert_sql), params)
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_processes(db, process_id=proc_id)
+                if rows_fetched:
+                    await _sync_process_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{proc_name}': {exc}")
+
+    # Second pass: apply parent_process_id now that all processes are inserted.
+    # Collect all parent IDs that actually exist to avoid FK violations from missing parents.
+    if deferred_parents:
+        parent_ids_needed = list({pid for _, pid, _ in deferred_parents})
+        placeholders = ", ".join(f":p{i}" for i in range(len(parent_ids_needed)))
+        exists_result = await db.execute(
+            text(f"SELECT business_process_id FROM core.business_processes WHERE business_process_id IN ({placeholders})"),
+            {f"p{i}": v for i, v in enumerate(parent_ids_needed)},
+        )
+        existing_parents: set[str] = {row[0] for row in exists_result.fetchall()}
+
+        for proc_id, parent_pid, proc_name in deferred_parents:
+            if parent_pid not in existing_parents:
+                warnings.append(
+                    f"'{proc_name}' was created but parent '{parent_pid}' was not found "
+                    "in the database or this CSV — upload the parent first to link them"
+                )
+                continue
+            try:
+                await db.execute(
+                    text(
+                        "UPDATE core.business_processes SET parent_process_id = :parent_pid, "
+                        "updated_ts = CURRENT_TIMESTAMP WHERE business_process_id = :proc_id"
+                    ),
+                    {"parent_pid": parent_pid, "proc_id": proc_id},
+                )
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                errors.append(f"Could not set parent '{parent_pid}' on process '{proc_id}': {exc}")
+
+    if errors or warnings:
+        print(f"[WARN] process upload: {len(errors)} error(s), {len(warnings)} warning(s)")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Process" if uploaded_count == 1 else "Processes"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+        "warnings": warnings,
+    }
 
 
 @router.get(

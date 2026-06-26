@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     parent_application_id TEXT,
     company_id TEXT,
     company_name TEXT,
+    tags JSONB DEFAULT '[]'::jsonb,
     business_criticality TEXT,
     emergency_tier TEXT,
     blended_risk_score NUMERIC,

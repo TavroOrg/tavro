@@ -2546,6 +2546,7 @@ async def create_application(
     application_name: str,
     company_id: Optional[str] = None,
     application_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     emergency_tier: Optional[str] = None,
     business_owner: Optional[str] = None,
     application_portfolio_manager: Optional[str] = None,
@@ -2574,6 +2575,7 @@ async def create_application(
         application_name (str): Name of the business application (required).
         company_id (str, optional): UUID of the company — links application to blueprint.
         application_description (str, optional): Description of the application's purpose.
+        tags (List[str], optional): Descriptive tags for the application (e.g. ["crm", "saas"]).
         emergency_tier (str, optional): Emergency classification tier.
         business_owner (str, optional): Business owner name or team.
         application_portfolio_manager (str, optional): Portfolio manager.
@@ -2605,6 +2607,8 @@ async def create_application(
         )
 
         payload: Dict[str, Any] = {"application_name": application_name}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("application_description", application_description),
             ("emergency_tier", emergency_tier),
@@ -2652,6 +2656,7 @@ async def update_application(
     application_id: str,
     application_name: Optional[str] = None,
     application_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     emergency_tier: Optional[str] = None,
     business_owner: Optional[str] = None,
     application_portfolio_manager: Optional[str] = None,
@@ -2677,6 +2682,7 @@ async def update_application(
         application_id (str): The business_application_id to update.
         application_name (str, optional): Updated application name.
         application_description (str, optional): Updated description.
+        tags (List[str], optional): Updated tags.
         emergency_tier (str, optional): Updated emergency tier.
         business_owner (str, optional): Updated business owner.
         application_portfolio_manager (str, optional): Updated portfolio manager.
@@ -2703,6 +2709,8 @@ async def update_application(
         log_tool_call("update_application", original_prompt, {"application_id": application_id}, tenant_id)
 
         payload: Dict[str, Any] = {}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("application_name", application_name),
             ("application_description", application_description),
@@ -2865,6 +2873,7 @@ async def create_process(
     company_id: Optional[str] = None,
     process_number: Optional[str] = None,
     process_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     parent_process_id: Optional[str] = None,
     stakeholders: Optional[str] = None,
     owner: Optional[str] = None,
@@ -2888,6 +2897,7 @@ async def create_process(
         company_id (str, optional): UUID of the company — links process to blueprint.
         process_number (str, optional): Process identifier/number (e.g. "P-001").
         process_description (str, optional): Description of the process workflow.
+        tags (List[str], optional): Descriptive tags for the process (e.g. ["finance", "automated"]).
         parent_process_id (str, optional): ID of a parent process for hierarchy.
         stakeholders (str, optional): Names of process stakeholders.
         owner (str, optional): Process owner name or team.
@@ -2914,6 +2924,8 @@ async def create_process(
         )
 
         payload: Dict[str, Any] = {"process_name": process_name}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("process_number", process_number),
             ("process_description", process_description),
@@ -2957,6 +2969,7 @@ async def update_process(
     process_name: Optional[str] = None,
     process_number: Optional[str] = None,
     process_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     parent_process_id: Optional[str] = None,
     stakeholders: Optional[str] = None,
     owner: Optional[str] = None,
@@ -2977,6 +2990,7 @@ async def update_process(
         process_name (str, optional): Updated process name.
         process_number (str, optional): Updated process number.
         process_description (str, optional): Updated description.
+        tags (List[str], optional): Updated tags.
         parent_process_id (str, optional): Updated parent process ID.
         stakeholders (str, optional): Updated stakeholders.
         owner (str, optional): Updated owner.
@@ -2997,6 +3011,8 @@ async def update_process(
         log_tool_call("update_process", original_prompt, {"process_id": process_id}, tenant_id)
 
         payload: Dict[str, Any] = {}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("process_name", process_name),
             ("process_number", process_number),
@@ -3162,6 +3178,7 @@ async def create_integration(
     integration_name: str,
     company_id: Optional[str] = None,
     integration_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     capabilities: Optional[str] = None,
     protocol: Optional[str] = None,
     endpoint_url: Optional[str] = None,
@@ -3186,6 +3203,7 @@ async def create_integration(
         integration_name (str): Name of the integration (required).
         company_id (str, optional): UUID of the company — links integration to blueprint.
         integration_description (str, optional): What this integration does.
+        tags (List[str], optional): Descriptive tags for the integration (e.g. ["api", "real-time"]).
         capabilities (str, optional): Comma-separated list of capabilities.
         protocol (str, optional): Communication protocol (e.g. "REST", "SOAP", "gRPC").
         endpoint_url (str, optional): API endpoint URL.
@@ -3213,6 +3231,8 @@ async def create_integration(
         )
 
         payload: Dict[str, Any] = {"integration_name": integration_name}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("integration_description", integration_description),
             ("capabilities", capabilities),
@@ -3257,6 +3277,7 @@ async def update_integration(
     company_id: Optional[str] = None,
     integration_name: Optional[str] = None,
     integration_description: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     capabilities: Optional[str] = None,
     protocol: Optional[str] = None,
     endpoint_url: Optional[str] = None,
@@ -3281,6 +3302,7 @@ async def update_integration(
         company_id (str, optional): Company UUID — if provided, re-syncs to blueprint.
         integration_name (str, optional): Updated name.
         integration_description (str, optional): Updated description.
+        tags (List[str], optional): Updated tags.
         capabilities (str, optional): Updated capabilities.
         protocol (str, optional): Updated protocol.
         endpoint_url (str, optional): Updated endpoint URL.
@@ -3303,6 +3325,8 @@ async def update_integration(
         log_tool_call("update_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
 
         payload: Dict[str, Any] = {}
+        if tags is not None:
+            payload["tags"] = tags
         for field, val in [
             ("integration_name", integration_name),
             ("integration_description", integration_description),

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import { AgentData } from '../types/agent';
 import { useCatalog } from '../context/CatalogContext';
+import { toUserMessage } from '../utils/errorUtils';
 import AgentCatalog from '../components/AgentCatalog';
 import LoadAgentsModal from '../components/LoadAgentsModal';
 import TimedInfoToast from '../components/TimedInfoToast';
@@ -120,7 +121,7 @@ const Dashboard: React.FC = () => {
                 100,
             );
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : 'Failed to load agent catalog');
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
             isFetchingRef.current = false;

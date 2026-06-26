@@ -31,5 +31,27 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   risk_considerations TEXT,
   implementation_roadmap TEXT,
   recommendation TEXT,
-  executive_summary TEXT
+  executive_summary TEXT,
+  business_value_score                  INTEGER CHECK (business_value_score BETWEEN 1 AND 5),
+  business_value_override               BOOLEAN DEFAULT FALSE,
+  business_value_override_reason        TEXT,
+  data_readiness_score                  INTEGER CHECK (data_readiness_score BETWEEN 1 AND 5),
+  data_readiness_override               BOOLEAN DEFAULT FALSE,
+  data_readiness_override_reason        TEXT,
+  technical_complexity_score            INTEGER CHECK (technical_complexity_score BETWEEN 1 AND 5),
+  technical_complexity_override         BOOLEAN DEFAULT FALSE,
+  technical_complexity_override_reason  TEXT,
+  risk_data_privacy_score               INTEGER CHECK (risk_data_privacy_score BETWEEN 1 AND 5),
+  risk_operational_score                INTEGER CHECK (risk_operational_score BETWEEN 1 AND 5),
+  risk_compliance_score                 INTEGER CHECK (risk_compliance_score BETWEEN 1 AND 5),
+  risk_ai_behavioral_score              INTEGER CHECK (risk_ai_behavioral_score BETWEEN 1 AND 5),
+  risk_strategic_reputational_score     INTEGER CHECK (risk_strategic_reputational_score BETWEEN 1 AND 5),
+  risk_composite_score                  DECIMAL(4, 2),
+  priority_score                        DECIMAL(4, 2),
+  quadrant                              TEXT CHECK (quadrant IN ('quick_win', 'big_bet', 'fill_in', 'money_pit')),
+  time_horizon                          TEXT CHECK (time_horizon IN ('now', 'next', 'later')),
+  time_horizon_rationale                TEXT,
+  roadmap_approved                      BOOLEAN DEFAULT FALSE,
+  scoring_history                       JSONB DEFAULT '[]'::JSONB
 );
+

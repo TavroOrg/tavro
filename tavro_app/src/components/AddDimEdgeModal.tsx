@@ -4,6 +4,7 @@
 // or from BlueprintPage (both source and target must be selected).
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { X, Link2, RefreshCw, Search, ArrowRight } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -103,7 +104,7 @@ const AddDimEdgeModal: React.FC<AddDimEdgeModalProps> = ({ sourceNode, onClose, 
       onCreated();
       onClose();
     } catch (err: any) {
-      setError(err.message ?? 'Failed to create relationship');
+      setError(toUserMessage(err));
     } finally {
       setSaving(false);
     }

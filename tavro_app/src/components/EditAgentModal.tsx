@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { X, Bot, Loader2, CheckCircle2 } from 'lucide-react';
 import { AgentData, AGENT_TYPES } from '../types/agent';
 import { agentApi } from '../services/agentApi';
@@ -58,7 +59,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
                 onClose();
             }, 300);
         } catch (err: any) {
-            setError(err.message || 'Failed to update agent. Please try again.');
+            setError(toUserMessage(err));
         } finally {
             setSaving(false);
         }

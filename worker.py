@@ -776,11 +776,11 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str,
     )
     process_seed_sql = f"""
         INSERT INTO core.business_processes (
-            business_process_id, process_number, created_ts, updated_ts
+            tenant_id, company_id, business_process_id, process_number, created_ts, updated_ts
         )
-        SELECT business_process_id, business_process_id, now_ts, now_ts
+        SELECT {_sq(tenant_id)}, {_sq(company_id)}, business_process_id, business_process_id, now_ts, now_ts
         FROM ({process_seed_rows}) AS seed
-        ON CONFLICT (business_process_id)
+        ON CONFLICT (tenant_id, company_id, business_process_id)
         DO UPDATE SET
             updated_ts = EXCLUDED.updated_ts
     """
@@ -801,15 +801,13 @@ def upsert_business_processes(card: dict, agent_internal_id: str, now_str: str,
             tenant_id, company_id, company_name,
             now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (business_process_id)
+        ON CONFLICT (tenant_id, company_id, business_process_id)
         DO UPDATE SET
             process_number       = COALESCE(EXCLUDED.process_number, core.business_processes.process_number),
             process_name         = COALESCE(EXCLUDED.process_name, core.business_processes.process_name),
             process_description  = COALESCE(EXCLUDED.process_description, core.business_processes.process_description),
             parent_process_id    = COALESCE(EXCLUDED.parent_process_id, core.business_processes.parent_process_id),
             business_criticality = COALESCE(EXCLUDED.business_criticality, core.business_processes.business_criticality),
-            tenant_id            = COALESCE(EXCLUDED.tenant_id, core.business_processes.tenant_id),
-            company_id           = COALESCE(EXCLUDED.company_id, core.business_processes.company_id),
             company_name         = COALESCE(EXCLUDED.company_name, core.business_processes.company_name),
             updated_ts           = EXCLUDED.updated_ts
     """
@@ -865,14 +863,12 @@ def upsert_business_applications(card: dict, agent_internal_id: str, now_str: st
             tenant_id, company_id, company_name,
             now_ts, now_ts
         FROM ({union_all}) AS s
-        ON CONFLICT (business_application_id)
+        ON CONFLICT (tenant_id, company_id, business_application_id)
         DO UPDATE SET
             application_name        = COALESCE(EXCLUDED.application_name, core.business_applications.application_name),
             business_criticality    = COALESCE(EXCLUDED.business_criticality, core.business_applications.business_criticality),
             emergency_tier          = COALESCE(EXCLUDED.emergency_tier, core.business_applications.emergency_tier),
             application_description = COALESCE(EXCLUDED.application_description, core.business_applications.application_description),
-            tenant_id               = COALESCE(EXCLUDED.tenant_id, core.business_applications.tenant_id),
-            company_id              = COALESCE(EXCLUDED.company_id, core.business_applications.company_id),
             company_name            = COALESCE(EXCLUDED.company_name, core.business_applications.company_name),
             updated_ts              = EXCLUDED.updated_ts
     """

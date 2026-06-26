@@ -15,6 +15,7 @@ import {
 import { aiModelApi } from '../services/aiModelApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord } from '../types/aiModel';
+import { toUserMessage } from '../utils/errorUtils';
 
 const PAGE_SIZE = 10;
 
@@ -36,7 +37,7 @@ const AiModelsPage: React.FC = () => {
         const data = await aiModelApi.listModels(undefined, activeCompany?.id);
         setModels(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Failed to load AI models');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }

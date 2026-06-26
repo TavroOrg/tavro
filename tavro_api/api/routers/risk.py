@@ -1,8 +1,11 @@
+import logging
 import os
 import uuid
 import threading
 from datetime import datetime, timezone
 from typing import Literal, Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 import requests
 
@@ -282,7 +285,7 @@ def send_payload_async(payload: Dict[str, Any]) -> None:
                 timeout=5
             )
         except Exception as e:
-            print(f"Risk assessment trigger failed: {e}")
+            logger.warning("Risk assessment trigger failed: %s", e)
 
     threading.Thread(target=_send, daemon=True).start()
 
@@ -473,7 +476,7 @@ async def classify_risk(
 @router.get("/workflows", response_model=List[WorkflowStatusItem])
 async def list_risk_workflows(request: Request, status: Optional[str] = None, agent_id: Optional[str] = None):
     tenant_id = _tenant(request)
-    print("TENANT_ID:", tenant_id)
+    logger.debug("TENANT_ID: %s", tenant_id)
     with _WORKFLOW_STATUS_LOCK:
         rows = list(_WORKFLOW_STATUS.values())
 

@@ -336,7 +336,8 @@ async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGen
     // ── Azure OpenAI BYOK — via proxy ─────────────────────────────────────────
     if (byok?.type === 'azure') {
         const base = (byok.baseUrl || '').replace(/\/$/, '');
-        const apiVersion = byok.azureApiVersion || '2024-10-21';
+        const isFoundry = base.includes('services.ai.azure.com');
+        const apiVersion = isFoundry ? '2025-01-01-preview' : (byok.azureApiVersion || '2024-10-21');
         const endpoint = `${base}/openai/deployments/${cfg.model}/chat/completions?api-version=${apiVersion}`;
         const res = await fetch('/copilot-api/chat/byok/stream', {
             method: 'POST',
@@ -345,7 +346,7 @@ async function* streamCopilot(cfg: LLMConfig, messages: ChatMessage[]): AsyncGen
                 providerType: 'azure',
                 endpoint,
                 apiKey: cfg.apiKey,
-                body: { messages, max_tokens: 8192 },
+                body: { messages, [/^(o\d|gpt-5)/i.test(cfg.model) ? 'max_completion_tokens' : 'max_tokens']: 8192 },
             }),
         });
         if (!res.ok) {
@@ -560,9 +561,10 @@ async function completeChatCopilot(cfg: LLMConfig, messages: ChatMessage[], tool
     // ── Azure OpenAI BYOK — via proxy ─────────────────────────────────────────
     if (byok?.type === 'azure') {
         const base = (byok.baseUrl || '').replace(/\/$/, '');
-        const apiVersion = byok.azureApiVersion || '2024-10-21';
+        const isFoundry = base.includes('services.ai.azure.com');
+        const apiVersion = isFoundry ? '2025-01-01-preview' : (byok.azureApiVersion || '2024-10-21');
         const endpoint = `${base}/openai/deployments/${cfg.model}/chat/completions?api-version=${apiVersion}`;
-        const body: any = { messages, max_tokens: 8192 };
+        const body: any = { messages, [/^(o\d|gpt-5)/i.test(cfg.model) ? 'max_completion_tokens' : 'max_tokens']: 8192 };
         if (tools.length > 0) { body.tools = tools; body.tool_choice = 'auto'; }
         const res = await fetch('/copilot-api/chat/byok/complete', {
             method: 'POST',
