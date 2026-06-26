@@ -617,6 +617,29 @@ class BusinessRelationsApi {
       method: 'DELETE',
     });
   }
+
+  async uploadIntegrations(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }>(
+      `/integrations/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business integration${result.uploaded_count === 1 ? '' : 's'}`,
+      'violet',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
+  }
 }
 
 export const businessRelationsApi = new BusinessRelationsApi();
