@@ -318,7 +318,7 @@ async def research_policy(body: PolicyResearchRequest, background_tasks: Backgro
     provider, api_key = _resolve_compliance_llm()
 
     company_row = await db.execute(
-        text("SELECT name, industry, region FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        text("SELECT name, industry, region FROM twin.company WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)"),
         {"id": body.company_id, "tid": tenant_id}
     )
     company = company_row.mappings().first()

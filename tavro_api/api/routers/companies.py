@@ -23,13 +23,13 @@ async def list_companies(
 ):
 
     count_result = await db.execute(
-        text("SELECT count(*) FROM twin.company WHERE tenant_id = :tid"),
+        text("SELECT count(*) FROM twin.company WHERE (tenant_id = :tid OR tenant_id IS NULL)"),
         {"tid": tenant_id},
     )
     total = count_result.scalar()
 
     rows = await db.execute(
-        text("SELECT * FROM twin.company WHERE tenant_id = :tid ORDER BY name LIMIT :limit OFFSET :offset"),
+        text("SELECT * FROM twin.company WHERE (tenant_id = :tid OR tenant_id IS NULL) ORDER BY name LIMIT :limit OFFSET :offset"),
         {"tid": tenant_id, "limit": limit, "offset": offset},
     )
     items = [dict(r._mapping) for r in rows]
@@ -39,7 +39,7 @@ async def list_companies(
 @router.get("/{company_id}", response_model=Company)
 async def get_company(company_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
-        text("SELECT * FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+        text("SELECT * FROM twin.company WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)"),
         {"id": str(company_id), "tid": tenant_id},
     )
     result = row.mappings().first()

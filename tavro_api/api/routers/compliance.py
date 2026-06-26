@@ -175,7 +175,7 @@ def _parse_date(val: str | None):
 async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
     """Raise 404 if the company does not exist or belongs to a different tenant."""
     row = await db.execute(
-        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND (tenant_id = :tid OR tenant_id IS NULL)"),
         {"cid": company_id, "tid": tenant_id},
     )
     if not row.scalar():
@@ -543,7 +543,7 @@ async def update_impact(impact_id: str, body: ComplianceImpactUpdate, tenant_id:
     check = await db.execute(
         text("""
             SELECT 1 FROM twin.compliance_impact ci
-            JOIN twin.company c ON c.id = ci.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = ci.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE ci.id = :id
         """),
         {"id": impact_id, "tid": tenant_id},
@@ -576,7 +576,7 @@ async def delete_impact(impact_id: str, tenant_id: str = Depends(require_tenant)
     check = await db.execute(
         text("""
             SELECT 1 FROM twin.compliance_impact ci
-            JOIN twin.company c ON c.id = ci.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = ci.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE ci.id = :id
         """),
         {"id": impact_id, "tid": tenant_id},

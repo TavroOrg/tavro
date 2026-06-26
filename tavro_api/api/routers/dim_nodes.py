@@ -21,7 +21,7 @@ router = APIRouter()
 async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
     """Raise 404 if the company does not exist or belongs to a different tenant."""
     row = await db.execute(
-        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND (tenant_id = :tid OR tenant_id IS NULL)"),
         {"cid": company_id, "tid": tenant_id},
     )
     if not row.scalar():
@@ -33,7 +33,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
     row = await db.execute(
         text("""
             SELECT 1 FROM twin.dim_node n
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE n.id = :nid
         """),
         {"nid": node_id, "tid": tenant_id},
@@ -112,7 +112,7 @@ async def get_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), 
                    t.category AS category
             FROM twin.dim_node n
             JOIN twin.dim_type t ON t.id = n.dim_type_id
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE n.id = :id
         """),
         {"id": str(node_id), "tid": tenant_id},
@@ -279,7 +279,7 @@ async def download_attachment(attachment_id: UUID, tenant_id: str = Depends(requ
             SELECT a.filename, a.content_type, a.data
             FROM twin.dim_node_attachment a
             JOIN twin.dim_node n ON n.id = a.node_id
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE a.id = :id
         """),
         {"id": str(attachment_id), "tid": tenant_id},
@@ -302,7 +302,7 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
         text("""
             SELECT 1 FROM twin.dim_node_attachment a
             JOIN twin.dim_node n ON n.id = a.node_id
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE a.id = :id
         """),
         {"id": str(attachment_id), "tid": tenant_id},

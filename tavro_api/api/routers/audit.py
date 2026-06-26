@@ -70,7 +70,7 @@ def _row(r) -> dict:
 async def _fetch_company(db: AsyncSession, company_id: str, tenant_id: str | None = None) -> dict | None:
     if tenant_id:
         r = await db.execute(
-            text("SELECT * FROM twin.company WHERE id = :id AND tenant_id = :tid"),
+            text("SELECT * FROM twin.company WHERE id = :id AND (tenant_id = :tid OR tenant_id IS NULL)"),
             {"id": company_id, "tid": tenant_id},
         )
     else:
@@ -508,7 +508,7 @@ async def stream_audit_progress(run_id: str, tenant_id: str = Depends(require_te
 
             # Verify this run's company belongs to the calling tenant
             company_check = await db.execute(
-                text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+                text("SELECT 1 FROM twin.company WHERE id = :cid AND (tenant_id = :tid OR tenant_id IS NULL)"),
                 {"cid": run["company_id"], "tid": tenant_id},
             )
             if not company_check.scalar():
@@ -649,7 +649,7 @@ async def get_finding(run_id: str, finding_id: str, tenant_id: str = Depends(req
     row = await db.execute(text("""
         SELECT af.* FROM twin.audit_finding af
         JOIN twin.audit_run ar ON ar.id = af.audit_run_id
-        JOIN twin.company c ON c.id = ar.company_id AND c.tenant_id = :tid
+        JOIN twin.company c ON c.id = ar.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
         WHERE af.id=:fid AND af.audit_run_id=:rid
     """), {"fid": finding_id, "rid": run_id, "tid": tenant_id})
     finding = row.mappings().first()

@@ -550,7 +550,10 @@ LIMIT :limit
 """
 
 _COMPANY_PICK_SQL = """
-SELECT id FROM twin.company WHERE tenant_id = :tid ORDER BY updated_at DESC NULLS LAST LIMIT 1
+SELECT id FROM twin.company
+WHERE (tenant_id = :tid OR tenant_id IS NULL)
+ORDER BY (tenant_id IS NULL) ASC, updated_at DESC NULLS LAST
+LIMIT 1
 """
 
 _PROFILE_NODES_SQL = """

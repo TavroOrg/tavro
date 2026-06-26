@@ -21,7 +21,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
     row = await db.execute(
         text("""
             SELECT 1 FROM twin.dim_node n
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE n.id = :nid
         """),
         {"nid": node_id, "tid": tenant_id},
@@ -47,7 +47,7 @@ async def list_dim_edges(
     """
 
     # Enforce tenant ownership by joining through the source node's company
-    filters = ["sn.company_id = :company_id", "c.tenant_id = :tenant_id"]
+    filters = ["sn.company_id = :company_id", "(c.tenant_id = :tenant_id OR c.tenant_id IS NULL)"]
     params: dict = {"company_id": str(company_id), "tenant_id": tenant_id}
 
     if active_only:
@@ -101,7 +101,7 @@ async def get_dim_edge(edge_id: UUID, tenant_id: str = Depends(require_tenant), 
             FROM twin.dim_edge e
             JOIN twin.dim_node sn ON sn.id = e.source_id
             JOIN twin.dim_node tn ON tn.id = e.target_id
-            JOIN twin.company c ON c.id = sn.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = sn.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE e.id = :id
         """),
         {"id": str(edge_id), "tid": tenant_id},
@@ -150,7 +150,7 @@ async def soft_delete_edge(edge_id: UUID, tenant_id: str = Depends(require_tenan
         text("""
             SELECT 1 FROM twin.dim_edge e
             JOIN twin.dim_node sn ON sn.id = e.source_id
-            JOIN twin.company c ON c.id = sn.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = sn.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE e.id = :id
         """),
         {"id": str(edge_id), "tid": tenant_id},

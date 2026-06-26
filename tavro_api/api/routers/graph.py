@@ -18,7 +18,7 @@ router = APIRouter()
 
 async def _assert_company_owned(db: AsyncSession, company_id: str, tenant_id: str) -> None:
     row = await db.execute(
-        text("SELECT 1 FROM twin.company WHERE id = :cid AND tenant_id = :tid"),
+        text("SELECT 1 FROM twin.company WHERE id = :cid AND (tenant_id = :tid OR tenant_id IS NULL)"),
         {"cid": company_id, "tid": tenant_id},
     )
     if not row.scalar():
@@ -29,7 +29,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
     row = await db.execute(
         text("""
             SELECT 1 FROM twin.dim_node n
-            JOIN twin.company c ON c.id = n.company_id AND c.tenant_id = :tid
+            JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE n.id = :nid AND n.valid_to IS NULL
         """),
         {"nid": node_id, "tid": tenant_id},
