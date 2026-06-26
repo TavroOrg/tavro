@@ -165,8 +165,9 @@ function formatDate(raw?: string | null): string {
     try {
         const date = new Date(raw);
         if (Number.isNaN(date.getTime())) return raw;
-        const pad = (value: number) => String(value).padStart(2, '0');
-        return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        return `${mm}/${dd}/${date.getFullYear()}`;
     } catch {
         return raw;
     }
@@ -203,7 +204,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'data_privacy',
         label: 'Data & Privacy Risk',
-        question: 'How sensitive is the data this ai use case will access and process?',
+        question: 'How sensitive is the data this use case will access and process?',
         options: [
             { score: 1, tier: 'Minimal',  description: 'Internal, non-sensitive data only. No PII, no regulated data classes. No meaningful privacy risk.' },
             { score: 2, tier: 'Low',      description: 'Some internal data with light sensitivity. Non-regulated PII in internal workflows. Standard access controls sufficient.' },
@@ -215,7 +216,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'operational',
         label: 'Operational Risk',
-        question: 'What is the operational consequence if this ai use case makes an error or fails?',
+        question: 'What is the operational consequence if this use case makes an error or fails?',
         options: [
             { score: 1, tier: 'Negligible', description: 'Advisory mode only. No autonomous actions. Errors surfaced for human review and easily corrected with no downstream impact.' },
             { score: 2, tier: 'Low',        description: 'Minor autonomous actions within narrow boundaries. Errors have limited impact and are readily reversible.' },
@@ -239,7 +240,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'ai_behavioral',
         label: 'AI Model & Behavioral Risk',
-        question: 'What is the risk of the ai use case producing incorrect, biased, or harmful outputs?',
+        question: 'What is the risk of the use case producing incorrect, biased, or harmful outputs?',
         options: [
             { score: 1, tier: 'Minimal',  description: 'Deterministic outputs. Negligible hallucination risk. Well-established use case type with industry precedent.' },
             { score: 2, tier: 'Low',      description: 'Generative outputs with low variability. Human review recommended but not critical. Low bias risk.' },
@@ -586,12 +587,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 const q = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
                                 return q ? (
                                     <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${q.bg} ${q.border}`}>
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
                                         <span className={`text-sm font-black leading-tight text-center ${q.value}`}>{quadrant!.label}</span>
                                     </div>
                                 ) : (
                                     <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
                                         <span className="text-slate-400 text-sm">—</span>
                                     </div>
                                 );
@@ -658,8 +659,16 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         ? (item.contribution >= 0 ? 'text-emerald-700' : 'text-red-600')
                                         : 'text-slate-400';
                                     return item.contribution !== null ? (
-                                        <div key={item.label} className={`group relative flex flex-col items-center justify-center w-[115px] h-[60px] rounded-2xl border gap-0.5 ${contribBg}`}>
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none whitespace-nowrap">{item.label}</span>
+                                        <div key={item.label} className="flex flex-col gap-1 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[100px]">
+                                            <div className="group relative flex items-center gap-1 w-fit">
+                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
+                                                <div className="absolute bottom-full right-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                                                    <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-52 leading-snug">
+                                                        {item.tooltip}
+                                                    </div>
+                                                    <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 mr-2 ml-auto" />
+                                                </div>
+                                            </div>
                                             <span className={`text-base font-black leading-none ${contribColor}`}>
                                                 {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)}
                                             </span>
@@ -672,7 +681,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         </div>
                                     ) : (
                                         <div key={item.label} className="flex flex-col items-center justify-center w-[115px] h-[60px] rounded-2xl border border-slate-100 bg-slate-50 gap-0.5">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none whitespace-nowrap">{item.label}</span>
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none whitespace-nowrap">{item.label}</span>
                                             <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                         </div>
                                     );
@@ -1296,12 +1305,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
                         {/* ── Section A: Scoring Dimensions ── */}
                         <div className="flex flex-col gap-2">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Section A — Scoring Dimensions</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Scoring Dimensions</p>
 
                             {/* Business Value */}
                             {([
                                 {
-                                    key: 'bv', label: 'Business Value', weight: '40%', value: pvBV, setter: setPvBV,
+                                    key: 'bv', label: 'Business Value', weight: `${(cfg.priorityWeights.BV * 100).toFixed(0)}%`, value: pvBV, setter: setPvBV,
                                     question: 'What is the measurable financial or strategic impact of this use case?',
                                     options: [
                                         { score: 1, tier: 'Minimal',        description: 'No measurable financial impact or productivity gain expected.' },
@@ -1312,7 +1321,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     ],
                                 },
                                 {
-                                    key: 'tc', label: 'Effort', weight: '20%', value: pvTC, setter: setPvTC,
+                                    key: 'tc', label: 'Effort', weight: `${(cfg.priorityWeights.TC * 100).toFixed(0)}%`, value: pvTC, setter: setPvTC,
                                     question: 'How much effort is required to implement this use case? (Higher = more effort = lower priority weight)',
                                     options: [
                                         { score: 1, tier: 'Minimal',      description: 'Off-the-shelf solution, minimal integration. Could be live within weeks.' },
@@ -1329,7 +1338,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             <div className="flex items-center gap-2">
                                                 <span className="text-sm font-bold text-slate-800">{dim.label}</span>
                                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{dim.weight}</span>
-                                                {dim.key === 'tc' && <span className="text-xs text-slate-500 italic">inverted — lower is better</span>}
+                                                {dim.key === 'tc' && <span className="text-xs text-slate-700 italic">inverted — lower is better</span>}
                                             </div>
                                             <p className="text-sm text-slate-600 mt-0.5">{dim.question}</p>
                                         </div>
@@ -1371,8 +1380,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     <div>
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-bold text-slate-800">Risk</span>
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">20%</span>
-                                            <span className="text-[10px] text-slate-400 italic">auto-populated from Risk Assessments tab</span>
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{(cfg.priorityWeights.RISK * 100).toFixed(0)}%</span>
+                                            <span className="text-[10px] text-slate-700 italic font-medium">auto-populated from Risk Assessments tab</span>
                                         </div>
                                         <p className="text-xs text-slate-500 mt-0.5">Composite risk score averaged across all 5 risk categories.</p>
                                     </div>
@@ -1389,7 +1398,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
                                             <span className={`text-2xl font-black ${scoreColor(riskComposite)}`}>{riskComposite.toFixed(1)}</span>
-                                            <span className="text-xs text-slate-400">/ 5.0 · {riskScoredCount}/5 categories scored</span>
+                                            <span className="text-xs text-slate-700 font-medium">/ 5.0 · {riskScoredCount}/5 categories scored</span>
                                         </div>
                                     </div>
                                 ) : (
