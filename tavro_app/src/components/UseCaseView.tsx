@@ -1,6 +1,7 @@
 import React from 'react';
 import { readRoadmapConfig } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
+import type { AuditFinding } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import {
@@ -25,6 +26,16 @@ import {
     Map,
     Lightbulb,
     ChevronDown,
+    ClipboardCheck,
+    ChevronRight,
+    CheckCircle,
+    XCircle,
+    AlertOctagon,
+    MinusCircle,
+    Shield,
+    Compass,
+    LayoutGrid,
+    List,
 } from 'lucide-react';
 
 
@@ -43,6 +54,7 @@ const ARE_HINTS: Record<string, string> = {
 
 interface UseCaseViewProps {
     useCase: UseCaseDetail;
+    companyId?: string;
     agentsComponent?: React.ReactNode;
     businessImpactComponent?: React.ReactNode;
     headerActions?: React.ReactNode;
@@ -285,10 +297,44 @@ function scoreBg(score: number | null): string {
     return 'bg-red-50 border-red-300';
 }
 
+function auditRiskBg(level: string | null): string {
+    if (!level) return 'bg-slate-50 border-slate-200 text-slate-500';
+    const l = level.toLowerCase();
+    if (l === 'critical') return 'bg-red-50 border-red-200 text-red-700';
+    if (l === 'high')     return 'bg-orange-50 border-orange-200 text-orange-700';
+    if (l === 'medium')   return 'bg-amber-50 border-amber-200 text-amber-700';
+    return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+}
+function auditScoreBar(score: number): string {
+    if (score >= 76) return '#dc2626';
+    if (score >= 51) return '#ea580c';
+    if (score >= 26) return '#d97706';
+    return '#16a34a';
+}
+function severityIcon(severity: string) {
+    const s = (severity || '').toLowerCase();
+    if (s === 'critical') return <AlertOctagon size={11} className="text-red-600 shrink-0 mt-0.5" />;
+    if (s === 'high')     return <XCircle size={11} className="text-orange-600 shrink-0 mt-0.5" />;
+    if (s === 'medium')   return <AlertTriangle size={11} className="text-amber-600 shrink-0 mt-0.5" />;
+    return <MinusCircle size={11} className="text-slate-400 shrink-0 mt-0.5" />;
+}
+function priorityBadge(priority: string) {
+    const p = (priority || '').toLowerCase();
+    const cls = p === 'immediate' ? 'bg-red-50 text-red-700 border-red-200' :
+                p === 'short_term' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                'bg-slate-100 text-slate-600 border-slate-200';
+    return (
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wide ${cls}`}>
+            {p.replace('_', ' ')}
+        </span>
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const UseCaseView: React.FC<UseCaseViewProps> = ({
     useCase: uc,
+    companyId,
     agentsComponent,
     businessImpactComponent,
     headerActions,
@@ -304,6 +350,40 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     enriching,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
+
+    // ── Audit findings ────────────────────────────────────────────────────────
+    const [auditFindings,  setAuditFindings]  = React.useState<AuditFinding[] | null>(null);
+    const [auditLoading,   setAuditLoading]   = React.useState(false);
+    const [auditFetched,   setAuditFetched]   = React.useState(false);
+    const [auditSummary,   setAuditSummary]   = React.useState<{
+        highest_risk_score: number | null;
+        highest_risk_level: string | null;
+        total: number;
+    } | null>(null);
+    const [auditExpandedSections, setAuditExpandedSections] = React.useState<Record<string, 'specific' | 'generic' | null>>({});
+    const [auditExpandedCards,   setAuditExpandedCards]   = React.useState<Record<string, boolean>>({});
+    const [auditRiskFilter,      setAuditRiskFilter]      = React.useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
+    const [auditTypeFilter,      setAuditTypeFilter]      = React.useState<'all' | 'Compliance' | 'Policy'>('all');
+    const [auditSearchQuery,     setAuditSearchQuery]     = React.useState('');
+    const [auditView,            setAuditView]            = React.useState<'list' | 'grid'>('list');
+
+    React.useEffect(() => {
+        if (activeTab !== 'compliance_audit' || auditFetched) return;
+        if (!companyId || !uc.identifier) return;
+        setAuditLoading(true);
+        useCaseApi.getAuditFindings(uc.identifier, companyId)
+            .then(res => {
+                setAuditFindings(res.findings);
+                setAuditSummary({ highest_risk_score: res.highest_risk_score, highest_risk_level: res.highest_risk_level, total: res.total });
+                setAuditFetched(true);
+            })
+            .catch(() => {
+                setAuditFindings([]);
+                setAuditFetched(true);
+            })
+            .finally(() => setAuditLoading(false));
+    }, [activeTab, auditFetched, uc.identifier, companyId]);
+
     const [generatingReport, setGeneratingReport] = React.useState(false);
 
     const handleGenerateReport = async () => {
@@ -562,6 +642,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         { id: 'risk_assessments', label: 'Risk Assessments',         icon: ShieldAlert },
         { id: 'prioritization',   label: 'Prioritization',           icon: Target },
         { id: 'controls',         label: 'Controls',                 icon: ShieldCheck },
+        { id: 'compliance_audit', label: 'Compliance Audit',          icon: ClipboardCheck },
     ];
 
     return (
@@ -609,6 +690,17 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 <StatusBadge status={statusLabel} />
                                 {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
+                                {auditSummary?.highest_risk_score != null && auditSummary?.highest_risk_level && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('compliance_audit')}
+                                        title="Click to view Compliance Audit details"
+                                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wide transition-opacity hover:opacity-80 ${auditRiskBg(auditSummary.highest_risk_level)}`}
+                                    >
+                                        <ClipboardCheck size={10} />
+                                        Audit · {auditSummary.highest_risk_level} · {auditSummary.highest_risk_score}/100
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -1699,6 +1791,437 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             <div className="text-center py-12 text-slate-400 text-sm bg-white rounded-2xl border border-slate-200 border-dashed">
                                 No controls linked.
                             </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Compliance Audit tab */}
+                {activeTab === 'compliance_audit' && (
+                    <div className="animate-fade-in flex flex-col gap-4">
+                        {auditLoading ? (
+                            <div className="flex items-center justify-center gap-2 py-16 text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">
+                                <Loader2 size={18} className="animate-spin" />
+                                Loading audit findings…
+                            </div>
+                        ) : !auditFindings || auditFindings.length === 0 ? (
+                            <div className="flex flex-col items-center gap-3 py-16 text-slate-400 bg-white rounded-2xl border border-slate-200 border-dashed">
+                                <ClipboardCheck size={32} className="text-slate-300" />
+                                <p className="text-sm font-semibold text-slate-500">No compliance assessments yet</p>
+                                <p className="text-xs text-slate-400 text-center max-w-xs">
+                                    Run a compliance audit from the Audit Center to assess this use case against your regulations and policies.
+                                </p>
+                            </div>
+                        ) : (
+                            <>
+                                {/* ── Audit filter bar ── */}
+                                <div className="flex items-center justify-between gap-3 bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-2.5">
+                                    {/* Left: search */}
+                                    <div className="relative w-[190px] flex-shrink-0">
+                                        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+                                        </svg>
+                                        <input
+                                            type="text"
+                                            value={auditSearchQuery}
+                                            onChange={e => setAuditSearchQuery(e.target.value)}
+                                            placeholder="Search assessments…"
+                                            className="w-full pl-7 pr-6 py-1.5 text-xs rounded-xl border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                                        />
+                                        {auditSearchQuery && (
+                                            <button onClick={() => setAuditSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                                <XCircle size={12} />
+                                            </button>
+                                        )}
+                                    </div>
+                                    {/* Right: pills + view toggle */}
+                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                        <button onClick={() => { setAuditRiskFilter('all'); setAuditTypeFilter('all'); setAuditSearchQuery(''); }}
+                                            className={`text-[10px] font-bold px-3 py-1.5 rounded-full border transition-all whitespace-nowrap ${
+                                                auditRiskFilter === 'all' && auditTypeFilter === 'all'
+                                                    ? 'bg-slate-800 text-white border-slate-800'
+                                                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                                            }`}>
+                                            All {auditFindings.length}
+                                        </button>
+                                        <span className="w-px h-4 bg-slate-200 shrink-0" />
+                                        {(['Compliance', 'Policy'] as const).map(t => {
+                                            const count = auditFindings.filter(f => (/policy/i.test(f.compliance_item_name ?? '') ? 'Policy' : 'Compliance') === t).length;
+                                            if (!count) return null;
+                                            const active = auditTypeFilter === t;
+                                            return (
+                                                <button key={t} onClick={() => setAuditTypeFilter(active ? 'all' : t)}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-full border transition-all whitespace-nowrap ${
+                                                        active
+                                                            ? t === 'Compliance' ? 'bg-sky-600 text-white border-sky-600' : 'bg-violet-600 text-white border-violet-600'
+                                                            : t === 'Compliance' ? 'bg-sky-50 text-sky-600 border-sky-200' : 'bg-violet-50 text-violet-600 border-violet-200'
+                                                    }`}>
+                                                    {t} {count}
+                                                </button>
+                                            );
+                                        })}
+                                        <span className="w-px h-4 bg-slate-200 shrink-0" />
+                                        {(['critical', 'high', 'medium', 'low'] as const).map(level => {
+                                            const count = auditFindings.filter(f => f.risk_level === level).length;
+                                            if (!count) return null;
+                                            const AR: Record<string, { bg: string; color: string; badge: string; dot: string; label: string }> = {
+                                                critical: { bg: '#fff1f2', color: '#be123c', badge: '#fda4af', dot: '#e11d48', label: 'Critical' },
+                                                high:     { bg: '#fff7ed', color: '#c2410c', badge: '#fdba74', dot: '#ea580c', label: 'High'     },
+                                                medium:   { bg: '#fffbeb', color: '#b45309', badge: '#fcd34d', dot: '#d97706', label: 'Medium'   },
+                                                low:      { bg: '#f0fdf4', color: '#15803d', badge: '#86efac', dot: '#16a34a', label: 'Low'      },
+                                            };
+                                            const rm = AR[level];
+                                            return (
+                                                <button key={level} onClick={() => setAuditRiskFilter(auditRiskFilter === level ? 'all' : level)}
+                                                    className="text-[10px] font-bold px-3 py-1.5 rounded-full border transition-all whitespace-nowrap"
+                                                    style={auditRiskFilter === level
+                                                        ? { background: rm.dot, color: '#fff', borderColor: rm.dot }
+                                                        : { background: rm.bg, color: rm.color, borderColor: rm.badge }
+                                                    }>
+                                                    {rm.label} {count}
+                                                </button>
+                                            );
+                                        })}
+                                        <span className="w-px h-4 bg-slate-200 shrink-0" />
+                                        <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+                                            <button onClick={() => setAuditView('list')}
+                                                className={`p-1.5 rounded-md transition-all ${auditView === 'list' ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:text-slate-600'}`}>
+                                                <List size={14} />
+                                            </button>
+                                            <button onClick={() => setAuditView('grid')}
+                                                className={`p-1.5 rounded-md transition-all ${auditView === 'grid' ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:text-slate-600'}`}>
+                                                <LayoutGrid size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* ── Per-regulation finding cards ── */}
+                                {(() => {
+                                    const AR_META: Record<string, { bg: string; color: string; badge: string; dot: string; label: string }> = {
+                                        critical: { bg: '#fff1f2', color: '#be123c', badge: '#fda4af', dot: '#e11d48', label: 'Critical' },
+                                        high:     { bg: '#fff7ed', color: '#c2410c', badge: '#fdba74', dot: '#ea580c', label: 'High'     },
+                                        medium:   { bg: '#fffbeb', color: '#b45309', badge: '#fcd34d', dot: '#d97706', label: 'Medium'   },
+                                        low:      { bg: '#f0fdf4', color: '#15803d', badge: '#86efac', dot: '#16a34a', label: 'Low'      },
+                                    };
+                                    const filteredFindings = auditFindings
+                                        .slice()
+                                        .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0))
+                                        .filter(f => auditRiskFilter === 'all' || f.risk_level === auditRiskFilter)
+                                        .filter(f => auditTypeFilter === 'all' || (/policy/i.test(f.compliance_item_name ?? '') ? 'Policy' : 'Compliance') === auditTypeFilter)
+                                        .filter(f => {
+                                            if (!auditSearchQuery.trim()) return true;
+                                            const q = auditSearchQuery.toLowerCase();
+                                            return (f.compliance_item_name ?? '').toLowerCase().includes(q);
+                                        });
+                                    if (filteredFindings.length === 0) {
+                                        return (
+                                            <div className="text-center py-10 text-slate-400 text-sm bg-white rounded-2xl border border-slate-200 border-dashed">
+                                                No findings match the current filters.
+                                            </div>
+                                        );
+                                    }
+                                    const cards = filteredFindings.map(finding => {
+                                        const isCardExpanded = auditExpandedCards[finding.id] ?? false;
+                                        const toggleCard = () => setAuditExpandedCards(prev => ({ ...prev, [finding.id]: !isCardExpanded }));
+                                        const expandedSection = auditExpandedSections[finding.id] ?? null;
+                                        const setExpandedSection = (val: 'specific' | 'generic' | null) =>
+                                            setAuditExpandedSections(prev => ({ ...prev, [finding.id]: val }));
+                                        const specificGaps      = finding.gaps?.specific ?? [];
+                                        const genericGaps       = finding.gaps?.generic ?? [];
+                                        const specificRecs      = finding.recommendations?.specific ?? [];
+                                        const genericRecs       = finding.recommendations?.generic ?? [];
+                                        const specificCompliant = finding.compliant_areas?.specific ?? [];
+                                        const genericCompliant  = finding.compliant_areas?.generic ?? [];
+                                        const hasSpecific = specificGaps.length > 0 || specificRecs.length > 0 || specificCompliant.length > 0;
+                                        const hasGeneric  = genericGaps.length > 0 || genericRecs.length > 0 || genericCompliant.length > 0;
+                                        const riskMeta = finding.risk_level ? AR_META[finding.risk_level] : null;
+                                        const totalGaps = specificGaps.length + genericGaps.length;
+                                        const totalRecs = specificRecs.length + genericRecs.length;
+                                        const totalCompliant = specificCompliant.length + genericCompliant.length;
+
+                                        return (
+                                            <div key={finding.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                                {/* Collapsible header */}
+                                                <button
+                                                    type="button"
+                                                    onClick={toggleCard}
+                                                    className="w-full px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                                                >
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                                                            <p className="text-base font-bold text-slate-900 leading-snug">
+                                                                {finding.compliance_item_name}
+                                                            </p>
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border uppercase tracking-wide bg-slate-100 text-slate-600 border-slate-200">
+                                                                    {finding.compliance_item_type ?? 'regulation'}
+                                                                </span>
+                                                                {finding.confidence != null && (
+                                                                    <span className="text-xs text-slate-500">{finding.confidence}% confidence</span>
+                                                                )}
+                                                                {totalGaps > 0 && (
+                                                                    <span className="text-xs text-rose-600 font-medium">{totalGaps} gap{totalGaps !== 1 ? 's' : ''}</span>
+                                                                )}
+                                                                {totalCompliant > 0 && (
+                                                                    <span className="text-xs text-emerald-600 font-medium">{totalCompliant} compliant</span>
+                                                                )}
+                                                                {totalRecs > 0 && (
+                                                                    <span className="text-xs text-indigo-600 font-medium">{totalRecs} recommendation{totalRecs !== 1 ? 's' : ''}</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 shrink-0">
+                                                            {riskMeta && (
+                                                                <span className="text-sm font-bold px-3 py-1 rounded-lg border"
+                                                                    style={{ background: riskMeta.bg, color: riskMeta.color, borderColor: riskMeta.badge }}>
+                                                                    {riskMeta.label}
+                                                                </span>
+                                                            )}
+                                                            <span className="text-xl font-black" style={{ color: riskMeta?.dot ?? '#64748b' }}>
+                                                                {finding.risk_score ?? '—'}<span className="text-sm font-normal text-slate-400">/100</span>
+                                                            </span>
+                                                            <ChevronRight size={16} className={`text-slate-400 transition-transform duration-200 ${isCardExpanded ? 'rotate-90' : ''}`} />
+                                                        </div>
+                                                    </div>
+                                                    {finding.risk_score != null && (
+                                                        <div className="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                            <div className="h-full rounded-full transition-all"
+                                                                style={{ width: `${finding.risk_score}%`, background: riskMeta?.dot ?? auditScoreBar(finding.risk_score) }} />
+                                                        </div>
+                                                    )}
+                                                </button>
+
+                                                {/* Expanded body */}
+                                                {isCardExpanded && (
+                                                    <>
+                                                        {/* Meta: score bars + summary + rules */}
+                                                        <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex flex-col gap-4">
+                                                            <div className="grid grid-cols-2 gap-4">
+                                                                {finding.risk_score != null && (
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Risk Score</span>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <div className="flex-1 bg-slate-200 rounded-full h-2">
+                                                                                <div className="h-2 rounded-full transition-all"
+                                                                                    style={{ width: `${finding.risk_score}%`, background: riskMeta?.dot ?? '#64748b' }} />
+                                                                            </div>
+                                                                            <span className="text-sm font-bold font-mono w-8 text-right" style={{ color: riskMeta?.dot ?? '#64748b' }}>
+                                                                                {finding.risk_score}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                {finding.confidence != null && (
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Confidence</span>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <div className="flex-1 bg-slate-200 rounded-full h-2">
+                                                                                <div className="h-2 rounded-full bg-indigo-500 transition-all"
+                                                                                    style={{ width: `${finding.confidence}%` }} />
+                                                                            </div>
+                                                                            <span className="text-sm font-bold font-mono text-indigo-600 w-8 text-right">
+                                                                                {finding.confidence}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {finding.summary && (
+                                                                <p className="text-sm text-slate-700 leading-relaxed">{finding.summary}</p>
+                                                            )}
+                                                            {finding.applicable_rules?.length > 0 && (
+                                                                <div className="flex flex-col gap-2">
+                                                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Applicable Rules</span>
+                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                        {finding.applicable_rules.map((rule, i) => (
+                                                                            <span key={i} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white text-slate-700 text-xs font-medium border border-slate-200 shadow-sm">
+                                                                                {rule}
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Section accordions */}
+                                                        {(hasSpecific || hasGeneric) && (
+                                                            <div className="divide-y divide-slate-100">
+                                                                {/* Policy Obligations */}
+                                                                {hasSpecific && (
+                                                                    <div>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setExpandedSection(expandedSection === 'specific' ? null : 'specific')}
+                                                                            className="w-full flex items-center justify-between px-5 py-3 text-left bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                                                        >
+                                                                            <div className="flex items-center gap-2">
+                                                                                <Shield size={14} className="text-indigo-500 shrink-0" />
+                                                                                <span className="text-sm font-bold text-indigo-800">Policy Obligations</span>
+                                                                                <span className="text-xs text-indigo-500">
+                                                                                    {specificGaps.length > 0 && `${specificGaps.length} gap${specificGaps.length !== 1 ? 's' : ''}`}
+                                                                                    {specificRecs.length > 0 && ` · ${specificRecs.length} recommendation${specificRecs.length !== 1 ? 's' : ''}`}
+                                                                                    {specificCompliant.length > 0 && ` · ${specificCompliant.length} compliant`}
+                                                                                </span>
+                                                                            </div>
+                                                                            <ChevronRight size={15} className={`text-indigo-400 transition-transform duration-200 ${expandedSection === 'specific' ? 'rotate-90' : ''}`} />
+                                                                        </button>
+                                                                        {expandedSection === 'specific' && (
+                                                                            <div className="px-5 py-4 flex flex-col gap-5">
+                                                                                {specificGaps.length > 0 && (
+                                                                                    <div className="flex flex-col gap-3">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Gaps Identified</p>
+                                                                                        {specificGaps.map((gap, i) => {
+                                                                                            const gm = gap.severity ? AR_META[gap.severity] : null;
+                                                                                            return (
+                                                                                                <div key={i} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                                                                                    <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5" style={{ background: gm?.dot ?? '#94a3b8' }} />
+                                                                                                    <div className="flex flex-col gap-1 min-w-0">
+                                                                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                                                                            <span className="text-sm font-semibold text-slate-900">{gap.requirement}</span>
+                                                                                                            {gm && (
+                                                                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                                                                                    style={{ background: gm.bg, color: gm.color, border: `1px solid ${gm.badge}` }}>
+                                                                                                                    {gm.label}
+                                                                                                                </span>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                        {gap.gap && <p className="text-sm text-slate-600 leading-snug">{gap.gap}</p>}
+                                                                                                        {gap.current_state && <p className="text-xs text-slate-400 italic">Current state: {gap.current_state}</p>}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            );
+                                                                                        })}
+                                                                                    </div>
+                                                                                )}
+                                                                                {specificCompliant.length > 0 && (
+                                                                                    <div className="flex flex-col gap-2">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Already Compliant</p>
+                                                                                        {specificCompliant.map((area, i) => (
+                                                                                            <div key={i} className="flex items-start gap-2 text-sm text-emerald-800">
+                                                                                                <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0 mt-0.5" />{area}
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                                {specificRecs.length > 0 && (
+                                                                                    <div className="flex flex-col gap-3 pt-2 border-t border-slate-100">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Recommendations</p>
+                                                                                        {specificRecs.map((rec, i) => (
+                                                                                            <div key={i} className="flex items-start gap-3">
+                                                                                                <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${rec.priority === 'immediate' ? 'bg-rose-500' : rec.priority === 'short_term' ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                                                                                                <div className="flex flex-col gap-0.5 min-w-0">
+                                                                                                    <p className="text-sm text-slate-800 leading-snug">{rec.action}</p>
+                                                                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                                                                        {rec.priority && (
+                                                                                                            <span className={`text-xs font-bold uppercase ${rec.priority === 'immediate' ? 'text-rose-600' : rec.priority === 'short_term' ? 'text-amber-600' : 'text-slate-400'}`}>
+                                                                                                                {rec.priority.replace(/_/g, ' ')}
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                        {rec.owner && <span className="text-xs text-slate-400">→ {rec.owner}</span>}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* AI Risk Insights */}
+                                                                {hasGeneric && (
+                                                                    <div>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setExpandedSection(expandedSection === 'generic' ? null : 'generic')}
+                                                                            className="w-full flex items-center justify-between px-5 py-3 text-left bg-teal-50 hover:bg-teal-100 transition-colors"
+                                                                        >
+                                                                            <div className="flex items-center gap-2">
+                                                                                <Compass size={14} className="text-teal-500 shrink-0" />
+                                                                                <span className="text-sm font-bold text-teal-800">AI Risk Insights</span>
+                                                                                <span className="text-xs text-teal-500">
+                                                                                    {genericGaps.length > 0 && `${genericGaps.length} gap${genericGaps.length !== 1 ? 's' : ''}`}
+                                                                                    {genericRecs.length > 0 && ` · ${genericRecs.length} recommendation${genericRecs.length !== 1 ? 's' : ''}`}
+                                                                                    {genericCompliant.length > 0 && ` · ${genericCompliant.length} compliant`}
+                                                                                </span>
+                                                                            </div>
+                                                                            <ChevronRight size={15} className={`text-teal-400 transition-transform duration-200 ${expandedSection === 'generic' ? 'rotate-90' : ''}`} />
+                                                                        </button>
+                                                                        {expandedSection === 'generic' && (
+                                                                            <div className="px-5 py-4 flex flex-col gap-5">
+                                                                                {genericGaps.length > 0 && (
+                                                                                    <div className="flex flex-col gap-3">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Gaps Identified</p>
+                                                                                        {genericGaps.map((gap, i) => {
+                                                                                            const gm = gap.severity ? AR_META[gap.severity] : null;
+                                                                                            return (
+                                                                                                <div key={i} className="border-l-2 pl-3 py-1" style={{ borderColor: gm?.dot ?? '#94a3b8' }}>
+                                                                                                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                                                                                                        {gm && (
+                                                                                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                                                                                style={{ background: gm.bg, color: gm.color, border: `1px solid ${gm.badge}` }}>
+                                                                                                                {gm.label}
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                        <span className="text-sm font-semibold text-slate-900">{gap.requirement}</span>
+                                                                                                    </div>
+                                                                                                    {gap.gap && <p className="text-sm text-slate-600 leading-snug">{gap.gap}</p>}
+                                                                                                    {gap.current_state && <p className="text-xs text-slate-400 mt-1 italic">Now: {gap.current_state}</p>}
+                                                                                                </div>
+                                                                                            );
+                                                                                        })}
+                                                                                    </div>
+                                                                                )}
+                                                                                {genericCompliant.length > 0 && (
+                                                                                    <div className="flex flex-col gap-2">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Already Compliant</p>
+                                                                                        {genericCompliant.map((area, i) => (
+                                                                                            <div key={i} className="flex items-start gap-2 text-sm text-emerald-800">
+                                                                                                <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0 mt-0.5" />{area}
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                                {genericRecs.length > 0 && (
+                                                                                    <div className="flex flex-col gap-3 pt-2 border-t border-slate-100">
+                                                                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Recommendations</p>
+                                                                                        {genericRecs.map((rec, i) => (
+                                                                                            <div key={i} className="flex items-start gap-3">
+                                                                                                <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${rec.priority === 'immediate' ? 'bg-rose-500' : rec.priority === 'short_term' ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                                                                                                <div className="flex flex-col gap-0.5 min-w-0">
+                                                                                                    <p className="text-sm text-slate-800 leading-snug">{rec.action}</p>
+                                                                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                                                                        {rec.priority && (
+                                                                                                            <span className={`text-xs font-bold uppercase ${rec.priority === 'immediate' ? 'text-rose-600' : rec.priority === 'short_term' ? 'text-amber-600' : 'text-slate-400'}`}>
+                                                                                                                {rec.priority.replace(/_/g, ' ')}
+                                                                                                            </span>
+                                                                                                        )}
+                                                                                                        {rec.owner && <span className="text-xs text-slate-400">→ {rec.owner}</span>}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
+                                        );
+                                    });
+                                    return auditView === 'grid' ? (
+                                        <div className="grid grid-cols-2 gap-4">{cards}</div>
+                                    ) : (
+                                        <div className="flex flex-col gap-3">{cards}</div>
+                                    );
+                                })()}
+                            </>
                         )}
                     </div>
                 )}

@@ -1719,6 +1719,7 @@ const UseCaseViewPage: React.FC = () => {
       {!loading && !error && useCase && (
         <UseCaseView
           useCase={useCase}
+          companyId={activeCompany?.id}
           agentsComponent={<AgentsSection useCase={useCase} agents={agents} onSilentRefetch={fetchUseCaseSilently} />}
           businessImpactComponent={
             <div className="flex flex-col gap-6">

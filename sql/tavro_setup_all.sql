@@ -402,6 +402,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS twin.audit_run (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id        UUID NOT NULL REFERENCES twin.company(id) ON DELETE CASCADE,
+    tenant_id         TEXT,
     scope_type        TEXT NOT NULL CHECK (scope_type IN (
                           'single','use_case_all','catalog_single','full'
                       )),
@@ -426,6 +427,7 @@ CREATE TABLE IF NOT EXISTS twin.audit_run (
     completed_at      TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS audit_run_company_idx  ON twin.audit_run (company_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_run_tenant_idx   ON twin.audit_run (tenant_id) WHERE tenant_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS audit_run_status_idx   ON twin.audit_run (status);
 CREATE INDEX IF NOT EXISTS audit_run_usecase_idx  ON twin.audit_run (use_case_id) WHERE use_case_id IS NOT NULL;
 
@@ -433,6 +435,7 @@ CREATE TABLE IF NOT EXISTS twin.audit_finding (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     audit_run_id          UUID NOT NULL REFERENCES twin.audit_run(id) ON DELETE CASCADE,
     company_id            UUID NOT NULL REFERENCES twin.company(id) ON DELETE CASCADE,
+    tenant_id             TEXT,
     use_case_id           TEXT NOT NULL,
     use_case_name         TEXT NOT NULL,
     compliance_item_id    UUID REFERENCES twin.compliance_item(id) ON DELETE SET NULL,
@@ -457,6 +460,7 @@ CREATE TABLE IF NOT EXISTS twin.audit_finding (
 );
 CREATE INDEX IF NOT EXISTS audit_finding_run_idx       ON twin.audit_finding (audit_run_id);
 CREATE INDEX IF NOT EXISTS audit_finding_company_idx   ON twin.audit_finding (company_id);
+CREATE INDEX IF NOT EXISTS audit_finding_tenant_idx    ON twin.audit_finding (tenant_id) WHERE tenant_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS audit_finding_usecase_idx   ON twin.audit_finding (use_case_id);
 CREATE INDEX IF NOT EXISTS audit_finding_risk_idx      ON twin.audit_finding (risk_level);
 CREATE INDEX IF NOT EXISTS audit_finding_status_idx    ON twin.audit_finding (status);

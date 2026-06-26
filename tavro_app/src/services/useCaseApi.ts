@@ -303,6 +303,39 @@ class UseCaseApiService {
         }
         return res.blob();
     }
+
+    async getAuditFindings(useCaseId: string, companyId: string): Promise<{
+        use_case_id: string;
+        findings: AuditFinding[];
+        total: number;
+        highest_risk_score: number | null;
+        highest_risk_level: string | null;
+    }> {
+        return req(`/audit/use-case/${encodeURIComponent(useCaseId)}?company_id=${encodeURIComponent(companyId)}`);
+    }
+}
+
+export interface AuditFindingSection {
+    gaps: Array<{ requirement: string; current_state: string; gap: string; severity: string }>;
+    compliant_areas: string[];
+    recommendations: Array<{ action: string; priority: string; owner: string }>;
+}
+
+export interface AuditFinding {
+    id: string;
+    audit_run_id: string;
+    compliance_item_id: string;
+    compliance_item_name: string;
+    compliance_item_type: string;
+    risk_level: string;
+    risk_score: number;
+    confidence: number;
+    applicable_rules: string[];
+    gaps: { specific: AuditFindingSection['gaps']; generic: AuditFindingSection['gaps'] };
+    compliant_areas: { specific: string[]; generic: string[] };
+    recommendations: { specific: AuditFindingSection['recommendations']; generic: AuditFindingSection['recommendations'] };
+    summary: string;
+    updated_at: string;
 }
 
 export const useCaseApi = new UseCaseApiService();
