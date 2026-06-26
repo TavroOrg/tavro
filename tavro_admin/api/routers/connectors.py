@@ -33,8 +33,10 @@ router = APIRouter()
 
 AGENT_CARD_DIR   = os.getenv("AGENT_CARD_DIR",    "/app/agent_cards")
 RISK_URL         = os.getenv("RISK_CLASSIFY_URL",  "http://tavro-api:8000/api/v1/risk/classify-risk")
+RISK_STATUS_URL  = RISK_URL.replace("/classify-risk", "/workflows")
 RISK_CONCURRENCY = int(os.getenv("RISK_CONCURRENCY", "2"))
 RISK_TIMEOUT_S   = int(os.getenv("RISK_TIMEOUT_S",   "600"))
+RISK_POLL_S      = int(os.getenv("RISK_POLL_S",       "5"))
 
 CONNECTOR_MAP: dict[str, tuple[str, str]] = {
     "copilot":    ("catalog_connector.connector.copilot_connector",    "CopilotConnector"),
@@ -110,6 +112,27 @@ def _refresh_agent_360_sync(agent_internal_id: str, agent_id: str, tenant_id: st
 
 # ── Phase 2: Risk queue (BackgroundTask) ──────────────────────────────────────
 
+async def _wait_for_risk_workflow(workflow_id: str, agent_id: str, tenant_id: str | None) -> str:
+    """Poll the risk workflow status until it reaches completed/failed or times out.
+    Returns the final status string."""
+    max_polls = RISK_TIMEOUT_S // RISK_POLL_S
+    headers = {"x-tenant-id": tenant_id} if tenant_id else {}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for _ in range(max_polls):
+            await asyncio.sleep(RISK_POLL_S)
+            try:
+                resp = await client.get(RISK_STATUS_URL, params={"agent_id": agent_id}, headers=headers)
+                if resp.status_code == 200:
+                    for entry in resp.json():
+                        if entry.get("workflow_id") == workflow_id:
+                            status = entry.get("status", "running")
+                            if status in ("completed", "failed", "terminated", "cancelled", "timed_out"):
+                                return status
+            except Exception:
+                pass
+    return "timeout"
+
+
 async def _run_risk_assessments(agents: list[dict]) -> None:
     semaphore = asyncio.Semaphore(RISK_CONCURRENCY)
 
@@ -141,10 +164,15 @@ async def _run_risk_assessments(agents: list[dict]) -> None:
         }
         async with semaphore:
             try:
-                async with httpx.AsyncClient(timeout=RISK_TIMEOUT_S) as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(RISK_URL, json=payload)
-                status = "completed" if resp.status_code == 200 else f"HTTP {resp.status_code}"
-                print(f"[risk] {agent_id} ({agent_name}): {status}")
+                if resp.status_code == 202:
+                    workflow_id = resp.json().get("workflow_id", "")
+                    print(f"[risk] {agent_id} ({agent_name}): submitted → {workflow_id}, waiting...")
+                    final = await _wait_for_risk_workflow(workflow_id, agent_id, agent.get("tenant_id"))
+                    print(f"[risk] {agent_id} ({agent_name}): {final}")
+                else:
+                    print(f"[risk] {agent_id} ({agent_name}): unexpected HTTP {resp.status_code}")
             except Exception as exc:
                 print(f"[risk] {agent_id} ({agent_name}): error — {exc}")
 

@@ -421,7 +421,7 @@ app.post('/chat/complete', async (req, res) => {
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'Missing messages array' });
 
     const providerCfg = hasCustomProvider(provider) ? { ...provider, apiKey: provider.apiKey || apiKey } : null;
-    const authToken = hasCustomProvider(providerCfg) ? '' : pickString(apiKey);
+    const authToken = hasCustomProvider(providerCfg) ? '' : pickString(apiKey, process.env.GITHUB_COPILOT_TOKEN);
     if (!authToken && !hasCustomProvider(providerCfg)) {
         return res.status(400).json({
             error: 'Missing GitHub Copilot token. Save a Copilot-enabled GitHub token in Settings for the GitHub Copilot SDK provider.',
@@ -506,7 +506,7 @@ app.post('/chat/stream', async (req, res) => {
     }
 
     const providerCfg = hasCustomProvider(provider) ? { ...provider, apiKey: provider.apiKey || apiKey } : null;
-    const authToken = hasCustomProvider(providerCfg) ? '' : pickString(apiKey);
+    const authToken = hasCustomProvider(providerCfg) ? '' : pickString(apiKey, process.env.GITHUB_COPILOT_TOKEN);
     if (!authToken && !hasCustomProvider(providerCfg)) {
         res.status(400).json({ error: 'Missing GitHub Copilot token.' });
         return;
@@ -680,9 +680,24 @@ app.post('/chat/byok/complete', async (req, res) => {
         ''
     );
     // Azure: prepend admin-configured endpoint when frontend sends only the path (no base URL).
-    const endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
+    let endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
         ? `${(process.env.AZURE_AI_FOUNDRY_ENDPOINT || '').replace(/\/$/, '')}${rawEndpoint}`
         : rawEndpoint;
+    // Azure AI Foundry: the stored base URL may include /api/projects/{project} (the agent service path).
+    // OpenAI chat completions must be called on the account root, not the project path.
+    // Strip /api/projects/... so the final URL is {account}.services.ai.azure.com/openai/deployments/...
+    if (providerType === 'azure' && endpoint && endpoint.includes('services.ai.azure.com')) {
+        endpoint = endpoint.replace(/\/api\/projects\/[^/]+(?=\/openai\/)/, '');
+        endpoint = endpoint.replace(/api-version=[\w.-]+/, 'api-version=2025-01-01-preview');
+    }
+    // Newer models (gpt-5.x, o-series) reject max_tokens — normalize to max_completion_tokens.
+    if (providerType === 'azure' && body && body.max_tokens !== undefined) {
+        const model = body.model || (endpoint.match(/\/deployments\/([^/]+)\//) || [])[1] || '';
+        if (/^(o\d|gpt-5)/i.test(model)) {
+            body.max_completion_tokens = body.max_tokens;
+            delete body.max_tokens;
+        }
+    }
 
     if (!endpoint || !body)     return res.status(400).json({ error: 'Missing endpoint or body' });
     if (!endpoint.startsWith('https://')) return res.status(400).json({ error: 'Only HTTPS endpoints allowed' });
@@ -728,9 +743,22 @@ app.post('/chat/byok/stream', async (req, res) => {
         ''
     );
     // Azure: prepend admin-configured endpoint when frontend sends only the path (no base URL).
-    const endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
+    let endpoint = (providerType === 'azure' && rawEndpoint && !rawEndpoint.startsWith('https://'))
         ? `${(process.env.AZURE_AI_FOUNDRY_ENDPOINT || '').replace(/\/$/, '')}${rawEndpoint}`
         : rawEndpoint;
+    // Azure AI Foundry: strip /api/projects/{project} so OpenAI calls hit the account root.
+    if (providerType === 'azure' && endpoint && endpoint.includes('services.ai.azure.com')) {
+        endpoint = endpoint.replace(/\/api\/projects\/[^/]+(?=\/openai\/)/, '');
+        endpoint = endpoint.replace(/api-version=[\w.-]+/, 'api-version=2025-01-01-preview');
+    }
+    // Newer models (gpt-5.x, o-series) reject max_tokens — normalize to max_completion_tokens.
+    if (providerType === 'azure' && body && body.max_tokens !== undefined) {
+        const model = body.model || (endpoint.match(/\/deployments\/([^/]+)\//) || [])[1] || '';
+        if (/^(o\d|gpt-5)/i.test(model)) {
+            body.max_completion_tokens = body.max_tokens;
+            delete body.max_tokens;
+        }
+    }
 
     if (!endpoint || !body) { res.status(400).json({ error: 'Missing endpoint or body' }); return; }
     if (!endpoint.startsWith('https://')) { res.status(400).json({ error: 'Only HTTPS endpoints allowed' }); return; }
