@@ -84,8 +84,12 @@ async def _run_temporal_worker():
 
 
 async def _run_audit_temporal_worker():
-    from api.temporal.workflow import AuditWorkflow
-    from api.temporal.activities import run_audit_orchestrator_activity
+    from services.workflow.audit_workflow import AuditWorkflow
+    from services.activity.audit_activities import (
+        setup_audit_activity,
+        assess_compliance_pair_activity,
+        finalize_audit_activity,
+    )
 
     print("Connecting enterprise audit Temporal worker...")
     client = await Client.connect(TEMPORAL_ADDRESS)
@@ -93,7 +97,11 @@ async def _run_audit_temporal_worker():
         client,
         task_queue=AUDIT_TASK_QUEUE,
         workflows=[AuditWorkflow],
-        activities=[run_audit_orchestrator_activity],
+        activities=[
+            setup_audit_activity,
+            assess_compliance_pair_activity,
+            finalize_audit_activity,
+        ],
     )
     print(f"Audit Temporal worker listening on queue: {AUDIT_TASK_QUEUE}")
     await worker.run()
@@ -172,8 +180,8 @@ app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Grap
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
-# BUILD_MODE=enterprise means the entrypoint copied enterprise routers into
-# /app/api/routers/ before uvicorn started.  Any other value uses stubs.
+# BUILD_MODE=enterprise means PYTHONPATH=/enterprise:/app so these modules
+# resolve from the enterprise image layer.  Any other value uses stubs.
 _ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
 if _ENTERPRISE_ENABLED:
     from api.routers import compliance, compliance_research, audit
