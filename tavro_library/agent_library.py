@@ -3763,13 +3763,17 @@ class AgentMetadataExporter:
         }
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.post(
                 COMPANY_API_BASE_URL,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3815,9 +3819,13 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {"accept": "application/json"}
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.get(
                 url,
-                headers={"accept": "application/json"},
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3873,13 +3881,17 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.patch(
                 url,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
