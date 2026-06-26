@@ -6,6 +6,7 @@ import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 import { AgentData, AGENT_TYPES } from '../types/agent';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage } from '../utils/errorUtils';
 
 const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Staging'];
 
@@ -46,7 +47,7 @@ const CreateAgentPage: React.FC = () => {
         set('description', result.description);
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to generate description.');
+      setError(toUserMessage(err));
     } finally {
       setGeneratingDescription(false);
     }
@@ -142,7 +143,7 @@ const CreateAgentPage: React.FC = () => {
       refresh();
       redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);
     } catch (err: any) {
-      setError(err.message || 'Failed to create agent.');
+      setError(toUserMessage(err));
     } finally {
       setSaving(false);
     }

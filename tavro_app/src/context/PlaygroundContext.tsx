@@ -3,6 +3,7 @@
 // All LLM calls run server-side — no API keys in the browser.
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import type {
   PlaygroundConfig, PlaygroundMessage, PlaygroundObservation, InfraProvider,
 } from '../types/playground';
@@ -275,11 +276,11 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         timestamp: new Date(),
       }]);
     } catch (err: any) {
-      setSessionError(err.message);
+      setSessionError(toUserMessage(err));
       setMessages(prev => [...prev, {
         id:        `err-${Date.now()}`,
         role:      'assistant',
-        content:   `Failed to start session: ${err.message}`,
+        content:   `Failed to start session: ${toUserMessage(err)}`,
         timestamp: new Date(),
       }]);
     } finally {
@@ -344,7 +345,7 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setMessages(prev => [...prev, {
         id:        `err-${Date.now()}`,
         role:      'assistant',
-        content:   `Something went wrong: ${err.message}`,
+        content:   toUserMessage(err),
         timestamp: new Date(),
       }]);
       return null;

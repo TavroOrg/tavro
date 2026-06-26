@@ -1,8 +1,11 @@
 from __future__ import annotations
 import json
+import logging
 import os
 import base64
 import uuid
+
+_logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -13,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -214,7 +218,8 @@ Return ONLY the JSON object with the "description" field."""
     try:
         parsed = json.loads(_extract_json(raw))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestModelDescriptionResponse(description=str(parsed.get("description", "")).strip())
 
@@ -305,7 +310,7 @@ async def list_ai_models(
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "items": data, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +363,7 @@ async def create_ai_model(
         return {"message": "AI Model registered successfully.", "ai_model_id": ai_model_id}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +549,7 @@ async def update_ai_model(
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +597,7 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +659,7 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -678,7 +683,7 @@ async def unlink_agent(ai_model_id: str, agent_id: str, db: AsyncSession = Depen
         return {"status": "unlinked", "ai_model_id": mid, "agent_id": agent_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -737,7 +742,7 @@ async def link_use_case(ai_model_id: str, body: LinkUseCaseRequest, request: Req
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -761,7 +766,7 @@ async def unlink_use_case(ai_model_id: str, use_case_id: str, db: AsyncSession =
         return {"status": "unlinked", "ai_model_id": mid, "ai_use_case_id": uc_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -820,7 +825,7 @@ async def link_application(ai_model_id: str, body: LinkApplicationRequest, reque
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 @router.delete("/{ai_model_id}/applications/{application_id}", summary="Unlink Application from AI Model")
@@ -840,7 +845,7 @@ async def unlink_application(ai_model_id: str, application_id: str, db: AsyncSes
         return {"status": "unlinked", "ai_model_id": mid, "business_application_id": app_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -899,7 +904,7 @@ async def link_process(ai_model_id: str, body: LinkProcessRequest, request: Requ
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 @router.delete("/{ai_model_id}/processes/{process_id}", summary="Unlink Process from AI Model")
@@ -919,7 +924,7 @@ async def unlink_process(ai_model_id: str, process_id: str, db: AsyncSession = D
         return {"status": "unlinked", "ai_model_id": mid, "business_process_id": proc_id, "rows_deleted": result.rowcount or 0}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:

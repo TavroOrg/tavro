@@ -15,6 +15,7 @@ import type {
   DimNodeAttachment,
 } from '../types/blueprint';
 import { getValidToken, refreshAccessToken } from './auth';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -47,7 +48,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
       if (retry.status === 401) {
         throw new Error('Request unauthorized. Please check your credentials.');
       }
-      if (!retry.ok) throw new Error(`API ${retry.status}: ${await retry.text()}`);
+      if (!retry.ok) { const retryBody = await retry.text(); throw new Error(parseApiError(retry.status, retryBody)); }
       if (retry.status === 204) return undefined as T;
       return retry.json();
     }
@@ -56,7 +57,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    throw new Error(parseApiError(res.status, body));
   }
   if (res.status === 204) return undefined as T;
   return res.json();

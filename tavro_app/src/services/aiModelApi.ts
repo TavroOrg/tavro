@@ -4,6 +4,7 @@ import type {
   AiModelAttachmentRecord,
 } from '../types/aiModel';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -211,7 +212,7 @@ class AiModelApi {
     );
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }

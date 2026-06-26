@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import {
   AppWindow,
   AlertCircle,
@@ -411,7 +412,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setTags(Array.isArray(data.tags) ? data.tags : []);
       setAttemptedSave(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to load business application');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -525,7 +526,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save application field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -622,7 +623,7 @@ const BusinessApplicationViewPage: React.FC = () => {
         setField('application_description', result.description);
       }
     } catch (err: any) {
-      setActionError(err.message || 'Failed to generate application description');
+      setActionError(toUserMessage(err));
     } finally {
       setGeneratingDescription(false);
     }
@@ -681,7 +682,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       setInlineEdit(null);
       setEditing(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save application');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -714,7 +715,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/applications');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to delete application');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -727,7 +728,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -741,7 +742,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -755,7 +756,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await aiModelApi.linkApplication(modelId, application.business_application_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to link AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }
@@ -769,7 +770,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await aiModelApi.unlinkApplication(modelId, application.business_application_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to remove AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }
@@ -784,7 +785,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to add AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -799,7 +800,7 @@ const BusinessApplicationViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to remove AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import os
 import sys
 import zipfile
@@ -12,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/azure-deploy", tags=["azure-deploy"])
 
 _API_VER  = "2025-11-15-preview"
@@ -415,7 +417,8 @@ async def get_status(
     try:
         token = await _get_token()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Auth failed: {exc}")
+        logger.error("Azure auth token acquisition failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Azure authentication failed. Please check your Azure credentials and try again.")
 
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.get(
@@ -437,7 +440,8 @@ async def invoke_agent(body: InvokeRequest):
     try:
         token = await _get_token()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Auth failed: {exc}")
+        logger.error("Azure auth token acquisition failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Azure authentication failed. Please check your Azure credentials and try again.")
 
     url = f"{ep}/agents/{body.agent_name}/endpoint/protocols/invocations?api-version=v1"
     async with httpx.AsyncClient(timeout=60) as c:
@@ -451,7 +455,8 @@ async def invoke_agent(body: InvokeRequest):
             json={"input": body.input},
         )
     if not r.is_success:
-        raise HTTPException(status_code=r.status_code, detail=r.text[:500])
+        logger.error("Azure deploy endpoint returned %s: %s", r.status_code, r.text[:500])
+        raise HTTPException(status_code=r.status_code, detail="The Azure deployment request failed. Please verify your configuration and try again.")
     return r.json()
 
 
@@ -466,7 +471,8 @@ async def delete_agent(
     try:
         token = await _get_token()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Auth failed: {exc}")
+        logger.error("Azure auth token acquisition failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Azure authentication failed. Please check your Azure credentials and try again.")
 
     qs = f"?api-version={_API_VER}" + ("&force=true" if force else "")
     async with httpx.AsyncClient(timeout=30) as c:

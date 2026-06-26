@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { Upload, X, FileJson, AlertCircle, CheckCircle2, Loader2, Trash2, FolderOpen, Link2, XCircle } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
 import { driveApi, FileValidationResult } from '../services/driveApi';
@@ -177,7 +178,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess, c
             setFileEntries([]);
             onSuccess();
         } catch (err: any) {
-            setErrorMessage(err?.message ?? 'Upload failed. Please try again.');
+            setErrorMessage(toUserMessage(err));
         } finally {
             setUploading(false);
         }
@@ -200,7 +201,7 @@ const LoadAgentsModal: React.FC<LoadAgentsModalProps> = ({ onClose, onSuccess, c
             });
             onSuccess();
         } catch (err: any) {
-            setDriveError(err?.message ?? 'Drive import failed. Please try again.');
+            setDriveError(toUserMessage(err));
         } finally {
             setDriveImporting(false);
         }

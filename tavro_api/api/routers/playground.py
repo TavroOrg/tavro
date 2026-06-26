@@ -9,12 +9,15 @@ import base64
 import asyncio
 import io
 import json
+import logging
 import os
 import re
 import uuid
 from datetime import datetime
 from functools import lru_cache
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import boto3
 from botocore.exceptions import ClientError
@@ -26,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -1333,10 +1337,10 @@ async def _run_bedrock_agent_chat(
 
         response_text = ""
         trace_events = []
-        print("SESSION ID:", bedrock_session_id)
-        print("AGENT ID:", agent_id)
-        print("ALIAS ID:", agent_alias_id)
-        print("INVOCATION ID:", response.get("invocationId"))
+        logger.debug("SESSION ID: %s", bedrock_session_id)
+        logger.debug("AGENT ID: %s", agent_id)
+        logger.debug("ALIAS ID: %s", agent_alias_id)
+        logger.debug("INVOCATION ID: %s", response.get("invocationId"))
 
         for event in response.get("completion", []):
             if "chunk" in event:
@@ -1359,8 +1363,8 @@ async def _run_bedrock_agent_chat(
                 "traces": trace_events,
             }
 
-            print("COMBINED TRACE EVENT:")
-            print(json.dumps(combined_trace_payload, indent=2, default=str))
+            logger.debug("COMBINED TRACE EVENT:")
+            logger.debug("%s", json.dumps(combined_trace_payload, indent=2, default=str))
 
             _put_bedrock_trace_log(
                 access_key=access_key,
@@ -1565,7 +1569,7 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     """
     # Check if model is supported for agent runtime
     model_key = config.model or AWS_BEDROCK_MODEL_DEFAULT
-    print(f"Creating Bedrock Agent with model: {model_key}")
+    logger.debug("Creating Bedrock Agent with model: %s", model_key)
     if model_key not in BEDROCK_AGENT_SUPPORTED_MODELS:
         # Model not supported for agent runtime - return disabled
         return BedrockAgentProvisioning(
@@ -1589,7 +1593,7 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     )[:200]
     # Use agent-supported model ID (no 'us.' prefix)
     model_id = BEDROCK_AGENT_SUPPORTED_MODELS.get(model_key, BEDROCK_AGENT_SUPPORTED_MODELS["claude-3-5-sonnet"])
-    print(f"Resolved Bedrock model ID: {model_id}")
+    logger.debug("Resolved Bedrock model ID: %s", model_id)
 
     try:
         # Get or create the agent role
@@ -2132,7 +2136,7 @@ async def send_message(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     # Add assistant message to session
     assistant_msg = {
@@ -2227,7 +2231,7 @@ async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
                 )
 
         except Exception as e:
-            print("END_SESSION ERROR:", str(e))
+            logger.warning("END_SESSION ERROR: %s", e)
     return {
         "session_id":  session_id,
         "status":      "ended",
