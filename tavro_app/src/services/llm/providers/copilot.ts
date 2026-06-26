@@ -317,14 +317,15 @@ export class CopilotProvider implements ILLMProvider {
 
     private azureEndpoint(): string {
         const base       = (this.byok?.baseUrl || '').replace(/\/$/, '');
-        const apiVersion = this.byok?.azureApiVersion || '2024-10-21';
+        const isFoundry  = base.includes('services.ai.azure.com');
+        const apiVersion = isFoundry ? '2025-01-01-preview' : (this.byok?.azureApiVersion || '2024-10-21');
         return `${base}/openai/deployments/${this.model}/chat/completions?api-version=${apiVersion}`;
     }
 
     private async completeAzure(messages: RuntimeMessage[], tools: ToolDefinition[]): Promise<InternalCompletionResult> {
         const body: any = {
             messages: toWireMessagesOpenAI(messages),
-            max_tokens: 8192,
+            [maxTokensKey(this.model)]: maxTokensValue(this.model, 'complete'),
         };
         if (tools.length > 0) {
             body.tools = toWireToolsOpenAI(tools);
@@ -363,7 +364,7 @@ export class CopilotProvider implements ILLMProvider {
             apiKey: this.apiKey,
             body: {
                 messages: toWireMessagesOpenAI(messages),
-                max_tokens: 8192,
+                [maxTokensKey(this.model)]: maxTokensValue(this.model, 'stream'),
             },
             ...(this.requestId ? { requestId: this.requestId } : {}),
         });
