@@ -457,9 +457,32 @@ const AgentViewPage: React.FC = () => {
             }
 
             if (resolved) {
-                const pendingAware = isLocallyPendingAssessment(resolved, id)
-                    ? markAssessmentRunning(resolved)
-                    : resolved;
+                let pendingAware: AgentData;
+                if (isLocallyPendingAssessment(resolved, id)) {
+                    pendingAware = markAssessmentRunning(resolved);
+                } else if (resolved.identification?.governance_status === 'Risk Assessment is running') {
+                    // Clear stale API value when no running Temporal workflow backs it up.
+                    let isWorkflowRunning = false;
+                    try {
+                        const raw = localStorage.getItem('tavro_temporal_workflows');
+                        const records: any[] = raw ? JSON.parse(raw) : [];
+                        const agentId = (resolved.identification?.agent_id ?? id ?? '').toLowerCase().trim();
+                        const agentName = (resolved.name ?? '').toLowerCase().trim();
+                        isWorkflowRunning = (Array.isArray(records) ? records : []).some((wf: any) => {
+                            if (String(wf?.status ?? '').toLowerCase() !== 'running') return false;
+                            const wfId = String(wf?.agent_id ?? '').toLowerCase().trim();
+                            const wfInternal = String(wf?.agent_internal_id ?? '').toLowerCase().trim();
+                            const wfName = String(wf?.name ?? '').toLowerCase().trim();
+                            return (agentId && (wfId === agentId || wfInternal === agentId || wfName === agentId)) ||
+                                   (agentName && (wfId === agentName || wfInternal === agentName || wfName === agentName));
+                        });
+                    } catch { /* ignore */ }
+                    pendingAware = isWorkflowRunning
+                        ? resolved
+                        : { ...resolved, identification: { ...resolved.identification, governance_status: null } };
+                } else {
+                    pendingAware = resolved;
+                }
                 const overlaid = applyRecentEditOverlay(pendingAware);
                 setAgent(overlaid);
             }
