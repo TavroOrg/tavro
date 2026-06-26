@@ -6,3 +6,4 @@ from .salesforce_connector import SalesforceConnector as salesforceConnector
 from .servicenow_connector import ServiceNowConnector as servicenowConnector
 from .snowflake_connector import SnowflakeConnector as snowflakeConnector
 from .mcp_connector import githubConnector
+from .agent365_inbound_connector import Agent365InboundConnector as agent365InboundConnector

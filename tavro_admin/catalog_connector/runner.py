@@ -98,4 +98,8 @@ def _build_connector(name: str, config: dict):
         from catalog_connector.connector.mcp_connector.github_connector import GithubConnector
         return GithubConnector(config)
 
+    if name == "agent365":
+        from catalog_connector.connector.agent365_inbound_connector import Agent365InboundConnector
+        return Agent365InboundConnector(config)
+
     raise ValueError(f"Unknown connector: {name}")

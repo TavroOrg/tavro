@@ -1,14 +1,14 @@
-"""
-Connector run endpoints — two-phase execution.
+﻿"""
+Connector run endpoints â€” two-phase execution.
 
-Phase 1 — Extraction (sync, runs in a thread, returns immediately)
+Phase 1 â€” Extraction (sync, runs in a thread, returns immediately)
   Saves agent card JSONs, refreshes curated.agent_360, collects metadata.
 
-Phase 2 — Risk Assessment Queue (FastAPI BackgroundTask — after HTTP response)
+Phase 2 â€” Risk Assessment Queue (FastAPI BackgroundTask â€” after HTTP response)
   Max RISK_CONCURRENCY workflows run at a time.
   The /classify-risk POST blocks until Temporal finishes, so the semaphore
   slot is held for the full workflow duration naturally.
-  Failures are fully isolated — one agent never affects others.
+  Failures are fully isolated â€” one agent never affects others.
 """
 from __future__ import annotations
 
@@ -35,6 +35,10 @@ AGENT_CARD_DIR   = os.getenv("AGENT_CARD_DIR",    "/app/agent_cards")
 RISK_URL         = os.getenv("RISK_CLASSIFY_URL",  "http://tavro-api:8000/api/v1/risk/classify-risk")
 RISK_CONCURRENCY = int(os.getenv("RISK_CONCURRENCY", "2"))
 RISK_TIMEOUT_S   = int(os.getenv("RISK_TIMEOUT_S",   "600"))
+ENV_FILE_PATH    = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
+_AGENT365_TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+_AGENT365_DEVICE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode"
+_AGENT365_SCOPE = "https://graph.microsoft.com/.default offline_access"
 
 CONNECTOR_MAP: dict[str, tuple[str, str]] = {
     "copilot":    ("catalog_connector.connector.copilot_connector",    "CopilotConnector"),
@@ -45,11 +49,12 @@ CONNECTOR_MAP: dict[str, tuple[str, str]] = {
     "databricks": ("catalog_connector.connector.databricks_connector",  "DatabricksConnector"),
     "gemini":     ("catalog_connector.connector.gemini_connector",      "GeminiConnector"),
     "github":     ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "agent365":   ("catalog_connector.connector.agent365_inbound_connector", "Agent365InboundConnector"),
 }
 
 _connector_lock = threading.Lock()
 
-# ── curated.agent_360 refresh ─────────────────────────────────────────────────
+# â”€â”€ curated.agent_360 refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _REFRESH_DELETE_SQL = """
     DELETE FROM curated.agent_360
@@ -108,7 +113,7 @@ def _refresh_agent_360_sync(agent_internal_id: str, agent_id: str, tenant_id: st
         session.commit()
 
 
-# ── Phase 2: Risk queue (BackgroundTask) ──────────────────────────────────────
+# â”€â”€ Phase 2: Risk queue (BackgroundTask) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _run_risk_assessments(agents: list[dict]) -> None:
     semaphore = asyncio.Semaphore(RISK_CONCURRENCY)
@@ -146,14 +151,14 @@ async def _run_risk_assessments(agents: list[dict]) -> None:
                 status = "completed" if resp.status_code == 200 else f"HTTP {resp.status_code}"
                 print(f"[risk] {agent_id} ({agent_name}): {status}")
             except Exception as exc:
-                print(f"[risk] {agent_id} ({agent_name}): error — {exc}")
+                print(f"[risk] {agent_id} ({agent_name}): error â€” {exc}")
 
-    print(f"[risk] Background queue started — {len(agents)} agent(s), max {RISK_CONCURRENCY} concurrent")
+    print(f"[risk] Background queue started â€” {len(agents)} agent(s), max {RISK_CONCURRENCY} concurrent")
     await asyncio.gather(*[assess_one(a) for a in agents], return_exceptions=True)
     print(f"[risk] Background queue complete")
 
 
-# ── Phase 1: Extraction ───────────────────────────────────────────────────────
+# â”€â”€ Phase 1: Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _run_extraction(
     module_path: str, class_name: str, config: dict,
@@ -238,7 +243,7 @@ def _run_extraction(
     return {"status": "success", "count": len(agents_extracted), "agents_extracted": agents_extracted}
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# â”€â”€ Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ConnectorRunRequest(BaseModel):
     config: dict
@@ -264,7 +269,7 @@ async def run_connector(
     if connector_id not in CONNECTOR_MAP:
         raise HTTPException(status_code=404, detail=f"Connector '{connector_id}' not found")
 
-    # Priority: x-tenant-id header (sent from localStorage) → ZITADEL userinfo claim
+    # Priority: x-tenant-id header (sent from localStorage) â†’ ZITADEL userinfo claim
     admin_tenant_id: str | None = (
         request.headers.get("x-tenant-id", "").strip() or
         auth.get("tenant_id") or
@@ -303,3 +308,128 @@ async def gemini_auth_url(body: GeminiAuthRequest):
     params = {"client_id": body.client_id, "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
               "response_type": "code", "scope": " ".join(scopes), "access_type": "offline", "prompt": "consent"}
     return {"auth_url": f"{body.auth_uri}?{urllib.parse.urlencode(params)}"}
+
+
+# â”€â”€ Agent 365: Device Code Flow â€” proxy to tavro-api â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+class _Agent365Credentials(BaseModel):
+    tenant_id: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+
+
+class _Agent365AuthStartBody(BaseModel):
+    credentials: _Agent365Credentials | None = None
+
+
+def _read_agent365_env_credentials() -> _Agent365Credentials:
+    values: dict[str, str] = {}
+    if ENV_FILE_PATH.exists():
+        for line in ENV_FILE_PATH.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            value = value.strip()
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            values[key.strip()] = value
+    return _Agent365Credentials(
+        tenant_id=values.get("AGENT365_TENANT_ID", os.getenv("AGENT365_TENANT_ID", "")),
+        client_id=values.get("AGENT365_CLIENT_ID", os.getenv("AGENT365_CLIENT_ID", "")),
+        client_secret=values.get("AGENT365_CLIENT_SECRET", os.getenv("AGENT365_CLIENT_SECRET", "")),
+    )
+
+
+def _merge_agent365_credentials(creds: _Agent365Credentials) -> _Agent365Credentials:
+    fallback = _read_agent365_env_credentials()
+    return _Agent365Credentials(
+        tenant_id=creds.tenant_id.strip() or fallback.tenant_id.strip(),
+        client_id=creds.client_id.strip() or fallback.client_id.strip(),
+        client_secret=creds.client_secret.strip() or fallback.client_secret.strip(),
+    )
+
+
+def _save_agent365_refresh_token(refresh_token: str) -> None:
+    if not refresh_token:
+        return
+    if not ENV_FILE_PATH.exists():
+        raise HTTPException(status_code=500, detail=".env file not found")
+
+    lines = ENV_FILE_PATH.read_text(encoding="utf-8").splitlines()
+    found = False
+    for idx, line in enumerate(lines):
+        if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
+            lines[idx] = f"AGENT365_REFRESH_TOKEN={refresh_token}"
+            found = True
+            break
+    if not found:
+        lines.append(f"AGENT365_REFRESH_TOKEN={refresh_token}")
+    ENV_FILE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ["AGENT365_REFRESH_TOKEN"] = refresh_token
+
+
+@router.post("/connectors/agent365/auth/start")
+async def agent365_auth_start(
+    body: _Agent365AuthStartBody | None = None,
+    auth: dict = Depends(require_portal_admin),
+):
+    """Start Microsoft Device Code Flow â€” returns user_code + verification_uri."""
+    creds = _merge_agent365_credentials(body.credentials if body and body.credentials else _Agent365Credentials())
+    if not creds.tenant_id or not creds.client_id:
+        raise HTTPException(status_code=400, detail="tenant_id and client_id are required")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _AGENT365_DEVICE_URL.format(tenant_id=creds.tenant_id),
+            data={
+                "client_id": creds.client_id,
+                "scope": _AGENT365_SCOPE,
+            },
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text[:300])
+    return resp.json()
+
+
+class _DeviceCodePollBody(BaseModel):
+    device_code: str
+    tenant_id: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+
+
+@router.post("/connectors/agent365/auth/poll")
+async def agent365_auth_poll(
+    body: _DeviceCodePollBody,
+    auth: dict = Depends(require_portal_admin),
+):
+    """Poll Microsoft for token completion and save the refresh token."""
+    creds = _merge_agent365_credentials(_Agent365Credentials(
+        tenant_id=body.tenant_id,
+        client_id=body.client_id,
+        client_secret=body.client_secret,
+    ))
+    if not creds.tenant_id or not creds.client_id:
+        raise HTTPException(status_code=400, detail="tenant_id and client_id are required")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _AGENT365_TOKEN_URL.format(tenant_id=creds.tenant_id),
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": creds.client_id,
+                "device_code": body.device_code,
+            },
+        )
+    data = resp.json()
+    error = data.get("error", "")
+    if error == "authorization_pending":
+        return {"pending": True}
+    if error == "slow_down":
+        return {"pending": True, "slow_down": True}
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=data.get("error_description", resp.text[:300]))
+
+    _save_agent365_refresh_token(data.get("refresh_token", ""))
+    return {"status": "ok", "refresh_token_saved": bool(data.get("refresh_token"))}
