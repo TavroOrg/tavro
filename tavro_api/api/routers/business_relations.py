@@ -2865,47 +2865,51 @@ async def upload_integrations_csv(
     uploaded_count = 0
     errors: list[str] = []
 
-    # For in-CSV duplicate names, keep only the last occurrence (last row wins — usually has more data).
-    # Build a deduplicated list preserving the last row for each name.
-    deduped_rows: list[dict] = []
-    name_to_last_index: dict[str, int] = {}
-    for i, row in enumerate(all_rows):
+    # Detect in-CSV duplicate names — add all occurrences after the first to blocked set.
+    seen_csv: set[str] = set()
+    blocked_csv_names: set[str] = set()
+    for row in all_rows:
         n = _text_or_none(row.get("integration_name", ""))
         if n:
-            name_to_last_index[n.lower()] = i
-    seen_csv_names: set[str] = set()
-    skipped_earlier: set[str] = set()
-    for i, row in enumerate(all_rows):
+            key = n.lower()
+            if key in seen_csv:
+                blocked_csv_names.add(key)
+            seen_csv.add(key)
+
+    deduped_rows: list[dict] = []
+    reported_csv_dups: set[str] = set()
+    for row in all_rows:
         n = _text_or_none(row.get("integration_name", ""))
         if not n:
             deduped_rows.append(row)
             continue
         key = n.lower()
-        if name_to_last_index[key] == i:
-            if key in seen_csv_names:
-                skipped_earlier.add(key)
-            deduped_rows.append(row)
-        seen_csv_names.add(key)
+        if key in blocked_csv_names:
+            if key not in reported_csv_dups:
+                errors.append(f"Skipped '{n}': already exists for this tenant/company or is duplicated in the CSV")
+                reported_csv_dups.add(key)
+            continue
+        deduped_rows.append(row)
 
-    for name_key in skipped_earlier:
-        errors.append(f"Duplicate name in CSV — kept the last row, skipped earlier occurrence(s)")
-
-    csv_names = [_text_or_none(r.get("integration_name", "")) for r in deduped_rows if _text_or_none(r.get("integration_name", ""))]
-
-    # Find names that already exist in DB for this tenant+company
-    existing_name_to_id: dict[str, str] = {}
-    if csv_names and cid:
-        placeholders = ", ".join(f":n{i}" for i in range(len(csv_names)))
-        result = await db.execute(
+    # Block names already in DB for this tenant+company (same as applications/processes logic)
+    csv_names_deduped = [_text_or_none(r.get("integration_name", "")) for r in deduped_rows if _text_or_none(r.get("integration_name", ""))]
+    blocked_int_names: set[str] = set()
+    if csv_names_deduped:
+        placeholders = ", ".join(f":n{i}" for i in range(len(csv_names_deduped)))
+        db_check_params: dict[str, Any] = {f"n{i}": v.lower() for i, v in enumerate(csv_names_deduped)}
+        db_check_params["tid"] = tenant_id
+        cid_filter = "AND company_id = :cid" if cid else ""
+        if cid:
+            db_check_params["cid"] = cid
+        existing_result = await db.execute(
             text(
-                f"SELECT LOWER(integration_name), integration_id FROM core.business_integrations "
-                f"WHERE LOWER(integration_name) IN ({placeholders}) "
-                f"AND tenant_id = :tid AND company_id = :cid"
+                f"SELECT LOWER(integration_name) FROM core.business_integrations "
+                f"WHERE LOWER(integration_name) IN ({placeholders}) AND tenant_id = :tid {cid_filter}"
             ),
-            {f"n{i}": v.lower() for i, v in enumerate(csv_names)} | {"tid": tenant_id, "cid": cid},
+            db_check_params,
         )
-        for row_db in result.fetchall():
-            existing_name_to_id[row_db[0]] = row_db[1]
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_int_names.add(existing_lower)
 
     for row in deduped_rows:
         int_name = _text_or_none(row.get("integration_name", ""))
@@ -2913,7 +2917,12 @@ async def upload_integrations_csv(
             errors.append("Skipped a row: integration_name is required")
             continue
 
-        insert_values: dict[str, Any] = {}
+        if int_name.lower() in blocked_int_names:
+            errors.append(f"Skipped '{int_name}': already exists for this tenant/company or is duplicated in the CSV")
+            continue
+
+        int_id = uuid4().hex
+        insert_values: dict[str, Any] = {"integration_id": int_id}
         for col in _INT_UPLOAD_TEXT_COLS:
             if col in int_cols:
                 val = _text_or_none(row.get(col, ""))
@@ -2927,49 +2936,26 @@ async def upload_integrations_csv(
         if cname and "company_name" in int_cols:
             insert_values["company_name"] = cname
 
-        existing_id = existing_name_to_id.get(int_name.lower()) if cid else None
+        col_names = [col for col in insert_values if col in int_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in int_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in int_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
 
         try:
-            if existing_id:
-                # UPDATE existing record
-                set_cols = [c for c in insert_values if c not in {"tenant_id", "company_id", "company_name", "integration_name"}]
-                if "updated_ts" in int_cols:
-                    set_sql = ", ".join(f"{c} = :{c}" for c in set_cols) + ", updated_ts = CURRENT_TIMESTAMP"
-                else:
-                    set_sql = ", ".join(f"{c} = :{c}" for c in set_cols)
-                if set_cols:
-                    update_params = {c: insert_values[c] for c in set_cols}
-                    update_params["integration_id"] = existing_id
-                    await db.execute(
-                        text(f"UPDATE core.business_integrations SET {set_sql} WHERE integration_id = :integration_id"),
-                        update_params,
-                    )
-                await db.commit()
-                int_id = existing_id
-            else:
-                # INSERT new record
-                int_id = uuid4().hex
-                insert_values["integration_id"] = int_id
-
-                col_names = [col for col in insert_values if col in int_cols]
-                param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
-                params = {col: insert_values[col] for col in param_cols}
-
-                if "created_ts" in int_cols and "created_ts" not in col_names:
-                    col_names.append("created_ts")
-                if "updated_ts" in int_cols and "updated_ts" not in col_names:
-                    col_names.append("updated_ts")
-
-                values_sql = ", ".join(
-                    "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
-                    for col in col_names
-                )
-                await db.execute(
-                    text(f"INSERT INTO core.business_integrations ({', '.join(col_names)}) VALUES ({values_sql})"),
-                    params,
-                )
-                await db.commit()
-
+            await db.execute(
+                text(f"INSERT INTO core.business_integrations ({', '.join(col_names)}) VALUES ({values_sql})"),
+                params,
+            )
+            await db.commit()
             if cid:
                 rows_fetched = await _fetch_integrations(db, integration_id=int_id)
                 if rows_fetched:
