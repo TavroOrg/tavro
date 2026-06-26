@@ -34,7 +34,7 @@ COPY enterprise/api/routers/audit.py                /enterprise/api/routers/audi
 COPY enterprise/api/llm.py                          /enterprise/api/llm.py
 
 COPY tavro/tavro_api/entrypoint.enterprise.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENV PYTHONPATH=/app
 
