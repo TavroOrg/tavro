@@ -83,10 +83,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
-ON core.business_applications (business_application_id);
+ON core.business_applications (tenant_id, company_id, business_application_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
-ON core.business_processes (business_process_id);
+ON core.business_processes (tenant_id, company_id, business_process_id);
 
 -- ux_core_columns removed: column_id is now the PRIMARY KEY
 
@@ -413,18 +413,6 @@ BEGIN
         ON core.agent_skills (tenant_id, skill_id, agent_id);
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_core_agent_business_applications_business_application'
-    ) THEN
-        ALTER TABLE core.agent_business_applications
-        ADD CONSTRAINT fk_core_agent_business_applications_business_application
-        FOREIGN KEY (business_application_id)
-        REFERENCES core.business_applications (business_application_id)
-        ON DELETE CASCADE;
-    END IF;
-
     -- Create helper function + triggers to populate tenant_id on insert when missing
     IF to_regclass('core.agents') IS NOT NULL THEN
         EXECUTE $ddl$
@@ -459,18 +447,6 @@ BEGIN
         END IF;
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_core_agent_business_processes_business_process'
-    ) THEN
-        ALTER TABLE core.agent_business_processes
-        ADD CONSTRAINT fk_core_agent_business_processes_business_process
-        FOREIGN KEY (business_process_id)
-        REFERENCES core.business_processes (business_process_id)
-        ON DELETE CASCADE;
-    END IF;
-
     IF to_regclass('core.agent_business_integrations') IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT 1
@@ -485,35 +461,12 @@ BEGIN
         END IF;
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_core_business_processes_parent'
-    ) THEN
-        ALTER TABLE core.business_processes
-        ADD CONSTRAINT fk_core_business_processes_parent
-        FOREIGN KEY (parent_process_id)
-        REFERENCES core.business_processes (business_process_id)
-        ON DELETE SET NULL;
-    END IF;
-
     IF to_regclass('core.ai_use_case_business_processes') IS NOT NULL THEN
         EXECUTE '
             CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_use_case_business_processes
             ON core.ai_use_case_business_processes (ai_use_case_id, business_process_id, tenant_id)
         ';
 
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conname = 'fk_core_ai_use_case_business_processes_business_process'
-        ) THEN
-            ALTER TABLE core.ai_use_case_business_processes
-            ADD CONSTRAINT fk_core_ai_use_case_business_processes_business_process
-            FOREIGN KEY (business_process_id)
-            REFERENCES core.business_processes (business_process_id)
-            ON DELETE CASCADE;
-        END IF;
     END IF;
 
     -- Drop and recreate unique indexes with new column name
@@ -616,17 +569,6 @@ BEGIN
             ON core.ai_use_case_business_applications (ai_use_case_id, business_application_id, tenant_id)
         ';
 
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conname = 'fk_core_ai_use_case_business_applications_business_application'
-        ) THEN
-            ALTER TABLE core.ai_use_case_business_applications
-            ADD CONSTRAINT fk_core_ai_use_case_business_applications_business_application
-            FOREIGN KEY (business_application_id)
-            REFERENCES core.business_applications (business_application_id)
-            ON DELETE CASCADE;
-        END IF;
     END IF;
 
     -- AI Models junction: ensure agent_name exists for display (additive).
@@ -676,12 +618,6 @@ BEGIN
             ADD CONSTRAINT fk_core_ai_model_business_applications_ai_model
             FOREIGN KEY (ai_model_id) REFERENCES core.ai_models (ai_model_id) ON DELETE CASCADE;
         END IF;
-        IF to_regclass('core.business_applications') IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_applications_application') THEN
-            ALTER TABLE core.ai_model_business_applications
-            ADD CONSTRAINT fk_core_ai_model_business_applications_application
-            FOREIGN KEY (business_application_id) REFERENCES core.business_applications (business_application_id) ON DELETE CASCADE;
-        END IF;
     END IF;
 
     -- AI Model <-> Business Process junction FKs.
@@ -691,12 +627,6 @@ BEGIN
             ALTER TABLE core.ai_model_business_processes
             ADD CONSTRAINT fk_core_ai_model_business_processes_ai_model
             FOREIGN KEY (ai_model_id) REFERENCES core.ai_models (ai_model_id) ON DELETE CASCADE;
-        END IF;
-        IF to_regclass('core.business_processes') IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_core_ai_model_business_processes_process') THEN
-            ALTER TABLE core.ai_model_business_processes
-            ADD CONSTRAINT fk_core_ai_model_business_processes_process
-            FOREIGN KEY (business_process_id) REFERENCES core.business_processes (business_process_id) ON DELETE CASCADE;
         END IF;
     END IF;
 

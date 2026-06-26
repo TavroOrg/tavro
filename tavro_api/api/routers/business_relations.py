@@ -2349,9 +2349,19 @@ async def _fetch_processes(
         if tenant_id and "tenant_id" in process_cols
         else ""
     )
+    process_tree_company_filter = (
+        "AND child.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
+        else ""
+    )
     parent_tenant_join = (
         "AND parent.tenant_id = bp.tenant_id"
         if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_company_join = (
+        "AND parent.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
         else ""
     )
     proc_rel_sql = f"""
@@ -2373,6 +2383,7 @@ async def _fetch_processes(
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
                   {process_tree_tenant_filter}
+                  {process_tree_company_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -2603,6 +2614,7 @@ async def _fetch_processes(
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
                {parent_tenant_join}
+               {parent_company_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
@@ -3292,6 +3304,40 @@ async def upload_applications_csv(
         raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
 
     app_cols = await _table_columns(db, "core", "business_applications")
+
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_names = [_text_or_none(r.get("application_name", "")) for r in all_rows]
+    csv_names = [n for n in csv_names if n]
+
+    seen: set[str] = set()
+    blocked_app_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_names:
+        key = n.lower()
+        if key in seen:
+            blocked_app_names.add(key)    # appears more than once in CSV
+        seen.add(key)
+
+    if csv_names:
+        name_params: dict = {f"n{i}": n for i, n in enumerate(csv_names)}
+        name_params["tid"] = tenant_id
+        if cid:
+            name_params["cid"] = cid
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_result = await db.execute(text(db_check_sql), name_params)
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_app_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
     uploaded_count = 0
     errors: list[str] = []
 
@@ -3299,6 +3345,10 @@ async def upload_applications_csv(
         app_name = _text_or_none(row.get("application_name", ""))
         if not app_name:
             errors.append("Skipped a row: application_name is required")
+            continue
+
+        if app_name.lower() in blocked_app_names:
+            errors.append(f"Skipped '{app_name}': already exists for this tenant/company or is duplicated in the CSV")
             continue
 
         app_id = uuid4().hex
@@ -3353,7 +3403,10 @@ async def upload_applications_csv(
 
         try:
             await db.execute(
-                text(f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"),
+                text(
+                    f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"
+                    f" ON CONFLICT (tenant_id, company_id, business_application_id) DO NOTHING"
+                ),
                 params,
             )
             await db.commit()
@@ -3723,6 +3776,41 @@ async def upload_processes_csv(
         raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
 
     proc_cols = await _table_columns(db, "core", "business_processes")
+
+    # ── Name uniqueness checks ────────────────────────────────────────────────
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_proc_names = [_text_or_none(r.get("process_name", "")) for r in all_rows]
+    csv_proc_names = [n for n in csv_proc_names if n]
+
+    seen_proc: set[str] = set()
+    blocked_proc_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_proc_names:
+        key = n.lower()
+        if key in seen_proc:
+            blocked_proc_names.add(key)    # appears more than once in CSV
+        seen_proc.add(key)
+
+    if csv_proc_names:
+        proc_name_params: dict = {f"n{i}": n for i, n in enumerate(csv_proc_names)}
+        proc_name_params["tid"] = tenant_id
+        if cid:
+            proc_name_params["cid"] = cid
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_proc_result = await db.execute(text(proc_db_check_sql), proc_name_params)
+        for (existing_lower,) in existing_proc_result.fetchall():
+            blocked_proc_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
     uploaded_count = 0
     errors: list[str] = []
     warnings: list[str] = []
@@ -3733,6 +3821,10 @@ async def upload_processes_csv(
         proc_name = _text_or_none(row.get("process_name", ""))
         if not proc_name:
             errors.append("Skipped a row: process_name is required")
+            continue
+
+        if proc_name.lower() in blocked_proc_names:
+            errors.append(f"Skipped '{proc_name}': already exists for this tenant/company or is duplicated in the CSV")
             continue
 
         proc_id = _text_or_none(row.get("business_process_id", "")) or uuid4().hex
@@ -3796,10 +3888,10 @@ async def upload_processes_csv(
         )
         upsert_sql = (
             f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
-            f" ON CONFLICT (business_process_id) DO UPDATE SET {conflict_set}"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO UPDATE SET {conflict_set}"
             if conflict_set else
             f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
-            f" ON CONFLICT (business_process_id) DO NOTHING"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO NOTHING"
         )
 
         try:
