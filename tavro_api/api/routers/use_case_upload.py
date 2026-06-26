@@ -21,10 +21,13 @@ POST /api/v1/use-cases/upload
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import uuid
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy import text
@@ -80,7 +83,7 @@ def _parse_cards_from_bytes(filename: str, content: bytes) -> list[dict]:
             if isinstance(item, dict):
                 cards.append(item)
             else:
-                print(f"[WARN] Skipping non-object item at index {i} in '{filename}'")
+                logger.warning("Skipping non-object item at index %d in '%s'", i, filename)
         return cards
 
     raise ValueError(f"Unsupported JSON structure in '{filename}': expected object or array")
@@ -321,7 +324,7 @@ async def upload_use_cases(
             errors.append(f"DB error for '{fields.get('name', '?')}': {e}")
 
     if errors:
-        print(f"[WARN] {len(errors)} card(s) had issues during upload: {errors[:3]}")
+        logger.warning("%d card(s) had issues during upload: %s", len(errors), errors[:3])
 
     if uploaded_count == 0 and all_cards:
         raise HTTPException(

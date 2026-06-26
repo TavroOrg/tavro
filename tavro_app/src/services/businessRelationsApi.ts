@@ -8,6 +8,7 @@ import type {
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
 
 export interface AgentTableRecord {
   table_id: string;
@@ -76,6 +77,24 @@ function authHeaders(): Record<string, string> {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
   };
+}
+
+async function reqFormData<T>(path: string, formData: FormData): Promise<T> {
+  const token = localStorage.getItem('tavro_access_token');
+  const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
+  const res = await fetch(`${V1}${path}`, {
+    method: 'POST',
+    body: formData,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+  }
+  return res.json();
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -226,6 +245,29 @@ class BusinessRelationsApi {
     });
   }
 
+  async uploadApplications(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }>(
+      `/applications/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business application${result.uploaded_count === 1 ? '' : 's'}`,
+      'emerald',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
+  }
+
   async listProcesses(search?: string, companyId?: string): Promise<BusinessProcessRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
@@ -268,6 +310,13 @@ class BusinessRelationsApi {
     });
   }
 
+  async suggestIntegrationDescription(integrationName: string): Promise<{ description: string }> {
+    return req('/integrations/suggest-description', {
+      method: 'POST',
+      body: JSON.stringify({ integration_name: integrationName }),
+    });
+  }
+
   async updateProcess(
     processId: string,
     payload: BusinessProcessUpsertPayload,
@@ -288,6 +337,29 @@ class BusinessRelationsApi {
     });
   }
 
+  async uploadProcesses(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[]; warnings: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[]; warnings: string[] }>(
+      `/processes/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business process${result.uploaded_count === 1 ? '' : 'es'}`,
+      'emerald',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
+  }
+  
   async getAgentRelations(agentId: string, companyId?: string): Promise<AgentRelationsPayload> {
     const params = new URLSearchParams();
     if (companyId) params.set('company_id', companyId);
@@ -321,7 +393,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -352,7 +424,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -383,7 +455,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }

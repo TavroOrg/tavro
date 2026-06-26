@@ -14,11 +14,14 @@ POST /api/v1/drive/import
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -174,7 +177,7 @@ def _process_agent_sync(card: dict, tenant_id: Optional[str]) -> bool:
             _save_agent_card(_strip_risk_fields(original))
         return success
     except Exception as exc:
-        print(f"[WARN] drive_import: agent processing failed: {exc}")
+        logger.warning("drive_import: agent processing failed: %s", exc)
         return False
 
 
@@ -241,22 +244,23 @@ async def import_from_drive(
                 embed_resp = await client.get(embed_url, headers=_BROWSER_HEADERS)
                 if embed_resp.status_code == 200:
                     all_file_entries = _extract_json_files_from_html(embed_resp.text)
-                    print(f"[INFO] drive_import: embeddedfolderview → {len(all_file_entries)} entries")
+                    logger.info("drive_import: embeddedfolderview → %d entries", len(all_file_entries))
             except Exception as exc:
-                print(f"[WARN] drive_import: embeddedfolderview fetch failed: {exc}")
+                logger.warning("drive_import: embeddedfolderview fetch failed: %s", exc)
 
             # Strategy B: regular folder page (fallback)
             if not all_file_entries:
                 all_file_entries = _extract_json_files_from_html(folder_resp.text)
-                print(f"[INFO] drive_import: folder page → {len(all_file_entries)} entries")
+                logger.info("drive_import: folder page → %d entries", len(all_file_entries))
 
                 if not all_file_entries:
-                    print(
-                        f"[WARN] drive_import: no file IDs found. "
-                        f"HTML len={len(folder_resp.text)}, "
-                        f"has AF_initDataCallback={'AF_initDataCallback' in folder_resp.text}, "
-                        f"has /file/d/={'/file/d/' in folder_resp.text}, "
-                        f"has data-id={'data-id=' in folder_resp.text}"
+                    logger.warning(
+                        "drive_import: no file IDs found. "
+                        "HTML len=%d, has AF_initDataCallback=%s, has /file/d/=%s, has data-id=%s",
+                        len(folder_resp.text),
+                        'AF_initDataCallback' in folder_resp.text,
+                        '/file/d/' in folder_resp.text,
+                        'data-id=' in folder_resp.text,
                     )
     except HTTPException:
         raise
@@ -454,7 +458,7 @@ async def import_from_drive(
     # ── 5. Build response ──────────────────────────────────────────────────────
     all_errors = download_errors + agent_errors + uc_errors
     if all_errors:
-        print(f"[WARN] drive_import: {len(all_errors)} error(s): {all_errors[:3]}")
+        logger.warning("drive_import: %d error(s): %s", len(all_errors), all_errors[:3])
 
     total_imported = agents_imported + use_cases_imported
     if total_imported == 0 and (agent_cards or use_case_cards):

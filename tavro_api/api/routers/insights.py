@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import CORE, _require_tenant
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -616,7 +617,7 @@ async def get_insights_summary(
         agent_rows = [dict(r) for r in (await db.execute(text(agent_sql), params)).mappings().all()]
         uc_rows = [dict(r) for r in (await db.execute(text(usecase_sql), params)).mappings().all()]
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     total_agents = len(agent_rows)
 

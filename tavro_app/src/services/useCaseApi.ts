@@ -1,6 +1,7 @@
 import { getValidToken } from './auth';
 import { portalActivity } from './portalActivity';
 import { appLogger } from './logger';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -18,7 +19,7 @@ async function reqFormData<T>(path: string, formData: FormData): Promise<T> {
     });
     if (!res.ok) {
         const body = await res.text();
-        throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(parseApiError(res.status, body));
     }
     return res.json();
 }
@@ -37,7 +38,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
     if (!res.ok) {
         const body = await res.text();
-        throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(parseApiError(res.status, body));
     }
     return res.json();
 }
@@ -64,6 +65,29 @@ export interface UseCaseUpdatePayload {
     priority?: string;
     solution_approach?: string;
     use_case_owner?: string;
+    // Prioritization scores
+    business_value_score?: number;
+    business_value_override?: boolean;
+    business_value_override_reason?: string;
+    data_readiness_score?: number;
+    data_readiness_override?: boolean;
+    data_readiness_override_reason?: string;
+    technical_complexity_score?: number;
+    technical_complexity_override?: boolean;
+    technical_complexity_override_reason?: string;
+    risk_data_privacy_score?: number;
+    risk_operational_score?: number;
+    risk_compliance_score?: number;
+    risk_ai_behavioral_score?: number;
+    risk_strategic_reputational_score?: number;
+    risk_composite_score?: number;
+    priority_score?: number;
+    quadrant?: string;
+    time_horizon?: string;
+    time_horizon_rationale?: string;
+    roadmap_approved?: boolean;
+    scoring_history_entry?: Record<string, unknown>;
+    scoring_history_entries?: Record<string, unknown>[];
 }
 
 function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
@@ -253,7 +277,7 @@ class UseCaseApiService {
         });
         if (!res.ok) {
             const body = await res.text();
-            throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+            throw new Error(parseApiError(res.status, body));
         }
         return res.blob();
     }

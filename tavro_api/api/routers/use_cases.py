@@ -1,23 +1,29 @@
 from __future__ import annotations
 import json
+import logging
 import os
 import base64
 import re
+
+_logger = logging.getLogger(__name__)
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB as PgJSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
 from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
 CORE = os.getenv("CORE_DB_NAME", "core")
+RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
 _PRIORITY_MAP: Dict[str, str] = {
     "1": "1 - Critical", "critical": "1 - Critical",
@@ -52,6 +58,144 @@ def _norm_id(value: str) -> str:
     return (value or "").strip()
 
 
+def _art_from_are(are: float) -> str:
+    if are >= 9.0:
+        return "Critical"
+    if are >= 7.0:
+        return "High"
+    if are >= 3.0:
+        return "Medium"
+    return "Low"
+
+
+async def _refresh_use_case_rollup(db: AsyncSession, use_case_id: str, tenant_id: Optional[str]) -> int:
+    relation_tenant_filter = (
+        "AND (rel.tenant_id = :tid OR rel.tenant_id IS NULL OR rel.tenant_id = '' OR rel.tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+    use_case_tenant_filter = (
+        "AND (tenant_id = :tid OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')"
+        if tenant_id
+        else ""
+    )
+
+    count_row = await db.execute(
+        text(
+            f"""
+            SELECT COUNT(DISTINCT rel.agent_id)::int AS link_count
+            FROM {CORE}.agent_ai_use_cases rel
+            WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+              AND rel.agent_id IS NOT NULL
+              AND rel.agent_id <> ''
+              {relation_tenant_filter}
+            """
+        ),
+        {"uid": use_case_id, "tid": tenant_id},
+    )
+    associated_count = int(count_row.scalar() or 0)
+
+    risk_table = (
+        await db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": f"{CORE}.agent_risk_assessments"})
+    ).scalar()
+    max_brs = 0.0
+    worst_internal_id = None
+    if risk_table:
+        risk_row = await db.execute(
+            text(
+                f"""
+                SELECT brs.agent_internal_id, brs.blended_risk_score
+                FROM {CORE}.agent_ai_use_cases rel
+                JOIN LATERAL (
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    FROM {CORE}.agent_risk_assessments ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = rel.agent_id
+                        OR (
+                            rel.agent_internal_id IS NOT NULL
+                            AND rel.agent_internal_id <> ''
+                            AND ara.agent_internal_id = rel.agent_internal_id
+                        )
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+                  AND rel.agent_id IS NOT NULL
+                  AND rel.agent_id <> ''
+                  {relation_tenant_filter}
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
+                """
+            ),
+            {"uid": use_case_id, "tid": tenant_id},
+        )
+        worst_row = risk_row.mappings().first()
+        if worst_row:
+            max_brs = float(worst_row.get("blended_risk_score") or 0.0)
+            worst_internal_id = worst_row.get("agent_internal_id")
+
+    inherent_class = ""
+    inherent_score = 0.0
+    residual_class = ""
+    residual_score = 0.0
+    if worst_internal_id:
+        rc_rows = await db.execute(
+            text(
+                f"""
+                SELECT type_of_risk, risk_classification, risk_classification_score
+                FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                WHERE agent_internal_id = :aid
+                  AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                ORDER BY created_ts DESC NULLS LAST
+                """
+            ),
+            {"aid": worst_internal_id},
+        )
+        for rc_row in rc_rows.mappings():
+            tor = rc_row.get("type_of_risk")
+            if tor == "Inherent Risk" and not inherent_class:
+                inherent_class = rc_row.get("risk_classification") or ""
+                inherent_score = float(rc_row.get("risk_classification_score") or 0.0)
+            elif tor == "Residual Risk" and not residual_class:
+                residual_class = rc_row.get("risk_classification") or ""
+                residual_score = float(rc_row.get("risk_classification_score") or 0.0)
+
+    are = round(max_brs, 2)
+    art = _art_from_are(are) if associated_count > 0 else "None"
+
+    await db.execute(
+        text(
+            f"""
+            UPDATE {CORE}.ai_use_cases
+            SET
+                no_of_associated_agents = :cnt,
+                blended_risk_score = :max_brs,
+                agent_risk_exposure_are = :are,
+                agent_risk_tier_art = :art,
+                inherent_risk_classification = :inherent_class,
+                inherent_risk_classification_score = :inherent_score,
+                residual_risk_classification = :residual_class,
+                residual_risk_classification_score = :residual_score,
+                updated_ts = CURRENT_TIMESTAMP
+            WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
+              {use_case_tenant_filter}
+            """
+        ),
+        {
+            "cnt": associated_count, "max_brs": max_brs, "are": are, "art": art,
+            "inherent_class": inherent_class, "inherent_score": inherent_score,
+            "residual_class": residual_class, "residual_score": residual_score,
+            "uid": use_case_id, "tid": tenant_id,
+        },
+    )
+    return associated_count
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -77,6 +221,29 @@ class UseCaseUpdateRequest(BaseModel):
     priority: Optional[str] = None
     solution_approach: Optional[str] = None
     use_case_owner: Optional[str] = None
+    # Prioritization scores
+    business_value_score: Optional[int] = None
+    business_value_override: Optional[bool] = None
+    business_value_override_reason: Optional[str] = None
+    data_readiness_score: Optional[int] = None
+    data_readiness_override: Optional[bool] = None
+    data_readiness_override_reason: Optional[str] = None
+    technical_complexity_score: Optional[int] = None
+    technical_complexity_override: Optional[bool] = None
+    technical_complexity_override_reason: Optional[str] = None
+    risk_data_privacy_score: Optional[int] = None
+    risk_operational_score: Optional[int] = None
+    risk_compliance_score: Optional[int] = None
+    risk_ai_behavioral_score: Optional[int] = None
+    risk_strategic_reputational_score: Optional[int] = None
+    risk_composite_score: Optional[float] = None
+    priority_score: Optional[float] = None
+    quadrant: Optional[str] = None
+    time_horizon: Optional[str] = None
+    time_horizon_rationale: Optional[str] = None
+    roadmap_approved: Optional[bool] = None
+    scoring_history_entry: Optional[Dict[str, Any]] = None
+    scoring_history_entries: Optional[List[Dict[str, Any]]] = None
 
 
 class LinkAgentRequest(BaseModel):
@@ -156,7 +323,8 @@ Return ONLY the JSON object with the "description" field."""
     try:
         parsed = json.loads(_extract_json(raw))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestUseCaseDescriptionResponse(
         description=str(parsed.get("description", "")).strip(),
@@ -278,6 +446,18 @@ async def list_use_cases(
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
+                        u.function,
+                        u.business_value_score        AS pv_business_value_score,
+                        u.data_readiness_score        AS pv_data_readiness_score,
+                        u.technical_complexity_score  AS pv_technical_complexity_score,
+                        u.risk_data_privacy_score,
+                        u.risk_operational_score,
+                        u.risk_compliance_score,
+                        u.risk_ai_behavioral_score,
+                        u.risk_strategic_reputational_score,
+                        u.risk_composite_score,
+                        u.priority_score,
+                        u.quadrant,
                         ROW_NUMBER() OVER (ORDER BY u.created_ts DESC) AS rn,
                         COUNT(*) OVER () AS total_records
                     FROM {CORE}.ai_use_cases u
@@ -295,7 +475,7 @@ async def list_use_cases(
         return {"start_record": start, "end_record": end, "record_count": len(data),
                 "total_records": total, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +526,7 @@ async def create_use_case(
         return {"message": "AI Use Case registered successfully.", "use_case_id": use_case_id}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -395,18 +575,44 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
     application_entity_tenant_filter = "AND ba.tenant_id = :tid" if tenant_id else ""
     model_entity_tenant_filter = "AND m.tenant_id = :tid" if tenant_id else ""
     try:
+        await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
+        await db.commit()
+
         result = await db.execute(
             text(f"""
                 SELECT
                     u.ai_use_case_id AS identifier,
                     u.ai_use_case_id,
                     u.name, u.description, u.owner,
+                    u.function,
                     u.problem_statement, u.expected_benefits, u.priority,
                     u.status, u.solution_approach, u.created_ts, u.updated_ts,
                     u.agent_risk_exposure_are, u.no_of_associated_agents,
+                    u.blended_risk_score,
                     u.inherent_risk_classification, u.residual_risk_classification,
                     u.inherent_risk_classification_score, u.residual_risk_classification_score,
-                    u.agent_risk_tier_art
+                    u.agent_risk_tier_art,
+                    u.business_value_score        AS pv_business_value_score,
+                    u.business_value_override,
+                    u.business_value_override_reason,
+                    u.data_readiness_score        AS pv_data_readiness_score,
+                    u.data_readiness_override,
+                    u.data_readiness_override_reason,
+                    u.technical_complexity_score  AS pv_technical_complexity_score,
+                    u.technical_complexity_override,
+                    u.technical_complexity_override_reason,
+                    u.risk_data_privacy_score,
+                    u.risk_operational_score,
+                    u.risk_compliance_score,
+                    u.risk_ai_behavioral_score,
+                    u.risk_strategic_reputational_score,
+                    u.risk_composite_score,
+                    u.priority_score,
+                    u.quadrant,
+                    u.time_horizon,
+                    u.time_horizon_rationale,
+                    u.roadmap_approved,
+                    u.scoring_history
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
@@ -575,7 +781,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -617,17 +823,115 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
             sets.append("owner = :owner")
             params["owner"] = body.use_case_owner.strip()
 
+        # Prioritization scores
+        if body.business_value_score is not None:
+            sets.append("business_value_score = :bv_score")
+            params["bv_score"] = body.business_value_score
+        if body.business_value_override is not None:
+            sets.append("business_value_override = :bv_override")
+            params["bv_override"] = body.business_value_override
+        if body.business_value_override_reason is not None:
+            sets.append("business_value_override_reason = :bv_override_reason")
+            params["bv_override_reason"] = body.business_value_override_reason
+        if body.data_readiness_score is not None:
+            sets.append("data_readiness_score = :dr_score")
+            params["dr_score"] = body.data_readiness_score
+        if body.data_readiness_override is not None:
+            sets.append("data_readiness_override = :dr_override")
+            params["dr_override"] = body.data_readiness_override
+        if body.data_readiness_override_reason is not None:
+            sets.append("data_readiness_override_reason = :dr_override_reason")
+            params["dr_override_reason"] = body.data_readiness_override_reason
+        if body.technical_complexity_score is not None:
+            sets.append("technical_complexity_score = :tc_score")
+            params["tc_score"] = body.technical_complexity_score
+        if body.technical_complexity_override is not None:
+            sets.append("technical_complexity_override = :tc_override")
+            params["tc_override"] = body.technical_complexity_override
+        if body.technical_complexity_override_reason is not None:
+            sets.append("technical_complexity_override_reason = :tc_override_reason")
+            params["tc_override_reason"] = body.technical_complexity_override_reason
+        if body.risk_data_privacy_score is not None:
+            sets.append("risk_data_privacy_score = :r_dp")
+            params["r_dp"] = body.risk_data_privacy_score
+        if body.risk_operational_score is not None:
+            sets.append("risk_operational_score = :r_op")
+            params["r_op"] = body.risk_operational_score
+        if body.risk_compliance_score is not None:
+            sets.append("risk_compliance_score = :r_co")
+            params["r_co"] = body.risk_compliance_score
+        if body.risk_ai_behavioral_score is not None:
+            sets.append("risk_ai_behavioral_score = :r_ai")
+            params["r_ai"] = body.risk_ai_behavioral_score
+        if body.risk_strategic_reputational_score is not None:
+            sets.append("risk_strategic_reputational_score = :r_sr")
+            params["r_sr"] = body.risk_strategic_reputational_score
+        if body.risk_composite_score is not None:
+            sets.append("risk_composite_score = :risk_composite")
+            params["risk_composite"] = body.risk_composite_score
+        if body.priority_score is not None:
+            sets.append("priority_score = :prio_score")
+            params["prio_score"] = body.priority_score
+        if body.quadrant is not None:
+            sets.append("quadrant = :quadrant")
+            params["quadrant"] = body.quadrant
+        if body.time_horizon is not None:
+            sets.append("time_horizon = :time_horizon")
+            params["time_horizon"] = body.time_horizon
+        if body.time_horizon_rationale is not None:
+            sets.append("time_horizon_rationale = :th_rationale")
+            params["th_rationale"] = body.time_horizon_rationale
+        if body.roadmap_approved is not None:
+            sets.append("roadmap_approved = :roadmap_approved")
+            params["roadmap_approved"] = body.roadmap_approved
         await db.execute(
             text(f"UPDATE {CORE}.ai_use_cases SET {', '.join(sets)} WHERE ai_use_case_id = :uid"),
             params,
         )
         await db.commit()
+
+        # Append scoring history entries in a separate best-effort operation so
+        # that any JSONB handling failure never rolls back the score field saves above.
+        history_entries = []
+        if body.scoring_history_entry is not None:
+            history_entries.append(body.scoring_history_entry)
+        if body.scoring_history_entries:
+            history_entries.extend(body.scoring_history_entries)
+        if history_entries:
+            try:
+                # Fetch current history so we can do the append in Python, avoiding
+                # asyncpg JSONB parameter-binding ambiguity entirely.
+                sel = await db.execute(
+                    text(f"SELECT scoring_history FROM {CORE}.ai_use_cases WHERE ai_use_case_id = :uid"),
+                    {"uid": use_case_id},
+                )
+                row = sel.first()
+                current = row[0] if (row and row[0] is not None) else []
+                if not isinstance(current, list):
+                    try:
+                        current = json.loads(current)
+                    except Exception:
+                        current = []
+                new_history = current + history_entries
+                # Use bindparam(type_=PgJSONB) so SQLAlchemy explicitly types the parameter
+                # as JSONB and asyncpg encodes the Python list directly — no ::jsonb cast
+                # ambiguity in the SQL string.
+                stmt = text(
+                    f"UPDATE {CORE}.ai_use_cases "
+                    f"SET scoring_history = :new_history "
+                    f"WHERE ai_use_case_id = :uid"
+                ).bindparams(bindparam("new_history", type_=PgJSONB))
+                await db.execute(stmt, {"uid": use_case_id, "new_history": new_history})
+                await db.commit()
+            except Exception:
+                await db.rollback()
+
         return {"message": "AI Use Case updated successfully.", "use_case_id": use_case_id}
     except HTTPException:
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +979,7 @@ async def delete_use_case(use_case_id: str, db: AsyncSession = Depends(get_db)):
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -738,19 +1042,9 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             {"uid": normalized_use_case_id, "aid": agent_id, "tid": tenant_id},
         )
         if dup.first():
-            cnt = await db.execute(
-                text(
-                    f"""
-                    SELECT COUNT(DISTINCT rel.agent_id)
-                    FROM {CORE}.agent_ai_use_cases rel
-                    WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                      AND rel.agent_id IS NOT NULL
-                      {relation_tenant_filter}
-                    """
-                ),
-                {"uid": normalized_use_case_id, "tid": tenant_id},
-            )
-            return {"message": "Relationship already exists", "associated_count": cnt.scalar() or 0}
+            associated_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
+            await db.commit()
+            return {"message": "Relationship already exists", "associated_count": associated_count}
 
         await db.execute(
             text(
@@ -778,38 +1072,14 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
             },
         )
 
-        cnt_row = await db.execute(
-            text(
-                f"""
-                SELECT COUNT(DISTINCT rel.agent_id)
-                FROM {CORE}.agent_ai_use_cases rel
-                WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
-                  AND rel.agent_id IS NOT NULL
-                  {relation_tenant_filter}
-                """
-            ),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
-        )
-        new_count = int(cnt_row.scalar() or 0)
-
-        await db.execute(
-            text(
-                f"""
-                UPDATE {CORE}.ai_use_cases
-                SET no_of_associated_agents = :cnt, updated_ts = CURRENT_TIMESTAMP
-                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
-                  {use_case_tenant_filter.replace('u.', '')}
-                """
-            ),
-            {"cnt": new_count, "uid": normalized_use_case_id, "tid": tenant_id},
-        )
+        new_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
         await db.commit()
         return {"message": "Relationship synchronized", "associated_count": new_count}
     except HTTPException:
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -877,18 +1147,7 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
             ),
             {"uid": normalized_use_case_id, "aid": agent_id, "tid": tenant_id},
         )
-        new_count = max(len(linked_ids) - 1, 0)
-        await db.execute(
-            text(
-                f"""
-                UPDATE {CORE}.ai_use_cases
-                SET no_of_associated_agents = :cnt, updated_ts = CURRENT_TIMESTAMP
-                WHERE LOWER(TRIM(ai_use_case_id)) = LOWER(TRIM(:uid))
-                  {use_case_tenant_filter}
-                """
-            ),
-            {"cnt": new_count, "uid": normalized_use_case_id, "tid": tenant_id},
-        )
+        new_count = await _refresh_use_case_rollup(db, normalized_use_case_id, tenant_id)
 
         await db.commit()
         return {"message": "Relationship removed", "associated_count": new_count}
@@ -896,7 +1155,7 @@ async def unlink_agent(use_case_id: str, agent_id: str, request: Request, db: As
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1000,7 +1259,7 @@ async def link_application(use_case_id: str, body: LinkApplicationRequest, reque
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1122,7 +1381,7 @@ async def unlink_application(use_case_id: str, application_id: str, request: Req
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1225,7 +1484,7 @@ async def link_process(use_case_id: str, body: LinkProcessRequest, request: Requ
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1348,7 +1607,7 @@ async def unlink_process(use_case_id: str, process_id: str, request: Request, db
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 # ---------------------------------------------------------------------------
 # Attachments

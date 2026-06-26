@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { createPortal } from 'react-dom';
 import {
   Zap,
@@ -636,7 +637,7 @@ const IdeaModal: React.FC<{
       // Step 4: Navigate to the newly created use case
       navigate(`/use-case/${encodeURIComponent(useCaseId)}`);
     } catch (err) {
-      setConvertError(err instanceof Error ? err.message : 'Failed to create use case');
+      setConvertError(toUserMessage(err));
       setConverting(false);
     }
   };
@@ -888,7 +889,7 @@ const SparkPage: React.FC = () => {
         ? { ...idea, user_reaction: previousReaction, popularity_score: previousPopularity }
         : idea
       ));
-      setError(err instanceof Error ? err.message : 'Failed to save idea reaction');
+      setError(toUserMessage(err));
     }
   };
 
@@ -910,7 +911,7 @@ const SparkPage: React.FC = () => {
         syncPersistedMetrics(data, true);
         setHasLibrary(data.length > 0);
       })
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ideas'))
+      .catch(err => setError(toUserMessage(err)))
       .finally(() => setLoading(false));
   }, [companyId, syncPersistedMetrics]);
 
@@ -966,7 +967,7 @@ const SparkPage: React.FC = () => {
         portalActivity.record(`Generated ${generatedCount} Spark idea${generatedCount === 1 ? '' : 's'}`, 'emerald');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate ideas');
+      setError(toUserMessage(err));
     } finally {
       setGenerating(false);
     }
@@ -1011,7 +1012,7 @@ const SparkPage: React.FC = () => {
       setHasLibrary(remaining.length > 0);
       exitSelectMode();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete ideas');
+      setError(toUserMessage(err));
     } finally {
       setDeleting(false);
     }
@@ -1043,7 +1044,7 @@ const SparkPage: React.FC = () => {
       setSelectedIdea(prev => prev?.idea_id === ideaId ? null : prev);
       setHasLibrary(remaining.length > 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete idea');
+      setError(toUserMessage(err));
     } finally {
       setDeletingIds(prev => {
         const next = new Set(prev);
@@ -1098,7 +1099,7 @@ const SparkPage: React.FC = () => {
     setError(null);
     sparkApi.getIdeas(companyId, search || undefined)
       .then(data => { setIdeas(data); setHasLibrary(data.length > 0); })
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to refresh'))
+      .catch(err => setError(toUserMessage(err)))
       .finally(() => setLoading(false));
   }, [companyId, search]);
 

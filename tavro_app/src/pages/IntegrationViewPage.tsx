@@ -8,8 +8,10 @@ import {
   Loader2,
   Pencil,
   PlusCircle,
+  RefreshCw,
   Save,
   Search,
+  Sparkles,
   Trash2,
   Unlink2,
   XCircle,
@@ -18,10 +20,12 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import { agentApi } from '../services/agentApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCatalog } from '../context/CatalogContext';
+import { mcpClient } from '../services/mcpClient';
 import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import { toUserMessage } from '../utils/errorUtils';
 
 type Tab = 'overview' | 'related';
 type Option = { label: string; value: string };
@@ -60,6 +64,20 @@ const AVAILABILITY_STATUS_OPTIONS: Option[] = [
   { label: 'Unknown', value: 'Unknown' },
 ];
 
+const INT_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const INT_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
+];
+
 interface IntegrationFormState {
   integration_name: string;
   integration_description: string;
@@ -75,6 +93,8 @@ interface IntegrationFormState {
   sla: string;
   version: string;
   parent_application_id: string;
+  business_criticality: string;
+  emergency_tier: string;
 }
 
 type IntegrationInlineField =
@@ -91,7 +111,9 @@ type IntegrationInlineField =
   | 'data_sensitivity'
   | 'availability_status'
   | 'sla'
-  | 'parent_application_id';
+  | 'parent_application_id'
+  | 'business_criticality'
+  | 'emergency_tier';
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -122,6 +144,8 @@ const emptyForm = (): IntegrationFormState => ({
   sla: '',
   version: '',
   parent_application_id: '',
+  business_criticality: '',
+  emergency_tier: '',
 });
 
 const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => ({
@@ -139,6 +163,8 @@ const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => (
   sla: toText(item.sla),
   version: toText(item.version),
   parent_application_id: toText(item.parent_application_id),
+  business_criticality: toText(item.business_criticality),
+  emergency_tier: toText(item.emergency_tier),
 });
 
 const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertPayload => ({
@@ -156,6 +182,8 @@ const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertP
   sla: toNullable(form.sla),
   version: toNullable(form.version),
   parent_application_id: toNullable(form.parent_application_id),
+  business_criticality: toNullable(form.business_criticality),
+  emergency_tier: toNullable(form.emergency_tier),
 });
 
 const changedIntegrationPayload = (
@@ -167,7 +195,7 @@ const changedIntegrationPayload = (
   const changed: IntegrationUpsertPayload = {};
   (Object.keys(nextPayload) as Array<keyof IntegrationUpsertPayload>).forEach(key => {
     if (nextPayload[key] !== currentPayload[key]) {
-      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+      Object.assign(changed, { [key]: nextPayload[key] ?? null });
     }
   });
   return changed;
@@ -210,6 +238,9 @@ const IntegrationViewPage: React.FC = () => {
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
   const [form, setForm] = useState<IntegrationFormState>(emptyForm);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -224,6 +255,7 @@ const IntegrationViewPage: React.FC = () => {
   const [searchAgents, setSearchAgents] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   const load = async () => {
     if (!id || isCreateMode) return;
@@ -233,9 +265,10 @@ const IntegrationViewPage: React.FC = () => {
       const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
       setIntegration(data);
       setForm(formFromIntegration(data));
+      setTags(Array.isArray(data.tags) ? data.tags : []);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load integration');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -245,6 +278,7 @@ const IntegrationViewPage: React.FC = () => {
     if (isCreateMode) {
       setIntegration(null);
       setForm(emptyForm());
+      setTags([]);
       setEditing(true);
       setAttemptedSave(false);
       setLoading(false);
@@ -255,6 +289,18 @@ const IntegrationViewPage: React.FC = () => {
     setEditing(false);
     load();
   }, [id, isCreateMode]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = () => {
+      mcpClient.invalidateCache();
+      load();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing]);
 
   const relatedAgentCount = useMemo(
     () => integration?.related_agents?.length ?? 0,
@@ -299,7 +345,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -313,7 +359,7 @@ const IntegrationViewPage: React.FC = () => {
       await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -361,10 +407,11 @@ const IntegrationViewPage: React.FC = () => {
       );
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -449,6 +496,25 @@ const IntegrationViewPage: React.FC = () => {
 
   // ── Bulk save / cancel ─────────────────────────────────────────────────────
 
+  const handleSuggestDescription = async () => {
+    if (!form.integration_name.trim()) {
+      setActionError('Integration Name is required before generating the description.');
+      return;
+    }
+    setGeneratingDescription(true);
+    setActionError(null);
+    try {
+      const result = await businessRelationsApi.suggestIntegrationDescription(form.integration_name.trim());
+      if (result.description) {
+        setField('integration_description', result.description);
+      }
+    } catch (err: any) {
+      setActionError(toUserMessage(err));
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const handleSave = async () => {
     setAttemptedSave(true);
     if (isNameMissing) {
@@ -461,6 +527,7 @@ const IntegrationViewPage: React.FC = () => {
     try {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
+        if (tags.length > 0) payload.tags = tags;
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         if (linkAgentId) {
@@ -485,10 +552,11 @@ const IntegrationViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateIntegration(integration.integration_id, changedPayload, activeCompany?.id);
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
       setAttemptedSave(false);
       setEditing(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -516,7 +584,7 @@ const IntegrationViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/integrations');
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -717,13 +785,34 @@ const IntegrationViewPage: React.FC = () => {
               </div>
 
               <div className="md:col-span-2 flex flex-col gap-1.5">
-                <HintLabel label="Integration Description" />
+                <div className="flex items-center justify-between">
+                  <HintLabel label="Integration Description" />
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={handleSuggestDescription}
+                      disabled={generatingDescription || !form.integration_name.trim()}
+                      title={form.integration_name.trim() ? 'Generate description with AI' : 'Enter an integration name first'}
+                      className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                        generatingDescription
+                          ? 'bg-violet-50 border-violet-200 text-violet-500 cursor-wait'
+                          : form.integration_name.trim()
+                            ? 'bg-violet-50 border-violet-200 text-violet-600 hover:bg-violet-100 hover:border-violet-300'
+                            : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                      }`}
+                    >
+                      {generatingDescription ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                      {generatingDescription ? 'Generating...' : 'AI assist'}
+                    </button>
+                  )}
+                </div>
                 {editing ? (
                   <textarea
                     value={form.integration_description}
                     onChange={(e) => setField('integration_description', e.target.value)}
                     rows={3}
-                    className={textAreaCls}
+                    className={`${textAreaCls} ${generatingDescription ? 'opacity-50' : ''}`}
+                    disabled={generatingDescription}
                   />
                 ) : (
                   renderInlineEditable('integration_description', form.integration_description || 'N/A', {
@@ -731,6 +820,56 @@ const IntegrationViewPage: React.FC = () => {
                     className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap',
                   })
                 )}
+              </div>
+              <div className="flex flex-col gap-1.5 col-span-full">
+                <HintLabel label="Tags" />
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[32px] bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+                  {tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-semibold bg-white text-slate-600 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                      {tag}
+                      <button
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={async () => {
+                          const next = tags.filter(t => t !== tag);
+                          if (isCreateMode) { setTags(next); return; }
+                          if (!integration) return;
+                          setTagSaving(true);
+                          try {
+                            const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { tags: next }, activeCompany?.id);
+                            setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                          } catch { setTags(next); }
+                          finally { setTagSaving(false); }
+                        }}
+                        className="text-slate-400 hover:text-red-400 leading-none ml-0.5"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={async e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const newTag = tagInput.trim().replace(/,$/, '');
+                        if (!newTag || tags.includes(newTag)) { setTagInput(''); return; }
+                        const next = [...tags, newTag];
+                        setTagInput('');
+                        if (isCreateMode) { setTags(next); return; }
+                        setTagSaving(true);
+                        try {
+                          const updated = await businessRelationsApi.updateIntegration(integration!.integration_id, { tags: next }, activeCompany?.id);
+                          setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                        } catch { setTags(next); }
+                        finally { setTagSaving(false); }
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter…"
+                    disabled={tagSaving}
+                    className="text-[11px] bg-transparent outline-none text-slate-500 placeholder:text-slate-300 min-w-[60px]"
+                  />
+                </div>
               </div>
             </div>
           </Section>
@@ -755,6 +894,63 @@ const IntegrationViewPage: React.FC = () => {
                   className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap',
                 })
               )}
+            </div>
+          </Section>
+
+          <Section title="Agent Risk Exposure">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Business Criticality" hint="Business Criticality defines how vital the integration is to core operations." />
+                {editing ? (
+                  <select value={form.business_criticality} onChange={(e) => setField('business_criticality', e.target.value)} className={inputCls}>
+                    {INT_BUSINESS_CRITICALITY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('business_criticality', form.business_criticality || 'N/A', { kind: 'select', options: INT_BUSINESS_CRITICALITY_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Emergency Tier" hint="The Emergency Tier categorizes an integration's crisis criticality to prioritize recovery execution order." />
+                {editing ? (
+                  <select value={form.emergency_tier} onChange={(e) => setField('emergency_tier', e.target.value)} className={inputCls}>
+                    {INT_EMERGENCY_TIER_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('emergency_tier', form.emergency_tier || 'N/A', { kind: 'select', options: INT_EMERGENCY_TIER_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Agent Risk Exposure (ARE)" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.agent_risk_exposure ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Agent Risk Tier (ART)" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Blended Risk Score" hint="The highest current blended risk score across agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.blended_risk_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="# Of Associated Agents" hint="Indicates the total number of agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.num_of_associated_agents ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.inherent_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.inherent_risk_classification_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.residual_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.residual_risk_classification_score ?? 0)}</p>
+              </div>
             </div>
           </Section>
 

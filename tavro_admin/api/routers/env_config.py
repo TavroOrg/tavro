@@ -64,6 +64,11 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
         "base_url": "GITHUB_MCP_BASE_URL",
         "token":    "GITHUB_MCP_TOKEN",
     },
+    "aict_inbound": {
+        "instance_url": "AICT_INSTANCE_URL",
+        "username":     "AICT_USERNAME",
+        "password":     "AICT_PASSWORD",
+    },
 }
 
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import UseCaseView from '../components/UseCaseView';
@@ -273,12 +274,23 @@ const mergeUseCaseWithRestDetail = (
   const linkedAgents = normalizeUseCaseAgents(
     row.of_associated_agents ?? row.agents ?? [],
   );
+  const restRiskFields = {
+    agent_risk_exposure_are: row.agent_risk_exposure_are ?? (base as any)?.agent_risk_exposure_are,
+    no_of_associated_agents: row.no_of_associated_agents ?? (base as any)?.no_of_associated_agents,
+    blended_risk_score: row.blended_risk_score ?? (base as any)?.blended_risk_score,
+    inherent_risk_classification: row.inherent_risk_classification ?? (base as any)?.inherent_risk_classification,
+    inherent_risk_classification_score: row.inherent_risk_classification_score ?? (base as any)?.inherent_risk_classification_score,
+    residual_risk_classification: row.residual_risk_classification ?? (base as any)?.residual_risk_classification,
+    residual_risk_classification_score: row.residual_risk_classification_score ?? (base as any)?.residual_risk_classification_score,
+    agent_risk_tier_art: row.agent_risk_tier_art ?? (base as any)?.agent_risk_tier_art,
+  };
 
   const linkedAiModels = normalizeUseCaseAiModels(row.of_associated_ai_models ?? row.ai_models ?? []);
 
   if (base) {
     return {
       ...base,
+      ...restRiskFields,
       solution_approach: row.solution_approach ?? (base as any).solution_approach ?? null,
       created_ts: row.created_ts ?? (base as any).created_ts ?? null,
       updated_ts: row.updated_ts ?? (base as any).updated_ts ?? null,
@@ -291,6 +303,7 @@ const mergeUseCaseWithRestDetail = (
   }
 
   return {
+    ...row,
     identifier: String(row.identifier ?? row.use_case_id ?? row.id ?? fallbackId),
     name: String(row.name ?? row.title ?? 'Unnamed Use Case'),
     description: row.description ?? null,
@@ -308,6 +321,7 @@ const mergeUseCaseWithRestDetail = (
     business_processes: linkedProcesses,
     of_associated_ai_models: linkedAiModels,
     ai_models: linkedAiModels,
+    ...restRiskFields,
   } as UseCaseDetail;
 };
 
@@ -429,7 +443,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingLinks(prev => prev.filter(a => (a.identification?.agent_id || a.name) !== aId));
-      setRelationError(err.message || 'Failed to link agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -447,7 +461,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingUnlinkIds(prev => { const next = new Set(prev); next.delete(linkedAgentId); return next; });
-      setRelationError(err.message || 'Failed to unlink agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -636,7 +650,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
       const data = await businessRelationsApi.listApplications(undefined, companyId);
       setAllApplications(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load application catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -667,7 +681,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -693,7 +707,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -891,7 +905,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
       const data = await businessRelationsApi.listProcesses(undefined, companyId);
       setAllProcesses(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load process catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -922,7 +936,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -948,7 +962,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1094,7 +1108,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
     try {
       setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load AI model catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -1113,7 +1127,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1128,7 +1142,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to unlink AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1285,7 +1299,7 @@ const UseCaseViewPage: React.FC = () => {
       refreshUseCases();
       navigate('/use-cases');
     } catch (err: any) {
-      setError(err.message || 'Failed to delete use case.');
+      setError(toUserMessage(err));
       setDeleteConfirm(false);
     } finally {
       setDeleting(false);
@@ -1315,7 +1329,7 @@ const UseCaseViewPage: React.FC = () => {
       if (!merged) throw new Error('Use Case not found');
       setUseCase(merged);
     } catch (err: any) {
-      setError(err.message || 'Failed to load use case details');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -1346,6 +1360,33 @@ const UseCaseViewPage: React.FC = () => {
   useEffect(() => {
     fetchUseCase();
   }, [id]);
+
+  useEffect(() => {
+    if (!id || isEditing) return;
+
+    const handleWorkflowUpdate = () => {
+      fetchUseCaseSilently();
+      refreshUseCases();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, activeCompany?.id, isEditing, refreshUseCases]);
+
+  useEffect(() => {
+    if (!id || isEditing || loading) return;
+    try {
+      const raw = localStorage.getItem('tavro_temporal_workflows');
+      if (raw !== null) {
+        const workflows = JSON.parse(raw) as Array<{ status?: string }>;
+        const hasRunning = workflows.some(w => String(w.status ?? '').trim().toLowerCase() === 'running');
+        if (!hasRunning) fetchUseCaseSilently();
+      }
+    } catch {
+      // Ignore malformed workflow snapshots.
+    }
+  }, [id, activeCompany?.id, isEditing, loading]);
+
 
   useEffect(() => {
     if (!useCase) return;
@@ -1430,7 +1471,7 @@ const UseCaseViewPage: React.FC = () => {
       });
       setIsEditing(false);
     } catch (err: any) {
-      setEditError(err.message || 'Failed to update use case.');
+      setEditError(toUserMessage(err));
     } finally {
       setEditSaving(false);
     }

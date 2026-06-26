@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { AgentData, AgentDataSource, AgentSkill, AgentTool } from '../types/agent';
 import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle, Zap, Search, Loader2, Link2, Unlink2, PlusCircle, X } from 'lucide-react';
 import { businessRelationsApi, AgentToolRecord, AgentTableRecord, AgentColumnRecord } from '../services/businessRelationsApi';
@@ -94,7 +95,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             const result = await businessRelationsApi.listAgentTools(resolvedAgentId);
             setAllTools(result.items);
         } catch (err: any) {
-            setToolsError(err.message || 'Failed to load tools');
+            setToolsError(toUserMessage(err));
         } finally {
             setToolsLoading(false);
         }
@@ -117,7 +118,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             await businessRelationsApi.linkAgentToTool(resolvedAgentId, effectiveId);
             setAllTools(prev => prev.map(t => t.effective_tool_id === effectiveId ? { ...t, is_linked: true } : t));
         } catch (err: any) {
-            setToolsError(err.message || 'Failed to link tool');
+            setToolsError(toUserMessage(err));
         } finally {
             setActioningTool(null);
         }
@@ -130,7 +131,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             await businessRelationsApi.unlinkAgentFromTool(resolvedAgentId, effectiveId);
             setAllTools(prev => prev.map(t => t.effective_tool_id === effectiveId ? { ...t, is_linked: false } : t));
         } catch (err: any) {
-            setToolsError(err.message || 'Failed to unlink tool');
+            setToolsError(toUserMessage(err));
         } finally {
             setActioningTool(null);
         }
@@ -151,7 +152,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             const result = await businessRelationsApi.listAgentTables(resolvedAgentId);
             setAllTables(result.items);
         } catch (err: any) {
-            setTablesError(err.message || 'Failed to load tables');
+            setTablesError(toUserMessage(err));
         } finally {
             setTablesLoading(false);
         }
@@ -179,7 +180,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                 .then(r => setAllColumns(r.items))
                 .catch(() => {});
         } catch (err: any) {
-            setTablesError(err.message || 'Failed to link table');
+            setTablesError(toUserMessage(err));
         } finally {
             setActioningTable(null);
         }
@@ -195,7 +196,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             // Remove all columns belonging to this table from local state
             setAllColumns(prev => prev.filter(c => c.table_id !== tableId));
         } catch (err: any) {
-            setTablesError(err.message || 'Failed to unlink table');
+            setTablesError(toUserMessage(err));
         } finally {
             setActioningTable(null);
         }
@@ -216,7 +217,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             const result = await businessRelationsApi.listAgentColumns(resolvedAgentId);
             setAllColumns(result.items);
         } catch (err: any) {
-            setColumnsError(err.message || 'Failed to load columns');
+            setColumnsError(toUserMessage(err));
         } finally {
             setColumnsLoading(false);
         }
@@ -240,7 +241,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             await businessRelationsApi.linkAgentToColumn(resolvedAgentId, columnId);
             setAllColumns(prev => prev.map(c => c.column_id === columnId ? { ...c, is_linked: true } : c));
         } catch (err: any) {
-            setColumnsError(err.message || 'Failed to link column');
+            setColumnsError(toUserMessage(err));
         } finally {
             setActioningColumn(null);
         }
@@ -254,7 +255,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
             await businessRelationsApi.unlinkAgentFromColumn(resolvedAgentId, columnId);
             setAllColumns(prev => prev.map(c => c.column_id === columnId ? { ...c, is_linked: false } : c));
         } catch (err: any) {
-            setColumnsError(err.message || 'Failed to unlink column');
+            setColumnsError(toUserMessage(err));
         } finally {
             setActioningColumn(null);
         }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toUserMessage } from '../utils/errorUtils';
 import { AgentData } from '../types/agent';
 import { mcpClient } from '../services/mcpClient';
 import { Link2, Loader2, CheckCircle2, AlertCircle, Bot, Search, X } from 'lucide-react';
@@ -40,7 +41,7 @@ const LinkAgentPanel: React.FC<LinkAgentPanelProps> = ({
             setLinked(prev => new Set([...prev, agentId]));
             onLinked(agentId);
         } catch (err: any) {
-            setError(err.message || 'Failed to link agent. Please try again.');
+            setError(toUserMessage(err));
         } finally {
             setLinking(null);
         }

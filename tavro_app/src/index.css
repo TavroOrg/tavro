@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide scrollbars cross-browser */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 @layer base {
   body {
     @apply bg-bg text-slate-900 antialiased selection:bg-primary/20 transition-colors duration-300;

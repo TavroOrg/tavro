@@ -1,4 +1,4 @@
-// ── src/pages/BlueprintSetupPage.tsx (FULL REPLACEMENT) ──────────────────────
+// ── src/pages/BlueprintSetupPage.tsx ─────────────────────────────────────────
 // 4-step setup flow:
 //   Step 1 — Company identity + public / private toggle
 //   Step 2 — AI research preview (public only) — skip for private
@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import {
   Building2, ChevronRight, ChevronLeft, Check, Layers,
   RefreshCw, Search, Globe, Lock, Sparkles, AlertTriangle,
@@ -180,7 +181,7 @@ const BlueprintSetupPage: React.FC = () => {
       }
     } catch (err: any) {
       console.error('[Research failed]', err);
-      setResearchError(err.message ?? 'Research failed');
+      setResearchError(toUserMessage(err));
       setResearching(false);
     } finally {
       console.groupEnd();
@@ -223,7 +224,7 @@ const BlueprintSetupPage: React.FC = () => {
       selectCompany(company);
       navigate('/blueprint');
     } catch (err: any) {
-      setSaveError(err.message ?? 'Failed to create blueprint');
+      setSaveError(toUserMessage(err));
     } finally {
       setSaving(false);
     }

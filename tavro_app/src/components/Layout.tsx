@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, Unlock
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -53,7 +53,6 @@ function isProcessPage(pathname: string): boolean {
 
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
-
 
 function LockedNavItem({
     icon,
@@ -111,8 +110,8 @@ const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [showLogs] = useShowLogs();
-    useCatalog();
-    useUseCases();
+    const { agents } = useCatalog();
+    const { useCases } = useUseCases();
     const { activeCompany } = useBlueprint();
     const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
@@ -129,7 +128,7 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(undefined, companyId),
+            aiModelApi.listModels(),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {
@@ -384,7 +383,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -468,7 +466,6 @@ const Layout: React.FC = () => {
                                 >
                                     <TestTube2 size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/agent-evals') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -496,7 +493,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -519,7 +515,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -542,7 +537,6 @@ const Layout: React.FC = () => {
                                 >
                                     <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -565,7 +559,6 @@ const Layout: React.FC = () => {
                                 >
                                     <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -626,7 +619,7 @@ const Layout: React.FC = () => {
 
                 <div className={location.pathname === '/settings/logs'
                     ? 'flex-1 min-h-0 flex flex-col overflow-hidden'
-                    : 'p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto'}>
+                    : `p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto${location.pathname.includes('/use-cases/') ? ' scrollbar-hide' : ''}`}>
                     <Outlet />
                 </div>
                 <footer className={`flex-shrink-0 border-t border-slate-200 dark:border-slate-800 py-2 px-6 text-[11px] text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-900 transition-colors flex items-center justify-between${location.pathname === '/settings/logs' ? ' hidden' : ''}`}>

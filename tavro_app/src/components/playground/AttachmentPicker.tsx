@@ -3,6 +3,7 @@
 // Converts files to base64 and passes them to the parent via onAttach.
 
 import React, { useRef, useState } from 'react';
+import { toUserMessage } from '../../utils/errorUtils';
 import { Paperclip, X, FileText, Image, Table, File, AlertCircle } from 'lucide-react';
 
 export interface PendingAttachment {
@@ -103,7 +104,7 @@ const AttachmentPicker: React.FC<AttachmentPickerProps> = ({
       const processed = await Promise.all(toAdd.map(readFile));
       onChange([...attachments, ...processed]);
     } catch (err: any) {
-      setError('Failed to read file: ' + err.message);
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
       if (inputRef.current) inputRef.current.value = '';
