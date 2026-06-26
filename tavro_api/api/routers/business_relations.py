@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+from datetime import datetime
 from uuid import uuid4
 
 _logger = logging.getLogger(__name__)
@@ -30,6 +31,17 @@ _PROCESS_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
 _APPLICATIONS_READY = False
 _PROCESSES_READY = False
+
+
+def _coerce_dt(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -3016,6 +3028,8 @@ async def create_application(
             existing_columns=app_cols,
         )
     )
+    if "latest_release_date" in insert_values:
+        insert_values["latest_release_date"] = _coerce_dt(insert_values["latest_release_date"])
 
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
@@ -3085,6 +3099,8 @@ async def update_application(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
         updates["tags"] = json.dumps(raw_tags)
+    if "latest_release_date" in updates:
+        updates["latest_release_date"] = _coerce_dt(updates["latest_release_date"])
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
