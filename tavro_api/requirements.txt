@@ -24,3 +24,4 @@ google-auth
 requests
 boto3
 docker
+fpdf2

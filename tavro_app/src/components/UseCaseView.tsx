@@ -21,6 +21,9 @@ import {
     CalendarDays,
     User,
     Loader2,
+    DollarSign,
+    Map,
+    Lightbulb,
     ChevronDown,
 } from 'lucide-react';
 
@@ -64,6 +67,7 @@ interface UseCaseViewProps {
     onInlineValueChange?: (v: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    enriching?: boolean;
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -297,8 +301,32 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     editSolutionApproach, onEditSolutionApproachChange,
     inlineEdit, inlineSaving,
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+    enriching,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
+    const [generatingReport, setGeneratingReport] = React.useState(false);
+
+    const handleGenerateReport = async () => {
+        if (!uc.identifier) return;
+        setGeneratingReport(true);
+        try {
+            const result = await useCaseApi.generateUseCaseReport(uc.identifier);
+            const ucTitle: string = (uc as any).name ?? (uc as any).title ?? 'Use Case';
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: `Report generated for "${ucTitle}"` },
+            }));
+            window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', {
+                detail: { entityType: 'use_case', entityId: uc.identifier },
+            }));
+        } catch (err) {
+            console.error('[UseCaseView] Generate report failed', err);
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: 'Failed to generate report. Please try again.' },
+            }));
+        } finally {
+            setGeneratingReport(false);
+        }
+    };
 
     // ── Business Case fields — localStorage until DB columns are added ────────
     const _bcStorageKey = `tavro_bc_${uc.identifier}`;
@@ -482,6 +510,16 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
     const solutionApproach = uc.solution_approach ?? (uc as any).solution_approach ?? null;
+    const executiveSummary = (uc as any).executive_summary ?? null;
+    const assumptions = (uc as any).assumptions ?? null;
+    const quantifiedFinancialBenefits = (uc as any).quantified_financial_benefits ?? null;
+    const totalFinancialImpactSummary = (uc as any).total_financial_impact_summary ?? null;
+    const implementationCostEstimate = (uc as any).implementation_cost_estimate ?? null;
+    const returnOnInvestment = (uc as any).return_on_investment ?? null;
+    const riskConsiderations = (uc as any).risk_considerations ?? null;
+    const implementationRoadmap = (uc as any).implementation_roadmap ?? null;
+    const recommendation = (uc as any).recommendation ?? null;
+
     const riskExposure = String((uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0);
     const associatedAgentCount = String((uc as any).no_of_associated_agents ?? (uc as any).num_of_associated_agents ?? linkedAgentCount ?? 0);
     const agentRiskTier = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
@@ -873,7 +911,78 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
 
-                        {/* ── Existing narrative fields (2-col grid) ── */}
+                        {/* Generate Report button — shown only when all business case fields are populated */}
+                        {(() => {
+                            const allFieldsPopulated = Boolean(
+                                executiveSummary && problemStatement && expectedBenefits && solutionApproach &&
+                                assumptions && quantifiedFinancialBenefits && totalFinancialImpactSummary &&
+                                implementationCostEstimate && returnOnInvestment && riskConsiderations &&
+                                implementationRoadmap && recommendation
+                            );
+                            if (enriching) {
+                                return (
+                                    <div className="flex justify-end">
+                                        <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-400">
+                                            <Loader2 size={12} className="animate-spin" />
+                                            Generating business case…
+                                        </span>
+                                    </div>
+                                );
+                            }
+                            if (!allFieldsPopulated) return null;
+                            return (
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={handleGenerateReport}
+                                        disabled={generatingReport}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {generatingReport && <Loader2 size={12} className="animate-spin" />}
+                                        {generatingReport ? 'Generating…' : 'Generate Report'}
+                                    </button>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Executive Summary — full-width prominent card */}
+                        {inlineEdit?.field === 'executive_summary' ? (
+                            <SectionCard icon={<FileText size={16} />} title="Executive Summary">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('executive_summary')}
+                                </div>
+                            </SectionCard>
+                        ) : (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 border-b border-blue-100 flex items-center gap-2">
+                                    <span className="text-blue-600"><FileText size={16} /></span>
+                                    <span className="font-bold text-slate-800 text-sm">Executive Summary</span>
+                                </div>
+                                <div className="px-5 py-4">
+                                    {executiveSummary ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', executiveSummary)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-700 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-white/60 transition-colors p-1 -m-1"
+                                        >{executiveSummary}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-white/40 rounded-lg p-1 -m-1 transition-colors"
+                                        >Double-click to add an executive summary…</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Existing fields */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Problem Statement */}
                             {isEditing ? (
@@ -898,15 +1007,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('problem_statement')}
                                     </div>
                                 </SectionCard>
-                            ) : problemStatement ? (
+                            ) : (
                                 <SectionCard icon={<FileText size={16} />} title="Business Problem Statement">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('problem_statement', problemStatement)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{problemStatement}</p>
+                                    {problemStatement ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('problem_statement', problemStatement)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{problemStatement}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('problem_statement', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {/* Expected Benefits */}
                             {isEditing ? (
@@ -931,15 +1048,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('expected_benefits')}
                                     </div>
                                 </SectionCard>
-                            ) : expectedBenefits ? (
+                            ) : (
                                 <SectionCard icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('expected_benefits', expectedBenefits)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{expectedBenefits}</p>
+                                    {expectedBenefits ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('expected_benefits', expectedBenefits)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{expectedBenefits}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('expected_benefits', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {/* Solution Approach */}
                             {isEditing ? (
@@ -964,15 +1089,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('solution_approach')}
                                     </div>
                                 </SectionCard>
-                            ) : solutionApproach ? (
+                            ) : (
                                 <SectionCard icon={<Target size={16} />} title="Solution Approach">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('solution_approach', solutionApproach)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{solutionApproach}</p>
+                                    {solutionApproach ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('solution_approach', solutionApproach)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{solutionApproach}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('solution_approach', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {(uc as any).business_sponsors && (
                                 <SectionCard icon={<Users size={16} />} title="Business Sponsors">
@@ -1082,6 +1215,131 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             </div>
                         )}
 
+                        {/* Financial Benefits section */}
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                                <span className="text-slate-500"><DollarSign size={16} /></span>
+                                <span className="font-bold text-slate-800 text-sm">Financial Benefits</span>
+                            </div>
+                            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {(['assumptions', 'quantified_financial_benefits', 'total_financial_impact_summary', 'implementation_cost_estimate', 'return_on_investment', 'risk_considerations'] as const).map(fieldKey => {
+                                    const labelMap: Record<string, string> = {
+                                        assumptions: 'Assumptions',
+                                        quantified_financial_benefits: 'Quantified Financial Benefits',
+                                        total_financial_impact_summary: 'Total Financial Impact Summary',
+                                        implementation_cost_estimate: 'Implementation Cost Estimate',
+                                        return_on_investment: 'Return on Investment',
+                                        risk_considerations: 'Risk Considerations',
+                                    };
+                                    const valueMap: Record<string, string | null> = {
+                                        assumptions,
+                                        quantified_financial_benefits: quantifiedFinancialBenefits,
+                                        total_financial_impact_summary: totalFinancialImpactSummary,
+                                        implementation_cost_estimate: implementationCostEstimate,
+                                        return_on_investment: returnOnInvestment,
+                                        risk_considerations: riskConsiderations,
+                                    };
+                                    const currentValue = valueMap[fieldKey];
+                                    const label = labelMap[fieldKey];
+                                    return (
+                                        <div key={fieldKey} className="flex flex-col gap-1.5">
+                                            <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</dt>
+                                            {inlineEdit?.field === fieldKey ? (
+                                                <div className="flex items-start gap-2">
+                                                    <textarea
+                                                        value={inlineEdit.value}
+                                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                                        rows={3}
+                                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                                        autoFocus
+                                                    />
+                                                    {renderInlineActions(fieldKey)}
+                                                </div>
+                                            ) : currentValue ? (
+                                                <p
+                                                    onDoubleClick={() => onStartInlineEdit?.(fieldKey, currentValue)}
+                                                    title="Double-click to edit"
+                                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                                >{currentValue}</p>
+                                            ) : (
+                                                <p
+                                                    onDoubleClick={() => onStartInlineEdit?.(fieldKey, '')}
+                                                    title="Double-click to add"
+                                                    className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                                ></p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Implementation Roadmap + Recommendation */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Implementation Roadmap */}
+                            {inlineEdit?.field === 'implementation_roadmap' ? (
+                                <SectionCard icon={<Map size={16} />} title="Implementation Roadmap">
+                                    <div className="flex items-start gap-2">
+                                        <textarea
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            rows={4}
+                                            className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                            autoFocus
+                                        />
+                                        {renderInlineActions('implementation_roadmap')}
+                                    </div>
+                                </SectionCard>
+                            ) : (
+                                <SectionCard icon={<Map size={16} />} title="Implementation Roadmap">
+                                    {implementationRoadmap ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('implementation_roadmap', implementationRoadmap)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{implementationRoadmap}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('implementation_roadmap', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
+                                </SectionCard>
+                            )}
+
+                            {/* Recommendation */}
+                            {inlineEdit?.field === 'recommendation' ? (
+                                <SectionCard icon={<Lightbulb size={16} />} title="Recommendation">
+                                    <div className="flex items-start gap-2">
+                                        <textarea
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            rows={4}
+                                            className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                            autoFocus
+                                        />
+                                        {renderInlineActions('recommendation')}
+                                    </div>
+                                </SectionCard>
+                            ) : (
+                                <SectionCard icon={<Lightbulb size={16} />} title="Recommendation">
+                                    {recommendation ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('recommendation', recommendation)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{recommendation}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('recommendation', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
+                                </SectionCard>
+                            )}
+                        </div>
                     </div>
                 )}
 
