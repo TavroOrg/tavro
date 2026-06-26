@@ -143,6 +143,15 @@ const CONNECTORS: ConnectorDef[] = [
             { key: 'token',    label: 'Token',          type: 'password' },
         ],
     },
+    {
+        id: 'aict_inbound', name: 'ServiceNow AICT', description: 'Import AI governance assets from ServiceNow AICT into the agent catalog',
+        category: 'ServiceNow AICT', initials: 'AI', color: 'from-purple-500 to-purple-700',
+        fields: [
+            { key: 'instance_url', label: 'Instance URL', type: 'text',     placeholder: 'https://myinstance.service-now.com' },
+            { key: 'username',     label: 'Username',     type: 'text' },
+            { key: 'password',     label: 'Password',     type: 'password' },
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------

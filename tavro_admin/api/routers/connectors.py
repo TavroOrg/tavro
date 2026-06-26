@@ -39,14 +39,15 @@ RISK_TIMEOUT_S   = int(os.getenv("RISK_TIMEOUT_S",   "600"))
 RISK_POLL_S      = int(os.getenv("RISK_POLL_S",       "5"))
 
 CONNECTOR_MAP: dict[str, tuple[str, str]] = {
-    "copilot":    ("catalog_connector.connector.copilot_connector",    "CopilotConnector"),
-    "bedrock":    ("catalog_connector.connector.bedrock_connector",     "BedrockConnector"),
-    "salesforce": ("catalog_connector.connector.salesforce_connector",  "SalesforceConnector"),
-    "servicenow": ("catalog_connector.connector.servicenow_connector",  "ServiceNowConnector"),
-    "snowflake":  ("catalog_connector.connector.snowflake_connector",   "SnowflakeConnector"),
-    "databricks": ("catalog_connector.connector.databricks_connector",  "DatabricksConnector"),
-    "gemini":     ("catalog_connector.connector.gemini_connector",      "GeminiConnector"),
-    "github":     ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "copilot":       ("catalog_connector.connector.copilot_connector",       "CopilotConnector"),
+    "bedrock":       ("catalog_connector.connector.bedrock_connector",        "BedrockConnector"),
+    "salesforce":    ("catalog_connector.connector.salesforce_connector",     "SalesforceConnector"),
+    "servicenow":    ("catalog_connector.connector.servicenow_connector",     "ServiceNowConnector"),
+    "snowflake":     ("catalog_connector.connector.snowflake_connector",      "SnowflakeConnector"),
+    "databricks":    ("catalog_connector.connector.databricks_connector",     "DatabricksConnector"),
+    "gemini":        ("catalog_connector.connector.gemini_connector",         "GeminiConnector"),
+    "github":        ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "aict_inbound":  ("catalog_connector.connector.aict_inbound_connector",  "AICTInboundConnector"),
 }
 
 _connector_lock = threading.Lock()
