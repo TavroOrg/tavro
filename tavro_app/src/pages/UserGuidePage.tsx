@@ -585,7 +585,25 @@ const UserGuidePage: React.FC = () => {
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
                             Everything in Tavro starts with the Blueprint. Navigate to <strong>Blueprint</strong> in the sidebar and begin with <strong>Company Profile</strong> — fill in your organization's name, industry, size, and a description of what the business does. This profile is what the AI engine reads when generating Spark ideas, so the more complete it is, the more relevant the suggestions will be.
                         </p>
-                        <ScreenshotFrame title="Blueprint — Company Profile" src="/assets/images/Company Blue print.png" alt="Company Profile" />
+                        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-violet-50/40 dark:from-slate-900 dark:to-violet-950/20 p-5 mt-3 mb-1">
+                            <p className="text-xs font-semibold uppercase tracking-widest text-violet-500 dark:text-violet-400 mb-3">Company Blueprint</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                {[
+                                    { icon: <Building2 size={15} className="text-violet-500" />, title: 'Company Profile', desc: 'Your organization\'s name, industry, size, and business description. This is what the AI engine reads when generating Spark ideas — the more complete it is, the more relevant the suggestions.' },
+                                    { icon: <Globe size={15} className="text-blue-500" />, title: 'Graph View', desc: 'A relationship graph showing how your profile, financials, strategy, risks, processes, integrations, and applications connect — giving the AI a 360° picture of your organization.' },
+                                    { icon: <Layers size={15} className="text-amber-500" />, title: 'Dimensions', desc: 'Each dimension (Profile, Strategy, Organisation, Processes, Applications, Integrations, Risks, Financials) expands to reveal the data points that ground downstream AI decisions.' },
+                                    { icon: <Network size={15} className="text-emerald-500" />, title: 'Relationships', desc: 'Add relationships between dimensions to capture dependencies — e.g. linking a Risk to a Process or an Application to an Integration.' },
+                                ].map(({ icon, title, desc }) => (
+                                    <div key={title} className="flex gap-3 rounded-xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3">
+                                        <span className="flex-shrink-0 mt-0.5">{icon}</span>
+                                        <div>
+                                            <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-0.5">{title}</p>
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{desc}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-3">
                             Once the profile is saved, populate your catalog across four sections: <strong>Applications</strong>, <strong>Processes</strong>, <strong>Integrations</strong>, and <strong>AI Models</strong>. A complete catalog is the grounding that makes every downstream stage — Spark ideas, Use Case risk scoring, Agent context graphs — accurate and meaningful.
                         </p>
@@ -1110,7 +1128,25 @@ const UserGuidePage: React.FC = () => {
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-3">
                         Navigate to <strong>Govern → Compliance</strong> to manage the obligations your AI portfolio is measured against. Each item is either a <strong>Regulation</strong> (external law or rule, e.g. EU AI Act, SOC 2) or a <strong>Policy</strong> (internal guideline or standard). Once loaded, regulations and policies appear as selectable targets when launching an audit.
                     </p>
-                    <ScreenshotFrame title="Compliance Module — Audit Center" src="/assets/images/ComplianceAudit.png" alt="Compliance Audit Center" />
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-blue-50/40 dark:from-slate-900 dark:to-blue-950/20 p-5 mt-3 mb-1">
+                        <p className="text-xs font-semibold uppercase tracking-widest text-blue-500 dark:text-blue-400 mb-3">Compliance Library</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            {[
+                                { icon: <Scale size={15} className="text-blue-500" />, title: 'Regulations', desc: 'External laws and frameworks — EU AI Act, GDPR, HIPAA, SOC 2, BSA/AML, and more. Each regulation carries AI-researched dimensions your use cases are evaluated against.' },
+                                { icon: <ClipboardList size={15} className="text-violet-500" />, title: 'Policies', desc: 'Internal standards and guidelines — model governance policies, AI ethics frameworks, vendor-specific rules. Author and version them alongside external regulations.' },
+                                { icon: <Filter size={15} className="text-amber-500" />, title: 'Filter & Search', desc: 'Switch between All, Regulation, and Policy views. Search by name or issuing body. Toggle between card grid and list view for quick scanning.' },
+                                { icon: <RefreshCw size={15} className="text-emerald-500" />, title: 'Refresh & Sync', desc: 'Refresh the library at any time to pull in newly added items. Regulations show their dimension count so you know how thorough each coverage is.' },
+                            ].map(({ icon, title, desc }) => (
+                                <div key={title} className="flex gap-3 rounded-xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3">
+                                    <span className="flex-shrink-0 mt-0.5">{icon}</span>
+                                    <div>
+                                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-0.5">{title}</p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{desc}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
 
                     <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-5 mb-2">Adding a Regulation or Policy</p>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-3">
