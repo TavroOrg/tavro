@@ -61,6 +61,13 @@ def _norm_id(value: str) -> str:
     return (value or "").strip()
 
 
+def _is_global_company_value(value: Any) -> bool:
+    if value is None:
+        return True
+    text_value = str(value).strip()
+    return text_value == "" or text_value.lower() == "none"
+
+
 async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
     try:
         row = await db.execute(
@@ -555,6 +562,18 @@ async def get_ai_model(
             return ""
         return f"AND {col}.tenant_id = :tid"
 
+    agent_relation_company_filter = (
+        "AND (rel.company_id = :company_id"
+        " OR rel.company_id IS NULL"
+        " OR TRIM(CAST(rel.company_id AS text)) = ''"
+        " OR rel.company_id = 'None'"
+        " OR a.company_id IS NULL"
+        " OR TRIM(CAST(a.company_id AS text)) = ''"
+        " OR a.company_id = 'None')"
+        if company_id
+        else ""
+    )
+
     rel_params: dict[str, Any] = {"mid": mid}
     if company_id:
         rel_params["company_id"] = company_id
@@ -595,6 +614,7 @@ async def get_ai_model(
               AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
               AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
               {_tf('rel')}
+              {agent_relation_company_filter}
               {_company_filter('a')}
               {_tf('a')}
             ORDER BY LOWER(COALESCE(a.agent_name, rel.agent_name, rel.agent_id))
@@ -935,7 +955,7 @@ async def link_agent(
         agent_row = await db.execute(
             text(
                 f"""
-                SELECT agent_internal_id, agent_name
+                SELECT agent_internal_id, agent_name, company_id
                 FROM {CORE}.agents
                 WHERE agent_id = :aid
                   AND is_current = true
@@ -951,7 +971,9 @@ async def link_agent(
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
         agent_internal_id = str(agent["agent_internal_id"])
         agent_name = str(agent.get("agent_name") or "")
-        relation_company_id = company_id or model.get("company_id")
+        relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+            company_id or model.get("company_id")
+        )
 
         await db.execute(
             text(f"""

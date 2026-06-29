@@ -1114,6 +1114,11 @@ def _text_or_none(value: Any) -> Optional[str]:
     return _clean(str(value))
 
 
+def _is_global_company_value(value: Any) -> bool:
+    text_value = _text_or_none(value)
+    return text_value is None or text_value == "" or text_value.lower() == "none"
+
+
 def _canonical_payload(raw_payload: Optional[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
     payload = raw_payload or {}
     out: dict[str, Any] = {}
@@ -1818,7 +1823,10 @@ async def _fetch_integrations(
                 " AND (abi.company_id = :related_company_id"
                 " OR abi.company_id IS NULL"
                 " OR TRIM(CAST(abi.company_id AS text)) = ''"
-                " OR abi.company_id = 'None')"
+                " OR abi.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
             )
 
         int_agent_company_join = ""
@@ -2080,7 +2088,10 @@ async def _fetch_applications(
                 " AND (aba.company_id = :related_company_id"
                 " OR aba.company_id IS NULL"
                 " OR TRIM(CAST(aba.company_id AS text)) = ''"
-                " OR aba.company_id = 'None')"
+                " OR aba.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
             )
 
         app_agent_company_join = ""
@@ -2553,7 +2564,10 @@ async def _fetch_processes(
                 " AND (abp.company_id = :related_company_id"
                 " OR abp.company_id IS NULL"
                 " OR TRIM(CAST(abp.company_id AS text)) = ''"
-                " OR abp.company_id = 'None')"
+                " OR abp.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
             )
 
         agent_company_join = ""
@@ -3462,7 +3476,9 @@ async def add_agent_integration_relation(
     integration = int_row.mappings().first()
     if not integration:
         raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
-    relation_company_id = company_id or integration.get("company_id") or agent.get("company_id")
+    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+        company_id or integration.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5601,7 +5617,9 @@ async def add_agent_application_relation(
             "company_id": company_id or agent.get("company_id"),
         }
 
-    relation_company_id = company_id or app.get("company_id") or agent.get("company_id")
+    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+        company_id or app.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5789,7 +5807,9 @@ async def add_agent_process_relation(
             "company_id": company_id or agent.get("company_id"),
         }
 
-    relation_company_id = company_id or process.get("company_id") or agent.get("company_id")
+    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+        company_id or process.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
