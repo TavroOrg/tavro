@@ -1,4 +1,4 @@
-"""
+﻿"""
 AICT Inbound Connector — polls ServiceNow AICT for AI governance assets
 and imports them as agents into the Tavro portal.
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import requests
 
 from catalog_connector.connector.base_connector import BaseConnector
-from catalog_connector.save import save_agent_cards
+import worker
 from catalog_connector.transformers.agent_transformer import transform_to_agent_cards
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,8 @@ class AICTInboundConnector(BaseConnector):
             card_data.setdefault("provider", {})
             card_data["provider"]["organization"] = "ServiceNow AICT"
 
-        save_agent_cards("aict_inbound", agent_cards)
+        for agent in agent_cards:
+            worker.process_card(agent["data"])
 
         _save_last_run(run_time)
         print("AICT inbound execution completed successfully")

@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from catalog_connector.connector.base_connector import BaseConnector
-from catalog_connector.save import save_agent_cards
 from catalog_connector.transformers.agent_transformer import transform_to_agent_cards
 
 router = APIRouter(prefix="/api/v1/agent365", tags=["Agent365 Inbound"])

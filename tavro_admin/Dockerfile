@@ -41,7 +41,7 @@ COPY tavro_admin/catalog_connector /app/catalog_connector
 COPY worker.py /app/worker.py
 COPY utils /app/utils
 
-ENV PYTHONPATH=/app:/app/catalog_connector
+ENV PYTHONPATH=/app
 
 EXPOSE 7000
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "7000"]

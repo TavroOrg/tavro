@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import re
 from pathlib import Path
@@ -12,7 +12,7 @@ from .base_connector import BaseConnector
 # from utils.config_loader import load_config
 from ..transformers.agent_transformer import transform_to_agent_cards
 # from worker import init_pool, process_card
-from save import save_agent_cards
+import worker
 
 
 class BedrockConnector(BaseConnector):
@@ -416,6 +416,7 @@ class BedrockConnector(BaseConnector):
         # init_pool()
         # for agent in agent_cards:
         #     process_card(agent["data"])
-        save_agent_cards("bedrock", agent_cards)
+        for agent in agent_cards:
+            worker.process_card(agent["data"])
 
         print("Bedrock execution completed successfully")

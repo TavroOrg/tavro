@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import json
 import os
 import uuid
@@ -10,7 +10,7 @@ import requests
 
 from ..base_connector import BaseConnector
 # from utils.config_loader import load_config
-from save import save_mcp_card
+import worker
 
 
 class GithubConnector(BaseConnector):
@@ -524,16 +524,9 @@ class GithubConnector(BaseConnector):
         metadata = self.fetch_metadata()
         card = self.normalize(metadata)
 
-        # Save to extracted_json/github/ instead of DB
-        # result = self.upsert_to_postgres(card)
-        # print(
-        #     "GitHub MCP upsert complete "
-        #     f"[status={result['status']}, tools={result['tools']}, "
-        #     f"prompts={result['prompts']}, resources={result['resources']}]"
-        # )
-        save_mcp_card("github", card)
+        worker.process_card(card)
         print(
-            f"GitHub MCP saved — tools={len(card.get('tool', []))}, "
+            f"GitHub MCP saved to DB — tools={len(card.get('tool', []))}, "
             f"prompts={len(card.get('prompt_template', []))}, "
             f"resources={len(card.get('resource', []))}"
         )
