@@ -209,6 +209,53 @@ export async function getValidToken(): Promise<string | null> {
     return ok ? localStorage.getItem('tavro_access_token') : null;
 }
 
+/**
+ * Returns the display name from the current session's id_token or access_token.
+ * Checks claims in priority order: name → given_name → preferred_username → email.
+ * Returns null when no token is present or no name claim is found.
+ */
+export function getUserDisplayName(): string | null {
+    const token =
+        localStorage.getItem('tavro_id_token') ||
+        localStorage.getItem('tavro_access_token');
+    if (!token) return null;
+    const payload = parseJwtPayload(token);
+    if (!payload) return null;
+    return (
+        (payload['name'] as string | undefined) ||
+        (payload['given_name'] as string | undefined) ||
+        (payload['preferred_username'] as string | undefined) ||
+        (payload['email'] as string | undefined) ||
+        null
+    );
+}
+
+/**
+ * Fetches the user's display name from the OIDC userinfo endpoint.
+ * Falls back to getUserDisplayName() (JWT claim parsing) if the fetch fails.
+ */
+export async function fetchUserDisplayName(): Promise<string | null> {
+    const token = localStorage.getItem('tavro_access_token');
+    const issuer = localStorage.getItem('tavro_oidc_issuer') || import.meta.env.VITE_ZITADEL_ISSUER?.replace(/\/$/, '');
+    if (!token || !issuer) return getUserDisplayName();
+    try {
+        const res = await fetch(`${issuer}/oidc/v1/userinfo`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return getUserDisplayName();
+        const data: Record<string, unknown> = await res.json();
+        return (
+            (data['name'] as string | undefined) ||
+            (data['given_name'] as string | undefined) ||
+            (data['preferred_username'] as string | undefined) ||
+            (data['email'] as string | undefined) ||
+            getUserDisplayName()
+        );
+    } catch {
+        return getUserDisplayName();
+    }
+}
+
 /** Clear all auth state from localStorage. */
 export function clearAuth(): void {
     AUTH_KEYS.forEach(k => localStorage.removeItem(k));
