@@ -34,7 +34,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
         text("""
             SELECT 1 FROM twin.dim_node n
             JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
-            WHERE n.id = :nid
+            WHERE n.id = :nid AND n.valid_to IS NULL
         """),
         {"nid": node_id, "tid": tenant_id},
     )
@@ -218,11 +218,13 @@ async def soft_delete_dim_node(node_id: UUID, tenant_id: str = Depends(require_t
     """Soft delete — sets valid_to = now() rather than deleting the row."""
     await _assert_node_owned(db, str(node_id), tenant_id)
 
-    await db.execute(
+    result = await db.execute(
         text("UPDATE twin.dim_node SET valid_to = now() WHERE id = :id AND valid_to IS NULL"),
         {"id": str(node_id)},
     )
     await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Node not found or already deleted")
 
 
 # ── Attachments ──────────────────────────────────────────────────────────────

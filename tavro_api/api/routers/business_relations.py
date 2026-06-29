@@ -2191,8 +2191,12 @@ async def _fetch_applications(
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
-                                WHERE ara.agent_id = aba.agent_id
-                                  AND ara.blended_risk_score IS NOT NULL
+                                WHERE ara.blended_risk_score IS NOT NULL
+                                  AND (
+                                    ara.agent_id = aba.agent_id
+                                    OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> ''
+                                        AND ara.agent_internal_id = aba.agent_internal_id)
+                                  )
                                 ORDER BY {ara_order}
                                 LIMIT 1
                             ) brs ON TRUE
