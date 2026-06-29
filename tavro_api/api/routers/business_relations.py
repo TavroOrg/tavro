@@ -1119,6 +1119,14 @@ def _is_global_company_value(value: Any) -> bool:
     return text_value is None or text_value == "" or text_value.lower() == "none"
 
 
+def _replace_select_col(cols: list, col_name: str, new_expr: str) -> None:
+    """Replace the first entry in cols whose alias matches col_name."""
+    for i, c in enumerate(cols):
+        if c.endswith(f" AS {col_name}"):
+            cols[i] = new_expr
+            return
+
+
 def _canonical_payload(raw_payload: Optional[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
     payload = raw_payload or {}
     out: dict[str, Any] = {}
@@ -1414,12 +1422,12 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         "tier 2 (core)": 0.7,
         "tier 3 (operational)": 0.4,
         "tier 4 (experimental)": 0.1,
-        "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+        "1": 1.0, "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
     }.get(bc, 0.0)
 
     fi = (proc.get("financial_impact") or "").strip().lower()
     fi_score = {
-        "systemic": 1.0, "1": 1.0,
+        "systemic": 1.0, "1": 1.0, "1.0": 1.0,
         "material": 0.7, "0.7": 0.7,
         "absorbable": 0.4, "0.4": 0.4,
         "immaterial": 0.1, "0.1": 0.1,
@@ -1427,7 +1435,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     ri = (proc.get("reputational_impact") or "").strip().lower()
     ri_score = {
-        "toxic": 1.0, "1": 1.0,
+        "toxic": 1.0, "1": 1.0, "1.0": 1.0,
         "adverse": 0.7, "0.7": 0.7,
         "private": 0.4, "0.4": 0.4,
         "contained": 0.1, "0.1": 0.1,
@@ -1435,7 +1443,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     rgi = (proc.get("regulatory_impact") or "").strip().lower()
     rgi_score = {
-        "restricted": 1.0, "1": 1.0,
+        "restricted": 1.0, "1": 1.0, "1.0": 1.0,
         "statutory": 0.7, "0.7": 0.7,
         "governed": 0.4, "0.4": 0.4,
         "unregulated": 0.1, "0.1": 0.1,
@@ -1449,7 +1457,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = abp.agent_id
+                WHERE (ara.agent_id = abp.agent_id OR ara.agent_internal_id = abp.agent_internal_id)
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1604,7 +1612,7 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                 JOIN LATERAL (
                     SELECT ara.agent_internal_id, ara.blended_risk_score
                     FROM core.agent_risk_assessments ara
-                    WHERE ara.agent_id = abi.agent_id
+                    WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
                       AND ara.blended_risk_score IS NOT NULL
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1835,7 +1843,7 @@ async def _fetch_integrations(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                int_agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                int_agent_join_type = "LEFT JOIN"
                 int_agent_company_join = (
                     f"{int_agent_join_type} core.agents ag ON ("
                     "(abi.agent_id IS NOT NULL AND abi.agent_id <> '' AND ag.agent_id = abi.agent_id)"
@@ -1923,7 +1931,7 @@ async def _fetch_integrations(
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
-                                WHERE ara.agent_id = abi.agent_id
+                                WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY {ara_order_int}
                                 LIMIT 1
@@ -1970,24 +1978,19 @@ async def _fetch_integrations(
         """
 
     if filter_related_by_company_id and has_ara_int:
-        def _replace_int_col(cols: list, col_name: str, new_expr: str) -> None:
-            for i, c in enumerate(cols):
-                if c.endswith(f" AS {col_name}"):
-                    cols[i] = new_expr
-                    return
-        _replace_int_col(select_cols, "blended_risk_score",
+        _replace_select_col(select_cols, "blended_risk_score",
                          "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
-        _replace_int_col(select_cols, "agent_risk_exposure",
+        _replace_select_col(select_cols, "agent_risk_exposure",
                          "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
-        _replace_int_col(select_cols, "agent_risk_tier",
+        _replace_select_col(select_cols, "agent_risk_tier",
                          "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
-        _replace_int_col(select_cols, "inherent_risk_classification",
+        _replace_select_col(select_cols, "inherent_risk_classification",
                          "company_risk_class.company_inherent_class AS inherent_risk_classification")
-        _replace_int_col(select_cols, "inherent_risk_classification_score",
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
                          "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
-        _replace_int_col(select_cols, "residual_risk_classification",
+        _replace_select_col(select_cols, "residual_risk_classification",
                          "company_risk_class.company_residual_class AS residual_risk_classification")
-        _replace_int_col(select_cols, "residual_risk_classification_score",
+        _replace_select_col(select_cols, "residual_risk_classification_score",
                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     rows = await db.execute(
@@ -2100,7 +2103,7 @@ async def _fetch_applications(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                app_agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                app_agent_join_type = "LEFT JOIN"
                 app_agent_company_join = (
                     f"{app_agent_join_type} core.agents ag ON ("
                     "(aba.agent_id IS NOT NULL AND aba.agent_id <> '' AND ag.agent_id = aba.agent_id)"
@@ -2235,24 +2238,19 @@ async def _fetch_applications(
         """
 
     if filter_related_by_company_id and has_ara:
-        def _replace_col(cols: list, col_name: str, new_expr: str) -> None:
-            for i, c in enumerate(cols):
-                if c.endswith(f" AS {col_name}"):
-                    cols[i] = new_expr
-                    return
-        _replace_col(select_cols, "blended_risk_score",
+        _replace_select_col(select_cols, "blended_risk_score",
                      "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
-        _replace_col(select_cols, "agent_risk_exposure",
+        _replace_select_col(select_cols, "agent_risk_exposure",
                      "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
-        _replace_col(select_cols, "agent_risk_tier",
+        _replace_select_col(select_cols, "agent_risk_tier",
                      "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
-        _replace_col(select_cols, "inherent_risk_classification",
+        _replace_select_col(select_cols, "inherent_risk_classification",
                      "company_risk_class.company_inherent_class AS inherent_risk_classification")
-        _replace_col(select_cols, "inherent_risk_classification_score",
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
                      "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
-        _replace_col(select_cols, "residual_risk_classification",
+        _replace_select_col(select_cols, "residual_risk_classification",
                      "company_risk_class.company_residual_class AS residual_risk_classification")
-        _replace_col(select_cols, "residual_risk_classification_score",
+        _replace_select_col(select_cols, "residual_risk_classification_score",
                      "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
@@ -2576,7 +2574,7 @@ async def _fetch_processes(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                agent_join_type = "LEFT JOIN"
                 agent_company_join = (
                     f"{agent_join_type} core.agents ag ON ("
                     "(abp.agent_id IS NOT NULL AND abp.agent_id <> '' AND ag.agent_id = abp.agent_id)"
@@ -2651,25 +2649,25 @@ async def _fetch_processes(
                                 (CASE LOWER(TRIM(bp.business_criticality))
                                     WHEN 'tier 1 (systemic)' THEN 1.0 WHEN 'tier 2 (core)' THEN 0.7
                                     WHEN 'tier 3 (operational)' THEN 0.4 WHEN 'tier 4 (experimental)' THEN 0.1
-                                    WHEN '1.0' THEN 1.0 WHEN '0.7' THEN 0.7 WHEN '0.4' THEN 0.4 WHEN '0.1' THEN 0.1
+                                    WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0 WHEN '0.7' THEN 0.7 WHEN '0.4' THEN 0.4 WHEN '0.1' THEN 0.1
                                     ELSE 0.0
                                 END +
                                 CASE LOWER(TRIM(bp.financial_impact))
-                                    WHEN 'systemic' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'systemic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
                                     WHEN 'material' THEN 0.7 WHEN '0.7' THEN 0.7
                                     WHEN 'absorbable' THEN 0.4 WHEN '0.4' THEN 0.4
                                     WHEN 'immaterial' THEN 0.1 WHEN '0.1' THEN 0.1
                                     ELSE 0.0
                                 END +
                                 CASE LOWER(TRIM(bp.reputational_impact))
-                                    WHEN 'toxic' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'toxic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
                                     WHEN 'adverse' THEN 0.7 WHEN '0.7' THEN 0.7
                                     WHEN 'private' THEN 0.4 WHEN '0.4' THEN 0.4
                                     WHEN 'contained' THEN 0.1 WHEN '0.1' THEN 0.1
                                     ELSE 0.0
                                 END +
                                 CASE LOWER(TRIM(bp.regulatory_impact))
-                                    WHEN 'restricted' THEN 1.0 WHEN '1' THEN 1.0
+                                    WHEN 'restricted' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
                                     WHEN 'statutory' THEN 0.7 WHEN '0.7' THEN 0.7
                                     WHEN 'governed' THEN 0.4 WHEN '0.4' THEN 0.4
                                     WHEN 'unregulated' THEN 0.1 WHEN '0.1' THEN 0.1
@@ -2731,24 +2729,19 @@ async def _fetch_processes(
         """
 
     if filter_related_by_company_id and has_ara_proc:
-        def _replace_proc_col(cols: list, col_name: str, new_expr: str) -> None:
-            for i, c in enumerate(cols):
-                if c.endswith(f" AS {col_name}"):
-                    cols[i] = new_expr
-                    return
-        _replace_proc_col(select_cols, "blended_risk_score",
+        _replace_select_col(select_cols, "blended_risk_score",
                           "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
-        _replace_proc_col(select_cols, "agent_risk_exposure",
+        _replace_select_col(select_cols, "agent_risk_exposure",
                           "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
-        _replace_proc_col(select_cols, "agent_risk_tier",
+        _replace_select_col(select_cols, "agent_risk_tier",
                           "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
-        _replace_proc_col(select_cols, "inherent_risk_classification",
+        _replace_select_col(select_cols, "inherent_risk_classification",
                           "company_risk_class.company_inherent_class AS inherent_risk_classification")
-        _replace_proc_col(select_cols, "inherent_risk_classification_score",
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
                           "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
-        _replace_proc_col(select_cols, "residual_risk_classification",
+        _replace_select_col(select_cols, "residual_risk_classification",
                           "company_risk_class.company_residual_class AS residual_risk_classification")
-        _replace_proc_col(select_cols, "residual_risk_classification_score",
+        _replace_select_col(select_cols, "residual_risk_classification_score",
                           "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     process_tree_tenant_filter = (

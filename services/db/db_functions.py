@@ -375,7 +375,7 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
                 if _row:
                     company_id = _row[0] or None
     except Exception:
-        pass
+        raise
 
     # CVSS params forwarded to scenario rows
     cvss_params = {col: response_data[col] for col in CVSS_PARAM_COLS}

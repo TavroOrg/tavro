@@ -413,10 +413,6 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const load = async () => {
     if (!id || isCreateMode) return;
-    if (!activeCompany?.id) {
-      setLoading(true);
-      return;
-    }
     setLoading(true);
     setError(null);
     setRelationError(null);

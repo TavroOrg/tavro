@@ -367,10 +367,6 @@ const AiModelViewPage: React.FC = () => {
       return;
     }
     const load = async () => {
-      if (!activeCompany?.id) {
-        setLoading(true);
-        return;
-      }
       setLoading(true);
       setError(null);
       try {

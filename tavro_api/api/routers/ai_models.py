@@ -812,6 +812,10 @@ async def get_ai_model(
             result["blended_risk_score"] = 0.0
             result["agent_risk_exposure"] = 0.0
             result["agent_risk_tier"] = "Low"
+            result["inherent_risk_classification"] = ""
+            result["inherent_risk_classification_score"] = 0.0
+            result["residual_risk_classification"] = ""
+            result["residual_risk_classification_score"] = 0.0
 
     return result
 
@@ -960,7 +964,6 @@ async def link_agent(
                 WHERE agent_id = :aid
                   AND is_current = true
                   {tenant_filter}
-                  {company_filter}
                 LIMIT 1
                 """
             ),
@@ -1041,9 +1044,16 @@ async def unlink_agent(
             """),
             {"mid": mid, "aid": agent_id, "tid": tenant_id, "company_id": company_id},
         )
+        if result.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No active link found for agent '{agent_id}' on model '{mid}' with the given company/tenant.",
+            )
         await _refresh_model_rollup(db, mid)
         await db.commit()
         return {"status": "unlinked", "ai_model_id": mid, "agent_id": agent_id, "rows_deleted": result.rowcount or 0}
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         raise_server_error(e)
@@ -1295,10 +1305,11 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
         text(f"""
             UPDATE {CORE}.ai_models
             SET no_of_associated_agents = (
-                SELECT COUNT(DISTINCT rel.agent_id)
+                SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
                 FROM {CORE}.agent_ai_models rel
                 WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-                  AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+                  AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                  AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
             ),
             updated_ts = CURRENT_TIMESTAMP
             WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
