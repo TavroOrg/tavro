@@ -7,3 +7,4 @@ from .servicenow_connector import ServiceNowConnector as servicenowConnector
 from .snowflake_connector import SnowflakeConnector as snowflakeConnector
 from .mcp_connector import githubConnector
 from .agent365_inbound_connector import Agent365InboundConnector as agent365InboundConnector
+from .aict_inbound_connector import AICTInboundConnector as aictInboundConnector

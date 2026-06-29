@@ -40,6 +40,15 @@ export interface UseCaseFields {
   expected_benefits: string;
   priority: string;
   solution_approach?: string;
+  executive_summary?: string;
+  assumptions?: string;
+  quantified_financial_benefits?: string;
+  total_financial_impact_summary?: string;
+  implementation_cost_estimate?: string;
+  return_on_investment?: string;
+  risk_considerations?: string;
+  implementation_roadmap?: string;
+  recommendation?: string;
 }
 
 class SparkApi {

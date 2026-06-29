@@ -1,14 +1,14 @@
 ﻿"""
-Connector run endpoints â€” two-phase execution.
+Connector run endpoints — two-phase execution.
 
-Phase 1 â€” Extraction (sync, runs in a thread, returns immediately)
+Phase 1 — Extraction (sync, runs in a thread, returns immediately)
   Saves agent card JSONs, refreshes curated.agent_360, collects metadata.
 
-Phase 2 â€” Risk Assessment Queue (FastAPI BackgroundTask â€” after HTTP response)
+Phase 2 — Risk Assessment Queue (FastAPI BackgroundTask — after HTTP response)
   Max RISK_CONCURRENCY workflows run at a time.
   The /classify-risk POST blocks until Temporal finishes, so the semaphore
   slot is held for the full workflow duration naturally.
-  Failures are fully isolated â€” one agent never affects others.
+  Failures are fully isolated — one agent never affects others.
 """
 from __future__ import annotations
 
@@ -33,28 +33,31 @@ router = APIRouter()
 
 AGENT_CARD_DIR   = os.getenv("AGENT_CARD_DIR",    "/app/agent_cards")
 RISK_URL         = os.getenv("RISK_CLASSIFY_URL",  "http://tavro-api:8000/api/v1/risk/classify-risk")
+RISK_STATUS_URL  = RISK_URL.replace("/classify-risk", "/workflows")
 RISK_CONCURRENCY = int(os.getenv("RISK_CONCURRENCY", "2"))
 RISK_TIMEOUT_S   = int(os.getenv("RISK_TIMEOUT_S",   "600"))
+RISK_POLL_S      = int(os.getenv("RISK_POLL_S",       "5"))
 ENV_FILE_PATH    = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
 _AGENT365_TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 _AGENT365_DEVICE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode"
 _AGENT365_SCOPE = "https://graph.microsoft.com/.default offline_access"
 
 CONNECTOR_MAP: dict[str, tuple[str, str]] = {
-    "copilot":    ("catalog_connector.connector.copilot_connector",    "CopilotConnector"),
-    "bedrock":    ("catalog_connector.connector.bedrock_connector",     "BedrockConnector"),
-    "salesforce": ("catalog_connector.connector.salesforce_connector",  "SalesforceConnector"),
-    "servicenow": ("catalog_connector.connector.servicenow_connector",  "ServiceNowConnector"),
-    "snowflake":  ("catalog_connector.connector.snowflake_connector",   "SnowflakeConnector"),
-    "databricks": ("catalog_connector.connector.databricks_connector",  "DatabricksConnector"),
-    "gemini":     ("catalog_connector.connector.gemini_connector",      "GeminiConnector"),
-    "github":     ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "copilot":       ("catalog_connector.connector.copilot_connector",       "CopilotConnector"),
+    "bedrock":       ("catalog_connector.connector.bedrock_connector",        "BedrockConnector"),
+    "salesforce":    ("catalog_connector.connector.salesforce_connector",     "SalesforceConnector"),
+    "servicenow":    ("catalog_connector.connector.servicenow_connector",     "ServiceNowConnector"),
+    "snowflake":     ("catalog_connector.connector.snowflake_connector",      "SnowflakeConnector"),
+    "databricks":    ("catalog_connector.connector.databricks_connector",     "DatabricksConnector"),
+    "gemini":        ("catalog_connector.connector.gemini_connector",         "GeminiConnector"),
+    "github":        ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "aict_inbound":  ("catalog_connector.connector.aict_inbound_connector",  "AICTInboundConnector"),
     "agent365":   ("catalog_connector.connector.agent365_inbound_connector", "Agent365InboundConnector"),
 }
 
 _connector_lock = threading.Lock()
 
-# â”€â”€ curated.agent_360 refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── curated.agent_360 refresh ─────────────────────────────────────────────────
 
 _REFRESH_DELETE_SQL = """
     DELETE FROM curated.agent_360
@@ -113,7 +116,28 @@ def _refresh_agent_360_sync(agent_internal_id: str, agent_id: str, tenant_id: st
         session.commit()
 
 
-# â”€â”€ Phase 2: Risk queue (BackgroundTask) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Phase 2: Risk queue (BackgroundTask) ──────────────────────────────────────
+
+async def _wait_for_risk_workflow(workflow_id: str, agent_id: str, tenant_id: str | None) -> str:
+    """Poll the risk workflow status until it reaches completed/failed or times out.
+    Returns the final status string."""
+    max_polls = RISK_TIMEOUT_S // RISK_POLL_S
+    headers = {"x-tenant-id": tenant_id} if tenant_id else {}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for _ in range(max_polls):
+            await asyncio.sleep(RISK_POLL_S)
+            try:
+                resp = await client.get(RISK_STATUS_URL, params={"agent_id": agent_id}, headers=headers)
+                if resp.status_code == 200:
+                    for entry in resp.json():
+                        if entry.get("workflow_id") == workflow_id:
+                            status = entry.get("status", "running")
+                            if status in ("completed", "failed", "terminated", "cancelled", "timed_out"):
+                                return status
+            except Exception:
+                pass
+    return "timeout"
+
 
 async def _run_risk_assessments(agents: list[dict]) -> None:
     semaphore = asyncio.Semaphore(RISK_CONCURRENCY)
@@ -146,10 +170,15 @@ async def _run_risk_assessments(agents: list[dict]) -> None:
         }
         async with semaphore:
             try:
-                async with httpx.AsyncClient(timeout=RISK_TIMEOUT_S) as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(RISK_URL, json=payload)
-                status = "completed" if resp.status_code == 200 else f"HTTP {resp.status_code}"
-                print(f"[risk] {agent_id} ({agent_name}): {status}")
+                if resp.status_code == 202:
+                    workflow_id = resp.json().get("workflow_id", "")
+                    print(f"[risk] {agent_id} ({agent_name}): submitted → {workflow_id}, waiting...")
+                    final = await _wait_for_risk_workflow(workflow_id, agent_id, agent.get("tenant_id"))
+                    print(f"[risk] {agent_id} ({agent_name}): {final}")
+                else:
+                    print(f"[risk] {agent_id} ({agent_name}): unexpected HTTP {resp.status_code}")
             except Exception as exc:
                 print(f"[risk] {agent_id} ({agent_name}): error â€” {exc}")
 
@@ -158,7 +187,7 @@ async def _run_risk_assessments(agents: list[dict]) -> None:
     print(f"[risk] Background queue complete")
 
 
-# â”€â”€ Phase 1: Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Phase 1: Extraction ───────────────────────────────────────────────────────
 
 def _run_extraction(
     module_path: str, class_name: str, config: dict,
@@ -243,7 +272,7 @@ def _run_extraction(
     return {"status": "success", "count": len(agents_extracted), "agents_extracted": agents_extracted}
 
 
-# â”€â”€ Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 class ConnectorRunRequest(BaseModel):
     config: dict
@@ -269,7 +298,8 @@ async def run_connector(
     if connector_id not in CONNECTOR_MAP:
         raise HTTPException(status_code=404, detail=f"Connector '{connector_id}' not found")
 
-    # Priority: x-tenant-id header (sent from localStorage) â†’ ZITADEL userinfo claim
+    # Priority: x-tenant-id header (sent from localStorage) → ZITADEL userinfo claim
+
     admin_tenant_id: str | None = (
         request.headers.get("x-tenant-id", "").strip() or
         auth.get("tenant_id") or
@@ -309,8 +339,6 @@ async def gemini_auth_url(body: GeminiAuthRequest):
               "response_type": "code", "scope": " ".join(scopes), "access_type": "offline", "prompt": "consent"}
     return {"auth_url": f"{body.auth_uri}?{urllib.parse.urlencode(params)}"}
 
-
-# â”€â”€ Agent 365: Device Code Flow â€” proxy to tavro-api â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _Agent365Credentials(BaseModel):
     tenant_id: str = ""

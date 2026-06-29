@@ -69,6 +69,11 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
     "client_id":     "AGENT365_CLIENT_ID",
     "client_secret": "AGENT365_CLIENT_SECRET",
     },
+    "aict_inbound": {
+        "instance_url": "AICT_INSTANCE_URL",
+        "username":     "AICT_USERNAME",
+        "password":     "AICT_PASSWORD",
+    },
 }
 
 
