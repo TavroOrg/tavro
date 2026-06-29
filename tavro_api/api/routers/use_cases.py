@@ -558,6 +558,9 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         else ""
     )
     _ci = " OR {col}.company_id IS NULL OR TRIM(CAST({col}.company_id AS text)) = '' OR {col}.company_id = 'None'"
+    use_case_company_filter = (
+        f"AND (u.company_id = :company_id{_ci.format(col='u')})" if company_id else ""
+    )
     agent_company_filter = (
         f"AND (ag.company_id = :company_id{_ci.format(col='ag')})" if company_id else ""
     )
@@ -616,6 +619,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                 FROM {CORE}.ai_use_cases u
                 WHERE LOWER(TRIM(u.ai_use_case_id)) = LOWER(TRIM(:uid))
                   {use_case_tenant_filter}
+                  {use_case_company_filter}
                 ORDER BY u.updated_ts DESC NULLS LAST
                 LIMIT 1
             """),

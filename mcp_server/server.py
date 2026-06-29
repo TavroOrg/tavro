@@ -214,7 +214,7 @@ def log_tool_call(
 
 
 @core.tool(name="get_agent_card")
-async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, agent_id: Optional[str] = None) -> Dict[str, Any]:
+async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = None, agent_id: Optional[str] = None, company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve the full agent card metadata and risk summary for a specific AI agent by name.
 
@@ -233,6 +233,8 @@ async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, 
         or
         agent_id (str, optional): The unique identifier of the AI agent.
                             Example: "c536dfxyzb0462101163f306cad0c123"
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns agents for this company plus global agents (company_id IS NULL).
 
     Returns:
         dict: Full agent card JSON on success.
@@ -251,11 +253,12 @@ async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, 
             {
                 "agent_name": agent_name,
                 "agent_id": agent_id,
+                "company_id": company_id,
             },
             tenant_id,
         )
 
-        result = AgentMetadataExporter.get_agent_card(agent_name=agent_name, agent_id=agent_id, tenant_id=str(tenant_id))
+        result = AgentMetadataExporter.get_agent_card(agent_name=agent_name, agent_id=agent_id, tenant_id=str(tenant_id), company_id=company_id)
         if result is None:
             return {"error": "NOT_FOUND", "details": f"No agent found with name '{agent_name}'"}
 
@@ -271,7 +274,7 @@ async def get_agent_card(original_prompt: str,agent_name: Optional[str] = None, 
 
 
 @core.tool(name="get_agent_catalog")
-async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+async def get_agent_catalog(original_prompt: str, *, start_record: int = 1, record_range: str = "1-10", company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve a limited set of agent records in a lightweight catalog view.
 
@@ -292,6 +295,8 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         start_record (int): Starting record number (1-based). Default is 1.
         record_range (str, optional): Inclusive range in "start-end" format.
                                     Example: "1-10", "20-30".
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns agents for this company plus global agents (company_id IS NULL).
 
     Returns:
         Dict[str, Any]: A lightweight catalog response containing:
@@ -303,7 +308,7 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
         - INTERNAL_ERROR   : Unexpected processing error
     """
     print("Agent Catalog requested")
-    
+
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
@@ -313,15 +318,19 @@ async def get_agent_catalog(original_prompt: str, start_record: int = 1, record_
             {
                 "start_record": start_record,
                 "record_range": record_range,
+                "company_id": company_id,
             },
             tenant_id,
         )
 
+        params: Dict[str, Any] = {"start_record": start_record, "record_range": record_range}
+        if company_id and company_id.strip():
+            params["company_id"] = company_id.strip()
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{TAVRO_API_URL}/api/v1/agents/",
-                params={"start_record": start_record, "record_range": record_range},
+                params=params,
                 headers=headers,
             )
             resp.raise_for_status()
@@ -351,7 +360,7 @@ async def create_agent(
     data_source: Optional[List[Dict[str, Any]]] = None,
     knowledge_source: Optional[Dict[str, str]] = None,
     skills: Optional[List[Dict[str, Any]]] = None,
-    company_id: Optional[str] = None,
+    company_id: Optional[str],
     company_name: Optional[str] = None,
     issues: Optional[List[Dict]] = None
 ) -> Dict[str, Any]:
@@ -481,6 +490,7 @@ async def create_agent(
         skills (Optional[List[Dict[str, Any]]]): Optional list of skill definitions to register and link to this agent.
             Each skill can include name, description, tags, inputModes/input_modes, and outputModes/output_modes.
         issues (Optional[List[Dict]]): Optional list of issues to associate with the agent.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
 
     Returns:
         Dict[str, Any]: A response containing agent metadata or error details.
@@ -583,7 +593,7 @@ async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict
 
 
 @core.tool(name="create_ai_use_case")
-async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str] = None, company_name: Optional[str] = None) -> Dict[str, Any]:
+async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str], company_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Register a new AI Use Case to establish governance and business context.
 
@@ -688,7 +698,7 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
 
 
 @core.tool(name="get_ai_use_case")
-async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: Optional[str] = None, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: Optional[str] = None, start_record: int = 1, record_range: str = "1-10", company_id: Optional[str]) -> Dict[str, Any]:
     """
     This function fetches AI use case records from a data source. You can filter results using identifiers or titles, and control pagination using record position and range parameters.
 
@@ -701,8 +711,8 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
     title (str, optional): Title of the use case (supports partial matching).
     start_record (int, optional): Starting record number (1-based). Defaults to 1.
     record_range (str, optional): Inclusive range in "start-end" format. Defaults to "1-10".
-
-    
+    company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                Returns use cases for this company plus global use cases (company_id IS NULL).
 
     Returns:
 
@@ -714,7 +724,7 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
     total_records
     """
     print(f"Get AI Use Case requested | use_case_id={use_case_id} title={title} start={start_record} range={record_range} prompt={original_prompt}")
-    
+
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
@@ -726,15 +736,20 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
                 "title": title,
                 "start_record": start_record,
                 "record_range": record_range,
+                "company_id": company_id,
             },
             tenant_id,
         )
-           
+
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
         async with httpx.AsyncClient(timeout=30.0) as client:
             if use_case_id:
+                uc_params: Dict[str, Any] = {}
+                if company_id and company_id.strip():
+                    uc_params["company_id"] = company_id.strip()
                 resp = await client.get(
                     f"{TAVRO_API_URL}/api/v1/use-cases/{use_case_id}",
+                    params=uc_params,
                     headers=headers,
                 )
             else:
@@ -744,6 +759,8 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
                 }
                 if title:
                     params["title"] = title
+                if company_id and company_id.strip():
+                    params["company_id"] = company_id.strip()
                 resp = await client.get(
                     f"{TAVRO_API_URL}/api/v1/use-cases/",
                     params=params,
@@ -2447,7 +2464,7 @@ async def create_dim_type(
 
 
 @core.tool(name="get_application_catalog")
-async def get_application_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+async def get_application_catalog(original_prompt: str, *, start_record: int = 1, record_range: str = "1-10", company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve paginated application catalog.
 
@@ -2455,6 +2472,8 @@ async def get_application_catalog(original_prompt: str, start_record: int = 1, r
         original_prompt (str): REQUIRED verbatim user message.
         start_record (int): Starting index.
         record_range (str): Range like "1-10".
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns applications for this company plus global applications (company_id IS NULL).
 
     Returns:
         Dict[str, Any]
@@ -2471,6 +2490,7 @@ async def get_application_catalog(original_prompt: str, start_record: int = 1, r
             {
                 "start_record": start_record,
                 "record_range": record_range,
+                "company_id": company_id,
             },
             tenant_id,
         )
@@ -2479,6 +2499,7 @@ async def get_application_catalog(original_prompt: str, start_record: int = 1, r
             start_record=start_record,
             record_range=record_range,
             tenant_id=str(tenant_id),
+            company_id=company_id,
         )
 
         return result
@@ -2490,13 +2511,16 @@ async def get_application_catalog(original_prompt: str, start_record: int = 1, r
 
 
 @core.tool(name="get_application")
-async def get_application(original_prompt: str, *, application_id: str) -> Dict[str, Any]:
+async def get_application(original_prompt: str, *, application_id: str, company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve a business application by its ID.
 
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         application_id (str): The business_application_id (hex string).
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns the application only if it belongs to this company or is a
+                                    global application (company_id IS NULL).
 
     Returns:
         Dict[str, Any]: Full application record including name, description, vendor,
@@ -2505,12 +2529,16 @@ async def get_application(original_prompt: str, *, application_id: str) -> Dict[
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
-        log_tool_call("get_application", original_prompt, {"application_id": application_id}, tenant_id)
+        log_tool_call("get_application", original_prompt, {"application_id": application_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        params: Dict[str, Any] = {}
+        if company_id and company_id.strip():
+            params["company_id"] = company_id.strip()
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{TAVRO_API_URL}/api/v1/applications/{application_id}",
+                params=params,
                 headers=headers,
             )
             resp.raise_for_status()
@@ -2526,7 +2554,7 @@ async def create_application(
     original_prompt: str,
     *,
     application_name: str,
-    company_id: Optional[str] = None,
+    company_id: Optional[str],
     application_description: Optional[str] = None,
     tags: Optional[List[str]] = None,
     emergency_tier: Optional[str] = None,
@@ -2555,7 +2583,7 @@ async def create_application(
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         application_name (str): Name of the business application (required).
-        company_id (str, optional): UUID of the company — links application to blueprint.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null. When provided, links the application to the company's blueprint.
         application_description (str, optional): Description of the application's purpose.
         tags (List[str], optional): Descriptive tags for the application (e.g. ["crm", "saas"]).
         emergency_tier (str, optional): Emergency classification tier.
@@ -2773,7 +2801,7 @@ async def delete_application(original_prompt: str, *, application_id: str) -> Di
 # =============================================================
 
 @core.tool(name="get_process_catalog")
-async def get_process_catalog(original_prompt: str, start_record: int = 1, record_range: str = "1-10") -> Dict[str, Any]:
+async def get_process_catalog(original_prompt: str, *, start_record: int = 1, record_range: str = "1-10", company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve paginated process catalog.
 
@@ -2781,6 +2809,8 @@ async def get_process_catalog(original_prompt: str, start_record: int = 1, recor
         original_prompt (str): REQUIRED verbatim user message.
         start_record (int): Start index.
         record_range (str): Range like "1-10".
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns processes for this company plus global processes (company_id IS NULL).
 
     Returns:
         Dict[str, Any]
@@ -2797,6 +2827,7 @@ async def get_process_catalog(original_prompt: str, start_record: int = 1, recor
             {
                 "start_record": start_record,
                 "record_range": record_range,
+                "company_id": company_id,
             },
             tenant_id,
         )
@@ -2805,6 +2836,7 @@ async def get_process_catalog(original_prompt: str, start_record: int = 1, recor
             start_record=start_record,
             record_range=record_range,
             tenant_id=str(tenant_id),
+            company_id=company_id,
         )
 
         return result
@@ -2816,13 +2848,16 @@ async def get_process_catalog(original_prompt: str, start_record: int = 1, recor
 
 
 @core.tool(name="get_process")
-async def get_process(original_prompt: str, *, process_id: str) -> Dict[str, Any]:
+async def get_process(original_prompt: str, *, process_id: str, company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve a business process by its ID.
 
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         process_id (str): The business_process_id (hex string).
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns the process only if it belongs to this company or is a
+                                    global process (company_id IS NULL).
 
     Returns:
         Dict[str, Any]: Full process record including name, description, owner,
@@ -2831,12 +2866,16 @@ async def get_process(original_prompt: str, *, process_id: str) -> Dict[str, Any
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
-        log_tool_call("get_process", original_prompt, {"process_id": process_id}, tenant_id)
+        log_tool_call("get_process", original_prompt, {"process_id": process_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        params: Dict[str, Any] = {}
+        if company_id and company_id.strip():
+            params["company_id"] = company_id.strip()
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{TAVRO_API_URL}/api/v1/processes/{process_id}",
+                params=params,
                 headers=headers,
             )
             resp.raise_for_status()
@@ -2852,7 +2891,7 @@ async def create_process(
     original_prompt: str,
     *,
     process_name: str,
-    company_id: Optional[str] = None,
+    company_id: Optional[str],
     process_number: Optional[str] = None,
     process_description: Optional[str] = None,
     tags: Optional[List[str]] = None,
@@ -2876,7 +2915,7 @@ async def create_process(
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         process_name (str): Name of the business process (required).
-        company_id (str, optional): UUID of the company — links process to blueprint.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null. When provided, links the process to the company's blueprint.
         process_number (str, optional): Process identifier/number (e.g. "P-001").
         process_description (str, optional): Description of the process workflow.
         tags (List[str], optional): Descriptive tags for the process (e.g. ["finance", "automated"]).
@@ -3072,7 +3111,8 @@ async def delete_process(original_prompt: str, *, process_id: str) -> Dict[str, 
 @core.tool(name="list_integrations")
 async def list_integrations(
     original_prompt: str,
-    company_id: Optional[str] = None,
+    *,
+    company_id: Optional[str],
     search: Optional[str] = None,
     offset: int = 0,
     limit: int = 50,
@@ -3082,7 +3122,7 @@ async def list_integrations(
 
     Args:
         original_prompt (str): REQUIRED verbatim user message.
-        company_id (str, optional): Filter by company UUID.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
         search (str, optional): Search by integration name or description.
         offset (int): Pagination offset (default 0).
         limit (int): Max records (default 50, max 500).
@@ -3122,13 +3162,16 @@ async def list_integrations(
 
 
 @core.tool(name="get_integration")
-async def get_integration(original_prompt: str, *, integration_id: str) -> Dict[str, Any]:
+async def get_integration(original_prompt: str, *, integration_id: str, company_id: Optional[str]) -> Dict[str, Any]:
     """
     Retrieve a business integration by its ID.
 
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         integration_id (str): The integration_id (hex string).
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
+                                    Returns the integration only if it belongs to this company or is a
+                                    global integration (company_id IS NULL).
 
     Returns:
         Dict[str, Any]: Full integration record including name, description, protocol,
@@ -3137,12 +3180,16 @@ async def get_integration(original_prompt: str, *, integration_id: str) -> Dict[
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
-        log_tool_call("get_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
+        log_tool_call("get_integration", original_prompt, {"integration_id": integration_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
+        params: Dict[str, Any] = {}
+        if company_id and company_id.strip():
+            params["company_id"] = company_id.strip()
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{TAVRO_API_URL}/api/v1/integrations/{integration_id}",
+                params=params,
                 headers=headers,
             )
             resp.raise_for_status()
@@ -3158,7 +3205,7 @@ async def create_integration(
     original_prompt: str,
     *,
     integration_name: str,
-    company_id: Optional[str] = None,
+    company_id: Optional[str],
     integration_description: Optional[str] = None,
     tags: Optional[List[str]] = None,
     capabilities: Optional[str] = None,
@@ -3183,7 +3230,7 @@ async def create_integration(
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         integration_name (str): Name of the integration (required).
-        company_id (str, optional): UUID of the company — links integration to blueprint.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null. When provided, links the integration to the company's blueprint.
         integration_description (str, optional): What this integration does.
         tags (List[str], optional): Descriptive tags for the integration (e.g. ["api", "real-time"]).
         capabilities (str, optional): Comma-separated list of capabilities.
@@ -3256,7 +3303,7 @@ async def update_integration(
     original_prompt: str,
     *,
     integration_id: str,
-    company_id: Optional[str] = None,
+    company_id: Optional[str],
     integration_name: Optional[str] = None,
     integration_description: Optional[str] = None,
     tags: Optional[List[str]] = None,
@@ -3281,7 +3328,7 @@ async def update_integration(
     Args:
         original_prompt (str): REQUIRED verbatim user message.
         integration_id (str): The integration_id to update.
-        company_id (str, optional): Company UUID — if provided, re-syncs to blueprint.
+        company_id (Optional[str]): REQUIRED. Active company UUID, or null. When provided, re-syncs the integration to the company's blueprint.
         integration_name (str, optional): Updated name.
         integration_description (str, optional): Updated description.
         tags (List[str], optional): Updated tags.
