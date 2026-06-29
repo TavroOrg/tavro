@@ -1281,7 +1281,10 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = aba.agent_id
+                WHERE (ara.agent_id = aba.agent_id
+                       OR (ara.agent_internal_id = aba.agent_internal_id
+                           AND aba.agent_internal_id IS NOT NULL
+                           AND aba.agent_internal_id <> ''))
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -2686,7 +2689,10 @@ async def _fetch_processes(
                             JOIN LATERAL (
                                 SELECT ara.blended_risk_score
                                 FROM core.agent_risk_assessments ara
-                                WHERE ara.agent_id = abp.agent_id
+                                WHERE (ara.agent_id = abp.agent_id
+                                       OR (ara.agent_internal_id = abp.agent_internal_id
+                                           AND abp.agent_internal_id IS NOT NULL
+                                           AND abp.agent_internal_id <> ''))
                                   AND ara.blended_risk_score IS NOT NULL
                                 ORDER BY {ara_order_proc}
                                 LIMIT 1
@@ -3473,7 +3479,10 @@ async def add_agent_integration_relation(
     integration = int_row.mappings().first()
     if not integration:
         raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
-    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(integration.get("company_id"))
+    ) else (
         company_id or integration.get("company_id") or agent.get("company_id")
     )
 
@@ -5614,7 +5623,10 @@ async def add_agent_application_relation(
             "company_id": company_id or agent.get("company_id"),
         }
 
-    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(app.get("company_id"))
+    ) else (
         company_id or app.get("company_id") or agent.get("company_id")
     )
 
@@ -5804,7 +5816,10 @@ async def add_agent_process_relation(
             "company_id": company_id or agent.get("company_id"),
         }
 
-    relation_company_id = None if _is_global_company_value(agent.get("company_id")) else (
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(process.get("company_id"))
+    ) else (
         company_id or process.get("company_id") or agent.get("company_id")
     )
 

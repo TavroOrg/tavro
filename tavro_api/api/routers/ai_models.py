@@ -1345,7 +1345,10 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM {CORE}.agent_risk_assessments ara
-                WHERE ara.agent_id = rel.agent_id
+                WHERE (ara.agent_id = rel.agent_id
+                       OR (ara.agent_internal_id = rel.agent_internal_id
+                           AND rel.agent_internal_id IS NOT NULL
+                           AND rel.agent_internal_id <> ''))
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1354,7 +1357,8 @@ async def _refresh_model_rollup(db: AsyncSession, ai_model_id: str) -> None:
                 LIMIT 1
             ) brs ON TRUE
             WHERE LOWER(TRIM(rel.ai_model_id)) = LOWER(TRIM(:mid))
-              AND rel.agent_id IS NOT NULL AND rel.agent_id <> ''
+              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
             ORDER BY brs.blended_risk_score DESC NULLS LAST
             LIMIT 1
         """),

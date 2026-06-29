@@ -114,6 +114,7 @@ async def get_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), 
             JOIN twin.dim_type t ON t.id = n.dim_type_id
             JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
             WHERE n.id = :id
+              AND n.valid_to IS NULL
         """),
         {"id": str(node_id), "tid": tenant_id},
     )

@@ -478,53 +478,22 @@ async def list_use_cases(
                 LIMIT 1
             ), 0.0) AS agent_risk_exposure_are
         """
-        _art_expr = f"""
-            (
-                SELECT CASE
-                    WHEN COALESCE(max_brs.blended_risk_score, 0.0) >= 9.0 THEN 'Critical'
-                    WHEN COALESCE(max_brs.blended_risk_score, 0.0) >= 7.0 THEN 'High'
-                    WHEN COALESCE(max_brs.blended_risk_score, 0.0) >= 3.0 THEN 'Medium'
+        _art_expr = ""
+        _outer_art_col = """, CASE
+                    WHEN t.agent_risk_exposure_are >= 9.0 THEN 'Critical'
+                    WHEN t.agent_risk_exposure_are >= 7.0 THEN 'High'
+                    WHEN t.agent_risk_exposure_are >= 3.0 THEN 'Medium'
                     ELSE 'Low'
-                END
-                FROM (
-                    SELECT brs.blended_risk_score
-                    FROM {CORE}.agent_ai_use_cases rel2
-                    JOIN {CORE}.agents ag2
-                        ON ag2.agent_id = rel2.agent_id
-                        OR ag2.agent_internal_id = rel2.agent_internal_id
-                    JOIN LATERAL (
-                        SELECT ara.blended_risk_score
-                        FROM {CORE}.agent_risk_assessments ara
-                        WHERE ara.blended_risk_score IS NOT NULL
-                          AND (
-                            ara.agent_id = rel2.agent_id
-                            OR (rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
-                                AND ara.agent_internal_id = rel2.agent_internal_id)
-                          )
-                        ORDER BY
-                            CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
-                            ara.assessment_ts DESC NULLS LAST,
-                            ara.updated_ts DESC NULLS LAST
-                        LIMIT 1
-                    ) brs ON TRUE
-                    WHERE LOWER(TRIM(rel2.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                      AND COALESCE(rel2.agent_id, rel2.agent_internal_id) IS NOT NULL
-                      AND COALESCE(rel2.agent_id, rel2.agent_internal_id) <> ''
-                      {_risk_tf}
-                      {_risk_cf}
-                    ORDER BY brs.blended_risk_score DESC NULLS LAST
-                    LIMIT 1
-                ) max_brs
-            ) AS agent_risk_tier_art
-        """
+                END AS agent_risk_tier_art"""
     else:
         _are_expr = "u.agent_risk_exposure_are"
-        _art_expr = "u.agent_risk_tier_art"
+        _art_expr = "u.agent_risk_tier_art,"
+        _outer_art_col = ""
 
     try:
         result = await db.execute(
             text(f"""
-                SELECT *
+                SELECT * {_outer_art_col}
                 FROM (
                     SELECT
                         u.ai_use_case_id AS identifier,
@@ -540,7 +509,7 @@ async def list_use_cases(
                         u.created_ts,
                         u.updated_ts,
                         {_are_expr},
-                        {_art_expr},
+                        {_art_expr}
                         COALESCE((
                             SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
                             FROM {CORE}.agent_ai_use_cases rel
