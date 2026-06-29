@@ -36,6 +36,7 @@ class CompanyUpdate(BaseModel):
 
 class Company(CompanyBase):
     id:         UUID
+    tenant_id:  Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

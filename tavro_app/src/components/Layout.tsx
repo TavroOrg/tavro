@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, User
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -26,6 +26,7 @@ import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
+import { getUserDisplayName, fetchUserDisplayName } from '../services/auth';
 
 import travoLogo from '../assets/travo_logo.png';
 
@@ -121,6 +122,11 @@ const Layout: React.FC = () => {
     const [agentCount, setAgentCount] = useState(0);
     const [useCaseCount, setUseCaseCount] = useState(0);
     const [sparkCount, setSparkCount] = useState(0);
+    const [userName, setUserName] = useState<string | null>(() => getUserDisplayName());
+
+    useEffect(() => {
+        fetchUserDisplayName().then(name => { if (name) setUserName(name); });
+    }, []);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;
@@ -128,14 +134,14 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(),
+            aiModelApi.countModels(companyId),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {
             if (apps.status === 'fulfilled') setAppCount(apps.value);
             if (processes.status === 'fulfilled') setProcessCount(processes.value);
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
-            if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+            if (models.status === 'fulfilled') setAiModelCount(models.value);
             if (agents.status === 'fulfilled') setAgentCount(agents.value);
             if (useCases.status === 'fulfilled') setUseCaseCount(useCases.value);
         });
@@ -273,6 +279,8 @@ const Layout: React.FC = () => {
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {/* Global artifact-ready notification — appears centered at top of viewport */}
             <TimedInfoToast storageKey="tavro_artifacts_notice" position="center" durationMs={8000} />
+            {/* Spark use-case enrichment notifications — bottom-right */}
+            <TimedInfoToast storageKey="tavro_spark_notice" position="bottom-right" durationMs={12000} />
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
@@ -596,10 +604,16 @@ const Layout: React.FC = () => {
                         <button
                             onClick={handleLogout}
                             className={`flex items-center py-1 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
-                            title={!isLeftPanelOpen ? "Sign Out" : undefined}
+                            title={!isLeftPanelOpen ? (userName ? `Sign Out (${userName})` : "Sign Out") : undefined}
                         >
                             <LogOut size={16} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Sign Out</span>
+                            {userName && (
+                                <span className={`flex items-center gap-1 overflow-hidden transition-all duration-300 text-xs text-slate-400 dark:text-slate-500 group-hover:text-red-400 dark:group-hover:text-red-400 ml-auto ${isLeftPanelOpen ? 'max-w-[120px] opacity-100' : 'max-w-0 opacity-0'}`} title={userName}>
+                                    <User size={11} className="flex-shrink-0" />
+                                    <span className="truncate">{userName}</span>
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>

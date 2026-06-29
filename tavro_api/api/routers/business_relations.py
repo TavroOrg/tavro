@@ -2839,6 +2839,176 @@ async def delete_integration(
     return {"status": "deleted", "integration_id": integration_id}
 
 
+@router.post("/integrations/upload", status_code=200, tags=["Integrations"], summary="Bulk Upload Integrations CSV")
+async def upload_integrations_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business integrations from one or more CSV or TSV files.
+    Only integration_name is mandatory per row; all other fields are optional.
+    tenant_id is read from the x-tenant-id request header.
+
+    Upsert logic:
+      - Same name + same tenant + same company  → UPDATE existing record
+      - Same name + same tenant + different company → INSERT as new row
+      - Same name appearing twice in the CSV → skip the duplicate, add to errors
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    await _ensure_integrations_table(db)
+    int_cols = await _table_columns(db, "core", "business_integrations")
+    uploaded_count = 0
+    errors: list[str] = []
+
+    # Detect in-CSV duplicate names — add all occurrences after the first to blocked set.
+    seen_csv: set[str] = set()
+    blocked_csv_names: set[str] = set()
+    for row in all_rows:
+        n = _text_or_none(row.get("integration_name", ""))
+        if n:
+            key = n.lower()
+            if key in seen_csv:
+                blocked_csv_names.add(key)
+            seen_csv.add(key)
+
+    deduped_rows: list[dict] = []
+    reported_csv_dups: set[str] = set()
+    for row in all_rows:
+        n = _text_or_none(row.get("integration_name", ""))
+        if not n:
+            deduped_rows.append(row)
+            continue
+        key = n.lower()
+        if key in blocked_csv_names:
+            if key not in reported_csv_dups:
+                errors.append(f"Skipped '{n}': already exists for this tenant/company or is duplicated in the CSV")
+                reported_csv_dups.add(key)
+            continue
+        deduped_rows.append(row)
+
+    # Block names already in DB for this tenant+company (same as applications/processes logic)
+    csv_names_deduped = [_text_or_none(r.get("integration_name", "")) for r in deduped_rows if _text_or_none(r.get("integration_name", ""))]
+    blocked_int_names: set[str] = set()
+    if csv_names_deduped:
+        placeholders = ", ".join(f":n{i}" for i in range(len(csv_names_deduped)))
+        db_check_params: dict[str, Any] = {f"n{i}": v.lower() for i, v in enumerate(csv_names_deduped)}
+        db_check_params["tid"] = tenant_id
+        cid_filter = "AND company_id = :cid" if cid else ""
+        if cid:
+            db_check_params["cid"] = cid
+        existing_result = await db.execute(
+            text(
+                f"SELECT LOWER(integration_name) FROM core.business_integrations "
+                f"WHERE LOWER(integration_name) IN ({placeholders}) AND tenant_id = :tid {cid_filter}"
+            ),
+            db_check_params,
+        )
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_int_names.add(existing_lower)
+
+    for row in deduped_rows:
+        int_name = _text_or_none(row.get("integration_name", ""))
+        if not int_name:
+            errors.append("Skipped a row: integration_name is required")
+            continue
+
+        if int_name.lower() in blocked_int_names:
+            errors.append(f"Skipped '{int_name}': already exists for this tenant/company or is duplicated in the CSV")
+            continue
+
+        int_id = uuid4().hex
+        insert_values: dict[str, Any] = {"integration_id": int_id}
+        for col in _INT_UPLOAD_TEXT_COLS:
+            if col in int_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+
+        if "tenant_id" in int_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in int_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in int_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in int_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in int_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in int_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        try:
+            await db.execute(
+                text(f"INSERT INTO core.business_integrations ({', '.join(col_names)}) VALUES ({values_sql})"),
+                params,
+            )
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_integrations(db, integration_id=int_id)
+                if rows_fetched:
+                    await _sync_integration_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{int_name}': {exc}")
+
+    if errors:
+        print(f"[WARN] integration upload: {len(errors)} row(s) failed — {errors[:3]}")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Integration" if uploaded_count == 1 else "Integrations"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+    }
+
+
 @router.put(
     "/agents/{agent_id}/integrations/{integration_id}",
     tags=["Integrations"],
@@ -3261,6 +3431,13 @@ _PROC_UPLOAD_FLOAT_COLS: set[str] = {
 }
 
 _PROC_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
+
+_INT_UPLOAD_TEXT_COLS: set[str] = {
+    "integration_name", "integration_description", "capabilities", "protocol",
+    "endpoint_url", "authentication_method", "owner", "documentation_url",
+    "data_sensitivity", "rate_limit", "availability_status", "sla", "version",
+    "parent_application_id", "business_criticality", "emergency_tier",
+}
 
 
 @router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")

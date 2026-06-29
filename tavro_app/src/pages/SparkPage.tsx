@@ -28,6 +28,7 @@ import {
 import { useBlueprint } from '../context/BlueprintContext';
 import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
+import { useCaseApi } from '../services/useCaseApi';
 import { portalActivity } from '../services/portalActivity';
 import type { SparkIdea } from '../types/spark';
 import {
@@ -505,8 +506,38 @@ const IdeaModal: React.FC<{
     setConverting(true);
     setConvertError(null);
     try {
-      // Step 1: Enrich idea into use case fields + agent recommendation via Claude
-      const { use_case_fields: fields, agent_recommendation: agentRecRaw } = await sparkApi.convertIdea({
+      // Step 1: Create use case immediately with raw idea data — no Claude wait
+      const priorityMap: Record<string, string> = { Low: '4 - Low', Medium: '3 - Moderate', High: '2 - High' };
+      const quickPriority = priorityMap[idea.estimated_impact ?? 'Medium'] ?? '3 - Moderate';
+
+      const created = await mcpClient.createAiUseCase({
+        title: idea.title,
+        description: idea.description,
+        business_problem_statement: idea.rationale || idea.description,
+        expected_benefits: idea.description,
+        priority: quickPriority,
+        original_prompt: `Convert Spark idea to AI use case: ${idea.title}`,
+      });
+      const useCaseId = extractStringByKeys(created, ['use_case_id', 'ai_use_case_id', 'identifier', 'id']);
+      if (!useCaseId) {
+        throw new Error(created?.details || created?.error || 'Use case creation failed');
+      }
+
+      // Step 2: Mark this use case as "enriching" so the detail page can show a banner
+      try {
+        const raw = localStorage.getItem('tavro_enriching_use_cases');
+        const enriching: string[] = raw ? JSON.parse(raw) : [];
+        if (!enriching.includes(useCaseId)) enriching.push(useCaseId);
+        localStorage.setItem('tavro_enriching_use_cases', JSON.stringify(enriching));
+      } catch { /* best-effort */ }
+
+      // Step 3: Navigate immediately + close modal
+      setConverting(false);
+      onClose();
+      navigate(`/use-case/${encodeURIComponent(useCaseId)}`);
+
+      // Step 4: Run full Claude enrichment in the background (fire-and-forget)
+      const ideaSnapshot = {
         idea_id: idea.idea_id,
         company_id: companyId,
         title: idea.title,
@@ -518,124 +549,130 @@ const IdeaModal: React.FC<{
         estimated_impact: idea.estimated_impact,
         blueprint_dimensions: blueprintCtx?.dimensions,
         blueprint_edges: blueprintCtx?.edges,
-      });
-      const agentRec = asRecord(agentRecRaw);
+      };
 
-      // Step 2: Create the AI use case via MCP
-      const created = await mcpClient.createAiUseCase({
-        ...fields,
-        original_prompt: `Convert Spark idea to AI use case: ${idea.title}`,
-      });
-      const useCaseId = extractStringByKeys(created, ['use_case_id', 'ai_use_case_id', 'identifier', 'id']);
-      if (!useCaseId) {
-        throw new Error(created?.details || created?.error || 'Use case creation failed');
-      }
-
-      // Step 3: Create agent and link it (best-effort — don't block navigation on failure)
-      const agentName =
-        asNonEmptyString(agentRec?.agent_name) ??
-        asNonEmptyString(agentRec?.name) ??
-        asNonEmptyString(idea.title ? `${idea.title} Agent` : '') ??
-        'Spark Use Case Agent';
-      if (agentName) {
+      (async () => {
         try {
-          // Fetch company applications to enrich generic tool names with real assets
-          let enrichedTools = normalizeAgentTools(agentRec?.tools);
-          try {
-            const appCatalog = await mcpClient.getApplicationCatalog({
-              original_prompt: `Find applications relevant to: ${idea.title}`,
-              start_record: 1,
-              record_range: '1-20',
-            });
-            const appCatalogRecord = asRecord(appCatalog);
-            const appRows =
-              (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
-              (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
-              (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
-              [];
+          const { use_case_fields: fields, agent_recommendation: agentRecRaw } = await sparkApi.convertIdea(ideaSnapshot);
+          const agentRec = asRecord(agentRecRaw);
 
-            const apps: { application_name: string; description: string }[] = [];
-            for (const row of appRows) {
-              const app = asRecord(row);
-              if (!app) continue;
-              const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
-              if (!applicationName) continue;
-              apps.push({
-                application_name: applicationName,
-                description: asNonEmptyString(app.description) ?? '',
-              });
-            }
-
-            if (apps.length > 0) {
-              // Replace generic tool entries with real company application names where a match is plausible
-              enrichedTools = enrichedTools.map((tool: AgentTool) => {
-                const match = apps.find(a =>
-                  tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
-                  a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0])
-                );
-                return match
-                  ? { name: match.application_name, description: match.description || tool.description }
-                  : tool;
-              });
-            }
-          } catch {
-            // Catalog fetch failed — use Claude-suggested tools as-is
-          }
-
-          const agentTables = normalizeAgentTables(agentRec?.tables);
-          const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
-          const agentSkills = normalizeAgentSkills(agentRec?.skills);
-
-          const agent = await mcpClient.createAgent({
-            agent_name: agentName,
-            description: asNonEmptyString(agentRec?.description) ?? agentName,
-            instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
-            tools: enrichedTools.length > 0 ? enrichedTools : undefined,
-            tables: agentTables.length > 0 ? agentTables : undefined,
-            columns: agentColumns.length > 0 ? agentColumns : undefined,
-            skills: agentSkills.length > 0 ? agentSkills : undefined,
-            knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
-            original_prompt: `Create agent for AI use case: ${idea.title}`,
+          // Update use case with all enriched + business case fields
+          await useCaseApi.updateUseCase(useCaseId, {
+            title: (fields.title as string) || idea.title,
+            description: (fields.description as string) || idea.description,
+            business_problem_statement: (fields.business_problem_statement as string) || idea.rationale,
+            expected_benefits: fields.expected_benefits as string,
+            solution_approach: fields.solution_approach as string,
+            executive_summary: fields.executive_summary as string,
+            assumptions: fields.assumptions as string,
+            quantified_financial_benefits: fields.quantified_financial_benefits as string,
+            total_financial_impact_summary: fields.total_financial_impact_summary as string,
+            implementation_cost_estimate: fields.implementation_cost_estimate as string,
+            return_on_investment: fields.return_on_investment as string,
+            risk_considerations: fields.risk_considerations as string,
+            implementation_roadmap: fields.implementation_roadmap as string,
+            recommendation: fields.recommendation as string,
+            __activityName: idea.title,
           });
 
-          const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
-          if (agentId) {
-            await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
-
-            // Register the agent as locally pending so CatalogContext can track
-            // the workflow completion and clear the badge on the agent detail page.
-            // Without this, mcpClient.createAgent() does not fire tavro:agent-created,
-            // so the workflow completion event would be missed by AgentViewPage.
+          // Create agent and link (best-effort)
+          const agentName =
+            asNonEmptyString(agentRec?.agent_name) ??
+            asNonEmptyString(agentRec?.name) ??
+            `${idea.title} Agent`;
+          try {
+            let enrichedTools = normalizeAgentTools(agentRec?.tools);
             try {
-              const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
-              const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
-              localStorage.setItem(
-                'tavro_pending_assessment_agents',
-                JSON.stringify(Array.from(new Set([...pending, agentId]))),
-              );
-              const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
-              const meta = metaRaw
-                ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>)
-                : [];
-              const filtered = meta.filter(item => item.agent_id !== agentId);
-              filtered.unshift({
-                agent_id: agentId,
-                name: agentName,
-                description: asNonEmptyString(agentRec?.description) ?? agentName,
-                created_at: new Date().toISOString(),
+              const appCatalog = await mcpClient.getApplicationCatalog({
+                original_prompt: `Find applications relevant to: ${idea.title}`,
+                start_record: 1,
+                record_range: '1-20',
               });
-              localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
-            } catch {
-              // localStorage writes are best-effort
-            }
-          }
-        } catch {
-          // Agent creation is best-effort; use case was created successfully
-        }
-      }
+              const appCatalogRecord = asRecord(appCatalog);
+              const appRows =
+                (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
+                (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
+                (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
+                [];
+              const apps: { application_name: string; description: string }[] = [];
+              for (const row of appRows) {
+                const app = asRecord(row);
+                if (!app) continue;
+                const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
+                if (!applicationName) continue;
+                apps.push({ application_name: applicationName, description: asNonEmptyString(app.description) ?? '' });
+              }
+              if (apps.length > 0) {
+                enrichedTools = enrichedTools.map((tool: AgentTool) => {
+                  const match = apps.find(a =>
+                    tool.name.toLowerCase().includes(a.application_name.toLowerCase().split(' ')[0]) ||
+                    a.application_name.toLowerCase().includes(tool.name.toLowerCase().split(' ')[0])
+                  );
+                  return match ? { name: match.application_name, description: match.description || tool.description } : tool;
+                });
+              }
+            } catch { /* catalog fetch best-effort */ }
 
-      // Step 4: Navigate to the newly created use case
-      navigate(`/use-case/${encodeURIComponent(useCaseId)}`);
+            const agentTables = normalizeAgentTables(agentRec?.tables);
+            const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
+            const agentSkills = normalizeAgentSkills(agentRec?.skills);
+
+            const agent = await mcpClient.createAgent({
+              agent_name: agentName,
+              description: asNonEmptyString(agentRec?.description) ?? agentName,
+              instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
+              tools: enrichedTools.length > 0 ? enrichedTools : undefined,
+              tables: agentTables.length > 0 ? agentTables : undefined,
+              columns: agentColumns.length > 0 ? agentColumns : undefined,
+              skills: agentSkills.length > 0 ? agentSkills : undefined,
+              knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
+              original_prompt: `Create agent for AI use case: ${idea.title}`,
+            });
+
+            const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
+            if (agentId) {
+              await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
+              try {
+                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+                localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(Array.from(new Set([...pending, agentId]))));
+                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                const meta = metaRaw ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>) : [];
+                const filtered = meta.filter(item => item.agent_id !== agentId);
+                filtered.unshift({ agent_id: agentId, name: agentName, description: asNonEmptyString(agentRec?.description) ?? agentName, created_at: new Date().toISOString() });
+                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+              } catch { /* best-effort */ }
+            }
+          } catch { /* agent creation best-effort */ }
+
+          // Remove enriching marker
+          try {
+            const raw = localStorage.getItem('tavro_enriching_use_cases');
+            const enriching: string[] = raw ? JSON.parse(raw) : [];
+            localStorage.setItem('tavro_enriching_use_cases', JSON.stringify(enriching.filter(id => id !== useCaseId)));
+          } catch { /* best-effort */ }
+
+          // Notify the use case detail page to re-fetch + show success banner
+          const enrichedTitle = (fields.title as string) || idea.title;
+          window.dispatchEvent(new CustomEvent('tavro_usecase_enriched', {
+            detail: { use_case_id: useCaseId, title: enrichedTitle },
+          }));
+
+        } catch (enrichErr) {
+          console.error('[Spark] Background enrichment failed for use case', useCaseId, enrichErr);
+          // Clean up the enriching marker silently — the use case was already created
+          try {
+            const raw = localStorage.getItem('tavro_enriching_use_cases');
+            const enriching: string[] = raw ? JSON.parse(raw) : [];
+            localStorage.setItem('tavro_enriching_use_cases', JSON.stringify(enriching.filter(id => id !== useCaseId)));
+          } catch { /* best-effort */ }
+          // Dismiss the loading banner without showing an error
+          window.dispatchEvent(new CustomEvent('tavro_usecase_enriched', {
+            detail: { use_case_id: useCaseId, title: idea.title },
+          }));
+        }
+      })();
+
     } catch (err) {
       setConvertError(toUserMessage(err));
       setConverting(false);

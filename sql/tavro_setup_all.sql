@@ -73,11 +73,13 @@ CREATE TABLE IF NOT EXISTS twin.company (
     industry     TEXT        NOT NULL,
     region       TEXT        NOT NULL,
     legal_entity TEXT,
+    tenant_id    TEXT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS company_name_region_uidx
-    ON twin.company (lower(name), lower(region));
+CREATE UNIQUE INDEX IF NOT EXISTS company_name_region_tenant_uidx
+    ON twin.company (lower(name), lower(region), tenant_id);
+CREATE INDEX IF NOT EXISTS twin_company_tenant_idx ON twin.company (tenant_id);
 
 
 CREATE TABLE IF NOT EXISTS twin.dim_type (
