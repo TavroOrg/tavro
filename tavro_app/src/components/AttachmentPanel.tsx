@@ -171,6 +171,16 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
         loadAttachments();
     }, [resolvedEntityId, resolvedEntityType, onAttachmentAdd, onAttachmentDelete]);
 
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ entityType?: string; entityId?: string }>).detail;
+            if (detail?.entityId && detail.entityId !== resolvedEntityId) return;
+            loadAttachments();
+        };
+        window.addEventListener('tavro:attachment-uploaded', handler);
+        return () => window.removeEventListener('tavro:attachment-uploaded', handler);
+    }, [resolvedEntityId]);
+
     const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.currentTarget.files;
         if (!files || files.length === 0) return;

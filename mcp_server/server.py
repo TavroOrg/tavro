@@ -593,7 +593,7 @@ async def create_risk_assessment(original_prompt: str, *, agent_id: str) -> Dict
 
 
 @core.tool(name="create_ai_use_case")
-async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str], company_name: Optional[str] = None) -> Dict[str, Any]:
+async def create_ai_use_case(original_prompt: str, *, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None, company_id: Optional[str] = None, company_name: Optional[str] = None, assumptions: Optional[str] = None, quantified_financial_benefits: Optional[str] = None, total_financial_impact_summary: Optional[str] = None, implementation_cost_estimate: Optional[str] = None, return_on_investment: Optional[str] = None, risk_considerations: Optional[str] = None, implementation_roadmap: Optional[str] = None, recommendation: Optional[str] = None, executive_summary: Optional[str] = None) -> Dict[str, Any]:
     """
     Register a new AI Use Case to establish governance and business context.
 
@@ -658,6 +658,24 @@ async def create_ai_use_case(original_prompt: str, *, title: str, description: s
             payload["impacted_business_applications"] = impacted_business_applications
         if impacted_business_processes is not None:
             payload["impacted_business_processes"] = impacted_business_processes
+        if assumptions is not None:
+            payload["assumptions"] = assumptions
+        if quantified_financial_benefits is not None:
+            payload["quantified_financial_benefits"] = quantified_financial_benefits
+        if total_financial_impact_summary is not None:
+            payload["total_financial_impact_summary"] = total_financial_impact_summary
+        if implementation_cost_estimate is not None:
+            payload["implementation_cost_estimate"] = implementation_cost_estimate
+        if return_on_investment is not None:
+            payload["return_on_investment"] = return_on_investment
+        if risk_considerations is not None:
+            payload["risk_considerations"] = risk_considerations
+        if implementation_roadmap is not None:
+            payload["implementation_roadmap"] = implementation_roadmap
+        if recommendation is not None:
+            payload["recommendation"] = recommendation
+        if executive_summary is not None:
+            payload["executive_summary"] = executive_summary
 
         headers = {"x-tenant-id": str(tenant_id), "Content-Type": "application/json"} if tenant_id else {"Content-Type": "application/json"}
         cid = company_id.strip() if company_id and company_id.strip() else None
