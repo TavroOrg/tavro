@@ -5,6 +5,7 @@ import type {
 } from '../types/aiModel';
 import { portalActivity } from './portalActivity';
 import { parseApiError } from '../utils/errorUtils';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -89,9 +90,12 @@ class AiModelApi {
     params.set('record_range', '1-500');
     if (companyId) params.set('company_id', companyId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/ai-models/', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/ai-models/${suffix}`);
-    if (Array.isArray(data)) return data as AiModelRecord[];
-    return (data?.items ?? data?.data ?? []) as AiModelRecord[];
+    const items = Array.isArray(data) ? data as AiModelRecord[] : (data?.items ?? data?.data ?? []) as AiModelRecord[];
+    appLogger.res('GET /api/v1/ai-models/', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countModels(companyId?: string): Promise<number> {
