@@ -77,9 +77,8 @@ CREATE TABLE IF NOT EXISTS twin.company (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-DROP INDEX CONCURRENTLY IF EXISTS company_name_region_tenant_uidx;
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS company_name_region_tenant_uidx
-    ON twin.company (lower(name), lower(region), COALESCE(tenant_id, ''));
+CREATE UNIQUE INDEX IF NOT EXISTS company_name_region_tenant_uidx
+    ON twin.company (lower(name), lower(region), tenant_id);
 CREATE INDEX IF NOT EXISTS twin_company_tenant_idx ON twin.company (tenant_id);
 
 
