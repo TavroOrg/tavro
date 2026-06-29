@@ -122,7 +122,6 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
 
     const computeScores = (uc: any) => {
         const pvBV: number | null = uc.pv_business_value_score ?? null;
-        const pvDR: number | null = uc.pv_data_readiness_score ?? null;
         const pvTC: number | null = uc.pv_technical_complexity_score ?? null;
 
         const riskFields: Record<string, string> = {
@@ -143,13 +142,12 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
 
         const pw = cfg.priorityWeights;
         const priorityScore: number | null = uc.priority_score ??
-            (pvBV !== null && pvDR !== null && pvTC !== null && riskComposite !== null
-                ? +((pvBV * pw.BV) + (pvDR * pw.DR) + ((6 - pvTC) * pw.TC) - (riskComposite * pw.RISK)).toFixed(2)
+            (pvBV !== null && pvTC !== null && riskComposite !== null
+                ? +((pvBV * pw.BV) + ((6 - pvTC) * pw.TC) - (riskComposite * pw.RISK)).toFixed(2)
                 : null);
 
         // Contribution points per dimension
         const contribBV: number | null = pvBV !== null ? +(pvBV * pw.BV).toFixed(2) : null;
-        const contribDR: number | null = pvDR !== null ? +(pvDR * pw.DR).toFixed(2) : null;
         const contribTC: number | null = pvTC !== null ? +((6 - pvTC) * pw.TC).toFixed(2) : null;
         const contribRisk: number | null = riskComposite !== null ? +(-(riskComposite * pw.RISK)).toFixed(2) : null;
 
@@ -163,7 +161,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
             else                            quadrant = { label: 'Money Pit', color: '#A32D2D' };
         }
 
-        return { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk };
+        return { pvBV, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribTC, contribRisk };
     };
 
     const metricDotColor = (value: number | null, positiveScale: boolean): string => {
@@ -232,18 +230,10 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         const relatedAgentCount = getRelatedAgentCount(uc);
                         const summary = getUseCaseSummary(uc);
                         const cardId = String(uc.id ?? uc.identifier ?? 'N/A').slice(0, 8);
-                        const { pvBV, pvDR, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk } = computeScores(uc);
-                        const hasAnyScore = pvBV !== null || pvDR !== null || pvTC !== null || riskComposite !== null;
+                        const { pvBV, pvTC, riskComposite, quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
+                        const hasAnyScore = pvBV !== null || pvTC !== null || riskComposite !== null;
                         const navId = uc.identifier ?? uc.id;
 
-                        const scoreBg = priorityScore === null ? 'bg-slate-50 border-slate-200'
-                            : priorityScore >= 3.5 ? 'bg-emerald-50 border-emerald-200'
-                            : priorityScore >= 2.5 ? 'bg-amber-50 border-amber-200'
-                            : 'bg-red-50 border-red-200';
-                        const scoreValueColor = priorityScore === null ? 'text-slate-400'
-                            : priorityScore >= 3.5 ? 'text-emerald-700'
-                            : priorityScore >= 2.5 ? 'text-amber-700'
-                            : 'text-red-700';
                         const qMap: Record<string, { bg: string; border: string; value: string }> = {
                             'Quick Win': { bg: 'bg-emerald-50', border: 'border-emerald-200', value: 'text-emerald-700' },
                             'Fill-in':   { bg: 'bg-orange-50',  border: 'border-orange-200',  value: 'text-orange-700' },
@@ -267,18 +257,6 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                             <ClipboardList size={24} />
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            {/* Priority Score chip */}
-                                            {priorityScore !== null ? (
-                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
-                                                    <span className={`text-sm font-black leading-none ${scoreValueColor}`}>{priorityScore.toFixed(1)}</span>
-                                                </div>
-                                            ) : (
-                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
-                                                    <span className="text-sm text-slate-400 font-normal leading-none">—</span>
-                                                </div>
-                                            )}
                                             {/* Quadrant chip */}
                                             {quadrant ? (
                                                 <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
@@ -309,8 +287,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                     <div className="flex items-center gap-1.5 mt-auto flex-wrap">
                                         {([
                                             { key: 'Business Value',  contrib: contribBV   },
-                                            { key: 'Data Readiness',  contrib: contribDR   },
-                                            { key: 'Tech Complexity', contrib: contribTC   },
+                                            { key: 'Effort',          contrib: contribTC   },
                                             { key: 'Risk',            contrib: contribRisk },
                                         ] as { key: string; contrib: number | null }[]).map(m => (
                                             <div key={m.key} className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-md">
@@ -343,16 +320,14 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                 </div>
             ) : (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_110px_120px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_110px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <div>Use Case Name</div>
                         <div>Function</div>
                         <div>Status</div>
                         <div>Owner</div>
-                        <div>Priority Score</div>
                         <div>Quadrant</div>
                         <div>Business Value</div>
-                        <div>Data Readiness</div>
-                        <div>Tech Complexity</div>
+                        <div>Effort</div>
                         <div>Risk</div>
                         <div></div>
                     </div>
@@ -362,13 +337,13 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                     >
                         {useCases.map(uc => {
                             const relatedAgentCount = getRelatedAgentCount(uc);
-                            const { priorityScore, quadrant, contribBV, contribDR, contribTC, contribRisk } = computeScores(uc);
+                            const { quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
                             const listNavId = uc.identifier ?? uc.id;
                             return (
                                 <div
                                     key={uc.identifier ?? uc.id}
                                     onClick={() => listNavId ? navigate(`/use-case/${listNavId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
-                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_110px_120px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_110px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
                                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
@@ -394,20 +369,6 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                     <div className="text-xs text-slate-500 dark:text-slate-400 font-medium truncate pr-4">
                                         {uc.owner || 'Unassigned'}
                                     </div>
-                                    {/* Score — value only */}
-                                    <div className="flex items-center">
-                                        {priorityScore !== null ? (() => {
-                                            const s = priorityScore;
-                                            const bg = s >= 3.5 ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                                : s >= 2.5 ? 'bg-amber-50 border-amber-200 text-amber-700'
-                                                : 'bg-red-50 border-red-200 text-red-700';
-                                            return (
-                                                <span className={`text-sm font-black px-2.5 py-1 rounded-lg border ${bg}`}>
-                                                    {s.toFixed(1)}
-                                                </span>
-                                            );
-                                        })() : <span className="text-sm text-slate-400 font-normal">—</span>}
-                                    </div>
                                     {/* Quadrant — value only */}
                                     <div className="flex items-center">
                                         {quadrant ? (() => {
@@ -429,12 +390,6 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                     <div className="flex items-center">
                                         <span className={`text-xs ${contribBV !== null ? `font-black ${contribBV >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
                                             {contribBV !== null ? `${contribBV >= 0 ? '+' : ''}${contribBV.toFixed(2)}` : '—'}
-                                        </span>
-                                    </div>
-                                    {/* DR */}
-                                    <div className="flex items-center">
-                                        <span className={`text-xs ${contribDR !== null ? `font-black ${contribDR >= 0 ? 'text-emerald-600' : 'text-red-500'}` : 'text-slate-400 font-normal'}`}>
-                                            {contribDR !== null ? `${contribDR >= 0 ? '+' : ''}${contribDR.toFixed(2)}` : '—'}
                                         </span>
                                     </div>
                                     {/* TC */}

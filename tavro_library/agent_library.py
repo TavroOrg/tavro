@@ -52,7 +52,7 @@ class AgentMetadataExporter:
             return cursor.rowcount
 
     @classmethod
-    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None) -> Optional[str]:
+    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Optional[str]:
         if not agent_name:
             return None
 
@@ -67,6 +67,12 @@ class AgentMetadataExporter:
         else:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        # ---------- 1b. Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
 
         safe_input = cls.sanitize(lower_input)
         prefix = (
@@ -90,6 +96,19 @@ class AgentMetadataExporter:
             """
             params.append(tenant_id)
 
+        # ---------- 2b. Company WHERE ----------
+        company_where = ""
+        if company_id:
+            company_where = """
+            AND (
+                company_id = %s
+                OR company_id IS NULL
+                OR TRIM(CAST(company_id AS text)) = ''
+                OR company_id = 'None'
+            )
+            """
+            params.append(company_id)
+
         # ---------- 3. Query ----------
         query = f"""
         SELECT agent_id, agent_name
@@ -99,6 +118,7 @@ class AgentMetadataExporter:
             OR lower(agent_name) LIKE %s
         )
         {tenant_where}
+        {company_where}
         LIMIT 200
         """
 
@@ -189,7 +209,7 @@ class AgentMetadataExporter:
         return None
 
     @classmethod
-    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Dict[str, Any]:
         print(f"Fetching agent card for name='{agent_name}', id='{agent_id}'")
 
         if not agent_name and not agent_id:
@@ -212,9 +232,15 @@ class AgentMetadataExporter:
                 tenant_mode = "TENANT"
                 tenant_id = cls.sanitize(str(tenant_id).strip())
 
+            # ---------- 1b. Normalize company ----------
+            if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+                company_id = None
+            else:
+                company_id = cls.sanitize(str(company_id).strip())
+
             # ---------- 2. Resolve agent_id ----------
             if agent_name and not agent_id:
-                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
+                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id, company_id)
                 print(f"Resolved agent_id='{agent_id}' from agent_name='{agent_name}'")
                 if not agent_id:
                     return {
@@ -246,12 +272,26 @@ class AgentMetadataExporter:
                 """
                 params.append(tenant_id)
 
+            # ---------- 4b. Build company filter ----------
+            company_where = ""
+            if company_id:
+                company_where = """
+                AND (
+                    company_id = %s
+                    OR company_id IS NULL
+                    OR TRIM(CAST(company_id AS text)) = ''
+                    OR company_id = 'None'
+                )
+                """
+                params.append(company_id)
+
             # ---------- 5. Existence check ----------
             check_query = f"""
             SELECT 1
             FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = %s
             {tenant_where}
+            {company_where}
             LIMIT 1
             """
 
@@ -2547,7 +2587,7 @@ class AgentMetadataExporter:
         )
 
         use_case_q = f"""
-            SELECT u.ai_use_case_id, u.name
+            SELECT u.ai_use_case_id, u.name, u.company_id
             FROM {cls.CORE_DB_NAME}.ai_use_cases u
             WHERE u.ai_use_case_id = '{ai_use_case_id}'
               {tenant_where_uc}
@@ -2557,6 +2597,7 @@ class AgentMetadataExporter:
         if not use_case_rows:
             raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
         use_case_name = cls.sanitize(str(use_case_rows[0].get("name") or ai_use_case_id))
+        use_case_company_id = use_case_rows[0].get("company_id")
 
         check_q = f"""
             SELECT 1
@@ -2586,12 +2627,14 @@ class AgentMetadataExporter:
         target_agent_name = cls.sanitize(str(agent_res[0].get("agent_name") or agent_catalog_id))
 
         if not is_duplicate:
+            company_id_sql = f"'{cls.sanitize(str(use_case_company_id))}'" if use_case_company_id else "NULL"
             action_q = f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
-                    tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
+                    tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
                     agent_internal_id, created_ts, updated_ts
                 ) VALUES (
                     {f"'{tenant_clean}'" if tenant_clean else "NULL"},
+                    {company_id_sql},
                     '{ai_use_case_id}',
                     '{use_case_name}',
                     '{agent_catalog_id}',
@@ -2602,6 +2645,7 @@ class AgentMetadataExporter:
                 )
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
+                    company_id = EXCLUDED.company_id,
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
                     agent_name = EXCLUDED.agent_name,
                     agent_internal_id = EXCLUDED.agent_internal_id,
@@ -3611,7 +3655,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated application catalog with single optimized query.
@@ -3630,16 +3675,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
@@ -3678,7 +3726,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated process catalog with single optimized query.
@@ -3697,16 +3746,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
@@ -3763,13 +3815,17 @@ class AgentMetadataExporter:
         }
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.post(
                 COMPANY_API_BASE_URL,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3815,9 +3871,13 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {"accept": "application/json"}
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.get(
                 url,
-                headers={"accept": "application/json"},
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3873,13 +3933,17 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.patch(
                 url,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
