@@ -21,6 +21,9 @@ import {
     CalendarDays,
     User,
     Loader2,
+    DollarSign,
+    Map,
+    Lightbulb,
     ChevronDown,
 } from 'lucide-react';
 
@@ -64,6 +67,7 @@ interface UseCaseViewProps {
     onInlineValueChange?: (v: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    enriching?: boolean;
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -132,7 +136,7 @@ function SectionCard({ icon, title, count, children }: { icon: React.ReactNode; 
 function MetaField({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div className="flex flex-col gap-1">
-            <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</dt>
+            <dt className="text-xs font-bold text-slate-400 uppercase tracking-widest">{label}</dt>
             <dd className="text-sm text-slate-700">{children}</dd>
         </div>
     );
@@ -204,7 +208,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'data_privacy',
         label: 'Data & Privacy Risk',
-        question: 'How sensitive is the data this agent will access and process?',
+        question: 'How sensitive is the data this use case will access and process?',
         options: [
             { score: 1, tier: 'Minimal',  description: 'Internal, non-sensitive data only. No PII, no regulated data classes. No meaningful privacy risk.' },
             { score: 2, tier: 'Low',      description: 'Some internal data with light sensitivity. Non-regulated PII in internal workflows. Standard access controls sufficient.' },
@@ -216,7 +220,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'operational',
         label: 'Operational Risk',
-        question: 'What is the operational consequence if this agent makes an error or fails?',
+        question: 'What is the operational consequence if this use case makes an error or fails?',
         options: [
             { score: 1, tier: 'Negligible', description: 'Advisory mode only. No autonomous actions. Errors surfaced for human review and easily corrected with no downstream impact.' },
             { score: 2, tier: 'Low',        description: 'Minor autonomous actions within narrow boundaries. Errors have limited impact and are readily reversible.' },
@@ -240,7 +244,7 @@ const RISK_DIMENSIONS: RiskDimension[] = [
     {
         key: 'ai_behavioral',
         label: 'AI Model & Behavioral Risk',
-        question: 'What is the risk of the agent producing incorrect, biased, or harmful outputs?',
+        question: 'What is the risk of the use case producing incorrect, biased, or harmful outputs?',
         options: [
             { score: 1, tier: 'Minimal',  description: 'Deterministic outputs. Negligible hallucination risk. Well-established use case type with industry precedent.' },
             { score: 2, tier: 'Low',      description: 'Generative outputs with low variability. Human review recommended but not critical. Low bias risk.' },
@@ -297,8 +301,32 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     editSolutionApproach, onEditSolutionApproachChange,
     inlineEdit, inlineSaving,
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+    enriching,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
+    const [generatingReport, setGeneratingReport] = React.useState(false);
+
+    const handleGenerateReport = async () => {
+        if (!uc.identifier) return;
+        setGeneratingReport(true);
+        try {
+            const result = await useCaseApi.generateUseCaseReport(uc.identifier);
+            const ucTitle: string = (uc as any).name ?? (uc as any).title ?? 'Use Case';
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: `Report generated for "${ucTitle}"` },
+            }));
+            window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', {
+                detail: { entityType: 'use_case', entityId: uc.identifier },
+            }));
+        } catch (err) {
+            console.error('[UseCaseView] Generate report failed', err);
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: 'Failed to generate report. Please try again.' },
+            }));
+        } finally {
+            setGeneratingReport(false);
+        }
+    };
 
     // ── Business Case fields — localStorage until DB columns are added ────────
     const _bcStorageKey = `tavro_bc_${uc.identifier}`;
@@ -312,7 +340,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     // ── Prioritization scoring — sourced from DB, saved back via API ──────────
     const [pvBV, setPvBV] = React.useState<number | null>((uc as any).pv_business_value_score ?? null);
-    const [pvDR, setPvDR] = React.useState<number | null>((uc as any).pv_data_readiness_score ?? null);
     const [pvTC, setPvTC] = React.useState<number | null>((uc as any).pv_technical_complexity_score ?? null);
 
     const [riskScores, setRiskScores] = React.useState<Record<string, number | null>>({
@@ -353,10 +380,10 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     // ── Priority score — weights from platform config (Settings → Roadmap configuration) ──
     const priorityScore = React.useMemo(() => {
-        if (pvBV === null || pvDR === null || pvTC === null || riskComposite === null) return null;
+        if (pvBV === null || pvTC === null || riskComposite === null) return null;
         const pw = cfg.priorityWeights;
-        return +((pvBV * pw.BV) + (pvDR * pw.DR) + ((6 - pvTC) * pw.TC) - (riskComposite * pw.RISK)).toFixed(2);
-    }, [pvBV, pvDR, pvTC, riskComposite, cfg]);
+        return +((pvBV * pw.BV) + ((6 - pvTC) * pw.TC) - (riskComposite * pw.RISK)).toFixed(2);
+    }, [pvBV, pvTC, riskComposite, cfg]);
 
     const quadrant: { label: string; color: string; bg: string; border: string; desc: string } | null = React.useMemo(() => {
         if (pvTC === null || riskComposite === null) return null;
@@ -375,7 +402,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     // Track the last values successfully written to DB so we can diff for scoring_history
     const _lastPersistedScores = React.useRef<Record<string, number | null>>({
         business_value_score:             (uc as any).pv_business_value_score             ?? null,
-        data_readiness_score:             (uc as any).pv_data_readiness_score             ?? null,
         technical_complexity_score:       (uc as any).pv_technical_complexity_score       ?? null,
         risk_data_privacy_score:          (uc as any).risk_data_privacy_score             ?? null,
         risk_operational_score:           (uc as any).risk_operational_score              ?? null,
@@ -393,14 +419,13 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     }, [uc.identifier]);
 
     React.useEffect(() => {
-        if (pvBV === null && pvDR === null && pvTC === null) return;
+        if (pvBV === null && pvTC === null) return;
         const quadrantKey = quadrant
             ? ({ 'Quick Win': 'quick_win', 'Fill In': 'fill_in', 'Big Bet': 'big_bet', 'Money Pit': 'money_pit' } as Record<string, string>)[quadrant.label]
             : undefined;
         const payload: Parameters<typeof useCaseApi.updateUseCase>[1] = {
             __activityName: uc.name || uc.identifier,
             ...(pvBV !== null ? { business_value_score: pvBV } : {}),
-            ...(pvDR !== null ? { data_readiness_score: pvDR } : {}),
             ...(pvTC !== null ? { technical_complexity_score: pvTC } : {}),
             ...(riskScores.data_privacy !== null ? { risk_data_privacy_score: riskScores.data_privacy } : {}),
             ...(riskScores.operational !== null ? { risk_operational_score: riskScores.operational } : {}),
@@ -415,7 +440,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         // Build per-field history entries for any score that changed since last save
         const TRACKED: Array<[string, number | null]> = [
             ['business_value_score',              payload.business_value_score              ?? null],
-            ['data_readiness_score',              payload.data_readiness_score              ?? null],
             ['technical_complexity_score',        payload.technical_complexity_score        ?? null],
             ['risk_data_privacy_score',           payload.risk_data_privacy_score           ?? null],
             ['risk_operational_score',            payload.risk_operational_score            ?? null],
@@ -453,7 +477,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
             if (_apiSaveTimer.current) clearTimeout(_apiSaveTimer.current);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pvBV, pvDR, pvTC, riskScores, riskComposite, priorityScore, quadrant, uc.identifier]);
+    }, [pvBV, pvTC, riskScores, riskComposite, priorityScore, quadrant, uc.identifier]);
 
     // Flush unsaved scores when the component unmounts (user navigates away)
     React.useEffect(() => {
@@ -482,6 +506,16 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const problemStatement = (uc as any).problem_statement ?? (uc as any).business_problem_statement ?? null;
     const expectedBenefits = uc.expected_benefits ?? null;
     const solutionApproach = uc.solution_approach ?? (uc as any).solution_approach ?? null;
+    const executiveSummary = (uc as any).executive_summary ?? null;
+    const assumptions = (uc as any).assumptions ?? null;
+    const quantifiedFinancialBenefits = (uc as any).quantified_financial_benefits ?? null;
+    const totalFinancialImpactSummary = (uc as any).total_financial_impact_summary ?? null;
+    const implementationCostEstimate = (uc as any).implementation_cost_estimate ?? null;
+    const returnOnInvestment = (uc as any).return_on_investment ?? null;
+    const riskConsiderations = (uc as any).risk_considerations ?? null;
+    const implementationRoadmap = (uc as any).implementation_roadmap ?? null;
+    const recommendation = (uc as any).recommendation ?? null;
+
     const riskExposure = String((uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0);
     const associatedAgentCount = String((uc as any).no_of_associated_agents ?? (uc as any).num_of_associated_agents ?? linkedAgentCount ?? 0);
     const agentRiskTier = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
@@ -619,6 +653,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     <span className="text-slate-400 text-sm">—</span>
                                 </div>
                             )}
+
+                            {/* Quadrant — light fill when value exists, plain dash when not */}
                             {(() => {
                                 const qMap: Record<string, { bg: string; border: string; value: string }> = {
                                     'Quick Win':  { bg: 'bg-emerald-50', border: 'border-emerald-200', value: 'text-emerald-700' },
@@ -629,12 +665,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 const q = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
                                 return q ? (
                                     <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${q.bg} ${q.border}`}>
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
                                         <span className={`text-sm font-black leading-tight text-center ${q.value}`}>{quadrant!.label}</span>
                                     </div>
                                 ) : (
                                     <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
                                         <span className="text-slate-400 text-sm">—</span>
                                     </div>
                                 );
@@ -678,19 +714,11 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         positiveScale: true,
                                     },
                                     {
-                                        label: 'Data Readiness',
-                                        value: pvDR,
-                                        weightLabel: `${(cfg.priorityWeights.DR * 100).toFixed(0)}%`,
-                                        contribution: pvDR !== null ? pvDR * cfg.priorityWeights.DR : null,
-                                        tooltip: 'How available, clean, and governed the required data is. Higher = more ready.',
-                                        positiveScale: true,
-                                    },
-                                    {
-                                        label: 'Tech Complexity',
+                                        label: 'Effort',
                                         value: pvTC,
                                         weightLabel: `(6−n)×${(cfg.priorityWeights.TC * 100).toFixed(0)}%`,
                                         contribution: pvTC !== null ? (6 - pvTC) * cfg.priorityWeights.TC : null,
-                                        tooltip: 'Implementation difficulty. Score is inverted — (6−n) means lower complexity gives a higher priority boost.',
+                                        tooltip: 'Implementation difficulty. Score is inverted — (6−n) means lower effort gives a higher priority boost.',
                                         positiveScale: false,
                                     },
                                     {
@@ -702,13 +730,16 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         positiveScale: false,
                                     },
                                 ] as { label: string; value: number | null; weightLabel: string; contribution: number | null; tooltip: string; positiveScale: boolean }[]).map(item => {
+                                    const contribBg    = item.contribution !== null
+                                        ? (item.contribution >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200')
+                                        : 'bg-slate-50 border-slate-100';
                                     const contribColor = item.contribution !== null
-                                        ? (item.contribution >= 0 ? 'text-emerald-600' : 'text-red-500')
+                                        ? (item.contribution >= 0 ? 'text-emerald-700' : 'text-red-600')
                                         : 'text-slate-400';
                                     return item.contribution !== null ? (
                                         <div key={item.label} className="flex flex-col gap-1 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors min-w-[100px]">
                                             <div className="group relative flex items-center gap-1 w-fit">
-                                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
+                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest cursor-help leading-none">{item.label}</span>
                                                 <div className="absolute bottom-full right-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
                                                     <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-52 leading-snug">
                                                         {item.tooltip}
@@ -719,17 +750,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             <span className={`text-base font-black leading-none ${contribColor}`}>
                                                 {item.contribution >= 0 ? '+' : ''}{item.contribution.toFixed(2)}
                                             </span>
+                                            <div className="absolute bottom-full left-0 mb-2 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                                                <div className="bg-slate-800 text-white text-[11px] rounded-lg px-2.5 py-2 shadow-xl w-44 leading-snug">
+                                                    {item.tooltip}
+                                                </div>
+                                                <div className="w-0 h-0 border-4 border-transparent border-t-slate-800 ml-2" />
+                                            </div>
                                         </div>
                                     ) : (
-                                        <div key={item.label} className="flex flex-col gap-1 min-w-[100px]">
-                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">{item.label}</span>
+                                        <div key={item.label} className="flex flex-col items-center justify-center w-[115px] h-[60px] rounded-2xl border border-slate-100 bg-slate-50 gap-0.5">
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none whitespace-nowrap">{item.label}</span>
                                             <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                         </div>
                                     );
                                 })}
                             </div>
                             {/* Empty state hint */}
-                            {(pvBV === null && pvDR === null && pvTC === null && riskComposite === null) && (
+                            {(pvBV === null && pvTC === null && riskComposite === null) && (
                                 <div className="flex items-center gap-2 text-[11px] text-slate-400">
                                     <span>Scores pending evaluation.</span>
                                     <button
@@ -892,7 +929,78 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
 
-                        {/* ── Existing narrative fields (2-col grid) ── */}
+                        {/* Generate Report button — shown only when all business case fields are populated */}
+                        {(() => {
+                            const allFieldsPopulated = Boolean(
+                                executiveSummary && problemStatement && expectedBenefits && solutionApproach &&
+                                assumptions && quantifiedFinancialBenefits && totalFinancialImpactSummary &&
+                                implementationCostEstimate && returnOnInvestment && riskConsiderations &&
+                                implementationRoadmap && recommendation
+                            );
+                            if (enriching) {
+                                return (
+                                    <div className="flex justify-end">
+                                        <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-400">
+                                            <Loader2 size={12} className="animate-spin" />
+                                            Generating business case…
+                                        </span>
+                                    </div>
+                                );
+                            }
+                            if (!allFieldsPopulated) return null;
+                            return (
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={handleGenerateReport}
+                                        disabled={generatingReport}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {generatingReport && <Loader2 size={12} className="animate-spin" />}
+                                        {generatingReport ? 'Generating…' : 'Generate Report'}
+                                    </button>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Executive Summary — full-width prominent card */}
+                        {inlineEdit?.field === 'executive_summary' ? (
+                            <SectionCard icon={<FileText size={16} />} title="Executive Summary">
+                                <div className="flex items-start gap-2">
+                                    <textarea
+                                        value={inlineEdit.value}
+                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                        rows={4}
+                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                        autoFocus
+                                    />
+                                    {renderInlineActions('executive_summary')}
+                                </div>
+                            </SectionCard>
+                        ) : (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 border-b border-blue-100 flex items-center gap-2">
+                                    <span className="text-blue-600"><FileText size={16} /></span>
+                                    <span className="font-bold text-slate-800 text-sm">Executive Summary</span>
+                                </div>
+                                <div className="px-5 py-4">
+                                    {executiveSummary ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', executiveSummary)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-700 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-white/60 transition-colors p-1 -m-1"
+                                        >{executiveSummary}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('executive_summary', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-white/40 rounded-lg p-1 -m-1 transition-colors"
+                                        >Double-click to add an executive summary…</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Existing fields */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Problem Statement */}
                             {isEditing ? (
@@ -917,15 +1025,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('problem_statement')}
                                     </div>
                                 </SectionCard>
-                            ) : problemStatement ? (
+                            ) : (
                                 <SectionCard icon={<FileText size={16} />} title="Business Problem Statement">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('problem_statement', problemStatement)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{problemStatement}</p>
+                                    {problemStatement ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('problem_statement', problemStatement)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{problemStatement}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('problem_statement', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {/* Expected Benefits */}
                             {isEditing ? (
@@ -950,15 +1066,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('expected_benefits')}
                                     </div>
                                 </SectionCard>
-                            ) : expectedBenefits ? (
+                            ) : (
                                 <SectionCard icon={<CheckCircle2 size={16} />} title="Expected Benefits / Outcomes">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('expected_benefits', expectedBenefits)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{expectedBenefits}</p>
+                                    {expectedBenefits ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('expected_benefits', expectedBenefits)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{expectedBenefits}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('expected_benefits', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {/* Solution Approach */}
                             {isEditing ? (
@@ -983,15 +1107,23 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         {renderInlineActions('solution_approach')}
                                     </div>
                                 </SectionCard>
-                            ) : solutionApproach ? (
+                            ) : (
                                 <SectionCard icon={<Target size={16} />} title="Solution Approach">
-                                    <p
-                                        onDoubleClick={() => onStartInlineEdit?.('solution_approach', solutionApproach)}
-                                        title="Double-click to edit"
-                                        className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
-                                    >{solutionApproach}</p>
+                                    {solutionApproach ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('solution_approach', solutionApproach)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{solutionApproach}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('solution_approach', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
                                 </SectionCard>
-                            ) : null}
+                            )}
 
                             {(uc as any).business_sponsors && (
                                 <SectionCard icon={<Users size={16} />} title="Business Sponsors">
@@ -1101,6 +1233,131 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             </div>
                         )}
 
+                        {/* Financial Benefits section */}
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                                <span className="text-slate-500"><DollarSign size={16} /></span>
+                                <span className="font-bold text-slate-800 text-sm">Financial Benefits</span>
+                            </div>
+                            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {(['assumptions', 'quantified_financial_benefits', 'total_financial_impact_summary', 'implementation_cost_estimate', 'return_on_investment', 'risk_considerations'] as const).map(fieldKey => {
+                                    const labelMap: Record<string, string> = {
+                                        assumptions: 'Assumptions',
+                                        quantified_financial_benefits: 'Quantified Financial Benefits',
+                                        total_financial_impact_summary: 'Total Financial Impact Summary',
+                                        implementation_cost_estimate: 'Implementation Cost Estimate',
+                                        return_on_investment: 'Return on Investment',
+                                        risk_considerations: 'Risk Considerations',
+                                    };
+                                    const valueMap: Record<string, string | null> = {
+                                        assumptions,
+                                        quantified_financial_benefits: quantifiedFinancialBenefits,
+                                        total_financial_impact_summary: totalFinancialImpactSummary,
+                                        implementation_cost_estimate: implementationCostEstimate,
+                                        return_on_investment: returnOnInvestment,
+                                        risk_considerations: riskConsiderations,
+                                    };
+                                    const currentValue = valueMap[fieldKey];
+                                    const label = labelMap[fieldKey];
+                                    return (
+                                        <div key={fieldKey} className="flex flex-col gap-1.5">
+                                            <dt className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</dt>
+                                            {inlineEdit?.field === fieldKey ? (
+                                                <div className="flex items-start gap-2">
+                                                    <textarea
+                                                        value={inlineEdit.value}
+                                                        onChange={e => onInlineValueChange?.(e.target.value)}
+                                                        rows={3}
+                                                        className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                                        autoFocus
+                                                    />
+                                                    {renderInlineActions(fieldKey)}
+                                                </div>
+                                            ) : currentValue ? (
+                                                <p
+                                                    onDoubleClick={() => onStartInlineEdit?.(fieldKey, currentValue)}
+                                                    title="Double-click to edit"
+                                                    className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                                >{currentValue}</p>
+                                            ) : (
+                                                <p
+                                                    onDoubleClick={() => onStartInlineEdit?.(fieldKey, '')}
+                                                    title="Double-click to add"
+                                                    className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                                ></p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Implementation Roadmap + Recommendation */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Implementation Roadmap */}
+                            {inlineEdit?.field === 'implementation_roadmap' ? (
+                                <SectionCard icon={<Map size={16} />} title="Implementation Roadmap">
+                                    <div className="flex items-start gap-2">
+                                        <textarea
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            rows={4}
+                                            className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                            autoFocus
+                                        />
+                                        {renderInlineActions('implementation_roadmap')}
+                                    </div>
+                                </SectionCard>
+                            ) : (
+                                <SectionCard icon={<Map size={16} />} title="Implementation Roadmap">
+                                    {implementationRoadmap ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('implementation_roadmap', implementationRoadmap)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{implementationRoadmap}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('implementation_roadmap', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
+                                </SectionCard>
+                            )}
+
+                            {/* Recommendation */}
+                            {inlineEdit?.field === 'recommendation' ? (
+                                <SectionCard icon={<Lightbulb size={16} />} title="Recommendation">
+                                    <div className="flex items-start gap-2">
+                                        <textarea
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            rows={4}
+                                            className="w-full text-sm text-slate-600 leading-relaxed border border-blue-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/20 resize-none"
+                                            autoFocus
+                                        />
+                                        {renderInlineActions('recommendation')}
+                                    </div>
+                                </SectionCard>
+                            ) : (
+                                <SectionCard icon={<Lightbulb size={16} />} title="Recommendation">
+                                    {recommendation ? (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('recommendation', recommendation)}
+                                            title="Double-click to edit"
+                                            className="text-sm text-slate-600 leading-relaxed whitespace-pre-line cursor-text rounded-lg hover:bg-blue-50/40 transition-colors p-1 -m-1"
+                                        >{recommendation}</p>
+                                    ) : (
+                                        <p
+                                            onDoubleClick={() => onStartInlineEdit?.('recommendation', '')}
+                                            title="Double-click to add"
+                                            className="text-slate-400 text-sm italic cursor-text hover:bg-blue-50/20 rounded-lg p-1 -m-1 transition-colors"
+                                        ></p>
+                                    )}
+                                </SectionCard>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -1161,14 +1418,14 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             <div className="flex items-start justify-between gap-6 flex-wrap">
                                 {/* Left: big number */}
                                 <div className="flex flex-col gap-1">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Composite Risk Score</span>
+                                    <span className="text-xs font-bold text-slate-700 uppercase tracking-widest">Composite Risk Score</span>
                                     <div className="flex items-end gap-2">
                                         {riskComposite !== null ? (
                                             <>
                                                 <span className={`text-5xl font-black leading-none ${scoreColor(riskComposite)}`}>
                                                     {riskComposite.toFixed(1)}
                                                 </span>
-                                                <span className="text-sm text-slate-400 mb-1">/ 5.0</span>
+                                                <span className="text-sm text-slate-600 font-semibold mb-1">/ 5.0</span>
                                                 <span className={`ml-1 text-xs font-bold px-2.5 py-1 rounded-lg border mb-0.5 ${scoreBg(riskComposite)}`}>
                                                     {riskComposite <= 2 ? 'Low Risk' : riskComposite <= 3 ? 'Moderate Risk' : riskComposite <= 4 ? 'High Risk' : 'Critical Risk'}
                                                 </span>
@@ -1177,7 +1434,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             <span className="text-4xl font-black text-slate-300 leading-none">—</span>
                                         )}
                                     </div>
-                                    <span className="text-xs text-slate-400 mt-1">{riskScoredCount} of 5 categories scored</span>
+                                    <span className="text-xs text-slate-600 font-medium mt-1">{riskScoredCount} of 5 categories scored</span>
                                 </div>
 
                                 {/* Right: per-dimension mini bars (only when at least one scored) */}
@@ -1188,7 +1445,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             const w = (riskWeights as unknown as Record<string, number>)[dim.key] ?? 20;
                                             return (
                                                 <div key={dim.key} className="flex items-center gap-2">
-                                                    <span className="text-[10px] text-slate-400 w-40 truncate shrink-0">{dim.label}</span>
+                                                    <span className="text-xs text-slate-700 font-medium w-40 truncate shrink-0">{dim.label}</span>
                                                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                                         {s !== null ? (
                                                             <div className="h-full rounded-full transition-all" style={{ width: `${(s / 5) * 100}%`, background: s <= 2 ? '#16a34a' : s <= 3 ? '#d97706' : '#dc2626' }} />
@@ -1197,7 +1454,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                                         )}
                                                     </div>
                                                     <span className={`text-[10px] font-bold w-4 text-right ${s !== null ? scoreColor(s) : 'text-slate-300'}`}>{s ?? '—'}</span>
-                                                    <span className="text-[9px] text-slate-300 w-7 text-right">{w}%</span>
+                                                    <span className="text-xs text-slate-600 font-medium w-7 text-right">{w}%</span>
                                                 </div>
                                             );
                                         })}
@@ -1235,7 +1492,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
                                             <div>
                                                 <p className="text-sm font-bold text-slate-800">{dim.label}</p>
-                                                <p className="text-xs text-slate-500 mt-0.5">{dim.question}</p>
+                                                <p className="text-sm text-slate-600 mt-0.5">{dim.question}</p>
                                             </div>
                                             {selected !== null ? (
                                                 <span className={`flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-lg border ${scoreBg(selected)}`}>
@@ -1255,19 +1512,19 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                                         key={opt.score}
                                                         type="button"
                                                         onClick={() => setRiskScores(prev => ({ ...prev, [dim.key]: isSelected ? null : opt.score }))}
-                                                        className={`text-left p-3 rounded-xl border transition-all flex flex-col gap-1 ${
+                                                        className={`text-left p-4 rounded-xl border transition-all flex flex-col gap-2 ${
                                                             isSelected
                                                                 ? `${scoreBg(opt.score)} shadow-sm`
-                                                                : 'bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-white'
+                                                                : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                                                         }`}
                                                     >
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
-                                                                isSelected ? `${scoreColor(opt.score)} bg-white border-2 border-current` : 'bg-slate-200 text-slate-500'
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0 ${
+                                                                isSelected ? `${scoreColor(opt.score)} bg-white border-2 border-current` : 'bg-slate-100 text-slate-500'
                                                             }`}>{opt.score}</span>
-                                                            <span className={`text-xs font-bold leading-tight ${isSelected ? scoreColor(opt.score) : 'text-slate-700'}`}>{opt.tier}</span>
+                                                            <span className={`text-sm font-bold leading-tight ${isSelected ? scoreColor(opt.score) : 'text-slate-800'}`}>{opt.tier}</span>
                                                         </div>
-                                                        <p className="text-[11px] text-slate-400 leading-snug">{opt.description}</p>
+                                                        <p className="text-sm text-slate-600 leading-snug">{opt.description}</p>
                                                     </button>
                                                 );
                                             })}
@@ -1351,7 +1608,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                             {/* Business Value */}
                             {([
                                 {
-                                    key: 'bv', label: 'Business Value', weight: '40%', value: pvBV, setter: setPvBV,
+                                    key: 'bv', label: 'Business Value', weight: `${(cfg.priorityWeights.BV * 100).toFixed(0)}%`, value: pvBV, setter: setPvBV,
                                     question: 'What is the measurable financial or strategic impact of this use case?',
                                     options: [
                                         { score: 1, tier: 'Minimal',        description: 'No measurable financial impact or productivity gain expected.' },
@@ -1362,19 +1619,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     ],
                                 },
                                 {
-                                    key: 'dr', label: 'Data Readiness', weight: '25%', value: pvDR, setter: setPvDR,
-                                    question: 'How available, clean, and governed is the data required for this use case?',
-                                    options: [
-                                        { score: 1, tier: 'Not Ready',          description: 'Data sources not identified. No governance or access controls in place.' },
-                                        { score: 2, tier: 'Partially Identified', description: 'Data sources known but not consistently accessible or structured.' },
-                                        { score: 3, tier: 'Available but Unclean', description: 'Data exists and is accessible but requires significant preparation and quality work.' },
-                                        { score: 4, tier: 'Mostly Ready',       description: 'Data accessible with minor quality or governance gaps that can be resolved quickly.' },
-                                        { score: 5, tier: 'Fully Ready',        description: 'Clean, governed, accessible data with clear lineage and documented ownership.' },
-                                    ],
-                                },
-                                {
-                                    key: 'tc', label: 'Technical Complexity', weight: '15%', value: pvTC, setter: setPvTC,
-                                    question: 'How technically difficult is it to implement this use case? (Higher = harder = lower priority weight)',
+                                    key: 'tc', label: 'Effort', weight: `${(cfg.priorityWeights.TC * 100).toFixed(0)}%`, value: pvTC, setter: setPvTC,
+                                    question: 'How much effort is required to implement this use case? (Higher = more effort = lower priority weight)',
                                     options: [
                                         { score: 1, tier: 'Minimal',      description: 'Off-the-shelf solution, minimal integration. Could be live within weeks.' },
                                         { score: 2, tier: 'Low',          description: 'Simple integration with existing systems. Standard engineering effort.' },
@@ -1390,9 +1636,9 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             <div className="flex items-center gap-2">
                                                 <span className="text-sm font-bold text-slate-800">{dim.label}</span>
                                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{dim.weight}</span>
-                                                {dim.key === 'tc' && <span className="text-[10px] text-slate-400 italic">inverted — lower is better</span>}
+                                                {dim.key === 'tc' && <span className="text-xs text-slate-700 italic">inverted — lower is better</span>}
                                             </div>
-                                            <p className="text-xs text-slate-500 mt-0.5">{dim.question}</p>
+                                            <p className="text-sm text-slate-600 mt-0.5">{dim.question}</p>
                                         </div>
                                         {dim.value !== null && (
                                             <span className={`flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-lg border ${scoreBg(dim.value)}`}>
@@ -1408,17 +1654,17 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                                     key={opt.score}
                                                     type="button"
                                                     onClick={() => dim.setter(isSelected ? null : opt.score)}
-                                                    className={`text-left p-3 rounded-xl border transition-all flex flex-col gap-1 ${
-                                                        isSelected ? `${scoreBg(opt.score)} shadow-sm` : 'bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-white'
+                                                    className={`text-left p-4 rounded-xl border transition-all flex flex-col gap-2 ${
+                                                        isSelected ? `${scoreBg(opt.score)} shadow-sm` : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                                                     }`}
                                                 >
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
-                                                            isSelected ? `${scoreColor(opt.score)} bg-white border-2 border-current` : 'bg-slate-200 text-slate-500'
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0 ${
+                                                            isSelected ? `${scoreColor(opt.score)} bg-white border-2 border-current` : 'bg-slate-100 text-slate-500'
                                                         }`}>{opt.score}</span>
-                                                        <span className={`text-xs font-bold leading-tight ${isSelected ? scoreColor(opt.score) : 'text-slate-700'}`}>{opt.tier}</span>
+                                                        <span className={`text-sm font-bold leading-tight ${isSelected ? scoreColor(opt.score) : 'text-slate-800'}`}>{opt.tier}</span>
                                                     </div>
-                                                    <p className="text-[11px] text-slate-400 leading-snug">{opt.description}</p>
+                                                    <p className="text-sm text-slate-600 leading-snug">{opt.description}</p>
                                                 </button>
                                             );
                                         })}
@@ -1432,8 +1678,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     <div>
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-bold text-slate-800">Risk</span>
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">20%</span>
-                                            <span className="text-[10px] text-slate-400 italic">auto-populated from Risk Assessments tab</span>
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{(cfg.priorityWeights.RISK * 100).toFixed(0)}%</span>
+                                            <span className="text-[10px] text-slate-700 italic font-medium">auto-populated from Risk Assessments tab</span>
                                         </div>
                                         <p className="text-xs text-slate-500 mt-0.5">Composite risk score averaged across all 5 risk categories.</p>
                                     </div>
@@ -1450,7 +1696,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
                                             <span className={`text-2xl font-black ${scoreColor(riskComposite)}`}>{riskComposite.toFixed(1)}</span>
-                                            <span className="text-xs text-slate-400">/ 5.0 · {riskScoredCount}/5 categories scored</span>
+                                            <span className="text-xs text-slate-700 font-medium">/ 5.0 · {riskScoredCount}/5 categories scored</span>
                                         </div>
                                     </div>
                                 ) : (

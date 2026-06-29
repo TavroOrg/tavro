@@ -367,6 +367,10 @@ const AiModelViewPage: React.FC = () => {
       return;
     }
     const load = async () => {
+      if (!activeCompany?.id) {
+        setLoading(true);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -380,7 +384,7 @@ const AiModelViewPage: React.FC = () => {
       }
     };
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   useEffect(() => {
     if (!id || isCreateMode || editing) return;
@@ -431,7 +435,7 @@ const AiModelViewPage: React.FC = () => {
         const created = await aiModelApi.createModel(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await aiModelApi.linkAgent(created.ai_model_id, linkAgentId);
+            await aiModelApi.linkAgent(created.ai_model_id, linkAgentId, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Model created but auto-link to agent failed.', linkErr);
           }
@@ -568,7 +572,7 @@ const AiModelViewPage: React.FC = () => {
     setActingAgent(`add:${agentId}`);
     setRelationError(null);
     try {
-      await aiModelApi.linkAgent(model.ai_model_id, agentId);
+      await aiModelApi.linkAgent(model.ai_model_id, agentId, activeCompany?.id);
       await reloadModel();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -582,7 +586,7 @@ const AiModelViewPage: React.FC = () => {
     setActingAgent(`remove:${agentId}`);
     setRelationError(null);
     try {
-      await aiModelApi.unlinkAgent(model.ai_model_id, agentId);
+      await aiModelApi.unlinkAgent(model.ai_model_id, agentId, activeCompany?.id);
       await reloadModel();
     } catch (err: any) {
       setRelationError(toUserMessage(err));

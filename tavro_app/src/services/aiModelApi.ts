@@ -94,6 +94,13 @@ class AiModelApi {
     return (data?.items ?? data?.data ?? []) as AiModelRecord[];
   }
 
+  async countModels(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ 'record_range': '1-1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/ai-models/?${params.toString()}`);
+    return (data?.total_records ?? 0) as number;
+  }
+
   async getModel(modelId: string, companyId?: string): Promise<AiModelRecord> {
     const suffix = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
     return req(`/ai-models/${encodeURIComponent(modelId)}${suffix}`);
@@ -132,15 +139,17 @@ class AiModelApi {
     });
   }
 
-  async linkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents`, {
+  async linkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents${qs}`, {
       method: 'POST',
       body: JSON.stringify({ agent_id: agentId }),
     });
   }
 
-  async unlinkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}`, {
+  async unlinkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}${qs}`, {
       method: 'DELETE',
     });
   }

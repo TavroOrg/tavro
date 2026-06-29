@@ -898,28 +898,60 @@ async def delete_ai_model(ai_model_id: str, db: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/{ai_model_id}/agents", summary="Link Agent to AI Model")
-async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def link_agent(
+    ai_model_id: str,
+    body: LinkAgentRequest,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
+    db: AsyncSession = Depends(get_db),
+):
     mid = _norm_id(ai_model_id)
     agent_id = body.agent_id
     tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tid" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
     try:
         model_row = await db.execute(
-            text(f"SELECT ai_model_id, model_name, company_id FROM {CORE}.ai_models WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid)) LIMIT 1"),
-            {"mid": mid},
+            text(
+                f"""
+                SELECT ai_model_id, model_name, company_id, tenant_id
+                FROM {CORE}.ai_models
+                WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
+                  {tenant_filter}
+                  {company_filter}
+                LIMIT 1
+                """
+            ),
+            {"mid": mid, "tid": tenant_id, "company_id": company_id},
         )
         model = model_row.mappings().first()
         if not model:
             raise HTTPException(status_code=404, detail=f"AI Model '{mid}' not found.")
 
         agent_row = await db.execute(
-            text(f"SELECT agent_internal_id, agent_name FROM {CORE}.agents WHERE agent_id = :aid AND is_current = true LIMIT 1"),
-            {"aid": agent_id},
+            text(
+                f"""
+                SELECT agent_internal_id, agent_name
+                FROM {CORE}.agents
+                WHERE agent_id = :aid
+                  AND is_current = true
+                  {tenant_filter}
+                  {company_filter}
+                LIMIT 1
+                """
+            ),
+            {"aid": agent_id, "tid": tenant_id, "company_id": company_id},
         )
         agent = agent_row.mappings().first()
         if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
         agent_internal_id = str(agent["agent_internal_id"])
         agent_name = str(agent.get("agent_name") or "")
+        relation_company_id = company_id or model.get("company_id")
 
         await db.execute(
             text(f"""
@@ -933,11 +965,12 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
                     agent_id = EXCLUDED.agent_id,
                     agent_name = EXCLUDED.agent_name,
                     tenant_id = EXCLUDED.tenant_id,
+                    company_id = EXCLUDED.company_id,
                     updated_ts = EXCLUDED.updated_ts
             """),
             {
-                "tid": tenant_id,
-                "cid": model.get("company_id"),
+                "tid": tenant_id or model.get("tenant_id"),
+                "cid": relation_company_id,
                 "mid": mid,
                 "mname": str(model.get("model_name") or mid),
                 "aid": agent_id,
@@ -960,16 +993,31 @@ async def link_agent(ai_model_id: str, body: LinkAgentRequest, request: Request,
 # ---------------------------------------------------------------------------
 
 @router.delete("/{ai_model_id}/agents/{agent_id}", summary="Unlink Agent from AI Model")
-async def unlink_agent(ai_model_id: str, agent_id: str, db: AsyncSession = Depends(get_db)):
+async def unlink_agent(
+    ai_model_id: str,
+    agent_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
+    db: AsyncSession = Depends(get_db),
+):
     mid = _norm_id(ai_model_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tid" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
     try:
         result = await db.execute(
             text(f"""
                 DELETE FROM {CORE}.agent_ai_models
                 WHERE LOWER(TRIM(ai_model_id)) = LOWER(TRIM(:mid))
                   AND agent_id = :aid
+                  {tenant_filter}
+                  {company_filter}
             """),
-            {"mid": mid, "aid": agent_id},
+            {"mid": mid, "aid": agent_id, "tid": tenant_id, "company_id": company_id},
         )
         await _refresh_model_rollup(db, mid)
         await db.commit()

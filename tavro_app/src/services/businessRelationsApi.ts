@@ -460,38 +460,44 @@ class BusinessRelationsApi {
     return res.blob();
   }
 
-  async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async linkAgentToApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async unlinkAgentFromApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async linkAgentToProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async unlinkAgentFromProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async linkAgentToIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'DELETE',
     });
   }
@@ -616,6 +622,29 @@ class BusinessRelationsApi {
     await req(`/integrations/${encodeURIComponent(integrationId)}`, {
       method: 'DELETE',
     });
+  }
+
+  async uploadIntegrations(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }>(
+      `/integrations/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business integration${result.uploaded_count === 1 ? '' : 's'}`,
+      'violet',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 }
 

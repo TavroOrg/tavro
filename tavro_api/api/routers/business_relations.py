@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+from datetime import datetime
 from uuid import uuid4
 
 _logger = logging.getLogger(__name__)
@@ -30,6 +31,17 @@ _PROCESS_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
 _APPLICATIONS_READY = False
 _PROCESSES_READY = False
+
+
+def _coerce_dt(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _tenant(request: Request) -> Optional[str]:
@@ -1801,6 +1813,13 @@ async def _fetch_integrations(
         )
         if tenant_id and "tenant_id" in abi_cols:
             abi_filter += " AND abi.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abi_cols:
+            abi_filter += (
+                " AND (abi.company_id = :related_company_id"
+                " OR abi.company_id IS NULL"
+                " OR TRIM(CAST(abi.company_id AS text)) = ''"
+                " OR abi.company_id = 'None')"
+            )
 
         int_agent_company_join = ""
         int_agent_company_filter = ""
@@ -1808,7 +1827,14 @@ async def _fetch_integrations(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                int_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abi.agent_internal_id"
+                int_agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                int_agent_company_join = (
+                    f"{int_agent_join_type} core.agents ag ON ("
+                    "(abi.agent_id IS NOT NULL AND abi.agent_id <> '' AND ag.agent_id = abi.agent_id)"
+                    " OR (abi.agent_internal_id IS NOT NULL AND abi.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abi.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     int_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -1894,7 +1920,7 @@ async def _fetch_integrations(
                                 ORDER BY {ara_order_int}
                                 LIMIT 1
                             ) brs ON TRUE
-                            WHERE abi.integration_id = bi.integration_id
+                            WHERE {abi_filter}
                               {int_agent_company_filter}
                               {int_agent_tenant_filter}
                         ) agg
@@ -2049,6 +2075,13 @@ async def _fetch_applications(
         )
         if tenant_id and "tenant_id" in aba_cols:
             aba_filter += " AND aba.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in aba_cols:
+            aba_filter += (
+                " AND (aba.company_id = :related_company_id"
+                " OR aba.company_id IS NULL"
+                " OR TRIM(CAST(aba.company_id AS text)) = ''"
+                " OR aba.company_id = 'None')"
+            )
 
         app_agent_company_join = ""
         app_agent_company_filter = ""
@@ -2056,7 +2089,14 @@ async def _fetch_applications(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                app_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = aba.agent_internal_id"
+                app_agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                app_agent_company_join = (
+                    f"{app_agent_join_type} core.agents ag ON ("
+                    "(aba.agent_id IS NOT NULL AND aba.agent_id <> '' AND ag.agent_id = aba.agent_id)"
+                    " OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = aba.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     app_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -2142,7 +2182,7 @@ async def _fetch_applications(
                                 ORDER BY {ara_order}
                                 LIMIT 1
                             ) brs ON TRUE
-                            WHERE aba.business_application_id = ba.business_application_id
+                            WHERE {aba_filter}
                               {app_agent_company_filter}
                               {app_agent_tenant_filter}
                         ) agg
@@ -2508,6 +2548,13 @@ async def _fetch_processes(
         )
         if tenant_id and "tenant_id" in abp_cols:
             abp_filter += " AND abp.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abp_cols:
+            abp_filter += (
+                " AND (abp.company_id = :related_company_id"
+                " OR abp.company_id IS NULL"
+                " OR TRIM(CAST(abp.company_id AS text)) = ''"
+                " OR abp.company_id = 'None')"
+            )
 
         agent_company_join = ""
         agent_company_filter = ""
@@ -2515,7 +2562,14 @@ async def _fetch_processes(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abp.agent_internal_id"
+                agent_join_type = "JOIN" if filter_related_by_company_id else "LEFT JOIN"
+                agent_company_join = (
+                    f"{agent_join_type} core.agents ag ON ("
+                    "(abp.agent_id IS NOT NULL AND abp.agent_id <> '' AND ag.agent_id = abp.agent_id)"
+                    " OR (abp.agent_internal_id IS NOT NULL AND abp.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abp.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -2621,7 +2675,7 @@ async def _fetch_processes(
                                 ORDER BY {ara_order_proc}
                                 LIMIT 1
                             ) brs ON TRUE
-                            WHERE abp.business_process_id = bp.business_process_id
+                            WHERE {abp_filter}
                               {agent_company_filter}
                               {agent_tenant_filter}
                         ) agg
@@ -2688,9 +2742,19 @@ async def _fetch_processes(
         if tenant_id and "tenant_id" in process_cols
         else ""
     )
+    process_tree_company_filter = (
+        "AND child.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
+        else ""
+    )
     parent_tenant_join = (
         "AND parent.tenant_id = bp.tenant_id"
         if tenant_id and "tenant_id" in process_cols
+        else ""
+    )
+    parent_company_join = (
+        "AND parent.company_id IS NOT DISTINCT FROM bp.company_id"
+        if "company_id" in process_cols
         else ""
     )
     proc_rel_sql = f"""
@@ -2712,6 +2776,7 @@ async def _fetch_processes(
                 FROM core.business_processes child
                 WHERE child.parent_process_id = bp.business_process_id
                   {process_tree_tenant_filter}
+                  {process_tree_company_filter}
             ) linked
             LEFT JOIN core.business_processes bp2
                 ON bp2.business_process_id = linked.other_process_id
@@ -2942,6 +3007,7 @@ async def _fetch_processes(
             LEFT JOIN core.business_processes parent
                 ON parent.business_process_id = bp.parent_process_id
                {parent_tenant_join}
+               {parent_company_join}
             {rel_join_sql}
             {proc_rel_sql}
             {uc_rel_sql}
@@ -3168,6 +3234,176 @@ async def delete_integration(
     return {"status": "deleted", "integration_id": integration_id}
 
 
+@router.post("/integrations/upload", status_code=200, tags=["Integrations"], summary="Bulk Upload Integrations CSV")
+async def upload_integrations_csv(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    company_id: Optional[str] = Query(default=None, description="Company UUID — stored on every uploaded record"),
+    company_name: Optional[str] = Query(default=None, description="Company name — stored on every uploaded record"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-upload business integrations from one or more CSV or TSV files.
+    Only integration_name is mandatory per row; all other fields are optional.
+    tenant_id is read from the x-tenant-id request header.
+
+    Upsert logic:
+      - Same name + same tenant + same company  → UPDATE existing record
+      - Same name + same tenant + different company → INSERT as new row
+      - Same name appearing twice in the CSV → skip the duplicate, add to errors
+    """
+    tenant_id = _get_upload_tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="x-tenant-id header is required")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    non_csv = [f.filename for f in files if not (f.filename or "").lower().endswith((".csv", ".tsv"))]
+    if non_csv:
+        raise HTTPException(status_code=400, detail=f"Only .csv files accepted. Rejected: {', '.join(non_csv)}")
+
+    cid = (company_id or "").strip() or None
+    cname = (company_name or "").strip() or None
+    if cid and not cname:
+        cname = await _get_company_name(db, cid)
+
+    all_rows: list[dict] = []
+    for upload_file in files:
+        raw = await upload_file.read()
+        try:
+            all_rows.extend(_parse_csv_rows(upload_file.filename or "upload.csv", raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    if not all_rows:
+        raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
+
+    await _ensure_integrations_table(db)
+    int_cols = await _table_columns(db, "core", "business_integrations")
+    uploaded_count = 0
+    errors: list[str] = []
+
+    # Detect in-CSV duplicate names — add all occurrences after the first to blocked set.
+    seen_csv: set[str] = set()
+    blocked_csv_names: set[str] = set()
+    for row in all_rows:
+        n = _text_or_none(row.get("integration_name", ""))
+        if n:
+            key = n.lower()
+            if key in seen_csv:
+                blocked_csv_names.add(key)
+            seen_csv.add(key)
+
+    deduped_rows: list[dict] = []
+    reported_csv_dups: set[str] = set()
+    for row in all_rows:
+        n = _text_or_none(row.get("integration_name", ""))
+        if not n:
+            deduped_rows.append(row)
+            continue
+        key = n.lower()
+        if key in blocked_csv_names:
+            if key not in reported_csv_dups:
+                errors.append(f"Skipped '{n}': already exists for this tenant/company or is duplicated in the CSV")
+                reported_csv_dups.add(key)
+            continue
+        deduped_rows.append(row)
+
+    # Block names already in DB for this tenant+company (same as applications/processes logic)
+    csv_names_deduped = [_text_or_none(r.get("integration_name", "")) for r in deduped_rows if _text_or_none(r.get("integration_name", ""))]
+    blocked_int_names: set[str] = set()
+    if csv_names_deduped:
+        placeholders = ", ".join(f":n{i}" for i in range(len(csv_names_deduped)))
+        db_check_params: dict[str, Any] = {f"n{i}": v.lower() for i, v in enumerate(csv_names_deduped)}
+        db_check_params["tid"] = tenant_id
+        cid_filter = "AND company_id = :cid" if cid else ""
+        if cid:
+            db_check_params["cid"] = cid
+        existing_result = await db.execute(
+            text(
+                f"SELECT LOWER(integration_name) FROM core.business_integrations "
+                f"WHERE LOWER(integration_name) IN ({placeholders}) AND tenant_id = :tid {cid_filter}"
+            ),
+            db_check_params,
+        )
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_int_names.add(existing_lower)
+
+    for row in deduped_rows:
+        int_name = _text_or_none(row.get("integration_name", ""))
+        if not int_name:
+            errors.append("Skipped a row: integration_name is required")
+            continue
+
+        if int_name.lower() in blocked_int_names:
+            errors.append(f"Skipped '{int_name}': already exists for this tenant/company or is duplicated in the CSV")
+            continue
+
+        int_id = uuid4().hex
+        insert_values: dict[str, Any] = {"integration_id": int_id}
+        for col in _INT_UPLOAD_TEXT_COLS:
+            if col in int_cols:
+                val = _text_or_none(row.get(col, ""))
+                if val is not None:
+                    insert_values[col] = val
+
+        if "tenant_id" in int_cols:
+            insert_values["tenant_id"] = tenant_id
+        if cid and "company_id" in int_cols:
+            insert_values["company_id"] = cid
+        if cname and "company_name" in int_cols:
+            insert_values["company_name"] = cname
+
+        col_names = [col for col in insert_values if col in int_cols]
+        param_cols = [col for col in col_names if col not in {"created_ts", "updated_ts"}]
+        params = {col: insert_values[col] for col in param_cols}
+
+        if "created_ts" in int_cols and "created_ts" not in col_names:
+            col_names.append("created_ts")
+        if "updated_ts" in int_cols and "updated_ts" not in col_names:
+            col_names.append("updated_ts")
+
+        values_sql = ", ".join(
+            "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"} else f":{col}"
+            for col in col_names
+        )
+
+        try:
+            await db.execute(
+                text(f"INSERT INTO core.business_integrations ({', '.join(col_names)}) VALUES ({values_sql})"),
+                params,
+            )
+            await db.commit()
+            if cid:
+                rows_fetched = await _fetch_integrations(db, integration_id=int_id)
+                if rows_fetched:
+                    await _sync_integration_to_dim_node(db, cid, rows_fetched[0])
+            uploaded_count += 1
+        except Exception as exc:
+            await db.rollback()
+            errors.append(f"DB error for '{int_name}': {exc}")
+
+    if errors:
+        print(f"[WARN] integration upload: {len(errors)} row(s) failed — {errors[:3]}")
+
+    if uploaded_count == 0 and all_rows:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All rows failed to process. First error: {errors[0] if errors else 'unknown'}",
+        )
+
+    noun = "Integration" if uploaded_count == 1 else "Integrations"
+    verb = "has" if uploaded_count == 1 else "have"
+    return {
+        "uploaded_count": uploaded_count,
+        "total_submitted": len(all_rows),
+        "failed_count": len(errors),
+        "message": f"{uploaded_count} Business {noun} {verb} been uploaded successfully.",
+        "errors": errors,
+    }
+
+
 @router.put(
     "/agents/{agent_id}/integrations/{integration_id}",
     tags=["Integrations"],
@@ -3176,25 +3412,57 @@ async def delete_integration(
 async def add_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    int_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT integration_id, integration_name
-            FROM core.business_integrations
-            WHERE integration_id = :integration_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"integration_id": integration_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    int_row = await db.execute(
+        text(
+            f"""
+            SELECT integration_id, integration_name, tenant_id, company_id
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     integration = int_row.mappings().first()
     if not integration:
         raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
+    relation_company_id = company_id or integration.get("company_id") or agent.get("company_id")
 
     await db.execute(
         text(
@@ -3212,12 +3480,14 @@ async def add_agent_integration_relation(
                 agent_id = EXCLUDED.agent_id,
                 agent_name = EXCLUDED.agent_name,
                 integration_name = EXCLUDED.integration_name,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or integration.get("tenant_id"),
+            "company_id": relation_company_id,
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -3244,26 +3514,39 @@ async def add_agent_integration_relation(
 async def remove_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_integrations
             WHERE integration_id = :integration_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "integration_id": integration_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
     await db.commit()
@@ -3369,6 +3652,8 @@ async def create_application(
             existing_columns=app_cols,
         )
     )
+    if "latest_release_date" in insert_values:
+        insert_values["latest_release_date"] = _coerce_dt(insert_values["latest_release_date"])
 
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
@@ -3438,6 +3723,8 @@ async def update_application(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
         updates["tags"] = json.dumps(raw_tags)
+    if "latest_release_date" in updates:
+        updates["latest_release_date"] = _coerce_dt(updates["latest_release_date"])
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
@@ -3587,6 +3874,13 @@ _PROC_UPLOAD_FLOAT_COLS: set[str] = {
 
 _PROC_UPLOAD_INT_COLS: set[str] = {"num_of_associated_agents"}
 
+_INT_UPLOAD_TEXT_COLS: set[str] = {
+    "integration_name", "integration_description", "capabilities", "protocol",
+    "endpoint_url", "authentication_method", "owner", "documentation_url",
+    "data_sensitivity", "rate_limit", "availability_status", "sla", "version",
+    "parent_application_id", "business_criticality", "emergency_tier",
+}
+
 
 @router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")
 async def upload_applications_csv(
@@ -3629,6 +3923,40 @@ async def upload_applications_csv(
         raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
 
     app_cols = await _table_columns(db, "core", "business_applications")
+
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_names = [_text_or_none(r.get("application_name", "")) for r in all_rows]
+    csv_names = [n for n in csv_names if n]
+
+    seen: set[str] = set()
+    blocked_app_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_names:
+        key = n.lower()
+        if key in seen:
+            blocked_app_names.add(key)    # appears more than once in CSV
+        seen.add(key)
+
+    if csv_names:
+        name_params: dict = {f"n{i}": n for i, n in enumerate(csv_names)}
+        name_params["tid"] = tenant_id
+        if cid:
+            name_params["cid"] = cid
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            db_check_sql = (
+                f"SELECT LOWER(application_name) FROM core.business_applications "
+                f"WHERE LOWER(application_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_result = await db.execute(text(db_check_sql), name_params)
+        for (existing_lower,) in existing_result.fetchall():
+            blocked_app_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
     uploaded_count = 0
     errors: list[str] = []
 
@@ -3636,6 +3964,10 @@ async def upload_applications_csv(
         app_name = _text_or_none(row.get("application_name", ""))
         if not app_name:
             errors.append("Skipped a row: application_name is required")
+            continue
+
+        if app_name.lower() in blocked_app_names:
+            errors.append(f"Skipped '{app_name}': already exists for this tenant/company or is duplicated in the CSV")
             continue
 
         app_id = uuid4().hex
@@ -3690,7 +4022,10 @@ async def upload_applications_csv(
 
         try:
             await db.execute(
-                text(f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"),
+                text(
+                    f"INSERT INTO core.business_applications ({', '.join(col_names)}) VALUES ({values_sql})"
+                    f" ON CONFLICT (tenant_id, company_id, business_application_id) DO NOTHING"
+                ),
                 params,
             )
             await db.commit()
@@ -4060,6 +4395,41 @@ async def upload_processes_csv(
         raise HTTPException(status_code=422, detail="No data rows found in uploaded files")
 
     proc_cols = await _table_columns(db, "core", "business_processes")
+
+    # ── Name uniqueness checks ────────────────────────────────────────────────
+    # ── Build blocked-names set (CSV dupes + DB conflicts) ───────────────────
+    csv_proc_names = [_text_or_none(r.get("process_name", "")) for r in all_rows]
+    csv_proc_names = [n for n in csv_proc_names if n]
+
+    seen_proc: set[str] = set()
+    blocked_proc_names: set[str] = set()   # lower-cased names to skip during insert
+    for n in csv_proc_names:
+        key = n.lower()
+        if key in seen_proc:
+            blocked_proc_names.add(key)    # appears more than once in CSV
+        seen_proc.add(key)
+
+    if csv_proc_names:
+        proc_name_params: dict = {f"n{i}": n for i, n in enumerate(csv_proc_names)}
+        proc_name_params["tid"] = tenant_id
+        if cid:
+            proc_name_params["cid"] = cid
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid AND company_id = :cid"
+            )
+        else:
+            proc_db_check_sql = (
+                f"SELECT LOWER(process_name) FROM core.business_processes "
+                f"WHERE LOWER(process_name) IN ({', '.join(f'LOWER(:n{i})' for i in range(len(csv_proc_names)))})"
+                f" AND tenant_id = :tid"
+            )
+        existing_proc_result = await db.execute(text(proc_db_check_sql), proc_name_params)
+        for (existing_lower,) in existing_proc_result.fetchall():
+            blocked_proc_names.add(existing_lower)
+    # ─────────────────────────────────────────────────────────────────────────
+
     uploaded_count = 0
     errors: list[str] = []
     warnings: list[str] = []
@@ -4070,6 +4440,10 @@ async def upload_processes_csv(
         proc_name = _text_or_none(row.get("process_name", ""))
         if not proc_name:
             errors.append("Skipped a row: process_name is required")
+            continue
+
+        if proc_name.lower() in blocked_proc_names:
+            errors.append(f"Skipped '{proc_name}': already exists for this tenant/company or is duplicated in the CSV")
             continue
 
         proc_id = _text_or_none(row.get("business_process_id", "")) or uuid4().hex
@@ -4133,10 +4507,10 @@ async def upload_processes_csv(
         )
         upsert_sql = (
             f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
-            f" ON CONFLICT (business_process_id) DO UPDATE SET {conflict_set}"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO UPDATE SET {conflict_set}"
             if conflict_set else
             f"INSERT INTO core.business_processes ({', '.join(col_names)}) VALUES ({values_sql})"
-            f" ON CONFLICT (business_process_id) DO NOTHING"
+            f" ON CONFLICT (tenant_id, company_id, business_process_id) DO NOTHING"
         )
 
         try:
@@ -5144,25 +5518,58 @@ async def get_agent_relations(
 async def add_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
+
+    agent_row = await db.execute(
+        text(
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
 
     app_row = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 business_application_id,
                 application_name,
                 business_criticality,
                 emergency_tier,
-                application_description
+                application_description,
+                tenant_id,
+                company_id
             FROM core.business_applications
             WHERE business_application_id = :business_application_id
+              {tenant_filter}
+              {company_filter}
             LIMIT 1
             """
         ),
-        {"business_application_id": application_id},
+        {"business_application_id": application_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     app = app_row.mappings().first()
 
@@ -5191,7 +5598,10 @@ async def add_agent_application_relation(
         app = {
             "application_name": application_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = company_id or app.get("company_id") or agent.get("company_id")
 
     await db.execute(
         text(
@@ -5209,12 +5619,14 @@ async def add_agent_application_relation(
                 agent_id = EXCLUDED.agent_id,
                 application_name = EXCLUDED.application_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or app.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
@@ -5241,25 +5653,38 @@ async def add_agent_application_relation(
 async def remove_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_applications
             WHERE business_application_id = :business_application_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_application_id": application_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 
@@ -5282,23 +5707,56 @@ async def remove_agent_application_relation(
 async def add_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    process_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT
-                business_process_id,
-                process_name,
-                business_criticality
-            FROM core.business_processes
-            WHERE business_process_id = :business_process_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"business_process_id": process_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    process_row = await db.execute(
+        text(
+            f"""
+            SELECT
+                business_process_id,
+                process_name,
+                business_criticality,
+                tenant_id,
+                company_id
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": process_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     process = process_row.mappings().first()
 
@@ -5328,7 +5786,10 @@ async def add_agent_process_relation(
         process = {
             "process_name": process_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = company_id or process.get("company_id") or agent.get("company_id")
 
     await db.execute(
         text(
@@ -5346,12 +5807,14 @@ async def add_agent_process_relation(
                 agent_id = EXCLUDED.agent_id,
                 process_name = EXCLUDED.process_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or process.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
@@ -5378,25 +5841,38 @@ async def add_agent_process_relation(
 async def remove_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_processes
             WHERE business_process_id = :business_process_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_process_id": process_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 

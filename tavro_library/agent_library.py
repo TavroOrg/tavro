@@ -2547,7 +2547,7 @@ class AgentMetadataExporter:
         )
 
         use_case_q = f"""
-            SELECT u.ai_use_case_id, u.name
+            SELECT u.ai_use_case_id, u.name, u.company_id
             FROM {cls.CORE_DB_NAME}.ai_use_cases u
             WHERE u.ai_use_case_id = '{ai_use_case_id}'
               {tenant_where_uc}
@@ -2557,6 +2557,7 @@ class AgentMetadataExporter:
         if not use_case_rows:
             raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
         use_case_name = cls.sanitize(str(use_case_rows[0].get("name") or ai_use_case_id))
+        use_case_company_id = use_case_rows[0].get("company_id")
 
         check_q = f"""
             SELECT 1
@@ -2586,12 +2587,14 @@ class AgentMetadataExporter:
         target_agent_name = cls.sanitize(str(agent_res[0].get("agent_name") or agent_catalog_id))
 
         if not is_duplicate:
+            company_id_sql = f"'{cls.sanitize(str(use_case_company_id))}'" if use_case_company_id else "NULL"
             action_q = f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
-                    tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
+                    tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
                     agent_internal_id, created_ts, updated_ts
                 ) VALUES (
                     {f"'{tenant_clean}'" if tenant_clean else "NULL"},
+                    {company_id_sql},
                     '{ai_use_case_id}',
                     '{use_case_name}',
                     '{agent_catalog_id}',
@@ -2602,6 +2605,7 @@ class AgentMetadataExporter:
                 )
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
+                    company_id = EXCLUDED.company_id,
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
                     agent_name = EXCLUDED.agent_name,
                     agent_internal_id = EXCLUDED.agent_internal_id,
@@ -3763,13 +3767,17 @@ class AgentMetadataExporter:
         }
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.post(
                 COMPANY_API_BASE_URL,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3815,9 +3823,13 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {"accept": "application/json"}
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.get(
                 url,
-                headers={"accept": "application/json"},
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3873,13 +3885,17 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.patch(
                 url,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 

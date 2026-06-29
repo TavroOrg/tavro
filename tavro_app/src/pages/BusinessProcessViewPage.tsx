@@ -413,6 +413,10 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const load = async () => {
     if (!id || isCreateMode) return;
+    if (!activeCompany?.id) {
+      setLoading(true);
+      return;
+    }
     setLoading(true);
     setError(null);
     setRelationError(null);
@@ -451,7 +455,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setEditing(false);
     setInlineEdit(null);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -692,7 +696,7 @@ const BusinessProcessViewPage: React.FC = () => {
         const created = await businessRelationsApi.createProcess(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id);
+            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Process created but auto-link to agent failed.', linkErr);
           }
@@ -770,7 +774,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id);
+      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -784,7 +788,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id);
+      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));

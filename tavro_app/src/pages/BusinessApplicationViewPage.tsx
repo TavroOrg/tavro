@@ -145,6 +145,38 @@ const toNullable = (value: string): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const getCalendarDateParts = (raw?: string | null): { year: string; month: string; day: string } | null => {
+  if (!raw) return null;
+  const match = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  return { year: match[1], month: match[2], day: match[3] };
+};
+
+const formatDate = (raw?: string | null): string => {
+  if (!raw) return 'N/A';
+  const parts = getCalendarDateParts(raw);
+  if (parts) return `${parts.month}/${parts.day}/${parts.year}`;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${date.getFullYear()}`;
+};
+
+const toDateInputValue = (value?: string | null): string => {
+  if (!value) return '';
+  const parts = getCalendarDateParts(value);
+  if (parts) return `${parts.year}-${parts.month}-${parts.day}`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  return date.toISOString().slice(0, 10);
+};
+
+const toDateTime = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed ? `${trimmed}T00:00:00` : null;
+};
+
 const emptyForm = (): ApplicationFormState => ({
   application_name: '',
   emergency_tier: '',
@@ -199,7 +231,7 @@ const formFromApplication = (app: BusinessApplicationRecord): ApplicationFormSta
   current_installed_version: toText(app.current_installed_version),
   is_current_version_supported: toText(app.is_current_version_supported, 'None'),
   latest_released_version: toText(app.latest_released_version),
-  latest_release_date: toText(app.latest_release_date),
+  latest_release_date: toDateInputValue(app.latest_release_date),
   latest_release_documentation_link: toText(app.latest_release_documentation_link),
 });
 
@@ -220,7 +252,7 @@ const buildApplicationPayload = (form: ApplicationFormState): BusinessApplicatio
   current_installed_version: toNullable(form.current_installed_version),
   is_current_version_supported: toNullable(form.is_current_version_supported),
   latest_released_version: toNullable(form.latest_released_version),
-  latest_release_date: toNullable(form.latest_release_date),
+  latest_release_date: toDateTime(form.latest_release_date),
   latest_release_documentation_link: toNullable(form.latest_release_documentation_link),
 });
 
@@ -410,6 +442,10 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const load = async () => {
     if (!id || isCreateMode) return;
+    if (!activeCompany?.id) {
+      setLoading(true);
+      return;
+    }
     setLoading(true);
     setError(null);
     setRelationError(null);
@@ -443,7 +479,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setEditing(false);
     setInlineEdit(null);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -500,7 +536,10 @@ const BusinessApplicationViewPage: React.FC = () => {
   const startInlineEdit = (field: ApplicationInlineField) => {
     if (editing || isCreateMode || saving || inlineSaving) return;
     setActionError(null);
-    setInlineEdit({ field, value: form[field] });
+    setInlineEdit({
+      field,
+      value: field === 'latest_release_date' ? toDateInputValue(form[field]) : form[field],
+    });
   };
 
   const cancelInlineEdit = () => {
@@ -544,7 +583,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const renderInlineEditable = (
     field: ApplicationInlineField,
     displayValue: string,
-    config: { kind?: 'text' | 'textarea' | 'select'; options?: Option[]; className?: string } = {},
+    config: { kind?: 'text' | 'textarea' | 'select' | 'date'; options?: Option[]; className?: string } = {},
   ) => {
     const isActive = inlineEdit?.field === field;
     const kind = config.kind ?? 'text';
@@ -575,6 +614,15 @@ const BusinessApplicationViewPage: React.FC = () => {
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
+          ) : kind === 'date' ? (
+            <input
+              type="date"
+              lang="en-US"
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ field, value: e.target.value })}
+              className={inputCls}
+              autoFocus
+            />
           ) : (
             <input
               value={inlineEdit.value}
@@ -656,7 +704,7 @@ const BusinessApplicationViewPage: React.FC = () => {
         const created = await businessRelationsApi.createApplication(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id);
+            await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Application created but auto-link to agent failed.', linkErr);
           }
@@ -734,7 +782,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id);
+      await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -748,7 +796,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id);
+      await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -1098,6 +1146,8 @@ const BusinessApplicationViewPage: React.FC = () => {
                   <HintLabel label={label} />
                   {editing ? (
                     <input
+                      type={field === 'latest_release_date' ? 'date' : 'text'}
+                      lang={field === 'latest_release_date' ? 'en-US' : undefined}
                       value={form[field as keyof ApplicationFormState]}
                       onChange={(e) => setField(field as keyof ApplicationFormState, e.target.value)}
                       className={inputCls}
@@ -1342,8 +1392,13 @@ const BusinessApplicationViewPage: React.FC = () => {
                   ) : (
                     renderInlineEditable(
                       field as ApplicationInlineField,
-                      form[field as keyof ApplicationFormState] || 'N/A',
-                      { className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all' },
+                      field === 'latest_release_date'
+                        ? formatDate(form.latest_release_date)
+                        : form[field as keyof ApplicationFormState] || 'N/A',
+                      {
+                        kind: field === 'latest_release_date' ? 'date' : 'text',
+                        className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 break-all',
+                      },
                     )
                   )}
                 </div>

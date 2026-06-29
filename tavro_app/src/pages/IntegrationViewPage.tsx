@@ -290,6 +290,10 @@ const IntegrationViewPage: React.FC = () => {
 
   const load = async () => {
     if (!id || isCreateMode) return;
+    if (!activeCompany?.id) {
+      setLoading(true);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -319,7 +323,7 @@ const IntegrationViewPage: React.FC = () => {
     }
     setEditing(false);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   useEffect(() => {
     if (!id || isCreateMode || editing) return;
@@ -373,7 +377,7 @@ const IntegrationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
+      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -387,7 +391,7 @@ const IntegrationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -563,7 +567,7 @@ const IntegrationViewPage: React.FC = () => {
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id);
+            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Integration created but auto-link to agent failed.', linkErr);
           }
