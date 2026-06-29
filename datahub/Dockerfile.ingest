@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir "acryl-datahub>=0.14.0"
+
+WORKDIR /app
+COPY ingest_industry_templates.py .
+COPY ["Industry templates for Blueprint - Guidewire Policy Center.csv", "."]
+
+CMD ["python", "ingest_industry_templates.py"]

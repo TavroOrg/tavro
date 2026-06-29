@@ -218,6 +218,28 @@ LOGIN_OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 ####################################
 
+# ── DataHub (optional — enable with: docker compose --profile datahub up -d --build) ──
+# Version tag for all DataHub images. Check https://github.com/datahub-project/datahub/releases
+DATAHUB_VERSION=v0.14.1
+ACTIONS_VERSION=v0.0.15
+DATAHUB_CONFLUENT_VERSION=7.4.0
+DATAHUB_SEARCH_TAG=7.10.1
+DATAHUB_MYSQL_VERSION=8.2
+# Internal URL used by tavro-api to talk to DataHub GMS (container-to-container)
+DATAHUB_GMS_URL=http://datahub-gms:8080
+# Host port mappings (18080 avoids conflict with Tavro's Traefik proxy on 8080)
+DATAHUB_MAPPED_GMS_PORT=18080
+DATAHUB_MAPPED_FRONTEND_PORT=9002
+DATAHUB_MAPPED_KAFKA_BROKER_PORT=9092
+DATAHUB_MAPPED_ELASTIC_PORT=9200
+DATAHUB_MAPPED_MYSQL_PORT=3306
+DATAHUB_MAPPED_SCHEMA_REGISTRY_PORT=8081
+DATAHUB_MAPPED_ZK_PORT=2181
+# Set to false to disable DataHub telemetry
+DATAHUB_TELEMETRY_ENABLED=false
+
+####################################
+
 RISK_CLASSIFY_URL=http://tavro-api:8000/api/v1/risk/classify-risk
 RISK_CLASSIFY_FALLBACK_URL=http://localhost:8000/api/v1/risk/classify-risk
 COMPANY_API_BASE_URL=http://tavro-api:8000/api/v1/companies
