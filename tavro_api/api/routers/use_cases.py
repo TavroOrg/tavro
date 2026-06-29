@@ -658,7 +658,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                 ORDER BY u.updated_ts DESC NULLS LAST
                 LIMIT 1
             """),
-            {"uid": normalized_use_case_id, "tid": tenant_id},
+            {"uid": normalized_use_case_id, "tid": tenant_id, "company_id": company_id},
         )
         row = result.mappings().first()
         if not row:
