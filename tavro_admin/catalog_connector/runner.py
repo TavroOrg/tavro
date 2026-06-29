@@ -97,6 +97,10 @@ def _build_connector(name: str, config: dict):
     if name == "github":
         from catalog_connector.connector.mcp_connector.github_connector import GithubConnector
         return GithubConnector(config)
+    
+    if name == "aict_inbound":
+        from catalog_connector.connector.aict_inbound_connector import AICTInboundConnector
+        return AICTInboundConnector(config)
 
     if name == "agent365":
         from catalog_connector.connector.agent365_inbound_connector import Agent365InboundConnector
