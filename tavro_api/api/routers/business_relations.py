@@ -3075,7 +3075,7 @@ async def get_integration(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -3618,7 +3618,7 @@ async def get_application(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -4115,7 +4115,7 @@ async def get_process(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
