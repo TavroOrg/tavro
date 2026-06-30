@@ -517,7 +517,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.linkAgentToApplication(agentId, businessApplicationId);
+      await businessRelationsApi.linkAgentToApplication(agentId, businessApplicationId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -532,7 +532,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromApplication(agentId, businessApplicationId);
+      await businessRelationsApi.unlinkAgentFromApplication(agentId, businessApplicationId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -547,7 +547,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.linkAgentToProcess(agentId, businessProcessId);
+      await businessRelationsApi.linkAgentToProcess(agentId, businessProcessId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -562,7 +562,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromProcess(agentId, businessProcessId);
+      await businessRelationsApi.unlinkAgentFromProcess(agentId, businessProcessId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -607,7 +607,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await aiModelApi.linkAgent(modelId, agentId);
+      await aiModelApi.linkAgent(modelId, agentId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -622,7 +622,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await aiModelApi.unlinkAgent(modelId, agentId);
+      await aiModelApi.unlinkAgent(modelId, agentId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -637,7 +637,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.linkAgentToIntegration(agentId, integrationId);
+      await businessRelationsApi.linkAgentToIntegration(agentId, integrationId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
@@ -652,7 +652,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     setActingKey(key);
     setActionError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integrationId);
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integrationId, activeCompany?.id);
       await refreshRelations();
     } catch (err: any) {
       setActionError(toUserMessage(err));
