@@ -1193,29 +1193,18 @@ const UserGuidePage: React.FC = () => {
                         From any of the three locations, click <UIButton color="blue" icon={<ClipboardCheck size={11}/>}>Audit</UIButton> (or <UIButton color="blue" icon={<ClipboardCheck size={11}/>}>New Audit</UIButton> on the Audit Center page).
                     </Step>
                     <Step n={2} title="Choose your scope">
-                        <div className="overflow-x-auto mt-2">
-                            <table className="w-full text-xs border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                                <thead className="bg-slate-50 dark:bg-slate-800">
-                                    <tr>
-                                        <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">Scope</th>
-                                        <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">Best for</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {[
-                                        ['Single use case × single regulation', 'Targeted spot-check before a product launch or deployment'],
-                                        ['Single use case × all regulations', 'Full compliance picture for one AI initiative'],
-                                        ['All use cases × single regulation', 'Impact analysis when a new regulation comes into effect'],
-                                        ['Full catalog × all regulations', 'Quarterly enterprise-wide compliance review'],
-                                    ].map(([scope, best]) => (
-                                        <tr key={scope} className="bg-white dark:bg-slate-900">
-                                            <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{scope}</td>
-                                            <td className="px-3 py-2 text-blue-600 dark:text-blue-400">{best}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        Select how broadly to run the audit using the two scope options:
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                            <div className="rounded-xl border-2 border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/40 px-4 py-3">
+                                <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1">Full Catalog</p>
+                                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">Runs the audit across <strong>all AI use cases</strong> in your portfolio. Best for quarterly enterprise-wide compliance reviews.</p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3">
+                                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Select Specific</p>
+                                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">Choose specific <strong>use cases & policies</strong> to audit. Best for targeted spot-checks before a launch or when a new regulation comes into effect.</p>
+                            </div>
                         </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">Then set <strong>Regulation / Policy</strong> — choose all active regulations & policies or a specific one.</p>
                     </Step>
                     <Step n={3} title="Select compliance items">
                         Pick the regulations or policies to audit against from the multi-select list. Your Compliance module must have items loaded — navigate to <strong>Compliance</strong> to add them first if needed.
