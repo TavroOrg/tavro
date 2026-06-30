@@ -8,7 +8,9 @@ import {
   CheckCircle2,
   Info,
   Loader2,
+  Network,
   Pencil,
+  Plus,
   PlusCircle,
   RefreshCw,
   Save,
@@ -28,12 +30,15 @@ import type {
   BusinessApplicationUpsertPayload,
 } from '../types/businessRelations';
 import type { AiModelRecord } from '../types/aiModel';
+import type { DimEdge, SourceRef } from '../types/blueprint';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { agentApi } from '../services/agentApi';
+import { blueprintApi } from '../services/blueprintApi';
+import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models';
+type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models' | 'blueprint';
 type Option = { label: string; value: string };
 
 const EMERGENCY_TIER_OPTIONS: Option[] = [
@@ -377,6 +382,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSaving, setTagSaving] = useState(false);
+  const [visibility, setVisibility] = useState<string>('internal');
+  const [sensitive, setSensitive] = useState<boolean>(false);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -399,6 +406,18 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [searchModels, setSearchModels] = useState('');
   const [actingModel, setActingModel] = useState<string | null>(null);
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
+
+  // Blueprint
+  const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
+  const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
+  const [showAddEdge, setShowAddEdge] = useState(false);
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName, setNewSysName] = useState('');
+  const [newExtId, setNewExtId] = useState('');
+  const [addingRef, setAddingRef] = useState(false);
+  const [deletingEdge, setDeletingEdge] = useState<string | null>(null);
+  const [deletingRef, setDeletingRef] = useState<string | null>(null);
 
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
@@ -442,6 +461,8 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(data);
       setForm(formFromApplication(data));
       setTags(Array.isArray(data.tags) ? data.tags : []);
+      setVisibility(data.visibility ?? 'internal');
+      setSensitive(data.sensitive ?? false);
       setAttemptedSave(false);
     } catch (err: any) {
       setError(toUserMessage(err));
@@ -449,6 +470,35 @@ const BusinessApplicationViewPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const loadBlueprint = async (dimNodeId: string) => {
+    if (!dimNodeId || !activeCompany?.id) return;
+    setBlueprintLoading(true);
+    try {
+      const edgesPage = await blueprintApi.listEdges({ company_id: activeCompany.id, node_id: dimNodeId });
+      setBlueprintEdges(edgesPage.items);
+    } catch {
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const loadSourceRefs = async (dimNodeId: string) => {
+    try {
+      const refs = await blueprintApi.listSourceRefs(dimNodeId);
+      setBlueprintSourceRefs(refs);
+    } catch {
+    }
+  };
+
+  useEffect(() => {
+    if (application?.dim_node_id) loadSourceRefs(application.dim_node_id);
+  }, [application?.dim_node_id]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint' || !application?.dim_node_id) return;
+    loadBlueprint(application.dim_node_id);
+  }, [tab, application?.dim_node_id]);
 
   useEffect(() => {
     if (isCreateMode) {
@@ -558,6 +608,8 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(updated);
       setForm(formFromApplication(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
@@ -688,6 +740,8 @@ const BusinessApplicationViewPage: React.FC = () => {
       const payload = buildApplicationPayload(form);
       if (isCreateMode) {
         if (tags.length > 0) payload.tags = tags;
+        payload.visibility = visibility;
+        payload.sensitive = sensitive;
         const created = await businessRelationsApi.createApplication(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
@@ -722,6 +776,8 @@ const BusinessApplicationViewPage: React.FC = () => {
       setApplication(updated);
       setForm(formFromApplication(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setAttemptedSave(false);
       setInlineEdit(null);
       setEditing(false);
@@ -1044,6 +1100,16 @@ const BusinessApplicationViewPage: React.FC = () => {
             >
               Related AI Models({linkedModels.length})
             </button>
+            <button
+              onClick={() => setTab('blueprint')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'blueprint'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Blueprint Relationships
+            </button>
           </>
         )}
       </div>
@@ -1232,6 +1298,48 @@ const BusinessApplicationViewPage: React.FC = () => {
                   />
                 </div>
               </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Visibility" />
+                <select
+                  value={visibility}
+                  onChange={async e => {
+                    const next = e.target.value;
+                    setVisibility(next);
+                    if (isCreateMode || !application) return;
+                    try {
+                      const updated = await businessRelationsApi.updateApplication(application.business_application_id, { visibility: next });
+                      setApplication(updated);
+                      setVisibility(updated.visibility ?? next);
+                    } catch { setVisibility(application.visibility ?? 'internal'); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 capitalize"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="confidential">Confidential</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Sensitive" />
+                <select
+                  value={sensitive ? 'true' : 'false'}
+                  onChange={async e => {
+                    const next = e.target.value === 'true';
+                    setSensitive(next);
+                    if (isCreateMode || !application) return;
+                    try {
+                      const updated = await businessRelationsApi.updateApplication(application.business_application_id, { sensitive: next });
+                      setApplication(updated);
+                      setSensitive(updated.sensitive ?? next);
+                    } catch { setSensitive(application.sensitive ?? false); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
             </div>
           </Section>
 
@@ -1385,6 +1493,73 @@ const BusinessApplicationViewPage: React.FC = () => {
               </div>
             </div>
           </Section>
+
+          {/* Source Systems — shown in Details tab when entity is linked to a dimension */}
+          {application?.dim_node_id && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Source Systems ({blueprintSourceRefs.length})</p>
+                <button
+                  onClick={() => setShowAddSourceRef(p => !p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {showAddSourceRef && (
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={newSysName} onChange={e => setNewSysName(e.target.value)} placeholder="System name (e.g. Salesforce)" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                    <input value={newExtId} onChange={e => setNewExtId(e.target.value)} placeholder="External ID" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!newSysName.trim() || !newExtId.trim() || !application.dim_node_id) return;
+                        setAddingRef(true);
+                        try {
+                          const ref = await blueprintApi.createSourceRef(application.dim_node_id, newSysName.trim(), newExtId.trim());
+                          setBlueprintSourceRefs(p => [...p, ref]);
+                          setNewSysName(''); setNewExtId(''); setShowAddSourceRef(false);
+                        } finally { setAddingRef(false); }
+                      }}
+                      disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addingRef ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save
+                    </button>
+                    <button onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }} className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {blueprintSourceRefs.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-slate-400 italic">No source systems linked.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintSourceRefs.map(ref => (
+                    <div key={ref.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-700">{ref.system_name}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{ref.external_id}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setDeletingRef(ref.id);
+                          try { await blueprintApi.deleteSourceRef(ref.id); setBlueprintSourceRefs(p => p.filter(r => r.id !== ref.id)); }
+                          finally { setDeletingRef(null); }
+                        }}
+                        disabled={deletingRef === ref.id}
+                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingRef === ref.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1664,6 +1839,85 @@ const BusinessApplicationViewPage: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'blueprint' && (
+        <div className="flex flex-col gap-4">
+          {application?.dim_node_id ? (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Network size={14} className="text-slate-400" />
+                  Blueprint Relationships ({blueprintEdges.length})
+                </p>
+                <button onClick={() => setShowAddEdge(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Add Relationship
+                </button>
+              </div>
+              {blueprintLoading ? (
+                <div className="px-5 py-4 text-sm text-slate-400 animate-pulse">Loading…</div>
+              ) : blueprintEdges.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-slate-400 italic">No blueprint relationships defined.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintEdges.map(edge => {
+                    const isSource = edge.source_id === application.dim_node_id;
+                    const otherLabel = isSource ? edge.target_label : edge.source_label;
+                    return (
+                      <div key={edge.id} className="px-5 py-3 flex items-center gap-3">
+                        <span className="text-slate-300">{isSource ? '→' : '←'}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{otherLabel ?? '—'}</span>
+                        <span className="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{edge.rel_type.replace('_', ' ')}</span>
+                        <span className="text-[11px] text-slate-400">{Math.round(edge.weight * 100)}%</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingEdge(edge.id);
+                            try { await blueprintApi.deleteEdge(edge.id); setBlueprintEdges(p => p.filter(e => e.id !== edge.id)); }
+                            finally { setDeletingEdge(null); }
+                          }}
+                          disabled={deletingEdge === edge.id}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Delete relationship"
+                        >
+                          {deletingEdge === edge.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 px-5 py-6 text-center">
+              <Info size={18} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">This application is not yet linked to a Blueprint dimension.</p>
+              <p className="text-xs text-slate-400 mt-1">Create an Application dimension in the Blueprint to enable relationships.</p>
+            </div>
+          )}
+          {showAddEdge && application?.dim_node_id && (
+            <AddDimEdgeModal
+              sourceNode={{
+                id: application.dim_node_id,
+                company_id: activeCompany?.id ?? '',
+                dim_type_id: '',
+                label: application.application_name ?? '',
+                category: 'application',
+                dim_type_name: 'Application',
+                summary: null,
+                tags: [],
+                visibility: 'internal',
+                sensitive: false,
+                valid_from: new Date().toISOString(),
+                valid_to: null,
+                updated_at: new Date().toISOString(),
+              }}
+              onClose={() => setShowAddEdge(false)}
+              onCreated={() => {
+                setShowAddEdge(false);
+                if (application.dim_node_id) loadBlueprint(application.dim_node_id);
+              }}
+            />
+          )}
         </div>
       )}
     </div>
