@@ -230,7 +230,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                         const relatedAgentCount = getRelatedAgentCount(uc);
                         const summary = getUseCaseSummary(uc);
                         const cardId = String(uc.id ?? uc.identifier ?? 'N/A').slice(0, 8);
-                        const { pvBV, pvTC, riskComposite, quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
+                        const { pvBV, pvTC, riskComposite, priorityScore, quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
                         const hasAnyScore = pvBV !== null || pvTC !== null || riskComposite !== null;
                         const navId = uc.identifier ?? uc.id;
 
@@ -241,6 +241,16 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                             'Money Pit': { bg: 'bg-red-50',     border: 'border-red-200',     value: 'text-red-700'    },
                         };
                         const qStyle = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
+                        const scoreBg = priorityScore !== null
+                            ? priorityScore >= 3.5 ? 'bg-emerald-50 border-emerald-200'
+                                : priorityScore >= 2.5 ? 'bg-amber-50 border-amber-200'
+                                : 'bg-red-50 border-red-200'
+                            : '';
+                        const scoreValueColor = priorityScore !== null
+                            ? priorityScore >= 3.5 ? 'text-emerald-700'
+                                : priorityScore >= 2.5 ? 'text-amber-700'
+                                : 'text-red-700'
+                            : 'text-slate-400';
 
                         return (
                             <div
@@ -256,8 +266,35 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                         <div className="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl group-hover:scale-110 transition-transform">
                                             <ClipboardList size={24} />
                                         </div>
-                                        <div className="flex items-center gap-1.5">
-                                            {/* Quadrant chip */}
+                                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                            <span className="inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                                                ARE: {(uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0}
+                                            </span>
+                                            <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 h-8 rounded-full border ${
+                                                (() => {
+                                                    const art = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? '';
+                                                    return art === 'Critical' || art === 'High'
+                                                        ? 'bg-red-50 text-red-700 border-red-200'
+                                                        : art === 'Medium'
+                                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                        : art === 'Low'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : 'bg-slate-50 text-slate-500 border-slate-200';
+                                                })()
+                                            }`}>
+                                                ART: {(uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None'}
+                                            </span>
+                                            {priorityScore !== null ? (
+                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
+                                                    <span className={`text-sm font-black leading-none ${scoreValueColor}`}>{priorityScore.toFixed(1)}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
+                                                    <span className="text-sm text-slate-400 font-normal leading-none">—</span>
+                                                </div>
+                                            )}
                                             {quadrant ? (
                                                 <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Quadrant</span>
@@ -269,7 +306,6 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                                     <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                                 </div>
                                             )}
-                                            {/* Agent count */}
                                             <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-800 px-2 py-0.5 rounded-full">
                                                 <Bot size={12} />{relatedAgentCount}
                                             </span>
@@ -320,11 +356,14 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                 </div>
             ) : (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_110px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_110px_120px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <div>Use Case Name</div>
                         <div>Function</div>
                         <div>Status</div>
                         <div>Owner</div>
+                        <div>ARE</div>
+                        <div>ART</div>
+                        <div>Priority Score</div>
                         <div>Quadrant</div>
                         <div>Business Value</div>
                         <div>Effort</div>
@@ -337,13 +376,15 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                     >
                         {useCases.map(uc => {
                             const relatedAgentCount = getRelatedAgentCount(uc);
-                            const { quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
+                            const { priorityScore, quadrant, contribBV, contribTC, contribRisk } = computeScores(uc);
                             const listNavId = uc.identifier ?? uc.id;
+                            const ucAre = (uc as any).agent_risk_exposure_are ?? (uc as any).agent_risk_exposure ?? 0;
+                            const ucArt = (uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None';
                             return (
                                 <div
                                     key={uc.identifier ?? uc.id}
                                     onClick={() => listNavId ? navigate(`/use-case/${listNavId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
-                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_110px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_110px_120px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
                                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
@@ -368,6 +409,35 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                     </div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 font-medium truncate pr-4">
                                         {uc.owner || 'Unassigned'}
+                                    </div>
+                                    {/* ARE */}
+                                    <div className="text-xs text-slate-600 font-bold">
+                                        {ucAre}
+                                    </div>
+                                    {/* ART */}
+                                    <div className="flex items-center">
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                                            ucArt === 'Critical' || ucArt === 'High' ? 'bg-red-50 text-red-700 border-red-200'
+                                                : ucArt === 'Medium' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                : ucArt === 'Low' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                : 'bg-slate-50 text-slate-500 border-slate-200'
+                                        }`}>
+                                            {ucArt}
+                                        </span>
+                                    </div>
+                                    {/* Score — value only */}
+                                    <div className="flex items-center">
+                                        {priorityScore !== null ? (() => {
+                                            const s = priorityScore;
+                                            const bg = s >= 3.5 ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                : s >= 2.5 ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                                : 'bg-red-50 border-red-200 text-red-700';
+                                            return (
+                                                <span className={`text-sm font-black px-2.5 py-1 rounded-lg border ${bg}`}>
+                                                    {s.toFixed(1)}
+                                                </span>
+                                            );
+                                        })() : <span className="text-sm text-slate-400 font-normal">—</span>}
                                     </div>
                                     {/* Quadrant — value only */}
                                     <div className="flex items-center">

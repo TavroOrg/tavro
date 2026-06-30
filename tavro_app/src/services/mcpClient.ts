@@ -1274,6 +1274,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     async createAgent(args: any): Promise<any> {
         // Server-side create_agent has a strict signature; drop unsupported
         // UI-only fields (owner/role/environment) to avoid tool validation errors.
+        const source: string | undefined = args?.source;
         const agentName = (args?.agent_name ?? '').trim();
         const description = (args?.description ?? '').trim() || agentName;
         const instruction = (args?.instruction ?? '').trim() || description;
@@ -1297,7 +1298,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
-        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload, source } }));
         return data;
     }
 

@@ -9,6 +9,7 @@ import type {
 } from '../types/businessRelations';
 import { portalActivity } from './portalActivity';
 import { parseApiError } from '../utils/errorUtils';
+import { appLogger } from './logger';
 
 export interface AgentTableRecord {
   table_id: string;
@@ -190,9 +191,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/applications', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/applications${suffix}`);
-    if (Array.isArray(data)) return data as BusinessApplicationRecord[];
-    return (data?.items ?? []) as BusinessApplicationRecord[];
+    const items = Array.isArray(data) ? data as BusinessApplicationRecord[] : (data?.items ?? []) as BusinessApplicationRecord[];
+    appLogger.res('GET /api/v1/applications', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countApplications(companyId?: string): Promise<number> {
@@ -275,9 +279,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/processes', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/processes${suffix}`);
-    if (Array.isArray(data)) return data as BusinessProcessRecord[];
-    return (data?.items ?? []) as BusinessProcessRecord[];
+    const items = Array.isArray(data) ? data as BusinessProcessRecord[] : (data?.items ?? []) as BusinessProcessRecord[];
+    appLogger.res('GET /api/v1/processes', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countProcesses(companyId?: string): Promise<number> {
@@ -460,38 +467,44 @@ class BusinessRelationsApi {
     return res.blob();
   }
 
-  async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async linkAgentToApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async unlinkAgentFromApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async linkAgentToProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async unlinkAgentFromProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async linkAgentToIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'DELETE',
     });
   }
@@ -568,9 +581,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/integrations', { search, companyId });
+    const t0 = Date.now();
     const data = await req<unknown>(`/integrations${suffix}`);
-    if (Array.isArray(data)) return data as IntegrationRecord[];
-    return ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+    const items = Array.isArray(data) ? data as IntegrationRecord[] : ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+    appLogger.res('GET /api/v1/integrations', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countIntegrations(companyId?: string): Promise<number> {

@@ -428,7 +428,7 @@ const PlaygroundPage: React.FC = () => {
           {/* Session controls */}
           {!sessionActive || sessionEnded ? (
             <button
-              onClick={startSession}
+              onClick={() => { startSession(); setActiveTab('chat'); }}
               disabled={!config.agentName.trim() || sessionStarting}
               className="flex items-center gap-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500 px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
