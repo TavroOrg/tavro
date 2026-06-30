@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import threading
+
 import requests
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -16,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.dependencies.auth import require_portal_admin
 from catalog_connector.connector.base_connector import BaseConnector
 from catalog_connector.transformers.agent_transformer import transform_to_agent_cards
 
@@ -86,6 +89,7 @@ def _creds() -> Tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 _ENV_FILE = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
+_env_lock = threading.Lock()
 
 
 def _env_files() -> List[Path]:
@@ -195,61 +199,20 @@ async def _fetch_m365_agents(
     #       non-agent types that would indicate a plain Teams app.
     # ---------------------------------------------------------------------------
 
-    # elementType values that identify Copilot / declarative agents
     _AGENT_ELEM_TYPES = {
-    "copilotagent",
-    "agent",
-    "declarativeagent",
-    "declarativecopilots",
-    "customcopilot",
-    "agentskills",
-    "agentconnectors",
-}
-    # def _is_copilot_agent(pkg: dict) -> bool:
-    #     pkg_id = pkg.get("id", "")
-    #     # All Foundry and Copilot Studio agents use the T_ prefix
-    #     if str(pkg_id).startswith("T_"):
-    #         return True
-    #     # For catalog (P_) packages: prefer elementTypes check
-    #     elem_types = [str(e).lower() for e in (pkg.get("elementTypes") or [])]
-    #     if elem_types:
-    #         # Include if any element type is agent-like
-    #         return any(et in _AGENT_ELEM_TYPES for et in elem_types)
-    #     # Fallback for packages with no elementTypes: check supportedHosts
-    #     hosts = [str(h).lower() for h in (pkg.get("supportedHosts") or [])]
-    #     return "copilot" in hosts
-
+        "copilotagent", "agent", "declarativeagent", "declarativecopilots",
+        "customcopilot", "agentskills", "agentconnectors",
+    }
 
     def _is_copilot_agent(pkg: dict) -> bool:
         pkg_id = str(pkg.get("id", ""))
-
-        # Always include Foundry / Copilot Studio agents
         if pkg_id.startswith("T_"):
             return True
-
-        elem_types = {
-            str(e).lower()
-            for e in (pkg.get("elementTypes") or [])
-        }
-
-        # Include catalog packages with explicit agent element types
-        if (
-            "declarativecopilots" in elem_types or
-            "copilotagent" in elem_types or
-            "declarativeagent" in elem_types or
-            "customcopilot" in elem_types or
-            "agentskills" in elem_types or
-            "agentconnectors" in elem_types
-        ):
+        elem_types = {str(e).lower() for e in (pkg.get("elementTypes") or [])}
+        if elem_types & _AGENT_ELEM_TYPES:
             return True
-
-        # Include third-party ISV packages that surface in Copilot
-        # (admin center "All agents" view uses this same signal)
         hosts = {str(h).lower() for h in (pkg.get("supportedHosts") or [])}
-        if "copilot" in hosts or "microsoftcopilot" in hosts:
-            return True
-
-        return False
+        return "copilot" in hosts or "microsoftcopilot" in hosts
 
     packages = [p for p in all_packages if _is_copilot_agent(p)]
 
@@ -269,20 +232,15 @@ async def _fetch_m365_agents(
     _ALL_TOOL_FIELDS  = _REAL_TOOL_FIELDS | {"capabilities", "extensions", "elementDetails"}
     _DETAIL_BASE = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages"
     _sem = asyncio.Semaphore(10)
+    _detail_client = httpx.AsyncClient(timeout=30)
 
     async def _fetch_detail(pkg: dict) -> dict:
-        # Always fetch the per-agent detail endpoint.
-        # The list response NEVER includes elementDetails (where tools live for
-        # declarative/Copilot-Studio/Foundry agents).  The list response may carry
-        # top-level "actions" or "plugins" for some catalog packages, but without
-        # the detail call we miss elementDetails entirely for all agents.
         pkg_id = str(pkg.get("id", ""))
         if not pkg_id:
             return pkg
         async with _sem:
             try:
-                async with httpx.AsyncClient(timeout=30) as _c:
-                    r = await _c.get(f"{_DETAIL_BASE}/{pkg_id}", headers=headers)
+                r = await _detail_client.get(f"{_DETAIL_BASE}/{pkg_id}", headers=headers)
                 if r.status_code == 200:
                     detail = r.json()
                     # detail overrides list fields; preserve list fields not in detail
@@ -325,7 +283,10 @@ async def _fetch_m365_agents(
         return pkg
 
     print(f"[m365] enriching {len(packages)} packages with per-agent detail …")
-    packages = list(await asyncio.gather(*[_fetch_detail(p) for p in packages]))
+    try:
+        packages = list(await asyncio.gather(*[_fetch_detail(p) for p in packages]))
+    finally:
+        await _detail_client.aclose()
     tools_found = sum(1 for p in packages if any(p.get(f) for f in _ALL_TOOL_FIELDS))
     print(f"[m365] enrichment done — {tools_found} package(s) have tool data")
 
@@ -487,7 +448,9 @@ async def receive_agent365(
     x_tenant_id:      Optional[str] = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    if _WEBHOOK_SECRET and x_webhook_secret != _WEBHOOK_SECRET:
+    if not _WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="AGENT365_WEBHOOK_SECRET is not configured")
+    if x_webhook_secret != _WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
     tid = (x_tenant_id or "").strip() or (body.tenantId or "").strip()
     if not tid:
@@ -511,6 +474,7 @@ async def sync_from_m365(
     x_tenant_id:      str           = Header(...),
     x_webhook_secret: Optional[str] = Header(default=None),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_portal_admin),
 ):
     """
     Fetch ALL Microsoft 365 agents and save them to the Tavro Agent Catalog.
@@ -668,7 +632,7 @@ async def sync_from_m365(
 # ---------------------------------------------------------------------------
 
 @router.get("/diagnose")
-async def diagnose_agent365():
+async def diagnose_agent365(auth: dict = Depends(require_portal_admin)):
     """Probe every source — writes nothing to DB."""
     az_tenant, client_id, client_secret = _creds()
 
@@ -811,7 +775,7 @@ class _DeviceCodePollBody(BaseModel):
 
 
 @router.post("/auth/start")
-async def agent365_auth_start(body: _DeviceCodeStartBody):
+async def agent365_auth_start(body: _DeviceCodeStartBody, auth: dict = Depends(require_portal_admin)):
     """Initiate Microsoft Device Code Flow — returns user_code + verification_uri."""
     tenant_id, client_id, _ = _creds()
     tenant_id  = body.tenant_id.strip()  or tenant_id
@@ -850,7 +814,7 @@ async def agent365_auth_start(body: _DeviceCodeStartBody):
 
 
 @router.post("/auth/poll")
-async def agent365_auth_poll(body: _DeviceCodePollBody):
+async def agent365_auth_poll(body: _DeviceCodePollBody, auth: dict = Depends(require_portal_admin)):
     """Poll for token completion; on success persists the refresh token to .env."""
     saved = _pop_device_session(body.device_code)
     tenant_id     = body.tenant_id.strip()     or (saved or {}).get("tenant_id", "") or _creds()[0]
@@ -889,21 +853,21 @@ async def agent365_auth_poll(body: _DeviceCodePollBody):
 
     refresh_token = data.get("refresh_token", "")
     if refresh_token:
-        # Persist to every .env file the app reads
-        for env_path in _env_files():
-            if not env_path.exists():
-                continue
-            lines = env_path.read_text(encoding="utf-8").splitlines()
-            found = False
-            for i, line in enumerate(lines):
-                if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
-                    lines[i] = f"AGENT365_REFRESH_TOKEN={refresh_token}"
-                    found = True
-                    break
-            if not found:
-                lines.append(f"AGENT365_REFRESH_TOKEN={refresh_token}")
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        os.environ["AGENT365_REFRESH_TOKEN"] = refresh_token
+        with _env_lock:
+            for env_path in _env_files():
+                if not env_path.exists():
+                    continue
+                lines = env_path.read_text(encoding="utf-8").splitlines()
+                found = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
+                        lines[i] = f"AGENT365_REFRESH_TOKEN={refresh_token}"
+                        found = True
+                        break
+                if not found:
+                    lines.append(f"AGENT365_REFRESH_TOKEN={refresh_token}")
+                env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.environ["AGENT365_REFRESH_TOKEN"] = refresh_token
 
     return {"status": "ok", "refresh_token_saved": bool(refresh_token)}
 
@@ -939,16 +903,17 @@ async def _get_delegated_token(tenant_id: str, client_id: str) -> Optional[str]:
         data = resp.json()
         new_rt = data.get("refresh_token", "")
         if new_rt and new_rt != refresh_token:
-            os.environ["AGENT365_REFRESH_TOKEN"] = new_rt
-            for env_path in _env_files():
-                if not env_path.exists():
-                    continue
-                lines = env_path.read_text(encoding="utf-8").splitlines()
-                for i, line in enumerate(lines):
-                    if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
-                        lines[i] = f"AGENT365_REFRESH_TOKEN={new_rt}"
-                        break
-                env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with _env_lock:
+                os.environ["AGENT365_REFRESH_TOKEN"] = new_rt
+                for env_path in _env_files():
+                    if not env_path.exists():
+                        continue
+                    lines = env_path.read_text(encoding="utf-8").splitlines()
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
+                            lines[i] = f"AGENT365_REFRESH_TOKEN={new_rt}"
+                            break
+                    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         return data.get("access_token")
 
@@ -1280,19 +1245,19 @@ class Agent365InboundConnector(BaseConnector):
             if not bot_id or bot_id in seen_ids:
                 continue
             seen_ids.add(bot_id)
-            name = (
+            name = _fix_encoding((
                 record.get("displayName") or record.get("title") or
                 record.get("name") or "Unnamed Agent"
-            ).strip()
-            description = (
+            ).strip())
+            description = _fix_encoding((
                 record.get("longDescription") or record.get("shortDescription") or
                 record.get("description") or f"Microsoft 365 agent: {name}"
-            ).strip()
-            publisher = (
+            ).strip())
+            builder = record.get("builderInfo") or {}
+            publisher = _fix_encoding((
                 record.get("publisherName") or record.get("developerName") or
-                record.get("publisher") or
-                (record.get("builderInfo") or {}).get("name") or "Microsoft 365"
-            )
+                record.get("publisher") or builder.get("name") or "Microsoft 365"
+            ).strip())
             instruction = self._build_instruction(record)
             bots.append({
                 "botid": bot_id,

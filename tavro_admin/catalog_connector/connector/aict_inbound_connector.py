@@ -151,6 +151,7 @@ class AICTInboundConnector(BaseConnector):
             card_data.setdefault("provider", {})
             card_data["provider"]["organization"] = "ServiceNow AICT"
 
+        worker.init_pool()
         for agent in agent_cards:
             worker.process_card(agent["data"])
 

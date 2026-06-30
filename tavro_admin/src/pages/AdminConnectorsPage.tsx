@@ -362,7 +362,7 @@ const AdminConnectorsPage: React.FC = () => {
                     if (pollRes.ok && pollData.status === 'ok') {
                         setDeviceCodeState({ phase: 'done' });
                     } else if (pollData.pending) {
-                        setTimeout(poll, 5000);
+                        setTimeout(poll, pollData.slow_down ? 10000 : 5000);
                     } else {
                         setDeviceCodeState({ phase: 'error', message: pollData.detail ?? pollData.error ?? 'Sign-in failed' });
                     }
@@ -782,7 +782,7 @@ const AdminConnectorsPage: React.FC = () => {
                                     <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                                     <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
                                         {selectedConnector.id === 'agent365'
-                                            ? `Completed — ${(state.result as any).agents_synced ?? state.result.count ?? 0} agents synced (${(state.result as any).created ?? 0} new, ${(state.result as any).updated ?? 0} updated). Check the Agent Catalog.`
+                                            ? `Completed — ${(state.result as any).agents_synced ?? state.result.count ?? 0} agents synced. Check the Agent Catalog.`
                                             : state.result.processes
                                                 ? `Completed — ${state.result.count ?? 0} process${(state.result.count ?? 0) !== 1 ? 'es' : ''} imported`
                                                 : state.result.applications

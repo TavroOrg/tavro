@@ -50,7 +50,7 @@ CONNECTOR_MAP: dict[str, tuple[str, str]] = {
     "snowflake":     ("catalog_connector.connector.snowflake_connector",      "SnowflakeConnector"),
     "databricks":    ("catalog_connector.connector.databricks_connector",     "DatabricksConnector"),
     "gemini":        ("catalog_connector.connector.gemini_connector",         "GeminiConnector"),
-    "github":        ("catalog_connector.connector.mcp_connector.github_connector", "GitHubConnector"),
+    "github":        ("catalog_connector.connector.mcp_connector.github_connector", "GithubConnector"),
     "aict_inbound":  ("catalog_connector.connector.aict_inbound_connector",  "AICTInboundConnector"),
     "agent365":   ("catalog_connector.connector.agent365_inbound_connector", "Agent365InboundConnector"),
 }

@@ -248,6 +248,10 @@ class GithubConnector(BaseConnector):
             self.map_prompt(prompt)
             for prompt in metadata.get("prompts", [])
         ]
+
+        server_url = metadata.get("serverURL") or server_info.get("name") or "github-mcp"
+        card.setdefault("identification", {})["agent_id"] = hashlib.sha256(server_url.encode()).hexdigest()[:32]
+
         return card
 
     @staticmethod
