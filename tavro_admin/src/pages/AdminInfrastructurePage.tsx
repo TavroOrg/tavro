@@ -31,7 +31,7 @@ const INFRA_ITEMS: InfraDef[] = [
     {
         id: 'claude-cli',
         name: 'Claude CLI',
-        description: 'Anthropic Claude CLI â€” powers agent code generation, updates, and terminal execution in the Agent Playground',
+        description: 'Anthropic Claude CLI - powers agent code generation, updates, and terminal execution in the Agent Playground',
         category: 'Anthropic',
         initials: 'CC',
         color: 'from-violet-500 to-purple-700',
