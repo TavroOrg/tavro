@@ -1,0 +1,151 @@
+name: Update User Guide on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:   # allows manual trigger from GitHub UI for testing
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-guide:
+    # Only run when the PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need HEAD~1 for the diff
+
+      # ── 2. Setup Node ──────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tavro_app/package-lock.json
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: tavro_app
+        run: npm ci
+
+      # ── TEST 1: Build check ────────────────────────────────────────────────
+      - name: "[Test 1] TypeScript check & build"
+        working-directory: tavro_app
+        run: npm run build
+
+      # ── 4. Install Claude Code CLI ─────────────────────────────────────────
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # ── 5. Run the update-user-guide workflow ──────────────────────────────
+      - name: Check and update user guide
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude --workflow .claude/workflows/update-user-guide.js \
+                 --output-file /tmp/guide-patch.json \
+                 --non-interactive
+        timeout-minutes: 10
+
+      # ── 6. Apply patches to UserGuidePage.tsx ─────────────────────────────
+      - name: Apply guide patches
+        run: |
+          node - <<'EOF'
+          import { readFileSync, writeFileSync } from 'fs';
+
+          const result = JSON.parse(readFileSync('/tmp/guide-patch.json', 'utf8'));
+
+          if (result.no_changes_needed || !result.approved) {
+            console.log('No guide changes needed or patches not approved. Skipping.');
+            process.exit(0);
+          }
+
+          let guide = readFileSync('tavro_app/src/pages/UserGuidePage.tsx', 'utf8');
+          let applied = 0;
+
+          for (const patch of result.patches) {
+            if (guide.indexOf(patch.old_content_snippet) === -1) {
+              console.warn(`WARN: snippet not found for "${patch.section_id}" — skipping.`);
+              continue;
+            }
+            guide = guide.replace(patch.old_content_snippet, patch.new_content);
+            applied++;
+            console.log(`Applied patch for: ${patch.section_id}`);
+          }
+
+          writeFileSync('tavro_app/src/pages/UserGuidePage.tsx', guide);
+          console.log(`\nPatches applied: ${applied}/${result.patches.length}`);
+          EOF
+        shell: node {0}
+
+      # ── TEST 2: Patched guide compiles ─────────────────────────────────────
+      - name: "[Test 2] Verify patched guide compiles"
+        working-directory: tavro_app
+        run: npx tsc --noEmit
+
+      # ── 7. Check if anything changed ──────────────────────────────────────
+      - name: Check for guide changes
+        id: check_changes
+        run: |
+          git diff --quiet tavro_app/src/pages/UserGuidePage.tsx \
+            && echo "changed=false" >> $GITHUB_OUTPUT \
+            || echo "changed=true"  >> $GITHUB_OUTPUT
+
+      # ── 8. Open a PR with the updated guide ───────────────────────────────
+      - name: Open guide update PR
+        if: steps.check_changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="docs/user-guide-update-${{ github.run_number }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add tavro_app/src/pages/UserGuidePage.tsx
+          git commit -m "docs: update user guide after PR #${{ github.event.pull_request.number }}
+
+          Triggered by: ${{ github.event.pull_request.title }}
+          PR: ${{ github.event.pull_request.html_url }}
+
+          Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "docs: update user guide after \"${{ github.event.pull_request.title }}\"" \
+            --body "$(cat <<'PREOF'
+          ## Auto-generated User Guide Update
+
+          Triggered by merging:
+          **#${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}**
+
+          ### Tests passed
+          - ✅ Test 1 — TypeScript check & build passed
+          - ✅ Test 2 — Patched guide compiles without errors
+
+          ### Review checklist
+          - [ ] New feature is correctly described
+          - [ ] No unrelated sections were changed
+          - [ ] Approve and merge when satisfied
+
+          > Automated by the `update-user-guide` workflow.
+          PREOF
+          )" \
+            --base main \
+            --head "$BRANCH" \
+            --label "documentation"
+
+      # ── 9. Nothing to update ───────────────────────────────────────────────
+      - name: Guide already up to date
+        if: steps.check_changes.outputs.changed == 'false'
+        run: echo "No guide changes needed — user guide is already up to date."
