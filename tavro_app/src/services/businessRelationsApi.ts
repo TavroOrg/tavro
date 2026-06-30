@@ -460,38 +460,44 @@ class BusinessRelationsApi {
     return res.blob();
   }
 
-  async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async linkAgentToApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async unlinkAgentFromApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async linkAgentToProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async unlinkAgentFromProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async linkAgentToIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'DELETE',
     });
   }

@@ -52,7 +52,7 @@ class AgentMetadataExporter:
             return cursor.rowcount
 
     @classmethod
-    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None) -> Optional[str]:
+    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Optional[str]:
         if not agent_name:
             return None
 
@@ -67,6 +67,12 @@ class AgentMetadataExporter:
         else:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        # ---------- 1b. Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
 
         safe_input = cls.sanitize(lower_input)
         prefix = (
@@ -90,6 +96,19 @@ class AgentMetadataExporter:
             """
             params.append(tenant_id)
 
+        # ---------- 2b. Company WHERE ----------
+        company_where = ""
+        if company_id:
+            company_where = """
+            AND (
+                company_id = %s
+                OR company_id IS NULL
+                OR TRIM(CAST(company_id AS text)) = ''
+                OR company_id = 'None'
+            )
+            """
+            params.append(company_id)
+
         # ---------- 3. Query ----------
         query = f"""
         SELECT agent_id, agent_name
@@ -99,6 +118,7 @@ class AgentMetadataExporter:
             OR lower(agent_name) LIKE %s
         )
         {tenant_where}
+        {company_where}
         LIMIT 200
         """
 
@@ -189,7 +209,7 @@ class AgentMetadataExporter:
         return None
 
     @classmethod
-    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Dict[str, Any]:
         print(f"Fetching agent card for name='{agent_name}', id='{agent_id}'")
 
         if not agent_name and not agent_id:
@@ -212,9 +232,15 @@ class AgentMetadataExporter:
                 tenant_mode = "TENANT"
                 tenant_id = cls.sanitize(str(tenant_id).strip())
 
+            # ---------- 1b. Normalize company ----------
+            if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+                company_id = None
+            else:
+                company_id = cls.sanitize(str(company_id).strip())
+
             # ---------- 2. Resolve agent_id ----------
             if agent_name and not agent_id:
-                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
+                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id, company_id)
                 print(f"Resolved agent_id='{agent_id}' from agent_name='{agent_name}'")
                 if not agent_id:
                     return {
@@ -246,12 +272,26 @@ class AgentMetadataExporter:
                 """
                 params.append(tenant_id)
 
+            # ---------- 4b. Build company filter ----------
+            company_where = ""
+            if company_id:
+                company_where = """
+                AND (
+                    company_id = %s
+                    OR company_id IS NULL
+                    OR TRIM(CAST(company_id AS text)) = ''
+                    OR company_id = 'None'
+                )
+                """
+                params.append(company_id)
+
             # ---------- 5. Existence check ----------
             check_query = f"""
             SELECT 1
             FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = %s
             {tenant_where}
+            {company_where}
             LIMIT 1
             """
 
@@ -3615,7 +3655,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated application catalog with single optimized query.
@@ -3634,16 +3675,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
@@ -3682,7 +3726,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated process catalog with single optimized query.
@@ -3701,16 +3746,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
