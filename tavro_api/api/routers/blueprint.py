@@ -81,14 +81,15 @@ async def _create_business_entity(
     label: str,
     summary: str | None,
     tags: list,
-) -> None:
+) -> bool:
     """
     Upsert the corresponding Application / Process / Integration record.
     Called after dim_node creation — non-fatal, errors are logged and rolled back.
+    Returns True if a new row was inserted, False if it already existed or was skipped.
     """
     label = (label or "").strip()
     if not label:
-        return
+        return False
     tags_json = json.dumps(tags or [])
 
     if category == "application":
@@ -104,7 +105,7 @@ async def _create_business_entity(
             "core.business_integrations", "integration_id", "integration_name", "integration_description"
         )
     else:
-        return
+        return False
 
     try:
         exists = await db.execute(
@@ -112,7 +113,7 @@ async def _create_business_entity(
             {"n": label, "c": company_id},
         )
         if exists.scalar():
-            return
+            return False
 
         await db.execute(
             text(f"""
@@ -124,10 +125,12 @@ async def _create_business_entity(
              "cid": company_id, "cname": company_name, "tid": tenant_id, "tags": tags_json},
         )
         await db.commit()
+        return True
 
     except Exception as e:
         _logger.warning("_create_business_entity failed [%s] '%s': %s", category, label, e)
         await db.rollback()
+        return False
 
 
 def _resolve_blueprint_llm() -> tuple[str, str]:
@@ -1098,11 +1101,14 @@ async def sync_business_entities(
     created = skipped = 0
     for node in nodes:
         tags = node["tags"] if isinstance(node["tags"], list) else []
-        await _create_business_entity(
+        was_created = await _create_business_entity(
             db, body.company_id, company_name, company_tenant_id,
             node["category"], node["label"], node["summary"], tags,
         )
-        created += 1
+        if was_created:
+            created += 1
+        else:
+            skipped += 1
 
     return {"created": created, "skipped": skipped}
 
