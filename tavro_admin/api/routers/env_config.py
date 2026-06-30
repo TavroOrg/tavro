@@ -64,6 +64,11 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
         "base_url": "GITHUB_MCP_BASE_URL",
         "token":    "GITHUB_MCP_TOKEN",
     },
+    "agent365": {
+    "tenant_id":     "AGENT365_TENANT_ID",
+    "client_id":     "AGENT365_CLIENT_ID",
+    "client_secret": "AGENT365_CLIENT_SECRET",
+    },
     "aict_inbound": {
         "instance_url": "AICT_INSTANCE_URL",
         "username":     "AICT_USERNAME",

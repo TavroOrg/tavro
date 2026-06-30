@@ -37,7 +37,7 @@ COPY tavro_admin/api /app/api
 COPY --from=frontend /frontend/dist /app/static
 
 # Connector code (required for the Connectors page run endpoints)
-COPY catalog_connector /app/catalog_connector
+COPY tavro_admin/catalog_connector /app/catalog_connector
 COPY worker.py /app/worker.py
 COPY utils /app/utils
 

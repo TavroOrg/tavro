@@ -85,6 +85,11 @@ services:
       AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_HOSTED_ENDPOINT: '${AZURE_AI_FOUNDRY_HOSTED_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
+      AZURE_AI_FOUNDRY_HOSTED_KEY: '${AZURE_AI_FOUNDRY_HOSTED_KEY:-}'
+      # Agent 365 inbound connector
+      AGENT365_TENANT_ID:    '${AGENT365_TENANT_ID:-}'
+      AGENT365_CLIENT_ID:    '${AGENT365_CLIENT_ID:-}'
+      AGENT365_CLIENT_SECRET: '${AGENT365_CLIENT_SECRET:-}'
       # DefaultAzureCredential uses these for local Docker runs. Azure deployments
       # can use managed identity instead.
       AZURE_CLIENT_ID: '${AZURE_AI_FOUNDRY_CLIENT_ID:-}'
@@ -121,6 +126,7 @@ services:
       - ./utils:/app/utils:ro               # live reload — risk utils
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
+      - ./.env:/app/.env:rw                           # Agent 365 refresh token + connector credentials
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
@@ -172,11 +178,14 @@ services:
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      tavro-api:
+        condition: service_healthy
     environment:
       DATABASE_URL:          postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       ADMIN_ENCRYPTION_KEY:  ${ADMIN_ENCRYPTION_KEY:-}
       AGENT_CARD_DIR:        /app/agent_cards
+      TAVRO_API_URL:         http://tavro-api:8000
       RISK_CLASSIFY_URL:     http://tavro-api:8000/api/v1/risk/classify-risk
       RISK_CONCURRENCY:      "2"
       RISK_TIMEOUT_S:        "600"
