@@ -51,6 +51,11 @@ function isProcessPage(pathname: string): boolean {
     return /^\/processes\/(?!new$)/.test(pathname);
 }
 
+/** Check if current route is an integration view page */
+function isIntegrationPage(pathname: string): boolean {
+    return /^\/integrations\/(?!new$)/.test(pathname);
+}
+
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
 
@@ -256,7 +261,8 @@ const Layout: React.FC = () => {
     const isOnUseCasePage = isUseCasePage(location.pathname);
     const isOnApplicationPage = isApplicationPage(location.pathname);
     const isOnProcessPage = isProcessPage(location.pathname);
-    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage;
+    const isOnIntegrationPage = isIntegrationPage(location.pathname);
+    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage || isOnIntegrationPage;
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -764,7 +770,9 @@ const Layout: React.FC = () => {
                                                     ? 'application'
                                                     : isOnProcessPage
                                                         ? 'process'
-                                                        : 'agent'
+                                                        : isOnIntegrationPage
+                                                            ? 'integration'
+                                                            : 'agent'
                                         }
                                     />
                                 )}
