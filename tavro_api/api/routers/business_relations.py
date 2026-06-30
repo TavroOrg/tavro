@@ -1114,6 +1114,19 @@ def _text_or_none(value: Any) -> Optional[str]:
     return _clean(str(value))
 
 
+def _is_global_company_value(value: Any) -> bool:
+    text_value = _text_or_none(value)
+    return text_value is None or text_value == "" or text_value.lower() == "none"
+
+
+def _replace_select_col(cols: list, col_name: str, new_expr: str) -> None:
+    """Replace the first entry in cols whose alias matches col_name."""
+    for i, c in enumerate(cols):
+        if c.endswith(f" AS {col_name}"):
+            cols[i] = new_expr
+            return
+
+
 def _canonical_payload(raw_payload: Optional[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
     payload = raw_payload or {}
     out: dict[str, Any] = {}
@@ -1268,7 +1281,10 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = aba.agent_id
+                WHERE (ara.agent_id = aba.agent_id
+                       OR (ara.agent_internal_id = aba.agent_internal_id
+                           AND aba.agent_internal_id IS NOT NULL
+                           AND aba.agent_internal_id <> ''))
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1409,12 +1425,12 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         "tier 2 (core)": 0.7,
         "tier 3 (operational)": 0.4,
         "tier 4 (experimental)": 0.1,
-        "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+        "1": 1.0, "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
     }.get(bc, 0.0)
 
     fi = (proc.get("financial_impact") or "").strip().lower()
     fi_score = {
-        "systemic": 1.0, "1": 1.0,
+        "systemic": 1.0, "1": 1.0, "1.0": 1.0,
         "material": 0.7, "0.7": 0.7,
         "absorbable": 0.4, "0.4": 0.4,
         "immaterial": 0.1, "0.1": 0.1,
@@ -1422,7 +1438,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     ri = (proc.get("reputational_impact") or "").strip().lower()
     ri_score = {
-        "toxic": 1.0, "1": 1.0,
+        "toxic": 1.0, "1": 1.0, "1.0": 1.0,
         "adverse": 0.7, "0.7": 0.7,
         "private": 0.4, "0.4": 0.4,
         "contained": 0.1, "0.1": 0.1,
@@ -1430,7 +1446,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     rgi = (proc.get("regulatory_impact") or "").strip().lower()
     rgi_score = {
-        "restricted": 1.0, "1": 1.0,
+        "restricted": 1.0, "1": 1.0, "1.0": 1.0,
         "statutory": 0.7, "0.7": 0.7,
         "governed": 0.4, "0.4": 0.4,
         "unregulated": 0.1, "0.1": 0.1,
@@ -1444,7 +1460,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = abp.agent_id
+                WHERE (ara.agent_id = abp.agent_id OR ara.agent_internal_id = abp.agent_internal_id)
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1599,7 +1615,7 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                 JOIN LATERAL (
                     SELECT ara.agent_internal_id, ara.blended_risk_score
                     FROM core.agent_risk_assessments ara
-                    WHERE ara.agent_id = abi.agent_id
+                    WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
                       AND ara.blended_risk_score IS NOT NULL
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1745,7 +1761,7 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "residual_risk_classification"),
         _col_expr("bi", int_cols, "inherent_risk_classification_score"),
         _col_expr("bi", int_cols, "residual_risk_classification_score"),
-        _col_expr("bi", int_cols, "num_of_associated_agents"),
+        _col_expr("bi", int_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
     ]
 
     where_parts: list[str] = []
@@ -1788,6 +1804,10 @@ async def _fetch_integrations(
         else "LOWER(bi.integration_id)"
     )
 
+    has_ara_int = False
+    int_company_risk_lateral_sql = ""
+    int_company_risk_class_lateral_sql = ""
+
     has_ba = await _table_exists(db, "core", "business_applications")
     ba_join_sql = (
         "LEFT JOIN core.business_applications pa ON pa.business_application_id = bi.parent_application_id"
@@ -1809,6 +1829,16 @@ async def _fetch_integrations(
         )
         if tenant_id and "tenant_id" in abi_cols:
             abi_filter += " AND abi.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abi_cols:
+            abi_filter += (
+                " AND (abi.company_id = :related_company_id"
+                " OR abi.company_id IS NULL"
+                " OR TRIM(CAST(abi.company_id AS text)) = ''"
+                " OR abi.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         int_agent_company_join = ""
         int_agent_company_filter = ""
@@ -1816,7 +1846,14 @@ async def _fetch_integrations(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                int_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abi.agent_internal_id"
+                int_agent_join_type = "LEFT JOIN"
+                int_agent_company_join = (
+                    f"{int_agent_join_type} core.agents ag ON ("
+                    "(abi.agent_id IS NOT NULL AND abi.agent_id <> '' AND ag.agent_id = abi.agent_id)"
+                    " OR (abi.agent_internal_id IS NOT NULL AND abi.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abi.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     int_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -1852,12 +1889,112 @@ async def _fetch_integrations(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_int = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_int:
+            ara_cols_int = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_int: list[str] = []
+            if "is_current" in ara_cols_int:
+                ara_order_parts_int.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_int:
+                ara_order_parts_int.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_int.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_int = ", ".join(ara_order_parts_int)
+
+            int_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bi.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bi.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abi.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_integrations abi
+                            {int_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_int}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {abi_filter}
+                              {int_agent_company_filter}
+                              {int_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_int = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_int:
+                int_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                int_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_int:
+        _replace_select_col(select_cols, "blended_risk_score",
+                         "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                         "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                         "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                         "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                         "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                         "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                         "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     rows = await db.execute(
         text(
@@ -1867,6 +2004,8 @@ async def _fetch_integrations(
             FROM core.business_integrations bi
             {ba_join_sql}
             {rel_join_sql}
+            {int_company_risk_lateral_sql}
+            {int_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1906,7 +2045,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "it_application_owner"),
         _col_expr("ba", app_cols, "application_description"),
         _col_expr("ba", app_cols, "agent_risk_exposure"),
-        _col_expr("ba", app_cols, "num_of_associated_agents"),
+        _col_expr("ba", app_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("ba", app_cols, "inherent_risk_classification"),
         _col_expr("ba", app_cols, "residual_risk_classification"),
         _col_expr("ba", app_cols, "agent_risk_tier"),
@@ -1932,6 +2071,10 @@ async def _fetch_applications(
         "mdl_rel.related_ai_models",
     ]
 
+    has_ara = False
+    company_risk_lateral_sql = ""
+    company_risk_class_lateral_sql = ""
+
     has_aba = await _table_exists(db, "core", "agent_business_applications")
     if has_aba:
         aba_cols = await _table_columns(db, "core", "agent_business_applications")
@@ -1946,6 +2089,16 @@ async def _fetch_applications(
         )
         if tenant_id and "tenant_id" in aba_cols:
             aba_filter += " AND aba.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in aba_cols:
+            aba_filter += (
+                " AND (aba.company_id = :related_company_id"
+                " OR aba.company_id IS NULL"
+                " OR TRIM(CAST(aba.company_id AS text)) = ''"
+                " OR aba.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         app_agent_company_join = ""
         app_agent_company_filter = ""
@@ -1953,7 +2106,14 @@ async def _fetch_applications(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                app_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = aba.agent_internal_id"
+                app_agent_join_type = "LEFT JOIN"
+                app_agent_company_join = (
+                    f"{app_agent_join_type} core.agents ag ON ("
+                    "(aba.agent_id IS NOT NULL AND aba.agent_id <> '' AND ag.agent_id = aba.agent_id)"
+                    " OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = aba.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     app_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -1989,12 +2149,116 @@ async def _fetch_applications(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara:
+            ara_cols = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts: list[str] = []
+            if "is_current" in ara_cols:
+                ara_order_parts.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols:
+                ara_order_parts.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts.append("ara.updated_ts DESC NULLS LAST")
+            ara_order = ", ".join(ara_order_parts)
+
+            company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(ba.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(ba.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(aba.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_applications aba
+                            {app_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE ara.blended_risk_score IS NOT NULL
+                                  AND (
+                                    ara.agent_id = aba.agent_id
+                                    OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> ''
+                                        AND ara.agent_internal_id = aba.agent_internal_id)
+                                  )
+                                ORDER BY {ara_order}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {aba_filter}
+                              {app_agent_company_filter}
+                              {app_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table:
+                company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara:
+        _replace_select_col(select_cols, "blended_risk_score",
+                     "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                     "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                     "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                     "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                     "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                     "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                     "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
@@ -2218,6 +2482,8 @@ async def _fetch_applications(
             {rel_join_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {company_risk_lateral_sql}
+            {company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -2258,7 +2524,7 @@ async def _fetch_processes(
         _col_expr("bp", process_cols, "operators"),
         _col_expr("bp", process_cols, "business_criticality"),
         _col_expr("bp", process_cols, "reputational_impact"),
-        _col_expr("bp", process_cols, "num_of_associated_agents"),
+        _col_expr("bp", process_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("bp", process_cols, "agent_risk_tier"),
         _col_expr("bp", process_cols, "residual_risk_classification"),
         _col_expr("bp", process_cols, "inherent_risk_classification"),
@@ -2280,6 +2546,10 @@ async def _fetch_processes(
         "mdl_rel.related_ai_models",
     ]
 
+    has_ara_proc = False
+    proc_company_risk_lateral_sql = ""
+    proc_company_risk_class_lateral_sql = ""
+
     has_abp = await _table_exists(db, "core", "agent_business_processes")
     if has_abp:
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
@@ -2294,6 +2564,16 @@ async def _fetch_processes(
         )
         if tenant_id and "tenant_id" in abp_cols:
             abp_filter += " AND abp.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abp_cols:
+            abp_filter += (
+                " AND (abp.company_id = :related_company_id"
+                " OR abp.company_id IS NULL"
+                " OR TRIM(CAST(abp.company_id AS text)) = ''"
+                " OR abp.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         agent_company_join = ""
         agent_company_filter = ""
@@ -2301,7 +2581,14 @@ async def _fetch_processes(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abp.agent_internal_id"
+                agent_join_type = "LEFT JOIN"
+                agent_company_join = (
+                    f"{agent_join_type} core.agents ag ON ("
+                    "(abp.agent_id IS NOT NULL AND abp.agent_id <> '' AND ag.agent_id = abp.agent_id)"
+                    " OR (abp.agent_internal_id IS NOT NULL AND abp.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abp.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -2337,12 +2624,135 @@ async def _fetch_processes(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_proc = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_proc:
+            ara_cols_proc = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_proc: list[str] = []
+            if "is_current" in ara_cols_proc:
+                ara_order_parts_proc.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_proc:
+                ara_order_parts_proc.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_proc.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_proc = ", ".join(ara_order_parts_proc)
+
+            proc_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bp.business_criticality))
+                                    WHEN 'tier 1 (systemic)' THEN 1.0 WHEN 'tier 2 (core)' THEN 0.7
+                                    WHEN 'tier 3 (operational)' THEN 0.4 WHEN 'tier 4 (experimental)' THEN 0.1
+                                    WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0 WHEN '0.7' THEN 0.7 WHEN '0.4' THEN 0.4 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.financial_impact))
+                                    WHEN 'systemic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'material' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'absorbable' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'immaterial' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.reputational_impact))
+                                    WHEN 'toxic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'adverse' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'private' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'contained' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.regulatory_impact))
+                                    WHEN 'restricted' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'statutory' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'governed' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'unregulated' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END) / 4.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abp.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_processes abp
+                            {agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE (ara.agent_id = abp.agent_id
+                                       OR (ara.agent_internal_id = abp.agent_internal_id
+                                           AND abp.agent_internal_id IS NOT NULL
+                                           AND abp.agent_internal_id <> ''))
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_proc}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {abp_filter}
+                              {agent_company_filter}
+                              {agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_proc = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_proc:
+                proc_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                proc_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_proc:
+        _replace_select_col(select_cols, "blended_risk_score",
+                          "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                          "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                          "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                          "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                          "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                          "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     process_tree_tenant_filter = (
         "AND child.tenant_id = bp.tenant_id"
@@ -2619,6 +3029,8 @@ async def _fetch_processes(
             {proc_rel_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {proc_company_risk_lateral_sql}
+            {proc_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -3017,25 +3429,62 @@ async def upload_integrations_csv(
 async def add_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    int_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT integration_id, integration_name
-            FROM core.business_integrations
-            WHERE integration_id = :integration_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"integration_id": integration_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    int_row = await db.execute(
+        text(
+            f"""
+            SELECT integration_id, integration_name, tenant_id, company_id
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     integration = int_row.mappings().first()
     if not integration:
         raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(integration.get("company_id"))
+    ) else (
+        company_id or integration.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -3053,12 +3502,14 @@ async def add_agent_integration_relation(
                 agent_id = EXCLUDED.agent_id,
                 agent_name = EXCLUDED.agent_name,
                 integration_name = EXCLUDED.integration_name,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or integration.get("tenant_id"),
+            "company_id": relation_company_id,
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -3085,26 +3536,39 @@ async def add_agent_integration_relation(
 async def remove_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_integrations
             WHERE integration_id = :integration_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "integration_id": integration_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
     await db.commit()
@@ -5076,25 +5540,58 @@ async def get_agent_relations(
 async def add_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
+
+    agent_row = await db.execute(
+        text(
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
 
     app_row = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 business_application_id,
                 application_name,
                 business_criticality,
                 emergency_tier,
-                application_description
+                application_description,
+                tenant_id,
+                company_id
             FROM core.business_applications
             WHERE business_application_id = :business_application_id
+              {tenant_filter}
+              {company_filter}
             LIMIT 1
             """
         ),
-        {"business_application_id": application_id},
+        {"business_application_id": application_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     app = app_row.mappings().first()
 
@@ -5123,7 +5620,15 @@ async def add_agent_application_relation(
         app = {
             "application_name": application_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(app.get("company_id"))
+    ) else (
+        company_id or app.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5141,12 +5646,14 @@ async def add_agent_application_relation(
                 agent_id = EXCLUDED.agent_id,
                 application_name = EXCLUDED.application_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or app.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
@@ -5173,25 +5680,38 @@ async def add_agent_application_relation(
 async def remove_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_applications
             WHERE business_application_id = :business_application_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_application_id": application_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 
@@ -5214,23 +5734,56 @@ async def remove_agent_application_relation(
 async def add_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    process_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT
-                business_process_id,
-                process_name,
-                business_criticality
-            FROM core.business_processes
-            WHERE business_process_id = :business_process_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"business_process_id": process_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    process_row = await db.execute(
+        text(
+            f"""
+            SELECT
+                business_process_id,
+                process_name,
+                business_criticality,
+                tenant_id,
+                company_id
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": process_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     process = process_row.mappings().first()
 
@@ -5260,7 +5813,15 @@ async def add_agent_process_relation(
         process = {
             "process_name": process_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(process.get("company_id"))
+    ) else (
+        company_id or process.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5278,12 +5839,14 @@ async def add_agent_process_relation(
                 agent_id = EXCLUDED.agent_id,
                 process_name = EXCLUDED.process_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or process.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
@@ -5310,25 +5873,38 @@ async def add_agent_process_relation(
 async def remove_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_processes
             WHERE business_process_id = :business_process_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_process_id": process_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 

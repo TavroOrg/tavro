@@ -22,7 +22,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
         text("""
             SELECT 1 FROM twin.dim_node n
             JOIN twin.company c ON c.id = n.company_id AND (c.tenant_id = :tid OR c.tenant_id IS NULL)
-            WHERE n.id = :nid
+            WHERE n.id = :nid AND n.valid_to IS NULL
         """),
         {"nid": node_id, "tid": tenant_id},
     )

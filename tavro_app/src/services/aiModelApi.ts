@@ -139,15 +139,17 @@ class AiModelApi {
     });
   }
 
-  async linkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents`, {
+  async linkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents${qs}`, {
       method: 'POST',
       body: JSON.stringify({ agent_id: agentId }),
     });
   }
 
-  async unlinkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}`, {
+  async unlinkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}${qs}`, {
       method: 'DELETE',
     });
   }
