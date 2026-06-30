@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import AdminLogin from './pages/AdminLogin';
@@ -9,6 +9,7 @@ import AdminConnectorsPage from './pages/AdminConnectorsPage';
 import AdminContainerLogsPage from './pages/AdminContainerLogsPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 import AdminCompanyPage from './pages/AdminCompanyPage';
+import AdminInfrastructurePage from './pages/AdminInfrastructurePage';
 
 function isAuthenticated(): boolean {
     const token = localStorage.getItem('tavro_admin_access_token');
@@ -48,6 +49,7 @@ function App() {
                         <Route path="connectors" element={<AdminConnectorsPage />} />
                         <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />
+                        <Route path="infrastructure" element={<AdminInfrastructurePage />} />
                     </Route>
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
@@ -57,3 +59,4 @@ function App() {
 }
 
 export default App;
+

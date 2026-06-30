@@ -530,6 +530,8 @@ async def list_use_cases(
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
+                        u.company_id,
+                        u.company_name,
                         u.function,
                         u.business_value_score        AS pv_business_value_score,
                         u.data_readiness_score        AS pv_data_readiness_score,

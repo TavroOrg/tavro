@@ -590,7 +590,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     // ── Agent creation / artifact status cards ────────────────────────────────
     useEffect(() => {
         const onAgentCreated = (event: Event) => {
-            const { result, args } = (event as CustomEvent).detail ?? {};
+            const { result, args, source } = (event as CustomEvent).detail ?? {};
+            if (source === 'spark') return;
             const agentId: string =
                 result?.agent_id ||
                 result?.identification?.agent_id ||

@@ -122,6 +122,6 @@ export const OBSERVATION_TYPES: Record<PlaygroundObservation['type'], { label: s
 
 export const PROVIDER_MODELS: Record<InfraProvider, string[]> = {
   claude:        ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
-  azure_foundry: ['gpt-4o', 'gpt-4o-mini', 'phi-4'],
+  azure_foundry: ['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini'],
   aws_bedrock:   ['gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-120b'],
 };
