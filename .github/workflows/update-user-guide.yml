@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+    paths:
+      - 'tavro_app/src/pages/**'
+      - 'tavro_app/src/components/**'
   workflow_dispatch:   # allows manual trigger from GitHub UI for testing
 
 permissions:
@@ -12,7 +15,6 @@ permissions:
 
 jobs:
   update-guide:
-    # Only run when the PR was actually merged (not just closed)
     if: github.event.pull_request.merged == true
 
     runs-on: ubuntu-latest
@@ -22,7 +24,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # need HEAD~1 for the diff
+          fetch-depth: 2
 
       # ── 2. Setup Node ──────────────────────────────────────────────────────
       - name: Setup Node.js
@@ -38,7 +40,7 @@ jobs:
         run: npm ci
 
       # ── TEST 1: Build check ────────────────────────────────────────────────
-      - name: "[Test 1] TypeScript check & build"
+      - name: "[Test 1] App builds without errors"
         working-directory: tavro_app
         run: npm run build
 
@@ -47,7 +49,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       # ── 5. Run the update-user-guide workflow ──────────────────────────────
-      - name: Check and update user guide
+      - name: Understand changes and update user guide
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -56,39 +58,25 @@ jobs:
                  --non-interactive
         timeout-minutes: 10
 
-      # ── 6. Apply patches to UserGuidePage.tsx ─────────────────────────────
-      - name: Apply guide patches
+      # ── 6. Log workflow result ─────────────────────────────────────────────
+      # The workflow directly edits UserGuidePage.tsx via the Edit tool.
+      # No separate patch application needed.
+      - name: Log guide update result
         run: |
           node - <<'EOF'
-          import { readFileSync, writeFileSync } from 'fs';
-
+          import { readFileSync } from 'fs';
           const result = JSON.parse(readFileSync('/tmp/guide-patch.json', 'utf8'));
-
-          if (result.no_changes_needed || !result.approved) {
-            console.log('No guide changes needed or patches not approved. Skipping.');
-            process.exit(0);
+          if (result.no_changes_needed) {
+            console.log('Guide already up to date — no edits needed.');
+          } else {
+            console.log('Sections updated:', (result.edited_sections ?? []).join(', '));
+            console.log('Summary:', result.summary);
           }
-
-          let guide = readFileSync('tavro_app/src/pages/UserGuidePage.tsx', 'utf8');
-          let applied = 0;
-
-          for (const patch of result.patches) {
-            if (guide.indexOf(patch.old_content_snippet) === -1) {
-              console.warn(`WARN: snippet not found for "${patch.section_id}" — skipping.`);
-              continue;
-            }
-            guide = guide.replace(patch.old_content_snippet, patch.new_content);
-            applied++;
-            console.log(`Applied patch for: ${patch.section_id}`);
-          }
-
-          writeFileSync('tavro_app/src/pages/UserGuidePage.tsx', guide);
-          console.log(`\nPatches applied: ${applied}/${result.patches.length}`);
           EOF
         shell: node {0}
 
-      # ── TEST 2: Patched guide compiles ─────────────────────────────────────
-      - name: "[Test 2] Verify patched guide compiles"
+      # ── TEST 2: Updated guide compiles ────────────────────────────────────
+      - name: "[Test 2] Updated guide compiles"
         working-directory: tavro_app
         run: npx tsc --noEmit
 
@@ -130,15 +118,15 @@ jobs:
           **#${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}**
 
           ### Tests passed
-          - ✅ Test 1 — TypeScript check & build passed
-          - ✅ Test 2 — Patched guide compiles without errors
+          - ✅ Test 1 — App builds without errors
+          - ✅ Test 2 — Updated guide compiles
 
           ### Review checklist
           - [ ] New feature is correctly described
           - [ ] No unrelated sections were changed
           - [ ] Approve and merge when satisfied
 
-          > Automated by the `update-user-guide` workflow.
+          > Automated by the \`update-user-guide\` workflow.
           PREOF
           )" \
             --base main \

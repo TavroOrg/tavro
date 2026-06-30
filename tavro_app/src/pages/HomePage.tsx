@@ -60,24 +60,6 @@ const STAT_CARDS = [
     iconBg: 'bg-rose-50 dark:bg-rose-900/20',
     route: null,
   },
-  {
-    key: 'complianceScore',
-    label: 'Compliance Score',
-    subColor: 'text-emerald-600 dark:text-emerald-400',
-    Icon: TrendingUp,
-    iconColor: 'text-emerald-600 dark:text-emerald-400',
-    iconBg: 'bg-emerald-50 dark:bg-emerald-900/20',
-    route: '/compliance',
-  },
-  {
-    key: 'complianceScore',
-    label: 'Compliance Score',
-    subColor: 'text-emerald-600 dark:text-emerald-400',
-    Icon: TrendingUp,
-    iconColor: 'text-emerald-600 dark:text-emerald-400',
-    iconBg: 'bg-emerald-50 dark:bg-emerald-900/20',
-    route: '/compliance',
-  },
 ];
 
 const EMPTY_TOTALS: InsightsTotals = {

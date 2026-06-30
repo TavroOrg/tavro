@@ -1,73 +1,43 @@
 export const meta = {
   name: 'update-user-guide',
-  description: 'Read changed source files and new screenshots, then patch UserGuidePage.tsx',
+  description: 'Understand changed code then directly edit UserGuidePage.tsx',
   phases: [
-    { title: 'Understand', detail: 'Read git diff and identify changed features' },
-    { title: 'Analyse',    detail: 'Map changes to guide sections' },
-    { title: 'Patch',      detail: 'Rewrite affected sections in UserGuidePage.tsx' },
-    { title: 'Verify',     detail: 'Check patch for correctness and completeness' },
+    { title: 'Understand', detail: 'Read git diff and changed source files to know exactly what changed' },
+    { title: 'Document',   detail: 'Directly edit UserGuidePage.tsx with the new documentation' },
   ],
 };
 
-// ── Schemas ───────────────────────────────────────────────────────────────────
-
-const DIFF_ANALYSIS_SCHEMA = {
+const UNDERSTAND_SCHEMA = {
   type: 'object',
-  required: ['changed_features', 'new_screenshots', 'removed_features'],
+  required: ['changed_features', 'removed_features', 'summary'],
   properties: {
     changed_features: {
       type: 'array',
       items: {
         type: 'object',
-        required: ['feature_name', 'section_id', 'what_changed', 'files'],
+        required: ['feature_name', 'section_id', 'route', 'what_changed', 'ui_elements', 'files'],
         properties: {
-          feature_name:  { type: 'string' },
-          section_id:    { type: 'string', description: 'The TOC id in UserGuidePage.tsx this maps to, e.g. govern-compliance' },
-          what_changed:  { type: 'string' },
-          files:         { type: 'array', items: { type: 'string' } },
+          feature_name: { type: 'string' },
+          section_id:   { type: 'string', description: 'TOC id in UserGuidePage.tsx' },
+          route:        { type: 'string' },
+          what_changed: { type: 'string' },
+          ui_elements:  { type: 'array', items: { type: 'string' } },
+          files:        { type: 'array', items: { type: 'string' } },
         },
       },
     },
-    new_screenshots: {
-      type: 'array',
-      items: { type: 'string', description: 'Screenshot filename added to /assets/images/screenshots/' },
-    },
-    removed_features: {
-      type: 'array',
-      items: { type: 'string', description: 'Feature name that was removed or marked Coming Soon' },
-    },
+    removed_features: { type: 'array', items: { type: 'string' } },
     summary: { type: 'string' },
   },
 };
 
-const PATCH_SCHEMA = {
+const DOCUMENT_SCHEMA = {
   type: 'object',
-  required: ['patches'],
+  required: ['edited', 'section_id'],
   properties: {
-    patches: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['section_id', 'old_content_snippet', 'new_content', 'reason'],
-        properties: {
-          section_id:          { type: 'string' },
-          old_content_snippet: { type: 'string', description: 'Unique substring to locate the section (first ~120 chars)' },
-          new_content:         { type: 'string', description: 'Full replacement JSX for the section' },
-          reason:              { type: 'string' },
-        },
-      },
-    },
-    no_changes_needed: { type: 'boolean' },
-  },
-};
-
-const VERIFY_SCHEMA = {
-  type: 'object',
-  required: ['approved', 'issues'],
-  properties: {
-    approved: { type: 'boolean' },
-    issues:   { type: 'array', items: { type: 'string' } },
-    summary:  { type: 'string' },
+    edited:        { type: 'boolean', description: 'true if the file was edited, false if already up to date' },
+    section_id:    { type: 'string' },
+    change_summary:{ type: 'string' },
   },
 };
 
@@ -75,137 +45,101 @@ const VERIFY_SCHEMA = {
 
 phase('Understand');
 
-const diffAnalysis = await agent(
-  `You are analysing a git diff to understand what changed in the Tavro Agent BizOps frontend.
+const understanding = await agent(
+  `You are analysing a merged PR to understand what UI changed.
 
-TASK: Read the git diff of the PR that just merged to main. Identify:
-1. Which UI pages/features were added, changed, or removed
-2. Which screenshots in /assets/images/ were added or modified
-3. Map each change to the corresponding section id in UserGuidePage.tsx
+STEP 1 — Get the diff:
+  Run: git diff HEAD~1 HEAD --name-only
+  Then: git diff HEAD~1 HEAD -- tavro_app/src/pages/ tavro_app/src/components/
 
-TOC section ids to reference:
-- nav-overview, nav-sidebar, three-panel
-- home-dashboard, home-metrics, home-flow
-- insights, insights-stages, insights-risk, insights-governance
-- end-to-end-workflow, workflow-blueprint, workflow-spark, workflow-usecases,
-  workflow-agents, workflow-roadmap, workflow-build, workflow-deploy, workflow-govern
-- build-section, build-playground, build-evals
-- govern-section, govern-risk, govern-compliance, govern-guardrails, govern-issues
-- settings-overview, llm-setup, roadmap-settings, appearance-settings
+STEP 2 — Filter to UI-only files:
+  Only consider files under tavro_app/src/pages/ or tavro_app/src/components/.
+  Ignore: package.json, .yml, .md, api files, backend files, test files.
+  If no UI files changed, return changed_features: [] immediately.
 
-Run: git diff HEAD~1 HEAD --name-only
-Then: git diff HEAD~1 HEAD -- tavro_app/src/pages/ tavro_app/src/components/ tavro_app/public/assets/images/
+STEP 3 — For each changed UI file, READ it to understand the change deeply:
+  Read the actual source file — understand what UI elements were added or changed.
+  Extract the visible UI elements (labels, buttons, cards, icons).
 
-Return structured analysis.`,
-  { label: 'read-diff', phase: 'Understand', schema: DIFF_ANALYSIS_SCHEMA }
+STEP 4 — Map to section_id and route:
+  Route mapping:
+  - HomePage.tsx → /
+  - CatalogPage.tsx → /catalog
+  - CompliancePage.tsx or AuditPage.tsx → /compliance
+  - SparkPage.tsx → /spark
+  - UseCasePage.tsx → /use-cases
+  - BlueprintPage.tsx → /blueprint
+  - RoadmapPage.tsx → /roadmap
+  - GuardrailsPage.tsx → /guardrails
+  - SettingsPage.tsx → /settings
+
+  TOC section ids:
+  - home-dashboard, home-metrics, home-flow
+  - nav-overview, nav-sidebar, three-panel
+  - govern-section, govern-risk, govern-compliance, govern-guardrails, govern-issues
+  - build-section, build-playground, build-evals
+  - insights, insights-stages, insights-risk, insights-governance
+  - settings-overview, llm-setup, roadmap-settings, appearance-settings
+
+Return a detailed understanding of what changed including exact UI element names.`,
+  { label: 'understand', phase: 'Understand', schema: UNDERSTAND_SCHEMA }
 );
 
-log(`Found ${diffAnalysis.changed_features.length} changed features, ${diffAnalysis.new_screenshots.length} new screenshots`);
+log(`Understood ${understanding.changed_features.length} changed UI feature(s)`);
 
-if (diffAnalysis.changed_features.length === 0 && diffAnalysis.new_screenshots.length === 0) {
-  log('No user-facing changes detected. Guide is up to date.');
+if (understanding.changed_features.length === 0) {
+  log('No UI changes — nothing to document.');
   return { no_changes_needed: true };
 }
 
-// ── Phase 2: Analyse ──────────────────────────────────────────────────────────
+// ── Phase 2: Document ─────────────────────────────────────────────────────────
+// Each agent directly edits UserGuidePage.tsx using the Edit tool.
+// No patch JSON — the file is modified in place with correct encoding.
 
-phase('Analyse');
+phase('Document');
 
-const currentGuide = await agent(
-  `Read the full file: tavro_app/src/pages/UserGuidePage.tsx
-   Return its complete content as a string so it can be patched.`,
-  { label: 'read-guide', phase: 'Analyse' }
-);
+const results = await pipeline(
+  understanding.changed_features,
+  feature => agent(
+    `You are documenting a UI feature by directly editing the Tavro user guide.
 
-const analyses = await parallel(
-  diffAnalysis.changed_features.map(feature => () =>
-    agent(
-      `Analyse this feature change and determine exactly what needs updating in the user guide.
+FEATURE: ${feature.feature_name}
+SECTION ID: ${feature.section_id}
+WHAT CHANGED: ${feature.what_changed}
+UI ELEMENTS: ${feature.ui_elements.join(', ')}
 
-Feature: ${feature.feature_name}
-Section ID: ${feature.section_id}
-What changed: ${feature.what_changed}
-Files changed: ${feature.files.join(', ')}
-New screenshots available: ${diffAnalysis.new_screenshots.join(', ')}
+FILE TO EDIT: tavro_app/src/pages/UserGuidePage.tsx
 
-Read the relevant page file(s) to understand the current UI:
-${feature.files.map(f => `- ${f}`).join('\n')}
+STEP 1 — Read ONLY the relevant section of the guide:
+  Run: grep -n "${feature.section_id}" tavro_app/src/pages/UserGuidePage.tsx
+  Then Read the file at those line numbers (read ~60 lines around the match).
 
-Then read the current guide section for "${feature.section_id}" in UserGuidePage.tsx.
+STEP 2 — Decide: does the guide need updating?
+  - If it already accurately describes the UI elements → return edited: false
+  - If it is missing or outdated → proceed to Step 3
 
-Return: what specifically in the guide is now wrong/missing/outdated.`,
-      { label: `analyse:${feature.section_id}`, phase: 'Analyse' }
-    )
+STEP 3 — Directly edit tavro_app/src/pages/UserGuidePage.tsx:
+  Use the Edit tool to insert or update the documentation for this feature.
+
+  RULES for the edit:
+  - Use valid JSX only — use the existing Step, Callout, UIButton, Badge, SectionHeading components
+  - No TypeScript types, no import statements
+  - Match the indentation style of the surrounding code exactly
+  - For removed features: use <Badge color="violet">Coming Soon</Badge>
+  - Keep the edit focused — only change the section relevant to this feature
+
+STEP 4 — Return the result:
+  Return edited: true with a brief change_summary if you made an edit.
+  Return edited: false if no change was needed.`,
+    { label: `document:${feature.section_id}`, phase: 'Document', schema: DOCUMENT_SCHEMA }
   )
 );
 
-// ── Phase 3: Patch ────────────────────────────────────────────────────────────
+const edited = results.filter(Boolean).filter(r => r.edited);
+log(`Done — ${edited.length} section(s) updated in UserGuidePage.tsx.`);
 
-phase('Patch');
-
-const patchPlan = await agent(
-  `You are updating UserGuidePage.tsx based on UI changes.
-
-CURRENT GUIDE (full file):
-${currentGuide}
-
-CHANGES NEEDED (one entry per feature):
-${analyses.filter(Boolean).map((a, i) => `[${diffAnalysis.changed_features[i].section_id}]: ${a}`).join('\n\n')}
-
-NEW SCREENSHOTS available at /assets/images/screenshots/:
-${diffAnalysis.new_screenshots.join('\n')}
-
-RULES:
-- Only patch sections that are actually wrong or missing. Do not touch unrelated sections.
-- Use <ScreenshotFrame src="/assets/images/screenshots/FILENAME.png" ... /> for new screenshots.
-- Keep the same JSX component style (Step, Callout, UIButton, Badge, FlowDiagram, ScreenshotFrame, SectionHeading).
-- For removed features, replace the section body with a Coming Soon badge: <Badge color="violet">Coming Soon</Badge>
-- old_content_snippet must be a unique 80-120 char substring that appears exactly once in the file.
-- new_content must be valid JSX (no TypeScript types, no import statements).
-
-Return the patch list.`,
-  { label: 'write-patches', phase: 'Patch', schema: PATCH_SCHEMA }
-);
-
-if (patchPlan.no_changes_needed) {
-  log('Patch agent determined no guide changes are needed.');
-  return { no_changes_needed: true };
-}
-
-log(`Generated ${patchPlan.patches.length} patch(es)`);
-
-// ── Phase 4: Verify ───────────────────────────────────────────────────────────
-
-phase('Verify');
-
-const verification = await agent(
-  `You are a technical reviewer verifying a user guide patch before it is applied.
-
-PATCHES TO APPLY:
-${JSON.stringify(patchPlan.patches, null, 2)}
-
-CURRENT GUIDE:
-${currentGuide}
-
-Check each patch for:
-1. old_content_snippet exists exactly once in the current guide (no duplicates, no missing)
-2. new_content is valid JSX — balanced tags, no TypeScript syntax
-3. The description accurately reflects the actual feature based on what changed
-4. No section references features that were removed
-5. Screenshot filenames in new_content match files in: ${diffAnalysis.new_screenshots.join(', ')}
-
-Return approved: true only if ALL patches are safe to apply.`,
-  { label: 'verify-patches', phase: 'Verify', schema: VERIFY_SCHEMA }
-);
-
-if (!verification.approved) {
-  log(`Verification FAILED: ${verification.issues.join('; ')}`);
-  return { approved: false, issues: verification.issues, patches: patchPlan.patches };
-}
-
-log('All patches verified. Ready to apply.');
 return {
   approved: true,
-  patches: patchPlan.patches,
-  summary: diffAnalysis.summary,
+  edited_sections: edited.map(r => r.section_id),
+  summary: understanding.summary,
 };
