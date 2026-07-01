@@ -418,19 +418,82 @@ async def list_use_cases(
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
-    # Company filter for the agent count subqueries — join agents table to apply company_id.
+    # Company filter for the agent count and risk score subqueries.
     _has_company = "company_id" in params
-    _agent_cnt_join = f"JOIN {CORE}.agents ag ON ag.agent_id = rel.agent_id" if _has_company else ""
+    _agent_cnt_join = (
+        f"""JOIN {CORE}.agents ag
+                ON (rel.agent_id IS NOT NULL AND rel.agent_id <> '' AND ag.agent_id = rel.agent_id)
+                OR (rel.agent_internal_id IS NOT NULL AND rel.agent_internal_id <> ''
+                    AND ag.agent_internal_id = rel.agent_internal_id)"""
+        if _has_company else ""
+    )
     _agent_cnt_cf = (
         "AND (ag.company_id = :company_id OR ag.company_id IS NULL"
         " OR TRIM(CAST(ag.company_id AS text)) = '' OR ag.company_id = 'None')"
         if _has_company else ""
     )
 
+    # Dynamic risk score expressions — filtered by tenant+company when available.
+    _risk_tf = f"AND rel2.tenant_id = :tid" if tenant_id else ""
+    _risk_cf = (
+        "AND (ag2.company_id = :company_id OR ag2.company_id IS NULL"
+        " OR TRIM(CAST(ag2.company_id AS text)) = '' OR ag2.company_id = 'None')"
+        if _has_company else ""
+    )
+    _risk_table_exists = None
+    if _has_company or tenant_id:
+        _risk_table_exists = (await db.execute(
+            text("SELECT to_regclass(:t)"), {"t": f"{CORE}.agent_risk_assessments"}
+        )).scalar()
+
+    if (_has_company or tenant_id) and _risk_table_exists:
+        _are_expr = f"""
+            COALESCE((
+                SELECT ROUND(brs.blended_risk_score::numeric, 2)
+                FROM {CORE}.agent_ai_use_cases rel2
+                JOIN {CORE}.agents ag2
+                    ON ag2.agent_id = rel2.agent_id
+                    OR ag2.agent_internal_id = rel2.agent_internal_id
+                JOIN LATERAL (
+                    SELECT ara.agent_internal_id, ara.blended_risk_score
+                    FROM {CORE}.agent_risk_assessments ara
+                    WHERE ara.blended_risk_score IS NOT NULL
+                      AND (
+                        ara.agent_id = rel2.agent_id
+                        OR (rel2.agent_internal_id IS NOT NULL AND rel2.agent_internal_id <> ''
+                            AND ara.agent_internal_id = rel2.agent_internal_id)
+                      )
+                    ORDER BY
+                        CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                        ara.assessment_ts DESC NULLS LAST,
+                        ara.updated_ts DESC NULLS LAST
+                    LIMIT 1
+                ) brs ON TRUE
+                WHERE LOWER(TRIM(rel2.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
+                  AND COALESCE(rel2.agent_id, rel2.agent_internal_id) IS NOT NULL
+                  AND COALESCE(rel2.agent_id, rel2.agent_internal_id) <> ''
+                  {_risk_tf}
+                  {_risk_cf}
+                ORDER BY brs.blended_risk_score DESC NULLS LAST
+                LIMIT 1
+            ), 0.0) AS agent_risk_exposure_are
+        """
+        _art_expr = ""
+        _outer_art_col = """, CASE
+                    WHEN t.agent_risk_exposure_are >= 9.0 THEN 'Critical'
+                    WHEN t.agent_risk_exposure_are >= 7.0 THEN 'High'
+                    WHEN t.agent_risk_exposure_are >= 3.0 THEN 'Medium'
+                    ELSE 'Low'
+                END AS agent_risk_tier_art"""
+    else:
+        _are_expr = "u.agent_risk_exposure_are"
+        _art_expr = "u.agent_risk_tier_art,"
+        _outer_art_col = ""
+
     try:
         result = await db.execute(
             text(f"""
-                SELECT *
+                SELECT * {_outer_art_col}
                 FROM (
                     SELECT
                         u.ai_use_case_id AS identifier,
@@ -445,26 +508,30 @@ async def list_use_cases(
                         u.solution_approach,
                         u.created_ts,
                         u.updated_ts,
+                        {_are_expr},
+                        {_art_expr}
                         COALESCE((
-                            SELECT COUNT(DISTINCT rel.agent_id)
+                            SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
                             FROM {CORE}.agent_ai_use_cases rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                              AND rel.agent_id IS NOT NULL
-                              AND rel.agent_id <> ''
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS related_agent_count,
                         COALESCE((
-                            SELECT COUNT(DISTINCT rel.agent_id)
+                            SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))
                             FROM {CORE}.agent_ai_use_cases rel
                             {_agent_cnt_join}
                             WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(u.ai_use_case_id))
-                              AND rel.agent_id IS NOT NULL
-                              AND rel.agent_id <> ''
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                              AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
                               {"AND rel.tenant_id = :tid" if tenant_id else ""}
                               {_agent_cnt_cf}
                         ), 0) AS no_of_associated_agents,
+                        u.company_id,
+                        u.company_name,
                         u.function,
                         u.business_value_score        AS pv_business_value_score,
                         u.data_readiness_score        AS pv_data_readiness_score,
@@ -664,6 +731,117 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
         if not row:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
+        uc_result = dict(row)
+        if company_id:
+            _agent_join = f"""
+                JOIN {CORE}.agents ag
+                    ON ag.agent_id = rel.agent_id
+                    OR ag.agent_internal_id = rel.agent_internal_id
+            """
+            _ci_agent = (
+                " OR ag.company_id IS NULL OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None'"
+            )
+            _rel_cf = f"AND (ag.company_id = :company_id{_ci_agent})"
+            _rel_tf = "AND rel.tenant_id = :tid" if tenant_id else ""
+            risk_params: dict = {
+                "uid": normalized_use_case_id,
+                "company_id": company_id,
+            }
+            if tenant_id:
+                risk_params["tid"] = tenant_id
+
+            cnt_row = await db.execute(
+                text(f"""
+                    SELECT COUNT(DISTINCT COALESCE(rel.agent_id, rel.agent_internal_id))::int AS cnt
+                    FROM {CORE}.agent_ai_use_cases rel
+                    {_agent_join}
+                    WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+                      AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                      AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                      {_rel_cf}
+                      {_rel_tf}
+                """),
+                risk_params,
+            )
+            uc_result["no_of_associated_agents"] = int(cnt_row.scalar() or 0)
+
+            ara_exists = (await db.execute(
+                text("SELECT to_regclass(:t)"), {"t": f"{CORE}.agent_risk_assessments"}
+            )).scalar()
+
+            max_brs = 0.0
+            worst_internal_id = None
+            if ara_exists:
+                worst_row = await db.execute(
+                    text(f"""
+                        SELECT brs.agent_internal_id, brs.blended_risk_score
+                        FROM {CORE}.agent_ai_use_cases rel
+                        {_agent_join}
+                        JOIN LATERAL (
+                            SELECT COALESCE(ara.agent_internal_id, ag.agent_internal_id, rel.agent_internal_id) AS agent_internal_id,
+                                   ara.blended_risk_score
+                            FROM {CORE}.agent_risk_assessments ara
+                            WHERE ara.blended_risk_score IS NOT NULL
+                              AND (
+                                ara.agent_id = rel.agent_id
+                                OR ara.agent_internal_id = rel.agent_internal_id
+                              )
+                            ORDER BY
+                                CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
+                                ara.assessment_ts DESC NULLS LAST,
+                                ara.updated_ts DESC NULLS LAST
+                            LIMIT 1
+                        ) brs ON TRUE
+                        WHERE LOWER(TRIM(rel.ai_use_case_id)) = LOWER(TRIM(:uid))
+                          AND COALESCE(rel.agent_id, rel.agent_internal_id) IS NOT NULL
+                          AND COALESCE(rel.agent_id, rel.agent_internal_id) <> ''
+                          {_rel_cf}
+                          {_rel_tf}
+                        ORDER BY brs.blended_risk_score DESC NULLS LAST
+                        LIMIT 1
+                    """),
+                    risk_params,
+                )
+                worst = worst_row.mappings().first()
+                max_brs = float(worst.get("blended_risk_score") or 0.0) if worst else 0.0
+                worst_internal_id = worst.get("agent_internal_id") if worst else None
+
+            are = round(max_brs, 2)
+            art = _art_from_are(are) if uc_result["no_of_associated_agents"] > 0 else "None"
+            uc_result["blended_risk_score"] = max_brs
+            uc_result["agent_risk_exposure_are"] = are
+            uc_result["agent_risk_tier_art"] = art
+
+            inherent_class, inherent_score, residual_class, residual_score = "", 0.0, "", 0.0
+            if worst_internal_id:
+                rm_exists = (await db.execute(
+                    text("SELECT to_regclass(:t)"), {"t": f"{RISK_MANAGEMENT}.agent_risk_assessment"}
+                )).scalar()
+                if rm_exists:
+                    rc_rows = await db.execute(
+                        text(f"""
+                            SELECT type_of_risk, risk_classification, risk_classification_score
+                            FROM {RISK_MANAGEMENT}.agent_risk_assessment
+                            WHERE agent_internal_id = :aid
+                              AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                            ORDER BY created_ts DESC NULLS LAST
+                        """),
+                        {"aid": worst_internal_id},
+                    )
+                    for rc in rc_rows.mappings():
+                        tor = rc.get("type_of_risk")
+                        if tor == "Inherent Risk" and not inherent_class:
+                            inherent_class = rc.get("risk_classification") or ""
+                            inherent_score = float(rc.get("risk_classification_score") or 0.0)
+                        elif tor == "Residual Risk" and not residual_class:
+                            residual_class = rc.get("risk_classification") or ""
+                            residual_score = float(rc.get("risk_classification_score") or 0.0)
+            uc_result["inherent_risk_classification"] = inherent_class
+            uc_result["inherent_risk_classification_score"] = inherent_score
+            uc_result["residual_risk_classification"] = residual_class
+            uc_result["residual_risk_classification_score"] = residual_score
+
         agents_result = await db.execute(
             text(f"""
                 SELECT DISTINCT
@@ -672,7 +850,8 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
                     ai.environment
                 FROM {CORE}.agent_ai_use_cases rel
                 LEFT JOIN {CORE}.agents ag
-                    ON ag.agent_id = rel.agent_id AND ag.is_current = true
+                    ON (ag.agent_id = rel.agent_id OR ag.agent_internal_id = rel.agent_internal_id)
+                    AND ag.is_current = true
                 LEFT JOIN {CORE}.agent_identifications ai
                     ON ai.agent_internal_id = rel.agent_internal_id
                     AND COALESCE(ai.is_current, true) = true
@@ -808,7 +987,7 @@ async def get_use_case(use_case_id: str, request: Request, db: AsyncSession = De
             ]
 
         data = {
-            **dict(row),
+            **uc_result,
             "of_associated_agents": linked_agents,
             "of_associated_business_applications": linked_applications,
             "applications": linked_applications,

@@ -59,6 +59,15 @@ interface RunResult {
 
 type ServiceNowMode = 'agents' | 'business_applications' | 'business_processes';
 
+type DeviceCodePhase = 'idle' | 'loading' | 'waiting' | 'done' | 'error';
+interface DeviceCodeState {
+    phase: DeviceCodePhase;
+    userCode?: string;
+    verificationUri?: string;
+    deviceCode?: string;
+    message?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Static connector definitions (mirrors admin_connectors.py)
 // ---------------------------------------------------------------------------
@@ -144,6 +153,16 @@ const CONNECTORS: ConnectorDef[] = [
         ],
     },
     {
+        id: 'agent365', name: 'Microsoft Agent 365', description: 'Microsoft 365 Admin Center — all agents',
+        category: 'Microsoft', initials: 'A3', color: 'from-blue-600 to-indigo-700',
+        note: "Requires Microsoft delegated sign-in. Save Tenant ID, Client ID and Client Secret, then complete Device Code authentication. The refresh token is stored and used to fetch Microsoft 365 agents.",
+        fields: [
+        { key: 'tenant_id', label: 'Azure Tenant ID', type: 'text' },
+        { key: 'client_id', label: 'Azure Client ID', type: 'text' },
+        { key: 'client_secret', label: 'Azure Client Secret', type: 'password' },
+        ],
+    },
+    {    
         id: 'aict_inbound', name: 'ServiceNow AICT', description: 'Import AI governance assets from ServiceNow AICT into the agent catalog',
         category: 'ServiceNow AICT', initials: 'AI', color: 'from-purple-500 to-purple-700',
         fields: [
@@ -198,9 +217,11 @@ const AdminConnectorsPage: React.FC = () => {
     const [credentials, setCredentials] = useState<Record<string, Record<string, string>>>({});
     const [runState, setRunState] = useState<Record<string, { status: RunStatus; result?: RunResult }>>({});
     const [geminiAuthUrl, setGeminiAuthUrl] = useState<{ url?: string; loading: boolean; error?: string }>({ loading: false });
+    
     const [credsLoading, setCredsLoading] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [snMode, setSnMode] = useState<ServiceNowMode>('agents');
+    const [deviceCodeState, setDeviceCodeState] = useState<DeviceCodeState>({ phase: 'idle' });
 
     const selectedConnector = CONNECTORS.find(c => c.id === selected) ?? null;
 
@@ -227,7 +248,10 @@ const AdminConnectorsPage: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (selected) loadCredentials(selected);
+        if (selected) {
+            loadCredentials(selected);
+            setDeviceCodeState({ phase: 'idle' });
+        }
     }, [selected, loadCredentials]);
 
     const saveCredentials = async (connId: string) => {
@@ -292,6 +316,66 @@ const AdminConnectorsPage: React.FC = () => {
         }
     };
 
+    const startDeviceCode = async () => {
+        setDeviceCodeState({ phase: 'loading' });
+        const creds = credentials['agent365'] ?? {};
+        const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
+        const authHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
+            ...(tenantId    ? { 'x-tenant-id':   tenantId }               : {}),
+        };
+        try {
+            const res = await fetch('/api/v1/admin/connectors/agent365/auth/start', {
+                method: 'POST',
+                headers: authHeaders,
+                body: JSON.stringify({
+                    credentials: {
+                        tenant_id:     creds.tenant_id     ?? '',
+                        client_id:     creds.client_id     ?? '',
+                        client_secret: creds.client_secret ?? '',
+                    },
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setDeviceCodeState({ phase: 'error', message: data.detail ?? 'Failed to start sign-in' });
+                return;
+            }
+            const { user_code, verification_uri, device_code } = data;
+            setDeviceCodeState({ phase: 'waiting', userCode: user_code, verificationUri: verification_uri, deviceCode: device_code });
+
+            // Poll until authenticated or expired
+            const poll = async () => {
+                try {
+                    const pollRes = await fetch('/api/v1/admin/connectors/agent365/auth/poll', {
+                        method: 'POST',
+                        headers: authHeaders,
+                        body: JSON.stringify({
+                            device_code,
+                            tenant_id:     creds.tenant_id     ?? '',
+                            client_id:     creds.client_id     ?? '',
+                            client_secret: creds.client_secret ?? '',
+                        }),
+                    });
+                    const pollData = await pollRes.json();
+                    if (pollRes.ok && pollData.status === 'ok') {
+                        setDeviceCodeState({ phase: 'done' });
+                    } else if (pollData.pending) {
+                        setTimeout(poll, pollData.slow_down ? 10000 : 5000);
+                    } else {
+                        setDeviceCodeState({ phase: 'error', message: pollData.detail ?? pollData.error ?? 'Sign-in failed' });
+                    }
+                } catch (err: unknown) {
+                    setDeviceCodeState({ phase: 'error', message: err instanceof Error ? err.message : 'Network error' });
+                }
+            };
+            setTimeout(poll, 5000);
+        } catch (err: unknown) {
+            setDeviceCodeState({ phase: 'error', message: err instanceof Error ? err.message : 'Network error' });
+        }
+    };
+
     const runConnector = async (connector: ConnectorDef) => {
         // Company must be selected before running
         if (!companyId) {
@@ -330,7 +414,16 @@ const AdminConnectorsPage: React.FC = () => {
                 ? undefined
                 : JSON.stringify({ config: credentials[connector.id] ?? {} });
 
-            const res = await fetch(url, { method: 'POST', headers: authHeaders, body });
+            const controller = new AbortController();
+            const timeoutMs = connector.id === 'agent365' ? 660000 : 120000;
+            setTimeout(() => controller.abort(), timeoutMs);
+
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: authHeaders,
+                body,
+                signal: controller.signal
+            });
             const data: RunResult = await res.json();
             setRunState(prev => ({ ...prev, [connector.id]: { status: data.status as RunStatus, result: data } }));
         } catch (err: unknown) {
@@ -565,6 +658,81 @@ const AdminConnectorsPage: React.FC = () => {
                         </div>
                     )}
 
+                    {/* Agent 365: Microsoft Device Code sign-in */}
+                    {selectedConnector.id === 'agent365' && (
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                                Microsoft Sign-in
+                            </h3>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                A Global Admin must sign in once. Tavro stores a refresh token to fetch all agents from admin.cloud.microsoft/agents.
+                            </p>
+
+                            {deviceCodeState.phase === 'idle' && (
+                                <button
+                                    onClick={startDeviceCode}
+                                    className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold px-4 py-2 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
+                                >
+                                    <ExternalLink size={14} /> Connect with Microsoft
+                                </button>
+                            )}
+
+                            {deviceCodeState.phase === 'loading' && (
+                                <div className="flex items-center gap-2 text-sm text-slate-500">
+                                    <Loader2 size={14} className="animate-spin" /> Starting sign-in…
+                                </div>
+                            )}
+
+                            {deviceCodeState.phase === 'waiting' && (
+                                <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 space-y-3">
+                                    <p className="text-sm text-blue-700 dark:text-blue-300">
+                                        1. Open this URL and sign in with a <strong>Global Admin</strong> account:
+                                    </p>
+                                    <a
+                                        href={deviceCodeState.verificationUri}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1.5 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                                    >
+                                        <ExternalLink size={13} className="shrink-0" />
+                                        {deviceCodeState.verificationUri}
+                                    </a>
+                                    <p className="text-sm text-blue-700 dark:text-blue-300">2. Enter this code:</p>
+                                    <span className="inline-block font-mono text-2xl font-bold tracking-widest text-slate-800 dark:text-white bg-white dark:bg-slate-800 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700">
+                                        {deviceCodeState.userCode}
+                                    </span>
+                                    <div className="flex items-center gap-2 text-xs text-blue-600/70 dark:text-blue-400/70 pt-1">
+                                        <Loader2 size={12} className="animate-spin shrink-0" /> Waiting for sign-in…
+                                    </div>
+                                </div>
+                            )}
+
+                            {deviceCodeState.phase === 'done' && (
+                                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
+                                    <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                    <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                                        Connected — you can now run the connector to sync all agents.
+                                    </span>
+                                </div>
+                            )}
+
+                            {deviceCodeState.phase === 'error' && (
+                                <div className="space-y-2">
+                                    <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-600 dark:text-red-400">
+                                        <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                                        {deviceCodeState.message}
+                                    </div>
+                                    <button
+                                        onClick={() => setDeviceCodeState({ phase: 'idle' })}
+                                        className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-white flex items-center gap-1"
+                                    >
+                                        <RotateCcw size={12} /> Try again
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* run button — hidden for Gemini (shown inside the auth URL block instead) */}
                     {selectedConnector.id !== 'gemini' && (
                         <div className="flex items-center gap-3 pt-2 flex-wrap">
@@ -613,11 +781,13 @@ const AdminConnectorsPage: React.FC = () => {
                                 <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
                                     <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                                     <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                                        {state.result.processes
-                                            ? `Completed — ${state.result.count ?? 0} process${(state.result.count ?? 0) !== 1 ? 'es' : ''} imported`
-                                            : state.result.applications
-                                                ? `Completed — ${state.result.count ?? 0} application${(state.result.count ?? 0) !== 1 ? 's' : ''} imported`
-                                                : `Completed — ${state.result.count ?? 0} agent${(state.result.count ?? 0) !== 1 ? 's' : ''} extracted`
+                                        {selectedConnector.id === 'agent365'
+                                            ? `Completed — ${(state.result as any).agents_synced ?? state.result.count ?? 0} agents synced. Check the Agent Catalog.`
+                                            : state.result.processes
+                                                ? `Completed — ${state.result.count ?? 0} process${(state.result.count ?? 0) !== 1 ? 'es' : ''} imported`
+                                                : state.result.applications
+                                                    ? `Completed — ${state.result.count ?? 0} application${(state.result.count ?? 0) !== 1 ? 's' : ''} imported`
+                                                    : `Completed — ${state.result.count ?? 0} agent${(state.result.count ?? 0) !== 1 ? 's' : ''} extracted`
                                         }
                                     </span>
                                 </div>
