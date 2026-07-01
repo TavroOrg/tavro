@@ -70,14 +70,25 @@ const AgentSessionsTab: React.FC<Props> = ({ agentId, agentName, agentInstructio
 
   useEffect(() => { fetchSessions(); }, [agentId]);
 
-  const openSessionSummary = (session: SessionSummary) => {
+  const buildPlaygroundParams = (session: SessionSummary) => {
     const params = new URLSearchParams();
     if (agentId)           params.set('useCase', agentId);
     if (agentName)         params.set('title', agentName);
     if (agentDescription)  params.set('desc', agentDescription);
     if (agentInstruction)  params.set('instruction', agentInstruction);
     params.set('sessionId', session.session_id);
+    return params;
+  };
+
+  const openSessionSummary = (session: SessionSummary) => {
+    const params = buildPlaygroundParams(session);
     params.set('tab', 'summary');
+    navigate(`/playground?${params.toString()}`);
+  };
+
+  const openSessionInteract = (session: SessionSummary) => {
+    const params = buildPlaygroundParams(session);
+    params.set('tab', 'chat');
     navigate(`/playground?${params.toString()}`);
   };
 
@@ -140,7 +151,7 @@ const AgentSessionsTab: React.FC<Props> = ({ agentId, agentName, agentInstructio
                 Active · {activeSessions.length}
               </p>
               {activeSessions.map(s => (
-                <SessionCard key={s.session_id} s={s} onSummary={openSessionSummary} />
+                <SessionCard key={s.session_id} s={s} onSummary={openSessionSummary} onInteract={openSessionInteract} />
               ))}
             </div>
           )}
@@ -152,7 +163,7 @@ const AgentSessionsTab: React.FC<Props> = ({ agentId, agentName, agentInstructio
                 Ended · {endedSessions.length}
               </p>
               {endedSessions.map(s => (
-                <SessionCard key={s.session_id} s={s} onSummary={openSessionSummary} />
+                <SessionCard key={s.session_id} s={s} onSummary={openSessionSummary} onInteract={openSessionInteract} />
               ))}
             </div>
           )}
@@ -163,7 +174,7 @@ const AgentSessionsTab: React.FC<Props> = ({ agentId, agentName, agentInstructio
   );
 };
 
-const SessionCard: React.FC<{ s: SessionSummary; onSummary: (s: SessionSummary) => void }> = ({ s, onSummary }) => {
+const SessionCard: React.FC<{ s: SessionSummary; onSummary: (s: SessionSummary) => void; onInteract: (s: SessionSummary) => void }> = ({ s, onSummary, onInteract }) => {
   const isActive = s.status === 'active';
   return (
     <div className={`bg-white border rounded-xl px-5 py-4 flex items-center gap-4 hover:shadow-sm transition-all ${
@@ -180,7 +191,13 @@ const SessionCard: React.FC<{ s: SessionSummary; onSummary: (s: SessionSummary) 
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-bold text-slate-700 truncate">{s.agent_name}</span>
+          <button
+            onClick={() => onInteract(s)}
+            className="text-sm font-bold text-blue-600 hover:underline truncate text-left"
+            title="Open in Playground"
+          >
+            {s.agent_name}
+          </button>
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
             isActive
               ? 'text-blue-700 bg-blue-50 border-blue-200'
