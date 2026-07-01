@@ -96,6 +96,19 @@ class BlueprintApiService {
     return req(`/companies?offset=${offset}&limit=${limit}`);
   }
 
+  async listAllCompanies(): Promise<Company[]> {
+    const pageSize = 200;
+    const first = await this.listCompanies(0, pageSize);
+    if (first.total <= first.items.length) return first.items;
+    const totalPages = Math.ceil(first.total / pageSize);
+    const remaining = await Promise.all(
+      Array.from({ length: totalPages - 1 }, (_, i) =>
+        this.listCompanies((i + 1) * pageSize, pageSize),
+      ),
+    );
+    return [first.items, ...remaining.map(p => p.items)].flat();
+  }
+
   async getCompany(id: string): Promise<Company> {
     return req(`/companies/${id}`);
   }
@@ -283,12 +296,13 @@ class BlueprintApiService {
   }
 
   async uploadAttachment(nodeId: string, file: File): Promise<DimNodeAttachment> {
-    const token = await import('./auth').then(m => m.getValidToken());
+    const token = await getValidToken();
     const form = new FormData();
     form.append('file', file);
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
     const res = await fetch(`${V1}/dim-nodes/${nodeId}/attachments`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: headersWithoutContentType,
       body: form,
     });
     if (!res.ok) throw new Error(`Upload failed ${res.status}: ${await res.text()}`);
@@ -300,9 +314,10 @@ class BlueprintApiService {
   }
 
   async downloadAttachment(attachmentId: string, filename: string): Promise<void> {
-    const token = await import('./auth').then(m => m.getValidToken());
+    const token = await getValidToken();
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
     const res = await fetch(`${V1}/dim-nodes/attachments/${attachmentId}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: headersWithoutContentType,
     });
     if (!res.ok) throw new Error(`Download failed ${res.status}`);
     const blob = await res.blob();

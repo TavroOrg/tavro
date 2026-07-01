@@ -808,9 +808,10 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 ? args.original_prompt
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
-        // Guarantee company_id is set for all tools — company_id is now a required param
-        // (Optional[str] with no default) so it must always be explicitly passed, even as null.
-        if (!('company_id' in toolArgs)) {
+        // Only inject company_id if the tool's schema declares it, to avoid Pydantic
+        // validation errors on tools that don't accept it (e.g. create_company).
+        const toolSchema = this._mcpTools?.find(t => t.name === name);
+        if (toolSchema?.inputSchema?.properties?.company_id && !('company_id' in toolArgs)) {
             toolArgs.company_id = companyId || null;
         }
         if ((name === 'create_agent' || name === 'create_ai_use_case' || name === 'generate_spark_ideas' || name === 'convert_spark_idea') && companyName && !toolArgs.company_name) {
@@ -1274,6 +1275,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     async createAgent(args: any): Promise<any> {
         // Server-side create_agent has a strict signature; drop unsupported
         // UI-only fields (owner/role/environment) to avoid tool validation errors.
+        const source: string | undefined = args?.source;
         const agentName = (args?.agent_name ?? '').trim();
         const description = (args?.description ?? '').trim() || agentName;
         const instruction = (args?.instruction ?? '').trim() || description;
@@ -1297,7 +1299,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
-        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload, source } }));
         return data;
     }
 
