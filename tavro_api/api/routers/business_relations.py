@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
-from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.llm_utils import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
@@ -28,6 +28,7 @@ _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
 _APPLICATION_ATTACHMENTS_READY = False
 _PROCESS_ATTACHMENTS_READY = False
+_INTEGRATION_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
 _APPLICATIONS_READY = False
 _PROCESSES_READY = False
@@ -67,6 +68,10 @@ _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "latest_released_version",
     "latest_release_date",
     "latest_release_documentation_link",
+    "visibility",
+    "valid_from",
+    "valid_to",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _APPLICATION_READONLY_DEFAULTS: dict[str, Any] = {
@@ -99,6 +104,8 @@ _PROCESS_EDITABLE_COLUMNS: set[str] = {
     "regulatory_impact",
     "sla",
     "process_health_state",
+    "visibility",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _PROCESS_READONLY_DEFAULTS: dict[str, Any] = {
@@ -133,6 +140,8 @@ _INTEGRATION_EDITABLE_COLUMNS: set[str] = {
     "parent_application_id",
     "business_criticality",
     "emergency_tier",
+    "visibility",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _INTEGRATION_READONLY_DEFAULTS: dict[str, Any] = {}
@@ -187,6 +196,10 @@ class Application(BaseModel):
     latest_release_date: Optional[str] = None
     latest_release_documentation_link: Optional[str] = None
     tags: Optional[list] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
     # Backward-compatible aliases accepted by canonical mapping:
     are: Optional[str] = None
     associated_agents: Optional[str] = None
@@ -220,6 +233,8 @@ class Process(BaseModel):
     sla: Optional[str] = None
     process_health_state: Optional[str] = None
     tags: Optional[list] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
     # Backward-compatible aliases accepted by canonical mapping:
     number: Optional[str] = None
     name: Optional[str] = None
@@ -254,6 +269,8 @@ class Integration(BaseModel):
     tags: Optional[list] = None
     business_criticality: Optional[str] = None
     emergency_tier: Optional[str] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
 
 
 class IntegrationCreate(Integration):
@@ -379,15 +396,17 @@ async def _upsert_dim_node_for_entity(
     label: str,
     summary: Optional[str],
     tags: Optional[list] = None,
-) -> None:
-    """Find the system dim_type for the given category and upsert a dim_node."""
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
+) -> Optional[str]:
+    """Find the system dim_type for the given category and upsert a dim_node. Returns the node id."""
     result = await db.execute(
         text("SELECT id FROM twin.dim_type WHERE category = :category LIMIT 1"),
         {"category": category},
     )
     row = result.mappings().first()
     if not row:
-        return
+        return None
     dim_type_id = str(row["id"])
 
     existing = await db.execute(
@@ -401,24 +420,42 @@ async def _upsert_dim_node_for_entity(
     )
     existing_row = existing.mappings().first()
     if existing_row:
+        node_id = str(existing_row["id"])
+        set_parts = ["summary = :summary", "updated_at = NOW()"]
+        params: dict = {"summary": summary, "id": node_id}
         if tags is not None:
-            await db.execute(
-                text("UPDATE twin.dim_node SET summary = :summary, tags = cast(:tags as jsonb), updated_at = NOW() WHERE id = :id"),
-                {"summary": summary, "tags": json.dumps(tags), "id": str(existing_row["id"])},
-            )
-        else:
-            await db.execute(
-                text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
-                {"summary": summary, "id": str(existing_row["id"])},
-            )
-    else:
+            set_parts.append("tags = cast(:tags as jsonb)")
+            params["tags"] = json.dumps(tags)
+        if visibility:
+            set_parts.append("visibility = :visibility")
+            params["visibility"] = visibility
+        if sensitive is not None:
+            set_parts.append("sensitive = :sensitive")
+            params["sensitive"] = sensitive
         await db.execute(
-            text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags)
-                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb))
-            """),
-            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary, "tags": json.dumps(tags or [])},
+            text(f"UPDATE twin.dim_node SET {', '.join(set_parts)} WHERE id = :id"),
+            params,
         )
+        return node_id
+    else:
+        ins = await db.execute(
+            text("""
+                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
+                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive)
+                RETURNING id
+            """),
+            {
+                "company_id": company_id,
+                "dim_type_id": dim_type_id,
+                "label": label,
+                "summary": summary,
+                "tags": json.dumps(tags or []),
+                "visibility": visibility or "internal",
+                "sensitive": sensitive if sensitive is not None else False,
+            },
+        )
+        ins_row = ins.mappings().first()
+        return str(ins_row["id"]) if ins_row else None
 
 
 async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integration: dict) -> None:
@@ -429,8 +466,12 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
             return
         desc = integration.get("integration_description") or ""
         caps = integration.get("capabilities") or ""
-        summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
+        summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc) or None
         tags = _json_list(integration.get("tags")) or None
+        visibility = integration.get("visibility") or None
+        sensitive = integration.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
 
         company_name = await _get_company_name(db, company_id)
 
@@ -447,20 +488,39 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
                     {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags, visibility=visibility, sensitive=sensitive)
+
+        # Write dim_node_id back to the integration row when not already set
+        if node_id and integration_id:
+            int_cols2 = await _table_columns(db, "core", "business_integrations")
+            if "dim_node_id" in int_cols2:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_integrations
+                        SET dim_node_id = :node_id
+                        WHERE integration_id = :integration_id
+                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
+                    """),
+                    {"node_id": node_id, "integration_id": integration_id},
+                )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal — don't break the integration save
 
 
 async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, application: dict) -> None:
-    """Sync a saved application into twin.dim_node and populate company fields on the record."""
+    """Sync a saved application into twin.dim_node and populate company fields + dim_node_id on the record."""
     try:
         name = (application.get("application_name") or "").strip()
         if not name:
             return
-        summary = (application.get("application_description") or "")[:800] or None
+        summary = (application.get("application_description") or "") or None
         tags = _json_list(application.get("tags")) or None
+        visibility = application.get("visibility") or None
+        sensitive = application.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
         company_name = await _get_company_name(db, company_id)
 
         application_id = application.get("business_application_id")
@@ -476,20 +536,39 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
                     {"company_id": company_id, "company_name": company_name, "application_id": application_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags, visibility=visibility, sensitive=sensitive)
+
+        # Write dim_node_id back to the application row when not already set
+        if node_id and application_id:
+            app_cols = await _table_columns(db, "core", "business_applications")
+            if "dim_node_id" in app_cols:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_applications
+                        SET dim_node_id = :node_id
+                        WHERE business_application_id = :application_id
+                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
+                    """),
+                    {"node_id": node_id, "application_id": application_id},
+                )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal
 
 
 async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_record: dict) -> None:
-    """Sync a saved process into twin.dim_node and populate company fields on the record."""
+    """Sync a saved process into twin.dim_node and populate company fields + dim_node_id on the record."""
     try:
         name = (process_record.get("process_name") or "").strip()
         if not name:
             return
-        summary = (process_record.get("process_description") or "")[:800] or None
+        summary = (process_record.get("process_description") or "") or None
         tags = _json_list(process_record.get("tags")) or None
+        visibility = process_record.get("visibility") or None
+        sensitive = process_record.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
         company_name = await _get_company_name(db, company_id)
 
         process_id = process_record.get("business_process_id")
@@ -505,7 +584,22 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
                     {"company_id": company_id, "company_name": company_name, "process_id": process_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags, visibility=visibility, sensitive=sensitive)
+
+        # Write dim_node_id back to the process row when not already set
+        if node_id and process_id:
+            proc_cols = await _table_columns(db, "core", "business_processes")
+            if "dim_node_id" in proc_cols:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_processes
+                        SET dim_node_id = :node_id
+                        WHERE business_process_id = :process_id
+                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
+                    """),
+                    {"node_id": node_id, "process_id": process_id},
+                )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -520,6 +614,9 @@ async def sync_dim_node_to_business_entity(
     summary: Optional[str],
     tags: Optional[list] = None,
     tenant_id: Optional[str] = None,
+    node_id: Optional[str] = None,
+    sensitive: Optional[bool] = None,
+    visibility: Optional[str] = None,
 ) -> None:
     """
     Called from dim_nodes.py when a dim_node is created under application/process/integration.
@@ -545,14 +642,33 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    updates: dict[str, Any] = {}
                     if tags and "tags" in app_cols:
+                        updates["tags"] = json.dumps(tags)
+                    if node_id and "dim_node_id" in app_cols:
+                        updates["dim_node_id"] = node_id
+                    if sensitive is not None and "sensitive" in app_cols:
+                        updates["sensitive"] = sensitive
+                    if visibility and "visibility" in app_cols:
+                        updates["visibility"] = visibility
+                    if updates:
+                        set_parts = []
+                        params_upd: dict[str, Any] = {"app_id": existing_row["business_application_id"]}
+                        if "tags" in updates:
+                            set_parts.append("tags = cast(:tags as jsonb)")
+                            params_upd["tags"] = updates["tags"]
+                        if "dim_node_id" in updates:
+                            set_parts.append("dim_node_id = :dim_node_id")
+                            params_upd["dim_node_id"] = updates["dim_node_id"]
+                        if "sensitive" in updates:
+                            set_parts.append("sensitive = :sensitive")
+                            params_upd["sensitive"] = updates["sensitive"]
+                        if "visibility" in updates:
+                            set_parts.append("visibility = :visibility")
+                            params_upd["visibility"] = updates["visibility"]
                         await db.execute(
-                            text("""
-                                UPDATE core.business_applications
-                                SET tags = cast(:tags as jsonb)
-                                WHERE business_application_id = :app_id
-                            """),
-                            {"tags": json.dumps(tags), "app_id": existing_row["business_application_id"]},
+                            text(f"UPDATE core.business_applications SET {', '.join(set_parts)} WHERE business_application_id = :app_id"),
+                            params_upd,
                         )
                         await db.commit()
                     return
@@ -582,6 +698,18 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("tags")
                 placeholders.append("cast(:tags as jsonb)")
                 params["tags"] = json.dumps(tags if tags is not None else [])
+            if node_id and "dim_node_id" in app_cols:
+                insert_cols.append("dim_node_id")
+                placeholders.append(":dim_node_id")
+                params["dim_node_id"] = node_id
+            if sensitive is not None and "sensitive" in app_cols:
+                insert_cols.append("sensitive")
+                placeholders.append(":sensitive")
+                params["sensitive"] = sensitive
+            if visibility and "visibility" in app_cols:
+                insert_cols.append("visibility")
+                placeholders.append(":visibility")
+                params["visibility"] = visibility
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in app_cols:
                     insert_cols.append(ts_col)
@@ -611,14 +739,23 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    update_set = ["tags = cast(:tags as jsonb)"] if tags and "tags" in proc_cols else []
+                    update_params: dict = {"proc_id": existing_row["business_process_id"]}
                     if tags and "tags" in proc_cols:
+                        update_params["tags"] = json.dumps(tags)
+                    if node_id and "dim_node_id" in proc_cols:
+                        update_set.append("dim_node_id = coalesce(dim_node_id, :dim_node_id)")
+                        update_params["dim_node_id"] = node_id
+                    if sensitive is not None and "sensitive" in proc_cols:
+                        update_set.append("sensitive = coalesce(:sensitive, sensitive)")
+                        update_params["sensitive"] = sensitive
+                    if visibility and "visibility" in proc_cols:
+                        update_set.append("visibility = coalesce(:visibility, visibility)")
+                        update_params["visibility"] = visibility
+                    if update_set:
                         await db.execute(
-                            text("""
-                                UPDATE core.business_processes
-                                SET tags = cast(:tags as jsonb)
-                                WHERE business_process_id = :proc_id
-                            """),
-                            {"tags": json.dumps(tags), "proc_id": existing_row["business_process_id"]},
+                            text(f"UPDATE core.business_processes SET {', '.join(update_set)} WHERE business_process_id = :proc_id"),
+                            update_params,
                         )
                         await db.commit()
                     return
@@ -648,6 +785,18 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("tags")
                 placeholders.append("cast(:tags as jsonb)")
                 params["tags"] = json.dumps(tags if tags is not None else [])
+            if node_id and "dim_node_id" in proc_cols:
+                insert_cols.append("dim_node_id")
+                placeholders.append(":dim_node_id")
+                params["dim_node_id"] = node_id
+            if sensitive is not None and "sensitive" in proc_cols:
+                insert_cols.append("sensitive")
+                placeholders.append(":sensitive")
+                params["sensitive"] = sensitive
+            if visibility and "visibility" in proc_cols:
+                insert_cols.append("visibility")
+                placeholders.append(":visibility")
+                params["visibility"] = visibility
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in proc_cols:
                     insert_cols.append(ts_col)
@@ -678,14 +827,23 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    int_update_set = ["tags = cast(:tags as jsonb)"] if tags and "tags" in int_cols else []
+                    int_update_params: dict = {"int_id": existing_row["integration_id"]}
                     if tags and "tags" in int_cols:
+                        int_update_params["tags"] = json.dumps(tags)
+                    if node_id and "dim_node_id" in int_cols:
+                        int_update_set.append("dim_node_id = coalesce(dim_node_id, :dim_node_id)")
+                        int_update_params["dim_node_id"] = node_id
+                    if sensitive is not None and "sensitive" in int_cols:
+                        int_update_set.append("sensitive = coalesce(:sensitive, sensitive)")
+                        int_update_params["sensitive"] = sensitive
+                    if visibility and "visibility" in int_cols:
+                        int_update_set.append("visibility = coalesce(:visibility, visibility)")
+                        int_update_params["visibility"] = visibility
+                    if int_update_set:
                         await db.execute(
-                            text("""
-                                UPDATE core.business_integrations
-                                SET tags = cast(:tags as jsonb)
-                                WHERE integration_id = :int_id
-                            """),
-                            {"tags": json.dumps(tags), "int_id": existing_row["integration_id"]},
+                            text(f"UPDATE core.business_integrations SET {', '.join(int_update_set)} WHERE integration_id = :int_id"),
+                            int_update_params,
                         )
                         await db.commit()
                     return
@@ -715,6 +873,18 @@ async def sync_dim_node_to_business_entity(
                 insert_cols.append("tags")
                 placeholders.append("cast(:tags as jsonb)")
                 params["tags"] = json.dumps(tags if tags is not None else [])
+            if node_id and "dim_node_id" in int_cols:
+                insert_cols.append("dim_node_id")
+                placeholders.append(":dim_node_id")
+                params["dim_node_id"] = node_id
+            if sensitive is not None and "sensitive" in int_cols:
+                insert_cols.append("sensitive")
+                placeholders.append(":sensitive")
+                params["sensitive"] = sensitive
+            if visibility and "visibility" in int_cols:
+                insert_cols.append("visibility")
+                placeholders.append(":visibility")
+                params["visibility"] = visibility
             for ts_col in ("created_ts", "updated_ts"):
                 if ts_col in int_cols:
                     insert_cols.append(ts_col)
@@ -760,6 +930,9 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 company_id TEXT,
                 company_name TEXT,
                 tags JSONB DEFAULT '[]'::jsonb,
+                dim_node_id UUID,
+                sensitive BOOLEAN DEFAULT FALSE,
+                visibility TEXT DEFAULT 'internal',
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
             )
@@ -907,6 +1080,39 @@ async def _ensure_process_attachments_table(db: AsyncSession) -> None:
     )
     await db.commit()
     _PROCESS_ATTACHMENTS_READY = True
+
+
+async def _ensure_integration_attachments_table(db: AsyncSession) -> None:
+    global _INTEGRATION_ATTACHMENTS_READY
+    if _INTEGRATION_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.integration_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                integration_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS integration_attachment_integration_idx
+            ON public.integration_attachment (integration_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _INTEGRATION_ATTACHMENTS_READY = True
 
 
 def _clean(value: Optional[str]) -> Optional[str]:
@@ -1761,6 +1967,10 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "residual_risk_classification"),
         _col_expr("bi", int_cols, "inherent_risk_classification_score"),
         _col_expr("bi", int_cols, "residual_risk_classification_score"),
+        _col_expr("bi", int_cols, "num_of_associated_agents"),
+        _col_expr("bi", int_cols, "dim_node_id"),
+        _col_expr("bi", int_cols, "sensitive"),
+        _col_expr("bi", int_cols, "visibility"),
         _col_expr("bi", int_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
     ]
 
@@ -2063,6 +2273,11 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "latest_release_date"),
         _col_expr("ba", app_cols, "latest_release_documentation_link"),
         _col_expr("ba", app_cols, "tags"),
+        _col_expr("ba", app_cols, "dim_node_id"),
+        _col_expr("ba", app_cols, "sensitive"),
+        _col_expr("ba", app_cols, "visibility"),
+        _col_expr("ba", app_cols, "valid_from"),
+        _col_expr("ba", app_cols, "valid_to"),
         _col_expr("ba", app_cols, "created_ts"),
         _col_expr("ba", app_cols, "updated_ts"),
         "rel.related_agents",
@@ -2544,6 +2759,9 @@ async def _fetch_processes(
         "proc_rel.related_processes",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
+        _col_expr("bp", process_cols, "dim_node_id"),
+        _col_expr("bp", process_cols, "sensitive"),
+        _col_expr("bp", process_cols, "visibility"),
     ]
 
     has_ara_proc = False
@@ -3137,6 +3355,13 @@ async def create_integration(
     if raw_tags is not None and "tags" in int_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in int_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     if "created_ts" in int_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in int_cols:
@@ -3150,6 +3375,7 @@ async def create_integration(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -3194,12 +3420,20 @@ async def update_integration(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in int_cols:
         updates["tags"] = json.dumps(raw_tags)
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in int_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["integration_id"] = integration_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "integration_id"
     )
     if "updated_ts" in int_cols:
@@ -3224,6 +3458,47 @@ async def update_integration(
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
+    else:
+        # Sync visibility/sensitive directly to dim_node even without company_id (non-fatal)
+        try:
+            raw_row = await db.execute(
+                text(
+                    "SELECT dim_node_id, integration_name, integration_description, tags, visibility, sensitive"
+                    " FROM core.business_integrations WHERE integration_id = :id"
+                ),
+                {"id": integration_id},
+            )
+            raw = raw_row.mappings().first()
+            if raw and raw.get("dim_node_id"):
+                i_name = (raw.get("integration_name") or "").strip() or None
+                i_summary = str(raw.get("integration_description") or "") or None
+                i_tags = raw.get("tags") or []
+                i_visibility = raw.get("visibility") or "internal"
+                i_sensitive_raw = raw.get("sensitive")
+                i_sensitive = i_sensitive_raw if isinstance(i_sensitive_raw, bool) else False
+                await db.execute(
+                    text("""
+                        UPDATE twin.dim_node
+                        SET label      = coalesce(:label, label),
+                            summary    = :summary,
+                            tags       = cast(:tags as jsonb),
+                            visibility = :visibility,
+                            sensitive  = :sensitive,
+                            updated_at = NOW()
+                        WHERE id = :id
+                    """),
+                    {
+                        "label": i_name,
+                        "summary": i_summary,
+                        "tags": json.dumps(i_tags if isinstance(i_tags, list) else []),
+                        "visibility": i_visibility,
+                        "sensitive": i_sensitive,
+                        "id": str(raw["dim_node_id"]),
+                    },
+                )
+                await db.commit()
+        except Exception:
+            pass
     return rows[0]
 
 
@@ -3233,6 +3508,29 @@ async def delete_integration(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_integrations_table(db)
+
+    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :id"),
+            {"id": integration_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result and dn_result.get("dim_node_id"):
+            dim_node_to_delete = str(dn_result["dim_node_id"])
+    except Exception:
+        pass
+
+    # Delete integration attachments
+    try:
+        await db.execute(
+            text("DELETE FROM public.integration_attachment WHERE integration_id = :integration_id"),
+            {"integration_id": integration_id},
+        )
+    except Exception:
+        pass
+
     result = await db.execute(
         text(
             """
@@ -3248,6 +3546,18 @@ async def delete_integration(
             detail=f"Integration '{integration_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "integration_id": integration_id}
 
 
@@ -3676,6 +3986,17 @@ async def create_application(
     )
     if "latest_release_date" in insert_values:
         insert_values["latest_release_date"] = _coerce_dt(insert_values["latest_release_date"])
+    if "valid_from" in insert_values:
+        insert_values["valid_from"] = _coerce_dt(insert_values["valid_from"])
+    if "valid_to" in insert_values:
+        insert_values["valid_to"] = _coerce_dt(insert_values["valid_to"])
+
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in app_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
 
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
@@ -3703,6 +4024,7 @@ async def create_application(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -3747,12 +4069,24 @@ async def update_application(
         updates["tags"] = json.dumps(raw_tags)
     if "latest_release_date" in updates:
         updates["latest_release_date"] = _coerce_dt(updates["latest_release_date"])
+    if "valid_from" in updates:
+        updates["valid_from"] = _coerce_dt(updates["valid_from"])
+    if "valid_to" in updates:
+        updates["valid_to"] = _coerce_dt(updates["valid_to"])
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in app_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["business_application_id"] = application_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "business_application_id"
     )
     if "updated_ts" in app_cols:
@@ -3774,6 +4108,48 @@ async def update_application(
         await _refresh_application_rollup(db, application_id)
         await db.commit()
     rows = await _fetch_applications(db, application_id=application_id)
+
+    # Sync updated fields back to linked dim_node (non-fatal)
+    try:
+        raw_row = await db.execute(
+            text(
+                "SELECT company_id, dim_node_id, application_name, application_description, tags, visibility, sensitive"
+                " FROM core.business_applications WHERE business_application_id = :id"
+            ),
+            {"id": application_id},
+        )
+        raw = raw_row.mappings().first()
+        if raw and raw.get("dim_node_id"):
+            name = (raw.get("application_name") or "").strip() or None
+            summary = str(raw.get("application_description") or "") or None
+            tags_raw = raw.get("tags") or []
+            visibility = raw.get("visibility") or "internal"
+            sensitive_raw = raw.get("sensitive")
+            sensitive = sensitive_raw if isinstance(sensitive_raw, bool) else False
+            await db.execute(
+                text("""
+                    UPDATE twin.dim_node
+                    SET label      = coalesce(:label, label),
+                        summary    = :summary,
+                        tags       = cast(:tags as jsonb),
+                        visibility = :visibility,
+                        sensitive  = :sensitive,
+                        updated_at = NOW()
+                    WHERE id = :id
+                """),
+                {
+                    "label": name,
+                    "summary": summary,
+                    "tags": json.dumps(tags_raw if isinstance(tags_raw, list) else []),
+                    "visibility": visibility,
+                    "sensitive": sensitive,
+                    "id": str(raw["dim_node_id"]),
+                },
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return rows[0]
 
 
@@ -3782,6 +4158,19 @@ async def delete_application(
     application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Capture the linked dim_node_id before deleting so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :id"),
+            {"id": application_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result and dn_result.get("dim_node_id"):
+            dim_node_to_delete = str(dn_result["dim_node_id"])
+    except Exception:
+        pass
+
     if await _table_exists(db, "core", "agent_business_applications"):
         aba_cols = await _table_columns(db, "core", "agent_business_applications")
         if "business_application_id" in aba_cols:
@@ -3840,6 +4229,18 @@ async def delete_application(
             detail=f"Application '{application_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "application_id": application_id}
 
 
@@ -4189,6 +4590,13 @@ async def create_process(
     if raw_tags is not None and "tags" in process_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in process_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
         if col in process_cols:
             insert_values[col] = default_value
@@ -4211,6 +4619,7 @@ async def create_process(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -4255,6 +4664,12 @@ async def update_process(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in process_cols:
         updates["tags"] = json.dumps(raw_tags)
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in process_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
@@ -4272,7 +4687,9 @@ async def update_process(
 
     updates["business_process_id"] = process_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "business_process_id"
     )
     if "updated_ts" in process_cols:
@@ -4294,6 +4711,48 @@ async def update_process(
         await _refresh_process_rollup(db, process_id)
         await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
+
+    # Sync visibility/sensitive back to linked dim_node (non-fatal)
+    try:
+        raw_row = await db.execute(
+            text(
+                "SELECT dim_node_id, process_name, process_description, tags, visibility, sensitive"
+                " FROM core.business_processes WHERE business_process_id = :id"
+            ),
+            {"id": process_id},
+        )
+        raw = raw_row.mappings().first()
+        if raw and raw.get("dim_node_id"):
+            p_name = (raw.get("process_name") or "").strip() or None
+            p_summary = str(raw.get("process_description") or "") or None
+            p_tags = raw.get("tags") or []
+            p_visibility = raw.get("visibility") or "internal"
+            p_sensitive_raw = raw.get("sensitive")
+            p_sensitive = p_sensitive_raw if isinstance(p_sensitive_raw, bool) else False
+            await db.execute(
+                text("""
+                    UPDATE twin.dim_node
+                    SET label      = coalesce(:label, label),
+                        summary    = :summary,
+                        tags       = cast(:tags as jsonb),
+                        visibility = :visibility,
+                        sensitive  = :sensitive,
+                        updated_at = NOW()
+                    WHERE id = :id
+                """),
+                {
+                    "label": p_name,
+                    "summary": p_summary,
+                    "tags": json.dumps(p_tags if isinstance(p_tags, list) else []),
+                    "visibility": p_visibility,
+                    "sensitive": p_sensitive,
+                    "id": str(raw["dim_node_id"]),
+                },
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return rows[0]
 
 
@@ -4302,6 +4761,19 @@ async def delete_process(
     process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :id"),
+            {"id": process_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result and dn_result.get("dim_node_id"):
+            dim_node_to_delete = str(dn_result["dim_node_id"])
+    except Exception:
+        pass
+
     if await _table_exists(db, "core", "agent_business_processes"):
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
         if "business_process_id" in abp_cols:
@@ -4373,6 +4845,18 @@ async def delete_process(
             detail=f"Process '{process_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "process_id": process_id}
 
 
@@ -4792,6 +5276,13 @@ async def create_application_attachment(
     if len(file_data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
+    dup = await db.execute(
+        text("SELECT 1 FROM public.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
+        {"aid": application_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this application.")
+
     row = await db.execute(
         text(
             """
@@ -4811,7 +5302,40 @@ async def create_application_attachment(
         },
     )
     await db.commit()
-    return dict(row.mappings().first())
+    record = dict(row.mappings().first())
+
+    # Sync to twin.dim_node_attachment if this application is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+            {"app_id": application_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim and dim.get("dim_node_id"):
+            node_id = str(dim["dim_node_id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {
+                        "node_id": node_id,
+                        "filename": filename,
+                        "content_type": mime_type,
+                        "size_bytes": len(file_data),
+                        "data": file_data,
+                    },
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return record
 
 
 @router.get(
@@ -4863,6 +5387,16 @@ async def delete_application_attachment(
 ):
     await _ensure_application_attachments_table(db)
 
+    # Fetch filename before deleting so we can mirror the delete to dim_node_attachment
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.application_attachment WHERE id = :aid AND application_id = :app_id LIMIT 1"),
+        {"aid": attachment_id, "app_id": application_id},
+    )
+    fname_rec = fname_row.mappings().first()
+    if not fname_rec:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    filename = fname_rec["filename"]
+
     result = await db.execute(
         text(
             """
@@ -4876,7 +5410,81 @@ async def delete_application_attachment(
     if (result.rowcount or 0) == 0:
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.commit()
+
+    # Mirror delete to twin.dim_node_attachment by filename (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+            {"app_id": application_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim and dim.get("dim_node_id"):
+            await db.execute(
+                text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                {"nid": str(dim["dim_node_id"]), "fn": filename},
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/applications/{application_id}/sync-blueprint-attachments",
+    tags=["Applications"],
+    summary="Sync Blueprint Attachments to Application",
+)
+async def sync_blueprint_attachments_to_application(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the application's attachment table."""
+    await _ensure_application_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+        {"app_id": application_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim or not dim.get("dim_node_id"):
+        return {"synced": 0}
+
+    node_id = str(dim["dim_node_id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data, uploaded_at FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.application_attachment WHERE application_id = :app_id AND filename = :fn LIMIT 1"),
+            {"app_id": application_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.application_attachment
+                        (application_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "application_id": application_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
 
 
 @router.get(
@@ -4932,6 +5540,13 @@ async def create_process_attachment(
     if len(file_data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
+    dup = await db.execute(
+        text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+        {"pid": process_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this process.")
+
     row = await db.execute(
         text(
             """
@@ -4951,7 +5566,34 @@ async def create_process_attachment(
         },
     )
     await db.commit()
-    return dict(row.mappings().first())
+    result = dict(row.mappings().first())
+
+    # Sync to dim_node_attachment if this process is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+            {"pid": process_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim and dim.get("dim_node_id"):
+            node_id = str(dim["dim_node_id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return result
 
 
 @router.get(
@@ -5003,6 +5645,13 @@ async def delete_process_attachment(
 ):
     await _ensure_process_attachments_table(db)
 
+    # Fetch filename before deleting so we can sync the deletion to dim_node_attachment
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.process_attachment WHERE id = :aid AND process_id = :pid LIMIT 1"),
+        {"aid": attachment_id, "pid": process_id},
+    )
+    fname_rec = fname_row.mappings().first()
+
     result = await db.execute(
         text(
             """
@@ -5016,7 +5665,340 @@ async def delete_process_attachment(
     if (result.rowcount or 0) == 0:
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.commit()
+
+    # Also remove the matching dim_node_attachment by filename (non-fatal)
+    if fname_rec:
+        try:
+            dim_row = await db.execute(
+                text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+                {"pid": process_id},
+            )
+            dim = dim_row.mappings().first()
+            if dim and dim.get("dim_node_id"):
+                await db.execute(
+                    text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                    {"nid": str(dim["dim_node_id"]), "fn": fname_rec["filename"]},
+                )
+                await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/processes/{process_id}/sync-blueprint-attachments",
+    tags=["Processes"],
+    summary="Sync Blueprint Attachments to Process",
+)
+async def sync_blueprint_attachments_to_process(
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the process's attachment table."""
+    await _ensure_process_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+        {"pid": process_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim or not dim.get("dim_node_id"):
+        return {"synced": 0}
+
+    node_id = str(dim["dim_node_id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+            {"pid": process_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.process_attachment
+                        (process_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "process_id": process_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
+
+
+# ── Integration Attachments ───────────────────────────────────────────────────
+
+@router.get(
+    "/integrations/{integration_id}/attachments",
+    tags=["Integrations"],
+    summary="List Integration Attachments",
+)
+async def list_integration_attachments(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.integration_attachment
+            WHERE integration_id = :integration_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/integrations/{integration_id}/attachments",
+    tags=["Integrations"],
+    summary="Upload Integration Attachment",
+    status_code=201,
+)
+async def create_integration_attachment(
+    integration_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    dup = await db.execute(
+        text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+        {"iid": integration_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this integration.")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.integration_attachment
+                (integration_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "integration_id": integration_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    result = dict(row.mappings().first())
+
+    # Sync to dim_node_attachment if this integration is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+            {"iid": integration_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim and dim.get("dim_node_id"):
+            node_id = str(dim["dim_node_id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return result
+
+
+@router.get(
+    "/integrations/{integration_id}/attachments/{attachment_id}/download",
+    tags=["Integrations"],
+    summary="Download Integration Attachment",
+)
+async def download_integration_attachment(
+    integration_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.integration_attachment
+            WHERE id = :attachment_id
+              AND integration_id = :integration_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "integration_id": integration_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/integrations/{integration_id}/attachments/{attachment_id}",
+    tags=["Integrations"],
+    summary="Delete Integration Attachment",
+)
+async def delete_integration_attachment(
+    integration_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    # Fetch filename before deleting for dim_node sync
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.integration_attachment WHERE id = :aid AND integration_id = :iid LIMIT 1"),
+        {"aid": attachment_id, "iid": integration_id},
+    )
+    fname_rec = fname_row.mappings().first()
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.integration_attachment
+            WHERE id = :attachment_id
+              AND integration_id = :integration_id
+            """
+        ),
+        {"attachment_id": attachment_id, "integration_id": integration_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+
+    # Also remove the matching dim_node_attachment by filename (non-fatal)
+    if fname_rec:
+        try:
+            dim_row = await db.execute(
+                text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+                {"iid": integration_id},
+            )
+            dim = dim_row.mappings().first()
+            if dim and dim.get("dim_node_id"):
+                await db.execute(
+                    text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                    {"nid": str(dim["dim_node_id"]), "fn": fname_rec["filename"]},
+                )
+                await db.commit()
+        except Exception:
+            pass
+
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/integrations/{integration_id}/sync-blueprint-attachments",
+    tags=["Integrations"],
+    summary="Sync Blueprint Attachments to Integration",
+)
+async def sync_blueprint_attachments_to_integration(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the integration's attachment table."""
+    await _ensure_integration_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+        {"iid": integration_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim or not dim.get("dim_node_id"):
+        return {"synced": 0}
+
+    node_id = str(dim["dim_node_id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+            {"iid": integration_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.integration_attachment
+                        (integration_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "integration_id": integration_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
 
 
 @router.get(

@@ -5,7 +5,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import type {
-  PlaygroundConfig, PlaygroundMessage, PlaygroundObservation, InfraProvider,
+  PlaygroundAgentSkill, PlaygroundConfig, PlaygroundMessage, PlaygroundObservation, InfraProvider,
 } from '../types/playground';
 import { BUILTIN_TOOLS, PROVIDER_MODELS } from '../types/playground';
 
@@ -110,7 +110,7 @@ interface PlaygroundState {
 
   setConfig:       (update: Partial<PlaygroundConfig>) => void;
   setProvider:     (provider: InfraProvider) => void;
-  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string) => void;
+  loadFromAgent:   (id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string, skills?: PlaygroundAgentSkill[]) => void;
   resetConfig:     () => void;
   reconnectSession: (sessionId: string) => Promise<void>;
 
@@ -154,12 +154,14 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, []);
 
-  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string) => {
+  const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string, skills?: PlaygroundAgentSkill[]) => {
     setConfigState(prev => ({
       ...prev,
       useCaseId:    id,
       useCaseTitle: name,
       agentName:    name,
+      agentDescription: description,
+      skills:       skills ?? [],
       agentType:    agentType ?? prev.agentType,
       agentInternalId:  agentInternalId ?? prev.agentInternalId,
       agentId:          agentId ?? prev.agentId,
@@ -248,12 +250,14 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         azure_foundry_agent?: { enabled?: boolean; agent_name?: string | null };
       }>('/session', {
         agent_name:     config.agentName,
+        agent_description: config.agentDescription,
         system_prompt:  systemPromptToUse,
         provider:       config.provider,
         model:          config.model,
         temperature:    config.temperature,
         max_tokens:     config.maxTokens,
         tools:          config.tools,
+        skills:         config.skills ?? [],
         company_id:     config.companyId,
         company_name:   config.companyName,
         use_case_id:    config.useCaseId || config.agentName,
