@@ -55,6 +55,20 @@ export interface AgentTool {
   source:      'mcp' | 'builtin' | 'custom';
 }
 
+export interface PlaygroundAgentSkill {
+  id?: string | null;
+  identifier?: string | null;
+  skill_id?: string | null;
+  name?: string | null;
+  skill_name?: string | null;
+  description?: string | null;
+  tags?: string[] | null;
+  inputModes?: string[] | null;
+  outputModes?: string[] | null;
+  input_modes?: string[] | null;
+  output_modes?: string[] | null;
+}
+
 export const BUILTIN_TOOLS: AgentTool[] = [
   { id: 'web_search',        name: 'Web search',          description: 'Search the public web for current information', enabled: false, source: 'builtin' },
   { id: 'code_interpreter',  name: 'Code interpreter',     description: 'Execute Python for data analysis and calculations', enabled: false, source: 'builtin' },
@@ -73,6 +87,8 @@ export interface PlaygroundConfig {
 
   // Agent identity
   agentName:    string;
+  agentDescription?: string;
+  skills?: PlaygroundAgentSkill[];
   systemPrompt: string;
 
   // Capability

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -35,6 +35,19 @@ def _str(val) -> str:
     if isinstance(val, dict):
         return val.get("display_value") or val.get("value") or ""
     return str(val)
+
+
+def _date(val) -> date | None:
+    """Return a date object or None — never an empty string."""
+    raw = _str(val).strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 
@@ -170,7 +183,7 @@ def _fetch_and_map_ba(
             "current_installed_version":          _str(record.get("u_current_installed_version")),
             "is_current_version_supported":       _str(record.get("u_is_current_installed_version_supported")),
             "latest_released_version":            _str(record.get("u_latest_released_version")),
-            "latest_release_date":                _str(record.get("u_latest_release_date")),
+            "latest_release_date":                _date(record.get("u_latest_release_date")),
             "latest_release_documentation_link":  _str(record.get("u_latest_release_documentation_link")),
             "company_id":                         company_id,
             "company_name":                       company_name,

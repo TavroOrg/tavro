@@ -904,7 +904,7 @@ async def update_agent(
     columns: Optional[List[Dict[str, Any]]] = None,
     data_source: Optional[List[Dict[str, Any]]] = None,
     skills: Optional[List[Any]] = None,
-    issues: Optional[List[Dict]] = None
+    issues: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     """
     Update an existing AI agent's configuration.

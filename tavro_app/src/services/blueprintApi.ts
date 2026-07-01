@@ -199,6 +199,23 @@ class BlueprintApiService {
     return req(`/source-refs/${refId}/fetch`, { method: 'POST' });
   }
 
+  async createSourceRef(
+    dimNodeId: string,
+    systemName: string,
+    externalId: string,
+    mcpTool: string = '',
+  ): Promise<SourceRef> {
+    return req('/source-refs', {
+      method: 'POST',
+      body: JSON.stringify({
+        dim_node_id: dimNodeId,
+        system_name: systemName,
+        external_id: externalId,
+        mcp_tool: mcpTool,
+      }),
+    });
+  }
+
   async deleteSourceRef(id: string): Promise<void> {
     return req(`/source-refs/${id}`, { method: 'DELETE' });
   }
@@ -215,6 +232,14 @@ class BlueprintApiService {
 
   async getRiskPaths(nodeId: string): Promise<GraphData> {
     return req(`/graph/node/${nodeId}/paths?target_category=risk`);
+  }
+
+  async getLinkedEntity(nodeId: string): Promise<{ entity_type: string; entity_id: string } | null> {
+    try {
+      return await req(`/dim-nodes/${nodeId}/linked-entity`);
+    } catch {
+      return null;
+    }
   }
 
   // ── Research ───────────────────────────────────────────────────────────────
@@ -305,7 +330,7 @@ class BlueprintApiService {
       headers: headersWithoutContentType,
       body: form,
     });
-    if (!res.ok) throw new Error(`Upload failed ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new Error(parseApiError(res.status, await res.text()));
     return res.json();
   }
 

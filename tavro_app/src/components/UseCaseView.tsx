@@ -642,13 +642,13 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     : 'bg-red-50 border-red-200';
                                 const vc = s >= 3.5 ? 'text-emerald-700' : s >= 2.5 ? 'text-amber-700' : 'text-red-700';
                                 return (
-                                    <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${bg}`}>
+                                    <div className={`hidden flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${bg}`}>
                                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
                                         <span className={`text-lg font-black leading-none tracking-tight ${vc}`}>{s.toFixed(1)}</span>
                                     </div>
                                 );
                             })() : (
-                                <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                <div className="hidden flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
                                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
                                     <span className="text-slate-400 text-sm">—</span>
                                 </div>
@@ -665,12 +665,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 const q = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
                                 return q ? (
                                     <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${q.bg} ${q.border}`}>
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="hidden"></span>
                                         <span className={`text-sm font-black leading-tight text-center ${q.value}`}>{quadrant!.label}</span>
                                     </div>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                    <div className="hidden flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                        <span className="hidden"></span>
                                         <span className="text-slate-400 text-sm">—</span>
                                     </div>
                                 );

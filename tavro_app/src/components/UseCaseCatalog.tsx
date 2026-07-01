@@ -285,23 +285,23 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                                 ART: {(uc as any).agent_risk_tier_art ?? (uc as any).agent_risk_tier ?? 'None'}
                                             </span>
                                             {priorityScore !== null ? (
-                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
+                                                <div className={`hidden flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${scoreBg}`}>
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
                                                     <span className={`text-sm font-black leading-none ${scoreValueColor}`}>{priorityScore.toFixed(1)}</span>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
+                                                <div className="hidden flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none whitespace-nowrap">Priority Score</span>
                                                     <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                                 </div>
                                             )}
                                             {quadrant ? (
-                                                <div className={`flex flex-col items-center justify-center w-[88px] h-[46px] rounded-xl border gap-0.5 ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Quadrant</span>
-                                                    <span className={`text-[10px] font-black leading-none text-center ${qStyle ? qStyle.value : 'text-slate-400'}`}>{quadrant.label}</span>
+                                                <div className={`inline-flex items-center justify-center px-3 h-8 rounded-full border ${qStyle ? `${qStyle.bg} ${qStyle.border}` : 'bg-slate-50 border-slate-200'}`}>
+                                                    <span className="hidden">Quadrant</span>
+                                                    <span className={`text-xs font-bold leading-none text-center whitespace-nowrap ${qStyle ? qStyle.value : 'text-slate-400'}`}>{quadrant.label}</span>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
+                                                <div className="hidden flex-col items-center justify-center w-[88px] h-[46px] gap-0.5">
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Quadrant</span>
                                                     <span className="text-sm text-slate-400 font-normal leading-none">—</span>
                                                 </div>
@@ -356,14 +356,13 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                 </div>
             ) : (
                 <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_110px_120px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    <div className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_120px_120px_140px_80px_40px] items-center bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         <div>Use Case Name</div>
                         <div>Function</div>
                         <div>Status</div>
                         <div>Owner</div>
                         <div>ARE</div>
                         <div>ART</div>
-                        <div>Priority Score</div>
                         <div>Quadrant</div>
                         <div>Business Value</div>
                         <div>Effort</div>
@@ -384,7 +383,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                 <div
                                     key={uc.identifier ?? uc.id}
                                     onClick={() => listNavId ? navigate(`/use-case/${listNavId}`, { state: { fromUseCasePage: true, page: currentPage } }) : undefined}
-                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_110px_120px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                                    className="grid grid-cols-[1.5fr_0.8fr_100px_0.8fr_80px_80px_120px_120px_140px_80px_40px] items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group"
                                 >
                                     <div className="flex flex-col gap-0.5 pr-4">
                                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
@@ -426,7 +425,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                         </span>
                                     </div>
                                     {/* Score — value only */}
-                                    <div className="flex items-center">
+                                    <div className="hidden items-center">
                                         {priorityScore !== null ? (() => {
                                             const s = priorityScore;
                                             const bg = s >= 3.5 ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
@@ -450,7 +449,7 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
                                             };
                                             const cls = qMap[quadrant.label] ?? 'bg-slate-50 border-slate-200 text-slate-700';
                                             return (
-                                                <span className={`text-xs font-black px-2.5 py-1 rounded-lg border whitespace-nowrap ${cls}`}>
+                                                <span className={`text-xs font-bold px-3 h-8 inline-flex items-center rounded-full border whitespace-nowrap ${cls}`}>
                                                     {quadrant.label}
                                                 </span>
                                             );
