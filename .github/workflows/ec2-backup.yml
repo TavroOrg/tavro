@@ -1,0 +1,132 @@
+name: EC2 Backup
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'   # Every Sunday at 2:00 AM UTC
+  workflow_dispatch:        # Manual trigger from GitHub UI
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. AWS credentials ───────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ── 2. AMI snapshot ──────────────────────────────────────────────────────
+      - name: Create EC2 AMI snapshot
+        id: create-ami
+        run: |
+          AMI_ID=$(aws ec2 create-image \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --name "tavro-ec2-backup-$(date +%Y%m%d-%H%M)" \
+            --no-reboot \
+            --description "Automated Tavro EC2 backup" \
+            --output text)
+          echo "ami_id=$AMI_ID" >> "$GITHUB_OUTPUT"
+          echo "Created AMI: $AMI_ID"
+
+      - name: Wait for AMI to be available
+        run: |
+          echo "Waiting for AMI ${{ steps.create-ami.outputs.ami_id }} ..."
+          aws ec2 wait image-available --image-ids "${{ steps.create-ami.outputs.ami_id }}"
+          echo "AMI ready."
+
+      # ── 3. Data backup via SSH ───────────────────────────────────────────────
+      - name: Set up SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
+          chmod 600 /tmp/ec2_key.pem
+
+      - name: Postgres dump + config archive → Google Drive
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem \
+            ec2-user@${{ secrets.EC2_HOST }} << 'ENDSSH'
+          set -e
+
+          DATE=$(date +%Y%m%d-%H%M)
+          BACKUP_DIR="/tmp/tavro-backup-${DATE}"
+          mkdir -p "$BACKUP_DIR"
+
+          # ── rclone config (stored as base64 secret) ─────────────────────────
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_B64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+          cd /home/ec2-user/tavro_portal
+
+          echo "==> Dumping Postgres..."
+          docker exec tavro-postgres pg_dump -U tavro_user_dev tavro \
+            | gzip > "${BACKUP_DIR}/tavro-db-${DATE}.sql.gz"
+
+          echo "==> Archiving configs..."
+          tar -czf "${BACKUP_DIR}/tavro-configs-${DATE}.tar.gz" \
+            docker-compose.yml \
+            .env \
+            agent_cards/ \
+            traefik-config/ \
+            $([ -f config.yaml ] && echo config.yaml) \
+            2>/dev/null || true
+
+          echo "==> Uploading to Google Drive..."
+          rclone copy "${BACKUP_DIR}/" gdrive:tavro-portal-dev-backups/ --progress
+
+          echo "==> Verifying upload..."
+          rclone ls gdrive:tavro-portal-dev-backups/ | grep "${DATE}"
+
+          echo "==> Pruning Drive backups older than 30 days..."
+          rclone delete --min-age 30d gdrive:tavro-portal-dev-backups/
+
+          echo "==> Cleaning up /tmp..."
+          rm -rf "${BACKUP_DIR}"
+
+          echo "Data backup complete: ${DATE}"
+          ENDSSH
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f /tmp/ec2_key.pem
+
+      # ── 4. Prune old AMIs (keep latest 4) ───────────────────────────────────
+      - name: Prune old AMIs
+        run: |
+          AMIS=$(aws ec2 describe-images \
+            --owners self \
+            --filters "Name=name,Values=tavro-ec2-backup-*" \
+            --query 'sort_by(Images, &CreationDate)[*].ImageId' \
+            --output text)
+
+          TOTAL=$(echo $AMIS | wc -w)
+          KEEP=4
+          DELETE_COUNT=$(( TOTAL - KEEP ))
+
+          if [ "$DELETE_COUNT" -gt 0 ]; then
+            OLD=$(echo $AMIS | tr ' ' '\n' | head -n "$DELETE_COUNT")
+            for AMI in $OLD; do
+              echo "Deregistering $AMI..."
+              SNAPS=$(aws ec2 describe-images --image-ids "$AMI" \
+                --query 'Images[0].BlockDeviceMappings[*].Ebs.SnapshotId' \
+                --output text)
+              aws ec2 deregister-image --image-id "$AMI"
+              for SNAP in $SNAPS; do
+                echo "  Deleting snapshot $SNAP"
+                aws ec2 delete-snapshot --snapshot-id "$SNAP"
+              done
+            done
+          else
+            echo "Only $TOTAL AMI(s) — nothing to prune."
+          fi
+
+      # ── 5. Summary ───────────────────────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Backup summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **AMI**: \`${{ steps.create-ami.outputs.ami_id }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Time**: $(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Postgres dump + config archive**: uploaded to \`gdrive:tavro-backups/\`" >> "$GITHUB_STEP_SUMMARY"
