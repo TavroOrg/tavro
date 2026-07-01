@@ -32,11 +32,24 @@ jobs:
           echo "ami_id=$AMI_ID" >> "$GITHUB_OUTPUT"
           echo "Created AMI: $AMI_ID"
 
-      - name: Wait for AMI to be available
+            - name: Wait for AMI to be available
         run: |
           echo "Waiting for AMI ${{ steps.create-ami.outputs.ami_id }} ..."
-          aws ec2 wait image-available --image-ids "${{ steps.create-ami.outputs.ami_id }}"
-          echo "AMI ready."
+          for i in $(seq 1 60); do
+            STATUS=$(aws ec2 describe-images \
+              --image-ids "${{ steps.create-ami.outputs.ami_id }}" \
+              --query 'Images[0].State' --output text)
+            echo "Attempt $i/60: $STATUS"
+            if [ "$STATUS" = "available" ]; then
+              echo "AMI ready."
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timed out after 30 minutes waiting for AMI."
+              exit 1
+            fi
+            sleep 30
+          done
 
       # ── 3. Data backup via SSH ───────────────────────────────────────────────
       - name: Set up SSH key
