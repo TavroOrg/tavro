@@ -880,7 +880,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
     const sendMessage = async () => {
         const text = input.trim();
-        if ((!text && pendingAttachments.length === 0) || loading) return;
+        if ((!text && pendingAttachments.length === 0) || loading || attachmentUploading) return;
 
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
@@ -891,17 +891,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         setPendingAttachments([]);
         setAttachmentError(null);
 
-        // Build the effective message text sent to the LLM.
-        // Attachment text is prepended as context; the user's typed text follows.
-        let effectiveText = text;
-        if (attsSnapshot.length > 0) {
-            const extracts = await Promise.all(attsSnapshot.map(extractAttachmentText));
-            const attachContext = attsSnapshot
-                .map((att, i) => `[Attached file: ${att.name}]\n${extracts[i]}`)
-                .join('\n\n---\n\n');
-            effectiveText = attachContext + (text ? `\n\n---\n\n${text}` : '');
-        }
-
+        // Show the user message and lock the input immediately — before any
+        // async work — so there is no window where the send button re-enables
+        // and the user can accidentally trigger a second send.
         const userMsg: Message = {
             id: `user-${Date.now()}`,
             role: 'user',
@@ -913,10 +905,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         setMessages(withUser);
         setInput('');
         setLoading(true);
-
-        // Persist after adding user message so the session has the user turn
-        // even if the page refreshes before the AI response arrives.
         persist(withUser);
+
+        // Build the effective message text sent to the LLM.
+        // Attachment text is prepended as context; the user's typed text follows.
+        let effectiveText = text;
+        if (attsSnapshot.length > 0) {
+            const extracts = await Promise.all(attsSnapshot.map(extractAttachmentText));
+            const attachContext = attsSnapshot
+                .map((att, i) => `[Attached file: ${att.name}]\n${extracts[i]}`)
+                .join('\n\n---\n\n');
+            effectiveText = attachContext + (text ? `\n\n---\n\n${text}` : '');
+        }
 
         const requestId = generateRequestId();
         savePendingRequest({ requestId, sessionId: activeSessionId ?? '', userMessage: text, timestamp: Date.now() });
@@ -1017,7 +1017,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!attachmentUploading) sendMessage(); }
     };
 
     const sortedSessions = [...sessions].sort(
@@ -1262,9 +1262,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     />
                     <button
                         onClick={sendMessage}
-                        disabled={(!input.trim() && pendingAttachments.length === 0) || loading}
+                        disabled={(!input.trim() && pendingAttachments.length === 0) || loading || attachmentUploading}
                         className="flex-shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl flex items-center justify-center transition-colors shadow-sm disabled:shadow-none"
-                        title="Send message"
+                        title={attachmentUploading ? 'Uploading attachment…' : 'Send message'}
                     >
                         {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={14} />}
                     </button>
