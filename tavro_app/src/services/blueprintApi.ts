@@ -321,16 +321,13 @@ class BlueprintApiService {
   }
 
   async uploadAttachment(nodeId: string, file: File): Promise<DimNodeAttachment> {
-    const token = await import('./auth').then(m => m.getValidToken());
-    const tenantId = localStorage.getItem('tavro_tenant_id');
+    const token = await getValidToken();
     const form = new FormData();
     form.append('file', file);
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (tenantId) headers['x-tenant-id'] = tenantId;
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
     const res = await fetch(`${V1}/dim-nodes/${nodeId}/attachments`, {
       method: 'POST',
-      headers,
+      headers: headersWithoutContentType,
       body: form,
     });
     if (!res.ok) throw new Error(parseApiError(res.status, await res.text()));
@@ -342,12 +339,11 @@ class BlueprintApiService {
   }
 
   async downloadAttachment(attachmentId: string, filename: string): Promise<void> {
-    const token = await import('./auth').then(m => m.getValidToken());
-    const tenantId = localStorage.getItem('tavro_tenant_id');
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (tenantId) headers['x-tenant-id'] = tenantId;
-    const res = await fetch(`${V1}/dim-nodes/attachments/${attachmentId}/download`, { headers });
+    const token = await getValidToken();
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
+    const res = await fetch(`${V1}/dim-nodes/attachments/${attachmentId}/download`, {
+      headers: headersWithoutContentType,
+    });
     if (!res.ok) throw new Error(`Download failed ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
