@@ -381,20 +381,8 @@ def _merge_agent365_credentials(creds: _Agent365Credentials) -> _Agent365Credent
 def _save_agent365_refresh_token(refresh_token: str) -> None:
     if not refresh_token:
         return
-    if not ENV_FILE_PATH.exists():
-        raise HTTPException(status_code=500, detail=".env file not found")
-
-    lines = ENV_FILE_PATH.read_text(encoding="utf-8").splitlines()
-    found = False
-    for idx, line in enumerate(lines):
-        if line.strip().startswith("AGENT365_REFRESH_TOKEN="):
-            lines[idx] = f"AGENT365_REFRESH_TOKEN={refresh_token}"
-            found = True
-            break
-    if not found:
-        lines.append(f"AGENT365_REFRESH_TOKEN={refresh_token}")
-    ENV_FILE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.environ["AGENT365_REFRESH_TOKEN"] = refresh_token
+    from api.routers.env_config import _update_env_file
+    _update_env_file({"AGENT365_REFRESH_TOKEN": refresh_token})
 
 
 @router.post("/connectors/agent365/auth/start")

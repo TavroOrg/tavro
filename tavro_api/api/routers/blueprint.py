@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from typing import Any, AsyncGenerator
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,25 +21,15 @@ from sqlalchemy import text
 
 from api.database import get_db
 from api.templates import INDUSTRY_TEMPLATES
+from api.llm_utils import (
+    ANTHROPIC_MODEL, OPENAI_MODEL, RESEARCH_MAX_OUTPUT_TOKENS,
+    _call_anthropic, _call_openai, _collect_text, _extract_json,
+)
 
 router = APIRouter()
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL   = "claude-sonnet-4-6"
-OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL      = "gpt-4o"
-
-# ── Token / turn caps (override via environment variables) ────────────────────
-# RESEARCH_MAX_OUTPUT_TOKENS: max tokens Claude may produce per API call.
-#   Default 2048 — enough for a full 10-node JSON response with summaries.
-#   Raise to 3000 if you want richer summaries; lower to 1024 to cut cost.
-#
-# RESEARCH_MAX_SEARCH_TURNS: max number of web-search round-trips allowed.
-#   Default 3 — Claude rarely needs more than 2 for a well-known public company.
-#   Set to 1 to force a single search; set to 0 to disable web search entirely.
-
-RESEARCH_MAX_OUTPUT_TOKENS: int = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "3000"))
-RESEARCH_MAX_SEARCH_TURNS:  int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS",  "3"))
+# RESEARCH_MAX_SEARCH_TURNS: max web-search round-trips (override via env var).
+RESEARCH_MAX_SEARCH_TURNS: int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS", "3"))
 
 
 # =============================================================
@@ -81,120 +72,65 @@ class SaveResearchedRequest(BaseModel):
 # Helpers
 # =============================================================
 
-def _extract_json(raw: str) -> str:
+async def _create_business_entity(
+    db: AsyncSession,
+    company_id: str,
+    company_name: str | None,
+    tenant_id: str | None,
+    category: str,
+    label: str,
+    summary: str | None,
+    tags: list,
+) -> bool:
     """
-    Robustly extract a JSON object from text that may contain:
-    - markdown code fences (```json ... ``` or ``` ... ```)
-    - prose before/after the JSON
-    - the word 'json' immediately after the opening fence
+    Upsert the corresponding Application / Process / Integration record.
+    Called after dim_node creation — non-fatal, errors are logged and rolled back.
+    Returns True if a new row was inserted, False if it already existed or was skipped.
     """
-    # 1. Strip markdown fences — handles ```json\n{...}``` and ```\n{...}```
-    fenced = re.search(r'```(?:json)?[\s\n]*(\{[\s\S]*?\})[\s\n]*```', raw)
-    if fenced:
-        return fenced.group(1).strip()
+    label = (label or "").strip()
+    if not label:
+        return False
+    tags_json = json.dumps(tags or [])
 
-    # 2. Also try fence without closing backticks (Claude sometimes omits them)
-    fenced_open = re.search(r'```(?:json)?[\s\n]*(\{[\s\S]*)', raw)
-    if fenced_open:
-        candidate = fenced_open.group(1).strip()
-        # Try to parse just the { ... } block from the candidate
-        start = candidate.find('{')
-        if start != -1:
-            depth = 0
-            for i, ch in enumerate(candidate[start:], start):
-                if ch == '{': depth += 1
-                elif ch == '}':
-                    depth -= 1
-                    if depth == 0:
-                        return candidate[start:i + 1]
-
-    # 3. Find outermost { ... } in the raw string
-    start = raw.find('{')
-    if start != -1:
-        depth = 0
-        for i, ch in enumerate(raw[start:], start):
-            if ch == '{': depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    return raw[start:i + 1]
-
-    return raw.strip()
-
-
-async def _call_anthropic(
-    api_key:    str,
-    messages:   list[dict],
-    system:     str,
-    tools:      list[dict] | None = None,
-    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
-) -> dict:
-    payload: dict[str, Any] = {
-        "model":      ANTHROPIC_MODEL,
-        "max_tokens": max_tokens,
-        "system":     system,
-        "messages":   messages,
-    }
-    if tools:
-        payload["tools"] = tools
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            ANTHROPIC_API_URL,
-            headers={
-                "x-api-key":         api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type":      "application/json",
-            },
-            json=payload,
+    if category == "application":
+        table, id_col, name_col, desc_col = (
+            "core.business_applications", "business_application_id", "application_name", "application_description"
         )
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Anthropic API error {resp.status_code}: {resp.text[:400]}"
+    elif category == "process":
+        table, id_col, name_col, desc_col = (
+            "core.business_processes", "business_process_id", "process_name", "process_description"
         )
-    return resp.json()
-
-
-async def _call_openai(
-    api_key:    str,
-    messages:   list[dict],
-    system:     str,
-    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
-) -> dict:
-    payload_messages = [{"role": "system", "content": system}] + messages
-    payload: dict[str, Any] = {
-        "model": OPENAI_MODEL,
-        "messages": payload_messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.2,
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            OPENAI_API_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+    elif category == "integration":
+        table, id_col, name_col, desc_col = (
+            "core.business_integrations", "integration_id", "integration_name", "integration_description"
         )
+    else:
+        return False
 
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI API error {resp.status_code}: {resp.text[:400]}",
+    try:
+        exists = await db.execute(
+            text(f"SELECT 1 FROM {table} WHERE LOWER({name_col}) = LOWER(:n) AND company_id = :c LIMIT 1"),
+            {"n": label, "c": company_id},
         )
+        if exists.scalar():
+            return False
 
-    data = resp.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-    finish_reason = data.get("choices", [{}])[0].get("finish_reason", "stop")
-    return {
-        "stop_reason": "max_tokens" if finish_reason == "length" else "end_turn",
-        "content": [{"type": "text", "text": content}],
-        "usage": data.get("usage", {}),
-    }
+        await db.execute(
+            text(f"""
+                INSERT INTO {table}
+                    ({id_col}, {name_col}, {desc_col}, company_id, company_name, tenant_id, tags)
+                VALUES (:id, :name, :desc, :cid, :cname, :tid, cast(:tags as jsonb))
+            """),
+            {"id": uuid4().hex, "name": label, "desc": summary,
+             "cid": company_id, "cname": company_name, "tid": tenant_id, "tags": tags_json},
+        )
+        await db.commit()
+        return True
+
+    except Exception as e:
+        _logger.warning("_create_business_entity failed [%s] '%s': %s", category, label, e)
+        await db.rollback()
+        return False
 
 
 def _resolve_blueprint_llm() -> tuple[str, str]:
@@ -209,12 +145,6 @@ def _resolve_blueprint_llm() -> tuple[str, str]:
         status_code=500,
         detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
     )
-
-
-def _collect_text(data: dict) -> str:
-    return "\n".join(
-        b["text"] for b in data.get("content", []) if b.get("type") == "text"
-    ).strip()
 
 
 def _collect_tool_results(data: dict) -> list[dict]:
@@ -1015,11 +945,18 @@ async def save_researched_nodes(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     saved = skipped = 0
+    to_sync: list[tuple[str, str, str, list]] = []
 
     for node in body.nodes:
         dim_type_id = type_map.get(node.category)
         if not dim_type_id:
             continue
+
+        # Track all app/process/integration nodes regardless of whether the dim_node
+        # already exists — _create_business_entity will skip any that are already in DB.
+        if node.category in ("application", "process", "integration"):
+            to_sync.append((node.category, node.label, node.summary, node.tags))
+
         exists = await db.execute(
             text("SELECT 1 FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL"),
             {"cid": body.company_id, "label": node.label},
@@ -1040,6 +977,18 @@ async def save_researched_nodes(
         saved += 1
 
     await db.commit()
+
+    if to_sync:
+        co_row = await db.execute(
+            text("SELECT name, tenant_id FROM twin.company WHERE id = :id LIMIT 1"),
+            {"id": body.company_id},
+        )
+        co = co_row.mappings().first() or {}
+        company_name = co.get("name")
+        company_tenant_id = co.get("tenant_id")
+        for category, label, summary, tags in to_sync:
+            await _create_business_entity(db, body.company_id, company_name, company_tenant_id, category, label, summary, tags)
+
     return {"saved": saved, "skipped": skipped}
 
 
@@ -1059,11 +1008,18 @@ async def seed_template(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     seeded = skipped = 0
+    to_sync: list[tuple[str, str, str, list]] = []
 
     for node in template_nodes:
         dim_type_id = type_map.get(node["category"])
         if not dim_type_id:
             continue
+
+        # Track all app/process/integration nodes regardless of whether the dim_node
+        # already exists — _create_business_entity will skip any that are already in DB.
+        if node["category"] in ("application", "process", "integration"):
+            to_sync.append((node["category"], node["label"], node["summary"], node.get("tags", [])))
+
         exists = await db.execute(
             text("SELECT 1 FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL"),
             {"cid": body.company_id, "label": node["label"]},
@@ -1087,11 +1043,74 @@ async def seed_template(
         seeded += 1
 
     await db.commit()
+
+    if to_sync:
+        co_row = await db.execute(
+            text("SELECT name, tenant_id FROM twin.company WHERE id = :id LIMIT 1"),
+            {"id": body.company_id},
+        )
+        co = co_row.mappings().first() or {}
+        company_name = co.get("name")
+        company_tenant_id = co.get("tenant_id")
+        for category, label, summary, tags in to_sync:
+            await _create_business_entity(db, body.company_id, company_name, company_tenant_id, category, label, summary, tags)
+
     return {
         "seeded":  seeded,
         "skipped": skipped,
         "message": f"Seeded {seeded} nodes ({skipped} already existed).",
     }
+
+
+# =============================================================
+# POST /sync-business-entities
+# Backfill: create missing Application / Process / Integration
+# records for all existing dim_nodes of those categories.
+# Safe to call multiple times — skips records that already exist.
+# =============================================================
+
+class SyncBusinessEntitiesRequest(BaseModel):
+    company_id: str
+
+@router.post("/sync-business-entities")
+async def sync_business_entities(
+    body: SyncBusinessEntitiesRequest,
+    db:   AsyncSession = Depends(get_db),
+):
+    rows = await db.execute(
+        text("""
+            SELECT n.label, n.summary, n.tags, t.category
+            FROM twin.dim_node n
+            JOIN twin.dim_type t ON t.id = n.dim_type_id
+            WHERE n.company_id = :cid
+              AND t.category IN ('application', 'process', 'integration')
+              AND n.valid_to IS NULL
+        """),
+        {"cid": body.company_id},
+    )
+    nodes = rows.mappings().all()
+
+    co_row = await db.execute(
+        text("SELECT name, tenant_id FROM twin.company WHERE id = :id LIMIT 1"),
+        {"id": body.company_id},
+    )
+    co = co_row.mappings().first() or {}
+    company_name = co.get("name")
+    company_tenant_id = co.get("tenant_id")
+
+    created = skipped = 0
+    for node in nodes:
+        tags = node["tags"] if isinstance(node["tags"], list) else []
+        was_created = await _create_business_entity(
+            db, body.company_id, company_name, company_tenant_id,
+            node["category"], node["label"], node["summary"], tags,
+        )
+        if was_created:
+            created += 1
+        else:
+            skipped += 1
+
+    return {"created": created, "skipped": skipped}
 
 
 # =============================================================
