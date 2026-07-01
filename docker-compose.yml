@@ -498,8 +498,8 @@ services:
 # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────  
   risk-mcp-server:
     build:
-      context: .
-      dockerfile: Dockerfile.mcp
+      context: ..
+      dockerfile: tavro/Dockerfile.mcp.${BUILD_MODE:-oss}
     container_name: risk-mcp-server
     restart: unless-stopped
     deploy:
@@ -509,6 +509,7 @@ services:
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
+      BUILD_MODE:           '${BUILD_MODE:-oss}'
       DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated

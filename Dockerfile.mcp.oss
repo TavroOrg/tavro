@@ -11,20 +11,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc
 
-COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl .
+COPY tavro/dist/tavro_agent_card-0.1.1-py3-none-any.whl .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install tavro_agent_card-0.1.1-py3-none-any.whl
 
-COPY worker.py .
-COPY requirements.txt .
+COPY tavro/worker.py .
+COPY tavro/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
-COPY mcp_server ./mcp_server
-COPY tavro_library ./tavro_library
-COPY tavro_app/copilot-server/templates ./templates
-COPY utils ./utils
-COPY services ./services
+COPY tavro/mcp_server ./mcp_server
+COPY tavro/tavro_library ./tavro_library
+COPY tavro/tavro_app/copilot-server/templates ./templates
+COPY tavro/utils ./utils
+COPY tavro/services ./services
 
 CMD ["python", "-m", "mcp_server.server"]

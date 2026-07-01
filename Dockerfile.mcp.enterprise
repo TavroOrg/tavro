@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.6
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev gcc
+
+COPY tavro/dist/tavro_agent_card-0.1.1-py3-none-any.whl .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install tavro_agent_card-0.1.1-py3-none-any.whl
+
+COPY tavro/worker.py .
+COPY tavro/requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# enterprise/api/llm.py (shared with tavro-api) imports fastapi.HTTPException,
+# but fastmcp doesn't pull in fastapi — install it explicitly for this image.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install fastapi
+
+COPY tavro/mcp_server ./mcp_server
+COPY tavro/tavro_library ./tavro_library
+COPY tavro/tavro_app/copilot-server/templates ./templates
+COPY tavro/utils ./utils
+COPY tavro/services ./services
+
+# Enterprise MCP tool — requires the enterprise repo to be a sibling of tavro/:
+#   parent/
+#   ├── tavro/       ← this repo
+#   └── enterprise/  ← enterprise repo
+# Copied verbatim into the app's own package tree, mirroring
+# Dockerfile.api.enterprise's approach: the source file's existing
+# `from api.llm import ...` import resolves naturally once api/llm.py lands
+# under /app (as a namespace package — no separate PYTHONPATH entry needed).
+COPY enterprise/api/llm.py             /app/api/llm.py
+COPY enterprise/mcp/compliance_tools.py /app/mcp_server/enterprise_compliance_tools.py
+
+CMD ["python", "-m", "mcp_server.server"]

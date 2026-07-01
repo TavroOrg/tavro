@@ -1315,6 +1315,23 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         return await this.callTool('create_risk_assessment', { agent_id });
     }
 
+    // Enterprise-only tool (registered by mcp_server when BUILD_MODE=enterprise).
+    // In OSS mode the underlying tool is not registered and this call errors —
+    // callers should treat failures as non-fatal (see BlueprintSetupPage usage).
+    async recommendBlueprintCompliance(args: {
+        company_id: string;
+        company_name: string;
+        industry: string;
+        region?: string;
+    }): Promise<any> {
+        return await this.callTool('recommend_blueprint_compliance', {
+            company_id:   args.company_id,
+            company_name: args.company_name,
+            industry:     args.industry,
+            region:       args.region ?? '',
+        });
+    }
+
     async getExecutiveRiskSummary(): Promise<any[]> {
         const allAgents = await this.getAllAgents();
         const envMap = new Map<string, AgentData[]>();
