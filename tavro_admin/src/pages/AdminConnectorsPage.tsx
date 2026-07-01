@@ -101,7 +101,7 @@ const PROVIDERS: ProviderDef[] = [
     {
         id: 'servicenow', name: 'ServiceNow', description: 'IT service management platform',
         initials: 'SN', color: 'from-green-500 to-green-700',
-        sharedConnectorIds: ['servicenow', 'aict_inbound'],
+        sharedConnectorIds: ['servicenow'],
         sharedFields: [
             { key: 'instance_url', label: 'Instance URL', type: 'text',     placeholder: 'https://myinstance.service-now.com' },
             { key: 'username',     label: 'Username',     type: 'text' },

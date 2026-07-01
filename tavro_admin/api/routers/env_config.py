@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 router = APIRouter()
 
 ENV_FILE_PATH = Path(os.getenv("ENV_FILE_PATH", "/app/.env"))
+_ENV_LOCK = threading.Lock()
 
 # Maps connector field keys → .env variable names
 CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
@@ -70,9 +72,9 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
     "client_secret": "AGENT365_CLIENT_SECRET",
     },
     "aict_inbound": {
-        "instance_url": "AICT_INSTANCE_URL",
-        "username":     "AICT_USERNAME",
-        "password":     "AICT_PASSWORD",
+        "instance_url": "SERVICENOW_INSTANCE_URL",
+        "username":     "SERVICENOW_USERNAME",
+        "password":     "SERVICENOW_PASSWORD",
     },
 }
 
@@ -98,40 +100,42 @@ def _read_env_file() -> dict[str, str]:
 
 
 def _update_env_file(updates: dict[str, str]) -> None:
-    """Update specific variables in .env, preserving all other content."""
-    if not ENV_FILE_PATH.exists():
-        raise HTTPException(status_code=500, detail=".env file not found — is it mounted into the container?")
+    """Update specific variables in .env, preserving all other content.
+    Holds a process-level lock so concurrent saves never interleave reads and writes."""
+    with _ENV_LOCK:
+        if not ENV_FILE_PATH.exists():
+            raise HTTPException(status_code=500, detail=".env file not found — is it mounted into the container?")
 
-    lines = ENV_FILE_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
-    updated: set[str] = set()
-    new_lines: list[str] = []
+        lines = ENV_FILE_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
+        updated: set[str] = set()
+        new_lines: list[str] = []
 
-    for line in lines:
-        matched = False
+        for line in lines:
+            matched = False
+            for var, value in updates.items():
+                if re.match(rf'^{re.escape(var)}\s*=', line):
+                    new_lines.append(f"{var}={value}\n")
+                    updated.add(var)
+                    matched = True
+                    break
+            if not matched:
+                new_lines.append(line)
+
+        # Append any vars that were not already in the file.
+        # Ensure the file ends with a newline before appending so the new var
+        # doesn't get concatenated onto the last existing line.
+        remaining = [var for var in updates if var not in updated]
+        if remaining:
+            if new_lines and not new_lines[-1].endswith("\n"):
+                new_lines.append("\n")
+            for var in remaining:
+                new_lines.append(f"{var}={updates[var]}\n")
+
+        ENV_FILE_PATH.write_text("".join(new_lines), encoding="utf-8")
+
+        # Keep the running process in sync
         for var, value in updates.items():
-            if re.match(rf'^{re.escape(var)}\s*=', line):
-                new_lines.append(f"{var}={value}\n")
-                updated.add(var)
-                matched = True
-                break
-        if not matched:
-            new_lines.append(line)
-
-    # Append any vars that were not already in the file.
-    # Ensure the file ends with a newline before appending so the new var
-    # doesn't get concatenated onto the last existing line.
-    remaining = [var for var in updates if var not in updated]
-    if remaining:
-        if new_lines and not new_lines[-1].endswith("\n"):
-            new_lines.append("\n")
-        for var in remaining:
-            new_lines.append(f"{var}={updates[var]}\n")
-
-    ENV_FILE_PATH.write_text("".join(new_lines), encoding="utf-8")
-
-    # Keep the running process in sync
-    for var, value in updates.items():
-        os.environ[var] = value
+            os.environ[var] = value
 
 
 # Maps LLM provider keys → .env variable names
