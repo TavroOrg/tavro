@@ -316,6 +316,15 @@ const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
   return 'text-slate-600';
 };
 
+const getArtMeta = (value: string): HeaderMetricMeta => {
+  const label = value || 'N/A';
+  const normalized = label.toLowerCase();
+  if (normalized === 'critical' || normalized === 'high') return { label, tone: 'high' };
+  if (normalized === 'medium') return { label, tone: 'medium' };
+  if (normalized === 'low' || normalized === 'none') return { label, tone: 'low' };
+  return { label, tone: 'neutral' };
+};
+
 const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
@@ -516,7 +525,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setEditing(false);
     setInlineEdit(null);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -745,7 +754,7 @@ const BusinessApplicationViewPage: React.FC = () => {
         const created = await businessRelationsApi.createApplication(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id);
+            await businessRelationsApi.linkAgentToApplication(linkAgentId, created.business_application_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Application created but auto-link to agent failed.', linkErr);
           }
@@ -825,7 +834,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id);
+      await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -839,7 +848,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id);
+      await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id, activeCompany?.id);
       await load();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
@@ -947,6 +956,7 @@ const BusinessApplicationViewPage: React.FC = () => {
   const relatedUseCaseCount = relatedUseCases.length;
   const criticalityMeta = getCriticalityMeta(form.business_criticality);
   const emergencyTierMeta = getEmergencyTierMeta(form.emergency_tier);
+  const artMeta = getArtMeta(form.agent_risk_tier);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1400px] mx-auto pb-10">
@@ -1036,6 +1046,16 @@ const BusinessApplicationViewPage: React.FC = () => {
           <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
             <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                Emergency Tier
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(emergencyTierMeta.tone)}`}>
+                {emergencyTierMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {emergencyTierMeta.label}
+              </span>
+            </div>
+
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
                 Business Criticality
               </span>
               <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(criticalityMeta.tone)}`}>
@@ -1044,13 +1064,28 @@ const BusinessApplicationViewPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Emergency Tier
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
               </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(emergencyTierMeta.tone)}`}>
-                {emergencyTierMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {emergencyTierMeta.label}
+              <span className="text-xs font-bold text-slate-700">
+                {form.agent_risk_exposure || 'N/A'}
+              </span>
+            </div>
+
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
+                {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {artMeta.label}
               </span>
             </div>
           </div>
@@ -1345,13 +1380,13 @@ const BusinessApplicationViewPage: React.FC = () => {
 
           <Section title="Agent Risk Exposure">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
               <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.num_of_associated_agents} />
-              <ReadValue label="Inherent Risk Classification" value={labelFromOptions(form.inherent_risk_classification, INHERENT_RESIDUAL_OPTIONS)} />
-              <ReadValue label="Residual Risk Classification" value={labelFromOptions(form.residual_risk_classification, INHERENT_RESIDUAL_OPTIONS)} />
+              <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
               <ReadValue label="Agent Risk Tier (ART)" value={labelFromOptions(form.agent_risk_tier, AGENT_RISK_TIER_OPTIONS)} hint={HINTS.agent_risk_tier} />
               <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
+              <ReadValue label="Inherent Risk Classification" value={labelFromOptions(form.inherent_risk_classification, INHERENT_RESIDUAL_OPTIONS)} />
               <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
+              <ReadValue label="Residual Risk Classification" value={labelFromOptions(form.residual_risk_classification, INHERENT_RESIDUAL_OPTIONS)} />
               <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
             </div>
           </Section>

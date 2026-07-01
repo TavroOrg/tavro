@@ -96,6 +96,19 @@ class BlueprintApiService {
     return req(`/companies?offset=${offset}&limit=${limit}`);
   }
 
+  async listAllCompanies(): Promise<Company[]> {
+    const pageSize = 200;
+    const first = await this.listCompanies(0, pageSize);
+    if (first.total <= first.items.length) return first.items;
+    const totalPages = Math.ceil(first.total / pageSize);
+    const remaining = await Promise.all(
+      Array.from({ length: totalPages - 1 }, (_, i) =>
+        this.listCompanies((i + 1) * pageSize, pageSize),
+      ),
+    );
+    return [first.items, ...remaining.map(p => p.items)].flat();
+  }
+
   async getCompany(id: string): Promise<Company> {
     return req(`/companies/${id}`);
   }
