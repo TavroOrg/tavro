@@ -13,7 +13,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
@@ -100,6 +100,11 @@ session_store: dict[str, dict] = {}
 # ── Ended session archive ─────────────────────────────────────────────────────
 # Sessions moved here on DELETE so they remain visible in the Sessions tab.
 ended_sessions: dict[str, dict] = {}
+
+
+def _utc_now_iso() -> str:
+    """Return UTC time with an explicit timezone so browsers do not treat it as local."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 # =============================================================
@@ -1678,7 +1683,7 @@ async def _provision_bedrock_agent_background(session_id: str, config: SessionCo
         session = session_store.get(session_id)
         if session:
             session["bedrock_agent"] = bedrock_agent.model_dump()
-            session["updated_at"] = datetime.utcnow().isoformat()
+            session["updated_at"] = _utc_now_iso()
     except Exception as e:
         session = session_store.get(session_id)
         if session:
@@ -1687,7 +1692,7 @@ async def _provision_bedrock_agent_background(session_id: str, config: SessionCo
                 agent_name=config.agent_name,
                 agent={"error": str(e)},
             ).model_dump()
-            session["updated_at"] = datetime.utcnow().isoformat()
+            session["updated_at"] = _utc_now_iso()
 
 
 def _get_aws_account_id(access_key: str, secret_key: str) -> str:
@@ -1922,7 +1927,7 @@ async def list_sessions(
 @router.post("/session", status_code=201)
 async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_db)):
     session_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
+    now = _utc_now_iso()
 
     provider = (config.provider or "claude").lower()
     azure_agent = AzureFoundryAgentProvisioning()
@@ -2059,7 +2064,7 @@ async def send_message(
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported playground provider: {config.provider}")
 
-    now         = datetime.utcnow().isoformat()
+    now         = _utc_now_iso()
     user_msg_id = str(uuid.uuid4())
 
     # Add user message to session
@@ -2143,12 +2148,12 @@ async def send_message(
         "id":        str(uuid.uuid4()),
         "role":      "assistant",
         "content":   response_text,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _utc_now_iso(),
         "tokens":    tokens_used,
     }
     session["messages"].append(assistant_msg)
     session["token_total"] = session.get("token_total", 0) + tokens_used
-    session["updated_at"]  = datetime.utcnow().isoformat()
+    session["updated_at"]  = _utc_now_iso()
 
     # Persist updated messages + token total to DB
     await _db_upsert_session({**session, "status": "active"}, db)
@@ -2195,7 +2200,7 @@ async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Archive in memory
-    session["ended_at"]  = datetime.utcnow().isoformat()
+    session["ended_at"]  = _utc_now_iso()
     session["updated_at"] = session["ended_at"]
     session["status"]    = "ended"
     ended_sessions[session_id] = session
@@ -2253,7 +2258,7 @@ async def save_observations(session_id: str, body: ObservationsPayload, db: Asyn
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     session["observations"] = body.observations
-    session["updated_at"] = datetime.utcnow().isoformat()
+    session["updated_at"] = _utc_now_iso()
     status = "ended" if session_id in ended_sessions else session.get("status", "active")
     await _db_upsert_session({**session, "status": status}, db)
     return {"ok": True}

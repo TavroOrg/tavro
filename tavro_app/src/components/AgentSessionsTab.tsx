@@ -18,7 +18,11 @@ interface SessionSummary {
 }
 
 function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
+  const timestamp = new Date(normalized).getTime();
+  if (Number.isNaN(timestamp)) return '';
+
+  const diff = Date.now() - timestamp;
   const mins  = Math.floor(diff / 60_000);
   const hours = Math.floor(diff / 3_600_000);
   if (mins < 1)   return 'just now';
