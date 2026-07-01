@@ -418,6 +418,42 @@ async def get_linked_entity(
         except Exception:
             pass
 
+    # Integration — dim_node_id match
+    try:
+        int_row = await db.execute(
+            text("""
+                SELECT integration_id
+                FROM core.business_integrations
+                WHERE dim_node_id = :nid
+                LIMIT 1
+            """),
+            {"nid": str(node_id)},
+        )
+        result = int_row.mappings().first()
+        if result:
+            return {"entity_type": "integration", "entity_id": result["integration_id"]}
+    except Exception:
+        pass
+
+    # Integration — name + company_id fallback
+    if node:
+        try:
+            int_row2 = await db.execute(
+                text("""
+                    SELECT integration_id
+                    FROM core.business_integrations
+                    WHERE LOWER(integration_name) = LOWER(:name)
+                      AND company_id = :cid
+                    LIMIT 1
+                """),
+                {"name": node["label"], "cid": str(node["company_id"])},
+            )
+            result = int_row2.mappings().first()
+            if result:
+                return {"entity_type": "integration", "entity_id": result["integration_id"]}
+        except Exception:
+            pass
+
     raise HTTPException(status_code=404, detail="No linked business entity found for this node")
 
 

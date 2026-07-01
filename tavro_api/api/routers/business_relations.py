@@ -3355,6 +3355,13 @@ async def create_integration(
     if raw_tags is not None and "tags" in int_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in int_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     if "created_ts" in int_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in int_cols:
@@ -3368,6 +3375,7 @@ async def create_integration(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -3500,6 +3508,29 @@ async def delete_integration(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_integrations_table(db)
+
+    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :id"),
+            {"id": integration_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result and dn_result.get("dim_node_id"):
+            dim_node_to_delete = str(dn_result["dim_node_id"])
+    except Exception:
+        pass
+
+    # Delete integration attachments
+    try:
+        await db.execute(
+            text("DELETE FROM public.integration_attachment WHERE integration_id = :integration_id"),
+            {"integration_id": integration_id},
+        )
+    except Exception:
+        pass
+
     result = await db.execute(
         text(
             """
@@ -3515,6 +3546,18 @@ async def delete_integration(
             detail=f"Integration '{integration_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "integration_id": integration_id}
 
 
@@ -4547,6 +4590,13 @@ async def create_process(
     if raw_tags is not None and "tags" in process_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in process_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
         if col in process_cols:
             insert_values[col] = default_value
@@ -4569,6 +4619,7 @@ async def create_process(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -4710,6 +4761,19 @@ async def delete_process(
     process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :id"),
+            {"id": process_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result and dn_result.get("dim_node_id"):
+            dim_node_to_delete = str(dn_result["dim_node_id"])
+    except Exception:
+        pass
+
     if await _table_exists(db, "core", "agent_business_processes"):
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
         if "business_process_id" in abp_cols:
@@ -4781,6 +4845,18 @@ async def delete_process(
             detail=f"Process '{process_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "process_id": process_id}
 
 
