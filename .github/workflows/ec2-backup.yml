@@ -102,7 +102,7 @@ jobs:
             --output text)
 
           TOTAL=$(echo $AMIS | wc -w)
-          KEEP=4
+          KEEP=1
           DELETE_COUNT=$(( TOTAL - KEEP ))
 
           if [ "$DELETE_COUNT" -gt 0 ]; then
