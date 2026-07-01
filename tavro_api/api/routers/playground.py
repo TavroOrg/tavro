@@ -112,14 +112,29 @@ class ToolConfig(BaseModel):
     enabled: bool
     source:  str
 
+class AgentSkillConfig(BaseModel):
+    id: str | None = None
+    identifier: str | None = None
+    skill_id: str | None = None
+    name: str | None = None
+    skill_name: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    inputModes: list[str] | None = None
+    outputModes: list[str] | None = None
+    input_modes: list[str] | None = None
+    output_modes: list[str] | None = None
+
 class SessionConfig(BaseModel):
     agent_name:    str
+    agent_description: str | None = None
     system_prompt: str
     provider:      str = "claude"
     model:         str = ANTHROPIC_MODEL_DEFAULT
     temperature:   float = 0.7
     max_tokens:    int = 2048
     tools:         list[ToolConfig] = []
+    skills:        list[AgentSkillConfig] = []
     company_id:    str | None = None
     company_name:  str | None = None
     use_case_id:   str | None = None
@@ -127,6 +142,13 @@ class SessionConfig(BaseModel):
     tenant_id:         str | None = None
     agent_internal_id: str | None = None
     agent_id:          str | None = None
+
+
+def _agent_description(config: SessionConfig, max_length: int) -> str:
+    description = (config.agent_description or "").strip()
+    if not description:
+        description = f"Tavro playground agent for {config.use_case_title or config.agent_name}"
+    return description[:max_length]
 
 class Attachment(BaseModel):
     name:      str          # original filename
@@ -743,6 +765,35 @@ def _slugify_skill_id(value: str, fallback: str) -> str:
     return (slug or fallback)[:64]
 
 
+def _portal_agent_skills(config: SessionConfig) -> list[dict[str, Any]] | None:
+    skills = []
+    for idx, skill in enumerate(config.skills or [], start=1):
+        name = (skill.name or skill.skill_name or skill.identifier or skill.skill_id or skill.id or "").strip()
+        if not name:
+            continue
+        description = (skill.description or name).strip()
+        skill_id = _slugify_skill_id(
+            skill.identifier or skill.skill_id or skill.id or name,
+            f"skill-{idx}",
+        )
+        item: dict[str, Any] = {
+            "id": skill_id,
+            "name": name[:512],
+            "description": description[:512],
+        }
+        tags = [str(tag).strip() for tag in (skill.tags or []) if str(tag).strip()]
+        input_modes = skill.inputModes or skill.input_modes or []
+        output_modes = skill.outputModes or skill.output_modes or []
+        if tags:
+            item["tags"] = tags[:10]
+        if input_modes:
+            item["inputModes"] = [str(mode).strip() for mode in input_modes if str(mode).strip()][:10]
+        if output_modes:
+            item["outputModes"] = [str(mode).strip() for mode in output_modes if str(mode).strip()][:10]
+        skills.append(item)
+    return skills or None
+
+
 async def _derive_agent_skills_via_llm(config: SessionConfig) -> list[dict[str, Any]] | None:
     """Ask the deployed model to distill the system prompt into a short skills list.
 
@@ -827,6 +878,9 @@ async def _derive_agent_skills_via_llm(config: SessionConfig) -> list[dict[str, 
 
 
 async def _build_agent_skills(agent_name: str, description: str, config: SessionConfig) -> list[dict[str, Any]]:
+    portal_skills = _portal_agent_skills(config)
+    if portal_skills:
+        return portal_skills
     llm_skills = await _derive_agent_skills_via_llm(config)
     if llm_skills:
         return llm_skills
@@ -878,9 +932,7 @@ async def _enable_azure_foundry_a2a(
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
     endpoint, token, api_version, deployment = _azure_foundry_project_settings(config)
     agent_name = _azure_agent_resource_name(config.agent_name)
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:512]
+    description = _agent_description(config, 512)
     payload = {
         "name": agent_name,
         "description": description,
@@ -1730,9 +1782,7 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     )
 
     agent_name = _azure_agent_resource_name(config.agent_name)  # Reuse naming convention
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:200]
+    description = _agent_description(config, 200)
     # Use agent-supported model ID (no 'us.' prefix)
     model_id = BEDROCK_AGENT_SUPPORTED_MODELS.get(model_key, BEDROCK_AGENT_SUPPORTED_MODELS["claude-3-5-sonnet"])
     logger.debug("Resolved Bedrock model ID: %s", model_id)

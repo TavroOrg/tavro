@@ -18,7 +18,7 @@ import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSync } from '../hooks/useChatSync';
 import {
   INFRA_PROVIDERS, PROVIDER_MODELS, OBSERVATION_TYPES,
-  type InfraProvider, type PlaygroundObservation,
+  type InfraProvider, type PlaygroundAgentSkill, type PlaygroundObservation,
 } from '../types/playground';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -82,6 +82,17 @@ const ObservationBadge: React.FC<{
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+const readStoredAgentSkills = (agentId: string | null): PlaygroundAgentSkill[] => {
+  if (!agentId) return [];
+  try {
+    const raw = sessionStorage.getItem(`tavro_playground_agent_skills:${agentId}`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
 const PlaygroundPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -109,6 +120,7 @@ const PlaygroundPage: React.FC = () => {
     const agentType       = searchParams.get('agentType') || undefined;
     const agentInternalId = searchParams.get('agentInternalId') || undefined;
     const tenantId        = searchParams.get('tenantId') || undefined;
+    const storedSkills    = readStoredAgentSkills(id);
 
     if (sessionId) {
       // Reconnecting to an existing session: restore agent config, session data,
@@ -122,6 +134,7 @@ const PlaygroundPage: React.FC = () => {
         agentInternalId,
         id,
         tenantId,
+        storedSkills,
       );
       reconnectSession(sessionId).then(() => {
         setActiveTab(tab ?? 'chat');
@@ -137,6 +150,7 @@ const PlaygroundPage: React.FC = () => {
         agentInternalId,
         id,
         tenantId,
+        storedSkills,
       );
       if (tab) setActiveTab(tab);
     }
@@ -233,7 +247,7 @@ const PlaygroundPage: React.FC = () => {
     const description = agent.description || agent.agent_description || '';
     const instruction = agent.identification?.instruction || agent.instruction || '';
     const agentType   = agent.agent_type || undefined;
-    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType, agentInternalId, agentId, tenantId);
+    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType, agentInternalId, agentId, tenantId, agent.skills ?? []);
     setAgentDropdown(false);
     setAgentSearch('');
     setActiveTab('config');
