@@ -157,6 +157,7 @@ class AzureFoundryAgentProvisioning(BaseModel):
     enabled: bool = False
     agent_name: str | None = None
     agent: dict[str, Any] | None = None
+    a2a_enabled: bool = False
 
 class BedrockAgentProvisioning(BaseModel):
     enabled: bool = False
@@ -736,6 +737,144 @@ def _azure_foundry_auth_hint(status_code: int) -> str:
     )
 
 
+def _slugify_skill_id(value: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (value or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return (slug or fallback)[:64]
+
+
+async def _derive_agent_skills_via_llm(config: SessionConfig) -> list[dict[str, Any]] | None:
+    """Ask the deployed model to distill the system prompt into a short skills list.
+
+    Works for any prompt structure since the model, not a fixed pattern, identifies the
+    distinct capabilities — matching what Foundry's own agent card editor expects (short
+    kebab-case ids, title-case names, one-sentence descriptions).
+    """
+    try:
+        url, api_key, _, deployment, uses_v1_api = _azure_openai_settings(config)
+    except HTTPException:
+        return None
+
+    extraction_prompt = (
+        "Analyze this AI agent's instructions and produce its \"agent skills\" list for an A2A agent card.\n"
+        "Identify 3-8 distinct capabilities the agent performs.\n"
+        "Respond ONLY with a JSON array.\n\n"
+        "Each item must be:\n"
+        "{\n"
+        '  "id": "kebab-case-slug",\n'
+        '  "name": "Title Case Name",\n'
+        '  "description": "One concise sentence.",\n'
+        '  "tags": ["keyword1","keyword2","keyword3"],\n'
+        '  "examples": [\n'
+        '      "Example user request 1",\n'
+        '      "Example user request 2"\n'
+        "  ]\n"
+        "}\n\n"
+        f"AGENT INSTRUCTIONS:\n{config.system_prompt}"
+    )
+    payload: dict[str, Any] = {
+        "messages": [{"role": "user", "content": extraction_prompt}],
+        "temperature": 0,
+    }
+    if uses_v1_api:
+        payload["model"] = deployment
+        payload["max_completion_tokens"] = 1200
+    else:
+        payload["max_tokens"] = 1200
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+        except httpx.HTTPError:
+            return None
+
+    if resp.status_code != 200:
+        return None
+
+    content = (
+        resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    ).strip()
+    content = re.sub(r"^```(?:json)?|```$", "", content, flags=re.MULTILINE).strip()
+
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+
+    skills = []
+    for idx, item in enumerate(parsed, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        skill_description = str(item.get("description") or "").strip()
+        if not name or not skill_description:
+            continue
+        skill_id = _slugify_skill_id(str(item.get("id") or name), f"skill-{idx}")
+        skills.append({
+            "id": skill_id,
+            "name": name[:512],
+            "description": skill_description[:512],
+            "tags": item.get("tags", [])[:10],
+            "examples": item.get("examples", [])[:5],
+        })
+    return skills or None
+
+
+async def _build_agent_skills(agent_name: str, description: str, config: SessionConfig) -> list[dict[str, Any]]:
+    llm_skills = await _derive_agent_skills_via_llm(config)
+    if llm_skills:
+        return llm_skills
+    # Only reached if the LLM extraction call itself fails (e.g. deployment misconfigured);
+    # Azure Foundry's A2A endpoint requires at least one skill, so fall back to a single
+    # generic entry built from data every agent already has, with no format assumptions.
+    return [{"id": agent_name, "name": agent_name, "description": description}]
+
+
+async def _enable_azure_foundry_a2a(
+    endpoint: str,
+    token: str,
+    api_version: str,
+    agent_name: str,
+    description: str,
+    config: SessionConfig,
+) -> None:
+    patch_url = f"{endpoint}/agents/{agent_name}?api-version={api_version}"
+    skills = await _build_agent_skills(agent_name, description, config)
+    payload = {
+        "agent_card": {
+            "description": description,
+            "version": "1.0",
+            # Azure Foundry's preview A2A endpoint 500s (instead of validating)
+            # when agent_card.skills is missing or empty, so at least one entry is required.
+            "skills": skills,
+        },
+        "agent_endpoint": {
+            "protocols": ["responses", "a2a"],
+        },
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.patch(
+            patch_url,
+            headers=_azure_agent_headers(token),
+            json=payload,
+        )
+
+    if resp.status_code not in (200, 201):
+        detail = resp.text[:600]
+        if resp.status_code in (401, 403):
+            detail += _azure_foundry_auth_hint(resp.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure Foundry A2A enablement failed {resp.status_code}: {detail}",
+        )
+
+
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
     endpoint, token, api_version, deployment = _azure_foundry_project_settings(config)
     agent_name = _azure_agent_resource_name(config.agent_name)
@@ -782,10 +921,13 @@ async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryA
             detail=f"Azure Foundry agent provisioning failed {resp.status_code}: {detail}",
         )
 
+    await _enable_azure_foundry_a2a(endpoint, token, api_version, agent_name, description, config)
+
     return AzureFoundryAgentProvisioning(
         enabled=True,
         agent_name=agent_name,
         agent=resp.json(),
+        a2a_enabled=True,
     )
 
 
