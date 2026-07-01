@@ -117,14 +117,29 @@ class ToolConfig(BaseModel):
     enabled: bool
     source:  str
 
+class AgentSkillConfig(BaseModel):
+    id: str | None = None
+    identifier: str | None = None
+    skill_id: str | None = None
+    name: str | None = None
+    skill_name: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    inputModes: list[str] | None = None
+    outputModes: list[str] | None = None
+    input_modes: list[str] | None = None
+    output_modes: list[str] | None = None
+
 class SessionConfig(BaseModel):
     agent_name:    str
+    agent_description: str | None = None
     system_prompt: str
     provider:      str = "claude"
     model:         str = ANTHROPIC_MODEL_DEFAULT
     temperature:   float = 0.7
     max_tokens:    int = 2048
     tools:         list[ToolConfig] = []
+    skills:        list[AgentSkillConfig] = []
     company_id:    str | None = None
     company_name:  str | None = None
     use_case_id:   str | None = None
@@ -132,6 +147,13 @@ class SessionConfig(BaseModel):
     tenant_id:         str | None = None
     agent_internal_id: str | None = None
     agent_id:          str | None = None
+
+
+def _agent_description(config: SessionConfig, max_length: int) -> str:
+    description = (config.agent_description or "").strip()
+    if not description:
+        description = f"Tavro playground agent for {config.use_case_title or config.agent_name}"
+    return description[:max_length]
 
 class Attachment(BaseModel):
     name:      str          # original filename
@@ -162,6 +184,7 @@ class AzureFoundryAgentProvisioning(BaseModel):
     enabled: bool = False
     agent_name: str | None = None
     agent: dict[str, Any] | None = None
+    a2a_enabled: bool = False
 
 class BedrockAgentProvisioning(BaseModel):
     enabled: bool = False
@@ -741,12 +764,180 @@ def _azure_foundry_auth_hint(status_code: int) -> str:
     )
 
 
+def _slugify_skill_id(value: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (value or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return (slug or fallback)[:64]
+
+
+def _portal_agent_skills(config: SessionConfig) -> list[dict[str, Any]] | None:
+    skills = []
+    for idx, skill in enumerate(config.skills or [], start=1):
+        name = (skill.name or skill.skill_name or skill.identifier or skill.skill_id or skill.id or "").strip()
+        if not name:
+            continue
+        description = (skill.description or name).strip()
+        skill_id = _slugify_skill_id(
+            skill.identifier or skill.skill_id or skill.id or name,
+            f"skill-{idx}",
+        )
+        item: dict[str, Any] = {
+            "id": skill_id,
+            "name": name[:512],
+            "description": description[:512],
+        }
+        tags = [str(tag).strip() for tag in (skill.tags or []) if str(tag).strip()]
+        input_modes = skill.inputModes or skill.input_modes or []
+        output_modes = skill.outputModes or skill.output_modes or []
+        if tags:
+            item["tags"] = tags[:10]
+        if input_modes:
+            item["inputModes"] = [str(mode).strip() for mode in input_modes if str(mode).strip()][:10]
+        if output_modes:
+            item["outputModes"] = [str(mode).strip() for mode in output_modes if str(mode).strip()][:10]
+        skills.append(item)
+    return skills or None
+
+
+async def _derive_agent_skills_via_llm(config: SessionConfig) -> list[dict[str, Any]] | None:
+    """Ask the deployed model to distill the system prompt into a short skills list.
+
+    Works for any prompt structure since the model, not a fixed pattern, identifies the
+    distinct capabilities — matching what Foundry's own agent card editor expects (short
+    kebab-case ids, title-case names, one-sentence descriptions).
+    """
+    try:
+        url, api_key, _, deployment, uses_v1_api = _azure_openai_settings(config)
+    except HTTPException:
+        return None
+
+    extraction_prompt = (
+        "Analyze this AI agent's instructions and produce its \"agent skills\" list for an A2A agent card.\n"
+        "Identify 3-8 distinct capabilities the agent performs.\n"
+        "Respond ONLY with a JSON array.\n\n"
+        "Each item must be:\n"
+        "{\n"
+        '  "id": "kebab-case-slug",\n'
+        '  "name": "Title Case Name",\n'
+        '  "description": "One concise sentence.",\n'
+        '  "tags": ["keyword1","keyword2","keyword3"],\n'
+        '  "examples": [\n'
+        '      "Example user request 1",\n'
+        '      "Example user request 2"\n'
+        "  ]\n"
+        "}\n\n"
+        f"AGENT INSTRUCTIONS:\n{config.system_prompt}"
+    )
+    payload: dict[str, Any] = {
+        "messages": [{"role": "user", "content": extraction_prompt}],
+        "temperature": 0,
+    }
+    if uses_v1_api:
+        payload["model"] = deployment
+        payload["max_completion_tokens"] = 1200
+    else:
+        payload["max_tokens"] = 1200
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+        except httpx.HTTPError:
+            return None
+
+    if resp.status_code != 200:
+        return None
+
+    content = (
+        resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    ).strip()
+    content = re.sub(r"^```(?:json)?|```$", "", content, flags=re.MULTILINE).strip()
+
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+
+    skills = []
+    for idx, item in enumerate(parsed, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        skill_description = str(item.get("description") or "").strip()
+        if not name or not skill_description:
+            continue
+        skill_id = _slugify_skill_id(str(item.get("id") or name), f"skill-{idx}")
+        skills.append({
+            "id": skill_id,
+            "name": name[:512],
+            "description": skill_description[:512],
+            "tags": item.get("tags", [])[:10],
+            "examples": item.get("examples", [])[:5],
+        })
+    return skills or None
+
+
+async def _build_agent_skills(agent_name: str, description: str, config: SessionConfig) -> list[dict[str, Any]]:
+    portal_skills = _portal_agent_skills(config)
+    if portal_skills:
+        return portal_skills
+    llm_skills = await _derive_agent_skills_via_llm(config)
+    if llm_skills:
+        return llm_skills
+    # Only reached if the LLM extraction call itself fails (e.g. deployment misconfigured);
+    # Azure Foundry's A2A endpoint requires at least one skill, so fall back to a single
+    # generic entry built from data every agent already has, with no format assumptions.
+    return [{"id": agent_name, "name": agent_name, "description": description}]
+
+
+async def _enable_azure_foundry_a2a(
+    endpoint: str,
+    token: str,
+    api_version: str,
+    agent_name: str,
+    description: str,
+    config: SessionConfig,
+) -> None:
+    patch_url = f"{endpoint}/agents/{agent_name}?api-version={api_version}"
+    skills = await _build_agent_skills(agent_name, description, config)
+    payload = {
+        "agent_card": {
+            "description": description,
+            "version": "1.0",
+            # Azure Foundry's preview A2A endpoint 500s (instead of validating)
+            # when agent_card.skills is missing or empty, so at least one entry is required.
+            "skills": skills,
+        },
+        "agent_endpoint": {
+            "protocols": ["responses", "a2a"],
+        },
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.patch(
+            patch_url,
+            headers=_azure_agent_headers(token),
+            json=payload,
+        )
+
+    if resp.status_code not in (200, 201):
+        detail = resp.text[:600]
+        if resp.status_code in (401, 403):
+            detail += _azure_foundry_auth_hint(resp.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure Foundry A2A enablement failed {resp.status_code}: {detail}",
+        )
+
+
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
     endpoint, token, api_version, deployment = _azure_foundry_project_settings(config)
     agent_name = _azure_agent_resource_name(config.agent_name)
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:512]
+    description = _agent_description(config, 512)
     payload = {
         "name": agent_name,
         "description": description,
@@ -787,10 +978,13 @@ async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryA
             detail=f"Azure Foundry agent provisioning failed {resp.status_code}: {detail}",
         )
 
+    await _enable_azure_foundry_a2a(endpoint, token, api_version, agent_name, description, config)
+
     return AzureFoundryAgentProvisioning(
         enabled=True,
         agent_name=agent_name,
         agent=resp.json(),
+        a2a_enabled=True,
     )
 
 
@@ -1593,9 +1787,7 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     )
 
     agent_name = _azure_agent_resource_name(config.agent_name)  # Reuse naming convention
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:200]
+    description = _agent_description(config, 200)
     # Use agent-supported model ID (no 'us.' prefix)
     model_id = BEDROCK_AGENT_SUPPORTED_MODELS.get(model_key, BEDROCK_AGENT_SUPPORTED_MODELS["claude-3-5-sonnet"])
     logger.debug("Resolved Bedrock model ID: %s", model_id)

@@ -820,9 +820,18 @@ const AgentViewPage: React.FC = () => {
                     ) : (
                         <>
                             <button
-                                onClick={() => navigate(
-                                    `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}&agentType=${encodeURIComponent(agent.agent_type || 'Config-driven')}&agentInternalId=${encodeURIComponent(agent.identification?.agent_internal_id ?? '')}&tenantId=${encodeURIComponent(agent.tenant_id ?? (agent as any).company_id ?? '')}`
-                                )}
+                                onClick={() => {
+                                    const agentId = agent.identification?.agent_id ?? agent.name;
+                                    try {
+                                        sessionStorage.setItem(
+                                            `tavro_playground_agent_skills:${agentId}`,
+                                            JSON.stringify(agent.skills ?? []),
+                                        );
+                                    } catch { /* best effort */ }
+                                    navigate(
+                                        `/playground?useCase=${encodeURIComponent(agentId)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}&agentType=${encodeURIComponent(agent.agent_type || 'Config-driven')}&agentInternalId=${encodeURIComponent(agent.identification?.agent_internal_id ?? '')}&tenantId=${encodeURIComponent(agent.tenant_id ?? (agent as any).company_id ?? '')}`
+                                    );
+                                }}
                                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
                             >
                                 <FlaskConical size={15} /> Playground
