@@ -4,6 +4,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
+import { appLogger } from '../services/logger';
 import type {
   PlaygroundAgentSkill, PlaygroundConfig, PlaygroundMessage, PlaygroundObservation, InfraProvider,
 } from '../types/playground';
@@ -21,6 +22,9 @@ export interface AttachmentPayload {
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 async function apiPost<T>(path: string, body?: any): Promise<T> {
+  const label = `POST /api/v1/playground${path}`;
+  appLogger.req(label, body);
+  const t0 = Date.now();
   const res = await fetch(`${API_BASE}/api/v1/playground${path}`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -34,21 +38,40 @@ async function apiPost<T>(path: string, body?: any): Promise<T> {
     } catch {
       // Keep the plain-text response.
     }
+    appLogger.error(label, detail);
     throw new Error(`API ${res.status}: ${detail}`);
   }
-  return res.json();
+  const result = await res.json();
+  appLogger.res(label, result, Date.now() - t0);
+  return result;
 }
 
 async function apiGet<T>(path: string): Promise<T> {
+  const label = `GET /api/v1/playground${path}`;
+  appLogger.req(label);
+  const t0 = Date.now();
   const res = await fetch(`${API_BASE}/api/v1/playground${path}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  if (!res.ok) {
+    appLogger.error(label, `API ${res.status}`);
+    throw new Error(`API ${res.status}`);
+  }
+  const result = await res.json();
+  appLogger.res(label, result, Date.now() - t0);
+  return result;
 }
 
 async function apiDelete<T>(path: string): Promise<T> {
+  const label = `DELETE /api/v1/playground${path}`;
+  appLogger.req(label);
+  const t0 = Date.now();
   const res = await fetch(`${API_BASE}/api/v1/playground${path}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  if (!res.ok) {
+    appLogger.error(label, `API ${res.status}`);
+    throw new Error(`API ${res.status}`);
+  }
+  const result = await res.json();
+  appLogger.res(label, result, Date.now() - t0);
+  return result;
 }
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
@@ -149,12 +172,14 @@ export const PlaygroundProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   const setProvider = useCallback((provider: InfraProvider) => {
+    appLogger.info(`Selected infrastructure: ${provider}`, { model: PROVIDER_MODELS[provider][0] });
     setConfigState(prev => ({
       ...prev, provider, model: PROVIDER_MODELS[provider][0],
     }));
   }, []);
 
   const loadFromAgent = useCallback((id: string, name: string, description?: string, instruction?: string, agentType?: string, agentInternalId?: string, agentId?: string, tenantId?: string, skills?: PlaygroundAgentSkill[]) => {
+    appLogger.info(`Loaded '${name}' into Agent Playground`, { useCaseId: id, agentId, agentInternalId, skillCount: skills?.length ?? 0 });
     setConfigState(prev => ({
       ...prev,
       useCaseId:    id,

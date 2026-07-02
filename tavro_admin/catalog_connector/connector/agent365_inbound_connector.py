@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import random
 import uuid
 import json
 from pathlib import Path
@@ -1206,6 +1207,16 @@ class Agent365InboundConnector(BaseConnector):
     def _refresh_token(self) -> str:
         return (self.config.get("refresh_token") or _env_value("AGENT365_REFRESH_TOKEN")).strip()
 
+    def _num_agents_to_fetch(self) -> Optional[int]:
+        raw = str(self.config.get("num_agents") or _env_value("AGENT365_NUM_AGENTS") or "").strip()
+        if not raw:
+            return None
+        try:
+            n = int(raw)
+        except ValueError:
+            return None
+        return n if n > 0 else None
+
     def fetch_metadata(self) -> List[Dict]:
         if not self.access_token:
             raise RuntimeError("Agent365 connector is not authenticated")
@@ -1305,6 +1316,12 @@ class Agent365InboundConnector(BaseConnector):
         self.authenticate()
 
         records = self.fetch_metadata()
+
+        num_agents = self._num_agents_to_fetch()
+        if num_agents is not None and num_agents < len(records):
+            records = random.sample(records, num_agents)
+            print(f"Randomly sampled {num_agents} of the discovered agent(s)")
+
         bots = self.normalize(records)
         if not bots:
             print("No Agent365 agents found")
