@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from catalog_connector.aict_outbound import sync_agent as _aict_sync
 import json
 import logging
 import os
@@ -119,18 +120,10 @@ def _process_card_sync(card_dict: dict, tenant_id: str | None, company_id: str |
         process_card_for_upload(card_dict, tenant_id, company_id=company_id, company_name=company_name)
         _save_card_to_disk(_strip_risk_fields(original))
 
-        # Sync to AICT — runs in the same thread since create_ai_system uses blocking requests
-        try:
-            from services.integrations.aict_integration import create_ai_system, is_configured
-            if is_configured():
-                agent_name = (card_dict.get("name") or "").strip()
-                agent_desc = (card_dict.get("description") or "").strip()
-                provider = (card_dict.get("provider") or {}).get("organization") or None
-                if agent_name:
-                    result = create_ai_system(agent_name, agent_desc, provider)
-                    print(f"[aict-sync] upload: created AI system: {result}")
-        except Exception as aict_err:
-            print(f"[aict-sync] upload: {aict_err}")
+        agent_name = (card_dict.get("name") or "").strip()
+        if agent_name:
+            provider = (card_dict.get("provider") or {}).get("organization") or None
+            _aict_sync(agent_name, card_dict.get("description") or "", provider)
 
         return {"success": True, "validation_error": False, "error": None}
     except ValueError as e:

@@ -18,10 +18,11 @@ RUN pip install \
       -r /tmp/requirements-risk.txt && \
     pip install /tmp/*.whl
 
-COPY tavro/tavro_api/   /app/
-COPY tavro/services     /app/services
-COPY tavro/tavro_library /app/tavro_library
-COPY tavro/utils        /app/utils
+COPY tavro/tavro_api/        /app/
+COPY tavro/services          /app/services
+COPY tavro/tavro_library     /app/tavro_library
+COPY tavro/utils             /app/utils
+COPY tavro/catalog_connector /app/catalog_connector
 
 ENV PYTHONPATH=/app
 

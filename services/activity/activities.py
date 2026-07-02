@@ -14,7 +14,7 @@ from services.db.db_functions import (
     refresh_curated_agent_360,
     create_local_agent_card,
 )
-from services.integrations.aict_integration import create_ai_system, is_configured as aict_is_configured
+from catalog_connector.aict_outbound import create_ai_system, is_configured as aict_is_configured
 
 
 @activity.defn

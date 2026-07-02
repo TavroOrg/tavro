@@ -93,17 +93,9 @@ SERVICENOW_USERNAME=
 SERVICENOW_PASSWORD=
 
 # ── AICT (ServiceNow AI Control Tower) Integration ───────────────────────────
-# When set, every new Tavro agent is automatically registered as an AI System
-# in ServiceNow AICT (find-or-create: provider → product model → digital asset).
-# Leave blank to disable the integration.
-AICT_INSTANCE_URL=https://your-instance.service-now.com
-AICT_USERNAME=
-AICT_PASSWORD=
-# Default manufacturer name used when the Tavro agent has no provider field set.
-AICT_PROVIDER_NAME=Tavro
-# sys_id of the "Agentic AI" cmdb_model_category in your ServiceNow instance.
-# Find it via: GET /api/now/table/cmdb_model_category?sysparm_query=name=Agentic+AI
-AICT_MODEL_CATEGORY_SYS_ID=5383f164ffec2a10c0fbffffffffff82
+# Uses shared SERVICENOW_INSTANCE_URL / SERVICENOW_USERNAME / SERVICENOW_PASSWORD.
+# Set AICT_ENABLED=false to turn off outbound agent sync without removing credentials.
+AICT_ENABLED=false
 
 # ── Catalog Connector - Salesforce ───────────────────────────────────────────
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com

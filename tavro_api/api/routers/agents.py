@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from catalog_connector.aict_outbound import sync_agent as _aict_sync
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -110,22 +111,6 @@ async def _fire_risk(payload: Dict[str, Any]) -> None:
     except Exception as e:
         _logger.error("[risk-trigger] Failed to fire risk assessment: %s", e, exc_info=True)
 
-
-async def _sync_to_aict(
-    agent_name: str,
-    agent_description: str,
-    provider: Optional[str] = None,
-    tools: Optional[List[Dict[str, Any]]] = None,
-) -> None:
-    try:
-        from services.integrations.aict_integration import create_ai_system, is_configured
-        if not is_configured():
-            return
-        import asyncio
-        result = await asyncio.to_thread(create_ai_system, agent_name, agent_description, provider, tools)
-        print(f"[aict-sync] created AI system: {result}")
-    except Exception as e:
-        print(f"[aict-sync] {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1399,7 +1384,7 @@ async def create_agent(
                       body.description, body.instruction, tenant_id),
     )
 
-    background_tasks.add_task(_sync_to_aict, body.agent_name, body.description, provider, body.tools)
+    background_tasks.add_task(_aict_sync, body.agent_name, body.description, None)
 
     return {"agent_id": agent_id, "agent_name": body.agent_name,
             "message": "Agent created successfully and risk assessment triggered."}

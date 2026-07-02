@@ -396,7 +396,7 @@ const AdminConnectorsPage: React.FC = () => {
                     body: JSON.stringify({ credentials: sharedCreds }),
                 })
             );
-            // Also persist outbound-specific settings (enabled, provider_name)
+            // Also persist outbound-specific settings (enabled)
             const outboundCap = p.capabilities.find(c => c.isOutbound);
             if (outboundCap) {
                 promises.push(
@@ -498,13 +498,8 @@ const AdminConnectorsPage: React.FC = () => {
         // Outbound-specific guards — show red error in result area, still allow retry
         if (cap.isOutbound) {
             const enabled = getCred(cap.connectorId, 'enabled');
-            const providerName = getCred(cap.connectorId, 'provider_name');
             if (enabled === 'false') {
                 setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'AICT outbound sync is disabled. Enable it in the shared credentials section above.' } } }));
-                return;
-            }
-            if (!providerName.trim()) {
-                setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'Provider name is required. Set it in the shared credentials section above.' } } }));
                 return;
             }
         }
@@ -806,22 +801,6 @@ const AdminConnectorsPage: React.FC = () => {
                             )}
                         </div>
 
-                        {/* Provider Name — only for providers with an outbound capability */}
-                        {provider.capabilities.some(c => c.isOutbound) && (() => {
-                            const outCap = provider.capabilities.find(c => c.isOutbound)!;
-                            return (
-                                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Provider Name</label>
-                                    <input
-                                        type="text"
-                                        value={getCred(outCap.connectorId, 'provider_name')}
-                                        onChange={e => setCred(outCap.connectorId, 'provider_name', e.target.value)}
-                                        placeholder="Tavro"
-                                        className={inputBase}
-                                    />
-                                </div>
-                            );
-                        })()}
 
                         <div className="flex items-center gap-2">
                             <SaveButton state={getSaveState(sharedConnId)} onClick={() => saveSharedCredentials(provider)} disabled={anyRunning} />
@@ -975,8 +954,7 @@ const AdminConnectorsPage: React.FC = () => {
                                 const allFilled  =
                                     !!getCred(sharedConnId, 'instance_url').trim() &&
                                     !!getCred(sharedConnId, 'username').trim() &&
-                                    !!getCred(sharedConnId, 'password').trim() &&
-                                    !!getCred(cap.connectorId, 'provider_name').trim();
+                                    !!getCred(sharedConnId, 'password').trim();
                                 return (
                                     <div className={`flex items-center justify-between ${!allFilled ? 'opacity-40' : ''}`}>
                                         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable AICT Sync</p>
