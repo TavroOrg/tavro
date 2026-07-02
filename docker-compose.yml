@@ -111,6 +111,9 @@ services:
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
+      # AICT (ServiceNow AI Control Tower) — uses shared SERVICENOW_* credentials
+      AICT_ENABLED:         ${AICT_ENABLED:-false}
+      ENV_FILE_PATH:        /app/.env
       # Agent Playground — Publish to Git
       GIT_PUBLISH_REPO_URL: '${GIT_PUBLISH_REPO_URL:-}'
       GIT_PUBLISH_TOKEN:    '${GIT_PUBLISH_TOKEN:-}'
@@ -121,13 +124,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./tavro_api:/app                    # live reload — tavro_api code
-      - ./services:/app/services:ro         # live reload — risk services
-      - ./utils:/app/utils:ro               # live reload — risk utils
+      - ./tavro_api:/app                              # live reload — tavro_api code
+      - ./services:/app/services:ro                 # live reload — risk services
+      - ./utils:/app/utils:ro                       # live reload — risk utils
+      - ./catalog_connector:/app/catalog_connector:ro  # aict outbound connector
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
       - ./.env:/app/.env:rw                           # Agent 365 refresh token + connector credentials
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
       interval: 30s
@@ -536,9 +541,16 @@ services:
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
       OPENAI_API_KEY:       ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
+      AICT_ENABLED:              ${AICT_ENABLED:-false}
+      ENV_FILE_PATH:             /app/.env
+      SERVICENOW_INSTANCE_URL:   ${SERVICENOW_INSTANCE_URL:-}
+      SERVICENOW_USERNAME:       ${SERVICENOW_USERNAME:-}
+      SERVICENOW_PASSWORD:       ${SERVICENOW_PASSWORD:-}
     volumes:
       - ./tavro_api/agent_cards:/app/agent_cards
       - tavro_runtime_config:/app/runtime:ro
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
+      - ./catalog_connector:/app/catalog_connector:ro  # aict outbound connector
     depends_on:
       tavro-postgres:
         condition: service_healthy

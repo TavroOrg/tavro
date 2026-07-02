@@ -27,9 +27,11 @@ RUN pip install  \
 COPY tavro_api/ /app/
 
 # ── Copy Risk stack source (keeps original import paths intact) ───────────────
-COPY services     /app/services
-COPY tavro_library /app/tavro_library
-COPY utils        /app/utils
+COPY services          /app/services
+COPY tavro_library     /app/tavro_library
+COPY utils             /app/utils
+COPY catalog_connector /app/catalog_connector
+COPY catalog_connector /app/catalog_connector
 
 ENV PYTHONPATH=/app
 

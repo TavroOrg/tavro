@@ -51,8 +51,9 @@ CONNECTOR_MAP: dict[str, tuple[str, str]] = {
     "databricks":    ("catalog_connector.connector.databricks_connector",     "DatabricksConnector"),
     "gemini":        ("catalog_connector.connector.gemini_connector",         "GeminiConnector"),
     "github":        ("catalog_connector.connector.mcp_connector.github_connector", "GithubConnector"),
-    "aict_inbound":  ("catalog_connector.connector.aict_inbound_connector",  "AICTInboundConnector"),
-    "agent365":   ("catalog_connector.connector.agent365_inbound_connector", "Agent365InboundConnector"),
+    "aict_inbound":   ("catalog_connector.connector.aict_inbound_connector",   "AICTInboundConnector"),
+    "aict_outbound":  ("catalog_connector.connector.aict_outbound_connector",  "AICTOutboundConnector"),
+    "agent365":       ("catalog_connector.connector.agent365_inbound_connector", "Agent365InboundConnector"),
 }
 
 _connector_lock = threading.Lock()

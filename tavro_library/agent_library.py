@@ -2014,6 +2014,12 @@ class AgentMetadataExporter:
         # Fire-and-forget
         cls.send_payload_async(payload)
 
+        try:
+            from catalog_connector.aict_outbound import sync_agent as _aict_sync
+            _aict_sync(raw_agent_name, raw_description, None)
+        except Exception:
+            pass
+
         return {
             "agent_id": agent_id,
             "agent_name": raw_agent_name,
