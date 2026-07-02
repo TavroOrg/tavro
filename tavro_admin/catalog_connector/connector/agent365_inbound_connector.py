@@ -1277,37 +1277,15 @@ class Agent365InboundConnector(BaseConnector):
                 "instruction": instruction,
                 "provider_name": f"Microsoft 365 - {publisher}",
                 "version": record.get("version") or "",
-                "tool": self._extract_tools(record, name, description),
+                # Agent 365 agents should not populate the catalog Lineage Map
+                # (no self-referential or auto-derived tool entries).
+                "tool": [],
                 "source_hash": hashlib.sha256(bot_id.encode()).hexdigest(),
             })
         return bots
 
     def _build_instruction(self, record: dict) -> str:
         return (record.get("instructions") or "").strip()
-
-    def _extract_tools(self, record: dict, name: str, description: str) -> List[dict]:
-        tools: List[dict] = []
-
-        def add_tool(tool_name: Any, tool_desc: Any = "") -> None:
-            clean_name = str(tool_name or "").strip()
-            if not clean_name:
-                return
-            if any(t["name"].lower() == clean_name.lower() for t in tools):
-                return
-            tools.append({"id": clean_name, "name": clean_name, "description": str(tool_desc or "").strip()})
-
-        for field in ("customActions", "actions", "plugins", "tools"):
-            for item in record.get(field, []) or []:
-                if isinstance(item, dict):
-                    add_tool(
-                        item.get("name_for_human") or item.get("name") or
-                        item.get("displayName") or item.get("title") or item.get("id"),
-                        item.get("description_for_human") or item.get("description") or item.get("summary"),
-                    )
-
-        if not tools and str(record.get("id") or "").startswith("T_"):
-            add_tool(name, description[:300])
-        return tools
 
     def execute(self):
         import worker as _worker
@@ -1318,9 +1296,15 @@ class Agent365InboundConnector(BaseConnector):
         records = self.fetch_metadata()
 
         num_agents = self._num_agents_to_fetch()
-        if num_agents is not None and num_agents < len(records):
-            records = random.sample(records, num_agents)
-            print(f"Randomly sampled {num_agents} of the discovered agent(s)")
+        if num_agents is not None:
+            if num_agents > len(records):
+                raise ValueError(
+                    f"There are only {len(records)} agent(s) available in Microsoft Agent 365 "
+                    f"(requested {num_agents})."
+                )
+            if num_agents < len(records):
+                records = random.sample(records, num_agents)
+                print(f"Randomly sampled {num_agents} of the discovered agent(s)")
 
         bots = self.normalize(records)
         if not bots:
