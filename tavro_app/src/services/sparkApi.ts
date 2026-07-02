@@ -1,6 +1,7 @@
 import type { SparkIdea, SparkConvertRequest } from '../types/spark';
 import { appLogger } from './logger';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = import.meta.env.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -26,13 +27,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text();
-    const isHtml = body.trimStart().startsWith('<');
-    const message = isHtml
-      ? res.status === 504
-        ? 'The request timed out. Please try again.'
-        : `Unexpected error (${res.status}). Please try again.`
-      : body.slice(0, 250);
-    throw new Error(`API ${res.status}: ${message}`);
+    throw new Error(parseApiError(res.status, body));
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -45,6 +40,15 @@ export interface UseCaseFields {
   expected_benefits: string;
   priority: string;
   solution_approach?: string;
+  executive_summary?: string;
+  assumptions?: string;
+  quantified_financial_benefits?: string;
+  total_financial_impact_summary?: string;
+  implementation_cost_estimate?: string;
+  return_on_investment?: string;
+  risk_considerations?: string;
+  implementation_roadmap?: string;
+  recommendation?: string;
 }
 
 class SparkApi {

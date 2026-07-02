@@ -10,6 +10,7 @@ import { useChatSync } from '../hooks/useChatSync';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useBlueprint } from '../context/BlueprintContext';
+import { toUserMessage, notifyError } from '../utils/errorUtils';
 
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
@@ -456,9 +457,32 @@ const AgentViewPage: React.FC = () => {
             }
 
             if (resolved) {
-                const pendingAware = isLocallyPendingAssessment(resolved, id)
-                    ? markAssessmentRunning(resolved)
-                    : resolved;
+                let pendingAware: AgentData;
+                if (isLocallyPendingAssessment(resolved, id)) {
+                    pendingAware = markAssessmentRunning(resolved);
+                } else if (resolved.identification?.governance_status === 'Risk Assessment is running') {
+                    // Clear stale API value when no running Temporal workflow backs it up.
+                    let isWorkflowRunning = false;
+                    try {
+                        const raw = localStorage.getItem('tavro_temporal_workflows');
+                        const records: any[] = raw ? JSON.parse(raw) : [];
+                        const agentId = (resolved.identification?.agent_id ?? id ?? '').toLowerCase().trim();
+                        const agentName = (resolved.name ?? '').toLowerCase().trim();
+                        isWorkflowRunning = (Array.isArray(records) ? records : []).some((wf: any) => {
+                            if (String(wf?.status ?? '').toLowerCase() !== 'running') return false;
+                            const wfId = String(wf?.agent_id ?? '').toLowerCase().trim();
+                            const wfInternal = String(wf?.agent_internal_id ?? '').toLowerCase().trim();
+                            const wfName = String(wf?.name ?? '').toLowerCase().trim();
+                            return (agentId && (wfId === agentId || wfInternal === agentId || wfName === agentId)) ||
+                                   (agentName && (wfId === agentName || wfInternal === agentName || wfName === agentName));
+                        });
+                    } catch { /* ignore */ }
+                    pendingAware = isWorkflowRunning
+                        ? resolved
+                        : { ...resolved, identification: { ...resolved.identification, governance_status: null } };
+                } else {
+                    pendingAware = resolved;
+                }
                 const overlaid = applyRecentEditOverlay(pendingAware);
                 setAgent(overlaid);
             }
@@ -569,7 +593,7 @@ const AgentViewPage: React.FC = () => {
             refreshCatalog();
             navigate('/catalog');
         } catch (err: any) {
-            alert(err.message || 'Failed to delete agent.');
+            notifyError(toUserMessage(err));
         } finally {
             setDeleting(false);
             setDeleteConfirm(false);
@@ -594,7 +618,7 @@ const AgentViewPage: React.FC = () => {
             unregisterPendingAssessment(previousAgent, id);
             setAgent(previousAgent);
             upsertAgent(previousAgent);
-            alert("Failed to request risk assessment.");
+            notifyError('Failed to request risk assessment. Please try again.');
         } finally {
             setAssessing(false);
         }
@@ -644,7 +668,7 @@ const AgentViewPage: React.FC = () => {
             setInlineEdit(null);
             setIsEditing(false);
         } catch (err: any) {
-            setEditError(err.message || 'Failed to update agent. Please try again.');
+            setEditError(toUserMessage(err));
         } finally {
             setEditSaving(false);
         }
@@ -695,7 +719,7 @@ const AgentViewPage: React.FC = () => {
             });
             setInlineEdit(null);
         } catch (err: any) {
-            setEditError(err.message || 'Failed to update agent field. Please try again.');
+            setEditError(toUserMessage(err));
         } finally {
             setInlineSaving(null);
         }
@@ -796,13 +820,23 @@ const AgentViewPage: React.FC = () => {
                     ) : (
                         <>
                             <button
-                                onClick={() => navigate(
-                                    `/playground?useCase=${encodeURIComponent(agent.identification?.agent_id ?? agent.name)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}`
-                                )}
+                                onClick={() => {
+                                    const agentId = agent.identification?.agent_id ?? agent.name;
+                                    try {
+                                        sessionStorage.setItem(
+                                            `tavro_playground_agent_skills:${agentId}`,
+                                            JSON.stringify(agent.skills ?? []),
+                                        );
+                                    } catch { /* best effort */ }
+                                    navigate(
+                                        `/playground?useCase=${encodeURIComponent(agentId)}&title=${encodeURIComponent(agent.name)}&desc=${encodeURIComponent(agent.description ?? '')}&instruction=${encodeURIComponent(agent.identification?.instruction ?? '')}&agentType=${encodeURIComponent(agent.agent_type || 'Config-driven')}&agentInternalId=${encodeURIComponent(agent.identification?.agent_internal_id ?? '')}&tenantId=${encodeURIComponent(agent.tenant_id ?? (agent as any).company_id ?? '')}`
+                                    );
+                                }}
                                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500 transition-all shadow-sm"
                             >
                                 <FlaskConical size={15} /> Playground
                             </button>
+
                             <button
                                 onClick={handleRequestRiskAssessment}
                                 disabled={assessing}

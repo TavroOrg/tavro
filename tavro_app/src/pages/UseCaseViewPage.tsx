@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import UseCaseView from '../components/UseCaseView';
@@ -273,12 +274,36 @@ const mergeUseCaseWithRestDetail = (
   const linkedAgents = normalizeUseCaseAgents(
     row.of_associated_agents ?? row.agents ?? [],
   );
+  const restRiskFields = {
+    agent_risk_exposure_are: row.agent_risk_exposure_are ?? (base as any)?.agent_risk_exposure_are,
+    no_of_associated_agents: row.no_of_associated_agents ?? (base as any)?.no_of_associated_agents,
+    blended_risk_score: row.blended_risk_score ?? (base as any)?.blended_risk_score,
+    inherent_risk_classification: row.inherent_risk_classification ?? (base as any)?.inherent_risk_classification,
+    inherent_risk_classification_score: row.inherent_risk_classification_score ?? (base as any)?.inherent_risk_classification_score,
+    residual_risk_classification: row.residual_risk_classification ?? (base as any)?.residual_risk_classification,
+    residual_risk_classification_score: row.residual_risk_classification_score ?? (base as any)?.residual_risk_classification_score,
+    agent_risk_tier_art: row.agent_risk_tier_art ?? (base as any)?.agent_risk_tier_art,
+  };
+
+  const businessCaseFields = {
+    executive_summary: row.executive_summary ?? (base as any)?.executive_summary ?? null,
+    assumptions: row.assumptions ?? (base as any)?.assumptions ?? null,
+    quantified_financial_benefits: row.quantified_financial_benefits ?? (base as any)?.quantified_financial_benefits ?? null,
+    total_financial_impact_summary: row.total_financial_impact_summary ?? (base as any)?.total_financial_impact_summary ?? null,
+    implementation_cost_estimate: row.implementation_cost_estimate ?? (base as any)?.implementation_cost_estimate ?? null,
+    return_on_investment: row.return_on_investment ?? (base as any)?.return_on_investment ?? null,
+    risk_considerations: row.risk_considerations ?? (base as any)?.risk_considerations ?? null,
+    implementation_roadmap: row.implementation_roadmap ?? (base as any)?.implementation_roadmap ?? null,
+    recommendation: row.recommendation ?? (base as any)?.recommendation ?? null,
+  };
 
   const linkedAiModels = normalizeUseCaseAiModels(row.of_associated_ai_models ?? row.ai_models ?? []);
 
   if (base) {
     return {
       ...base,
+      ...restRiskFields,
+      ...businessCaseFields,
       solution_approach: row.solution_approach ?? (base as any).solution_approach ?? null,
       created_ts: row.created_ts ?? (base as any).created_ts ?? null,
       updated_ts: row.updated_ts ?? (base as any).updated_ts ?? null,
@@ -291,6 +316,7 @@ const mergeUseCaseWithRestDetail = (
   }
 
   return {
+    ...row,
     identifier: String(row.identifier ?? row.use_case_id ?? row.id ?? fallbackId),
     name: String(row.name ?? row.title ?? 'Unnamed Use Case'),
     description: row.description ?? null,
@@ -308,6 +334,8 @@ const mergeUseCaseWithRestDetail = (
     business_processes: linkedProcesses,
     of_associated_ai_models: linkedAiModels,
     ai_models: linkedAiModels,
+    ...restRiskFields,
+    ...businessCaseFields,
   } as UseCaseDetail;
 };
 
@@ -429,7 +457,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingLinks(prev => prev.filter(a => (a.identification?.agent_id || a.name) !== aId));
-      setRelationError(err.message || 'Failed to link agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -447,7 +475,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
       onSilentRefetch();
     } catch (err: any) {
       setPendingUnlinkIds(prev => { const next = new Set(prev); next.delete(linkedAgentId); return next; });
-      setRelationError(err.message || 'Failed to unlink agent. Please try again.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -636,7 +664,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
       const data = await businessRelationsApi.listApplications(undefined, companyId);
       setAllApplications(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load application catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -667,7 +695,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -693,7 +721,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
         next.delete(applicationId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -891,7 +919,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
       const data = await businessRelationsApi.listProcesses(undefined, companyId);
       setAllProcesses(data);
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load process catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -922,7 +950,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to link process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -948,7 +976,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
         next.delete(processId);
         return next;
       });
-      setRelationError(err.message || 'Failed to unlink process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1094,7 +1122,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
     try {
       setAllModels(await aiModelApi.listModels(undefined, companyId));
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to load AI model catalog.');
+      setRelationError(toUserMessage(err));
     } finally {
       setLoadingCatalog(false);
     }
@@ -1113,7 +1141,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1128,7 +1156,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
       refreshUC();
       onSilentRefetch();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to unlink AI model.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActing(null);
     }
@@ -1255,6 +1283,13 @@ const UseCaseViewPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('tavro_enriching_use_cases');
+      const ids: string[] = raw ? JSON.parse(raw) : [];
+      return ids.includes(id ?? '');
+    } catch { return false; }
+  });
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
@@ -1285,7 +1320,7 @@ const UseCaseViewPage: React.FC = () => {
       refreshUseCases();
       navigate('/use-cases');
     } catch (err: any) {
-      setError(err.message || 'Failed to delete use case.');
+      setError(toUserMessage(err));
       setDeleteConfirm(false);
     } finally {
       setDeleting(false);
@@ -1315,7 +1350,7 @@ const UseCaseViewPage: React.FC = () => {
       if (!merged) throw new Error('Use Case not found');
       setUseCase(merged);
     } catch (err: any) {
-      setError(err.message || 'Failed to load use case details');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
@@ -1346,6 +1381,49 @@ const UseCaseViewPage: React.FC = () => {
   useEffect(() => {
     fetchUseCase();
   }, [id]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ use_case_id: string; title?: string }>).detail;
+      if (detail?.use_case_id !== id) return;
+      setEnriching(false);
+      fetchUseCaseSilently();
+      refreshUseCases();
+      const name = detail.title || 'Use case';
+      window.dispatchEvent(new CustomEvent('tavro_notice', {
+        detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.` },
+      }));
+    };
+    window.addEventListener('tavro_usecase_enriched', handler);
+    return () => window.removeEventListener('tavro_usecase_enriched', handler);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || isEditing) return;
+
+    const handleWorkflowUpdate = () => {
+      fetchUseCaseSilently();
+      refreshUseCases();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, activeCompany?.id, isEditing, refreshUseCases]);
+
+  useEffect(() => {
+    if (!id || isEditing || loading) return;
+    try {
+      const raw = localStorage.getItem('tavro_temporal_workflows');
+      if (raw !== null) {
+        const workflows = JSON.parse(raw) as Array<{ status?: string }>;
+        const hasRunning = workflows.some(w => String(w.status ?? '').trim().toLowerCase() === 'running');
+        if (!hasRunning) fetchUseCaseSilently();
+      }
+    } catch {
+      // Ignore malformed workflow snapshots.
+    }
+  }, [id, activeCompany?.id, isEditing, loading]);
+
 
   useEffect(() => {
     if (!useCase) return;
@@ -1430,7 +1508,7 @@ const UseCaseViewPage: React.FC = () => {
       });
       setIsEditing(false);
     } catch (err: any) {
-      setEditError(err.message || 'Failed to update use case.');
+      setEditError(toUserMessage(err));
     } finally {
       setEditSaving(false);
     }
@@ -1457,6 +1535,15 @@ const UseCaseViewPage: React.FC = () => {
       else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
       else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
       else if (field === 'solution_approach') payload.solution_approach = value.trim();
+      else if (field === 'executive_summary') payload.executive_summary = value.trim();
+      else if (field === 'assumptions') payload.assumptions = value.trim();
+      else if (field === 'quantified_financial_benefits') payload.quantified_financial_benefits = value.trim();
+      else if (field === 'total_financial_impact_summary') payload.total_financial_impact_summary = value.trim();
+      else if (field === 'implementation_cost_estimate') payload.implementation_cost_estimate = value.trim();
+      else if (field === 'return_on_investment') payload.return_on_investment = value.trim();
+      else if (field === 'risk_considerations') payload.risk_considerations = value.trim();
+      else if (field === 'implementation_roadmap') payload.implementation_roadmap = value.trim();
+      else if (field === 'recommendation') payload.recommendation = value.trim();
       await useCaseApi.updateUseCase(id, payload);
       setUseCase(prev => {
         if (!prev) return prev;
@@ -1468,6 +1555,15 @@ const UseCaseViewPage: React.FC = () => {
         else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
         else if (field === 'expected_benefits') next.expected_benefits = value.trim();
         else if (field === 'solution_approach') next.solution_approach = value.trim();
+        else if (field === 'executive_summary') next.executive_summary = value.trim();
+        else if (field === 'assumptions') next.assumptions = value.trim();
+        else if (field === 'quantified_financial_benefits') next.quantified_financial_benefits = value.trim();
+        else if (field === 'total_financial_impact_summary') next.total_financial_impact_summary = value.trim();
+        else if (field === 'implementation_cost_estimate') next.implementation_cost_estimate = value.trim();
+        else if (field === 'return_on_investment') next.return_on_investment = value.trim();
+        else if (field === 'risk_considerations') next.risk_considerations = value.trim();
+        else if (field === 'implementation_roadmap') next.implementation_roadmap = value.trim();
+        else if (field === 'recommendation') next.recommendation = value.trim();
         return next as UseCaseDetail;
       });
       setInlineEdit(null);
@@ -1613,6 +1709,13 @@ const UseCaseViewPage: React.FC = () => {
         </div>
       )}
 
+      {enriching && (
+        <div className="flex items-center gap-3 px-5 py-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-800 text-sm font-medium shadow-sm">
+          <RefreshCw size={15} className="animate-spin shrink-0 text-blue-500" />
+          <span>Enriching AI Use Case and creating an appropriate agent.</span>
+        </div>
+      )}
+
       {!loading && !error && useCase && (
         <UseCaseView
           useCase={useCase}
@@ -1645,6 +1748,7 @@ const UseCaseViewPage: React.FC = () => {
           onInlineValueChange={(v) => setInlineEdit(prev => prev ? { ...prev, value: v } : null)}
           onSaveInlineEdit={handleSaveInlineEdit}
           onCancelInlineEdit={handleCancelInlineEdit}
+          enriching={enriching}
         />
       )}
 

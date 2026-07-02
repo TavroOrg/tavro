@@ -4,6 +4,8 @@ import type {
   AiModelAttachmentRecord,
 } from '../types/aiModel';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
+import { appLogger } from './logger';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -88,9 +90,19 @@ class AiModelApi {
     params.set('record_range', '1-500');
     if (companyId) params.set('company_id', companyId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/ai-models/', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/ai-models/${suffix}`);
-    if (Array.isArray(data)) return data as AiModelRecord[];
-    return (data?.items ?? data?.data ?? []) as AiModelRecord[];
+    const items = Array.isArray(data) ? data as AiModelRecord[] : (data?.items ?? data?.data ?? []) as AiModelRecord[];
+    appLogger.res('GET /api/v1/ai-models/', { count: items.length }, Date.now() - t0);
+    return items;
+  }
+
+  async countModels(companyId?: string): Promise<number> {
+    const params = new URLSearchParams({ 'record_range': '1-1' });
+    if (companyId) params.set('company_id', companyId);
+    const data = await req<any>(`/ai-models/?${params.toString()}`);
+    return (data?.total_records ?? 0) as number;
   }
 
   async getModel(modelId: string, companyId?: string): Promise<AiModelRecord> {
@@ -131,15 +143,17 @@ class AiModelApi {
     });
   }
 
-  async linkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents`, {
+  async linkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents${qs}`, {
       method: 'POST',
       body: JSON.stringify({ agent_id: agentId }),
     });
   }
 
-  async unlinkAgent(modelId: string, agentId: string): Promise<void> {
-    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}`, {
+  async unlinkAgent(modelId: string, agentId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/ai-models/${encodeURIComponent(modelId)}/agents/${encodeURIComponent(agentId)}${qs}`, {
       method: 'DELETE',
     });
   }
@@ -211,7 +225,7 @@ class AiModelApi {
     );
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }

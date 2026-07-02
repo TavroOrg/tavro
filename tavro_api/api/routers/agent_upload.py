@@ -15,9 +15,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import List
 
@@ -58,7 +61,7 @@ def _parse_cards_from_bytes(filename: str, content: bytes) -> list[dict]:
             if isinstance(item, dict):
                 cards.append(item)
             else:
-                print(f"[WARN] Skipping non-object item at index {i} in '{filename}'")
+                logger.warning("Skipping non-object item at index %d in '%s'", i, filename)
         return cards
 
     raise ValueError(f"Unsupported JSON structure in '{filename}': expected object or array")
@@ -89,7 +92,7 @@ def _save_card_to_disk(card: dict) -> None:
     """Save the agent card JSON to LOCAL_AGENT_CARD_DIR as {agent_id}_agent_card.json."""
     agent_id = (card.get("identification") or {}).get("agent_id", "").strip()
     if not agent_id:
-        print("[WARN] _save_card_to_disk: card has no agent_id, skipping file save")
+        logger.warning("_save_card_to_disk: card has no agent_id, skipping file save")
         return
 
     card_dir = Path(os.getenv("LOCAL_AGENT_CARD_DIR", "./agent_cards"))
@@ -99,7 +102,7 @@ def _save_card_to_disk(card: dict) -> None:
     with file_path.open("w", encoding="utf-8") as f:
         json.dump(card, f, indent=2, default=str)
 
-    print(f"[INFO] Saved agent card to disk: {file_path}")
+    logger.info("Saved agent card to disk: %s", file_path)
 
 
 def _process_card_sync(card_dict: dict, tenant_id: str | None, company_id: str | None = None, company_name: str | None = None) -> dict:
@@ -226,7 +229,7 @@ async def upload_agents(
                 file_map[fn]["errors"].append(r["error"])
 
     if hard_errors:
-        print(f"[WARN] {len(hard_errors)} card(s) raised hard exceptions: {hard_errors[:3]}")
+        logger.warning("%d card(s) raised hard exceptions: %s", len(hard_errors), hard_errors[:3])
 
     # Preserve input order so the UI lists files in the same order the user selected
     seen: set[str] = set()

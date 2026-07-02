@@ -62,7 +62,7 @@ async def score_cvss_activity(agent_name: str, agent_description: str, agent_ins
     )
 
 @activity.defn
-async def update_cvss_activity(agent_internal_id: str, assessment_id: str, aars_score: float, cvss_result: dict, tenant_id: str = None,) -> None:
+async def update_cvss_activity(agent_internal_id: str, assessment_id: str, aars_score: float, cvss_result: dict, risk_classification: str = None, tenant_id: str = None,) -> None:
     updated_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return await asyncio.to_thread(
         update_cvss_for_assessment,
@@ -72,6 +72,7 @@ async def update_cvss_activity(agent_internal_id: str, assessment_id: str, aars_
         aars_score,
         cvss_result,
         updated_ts,
+        risk_classification,
         tenant_id=tenant_id,
     )
 

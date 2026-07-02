@@ -9,12 +9,15 @@ import base64
 import asyncio
 import io
 import json
+import logging
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import boto3
 from botocore.exceptions import ClientError
@@ -26,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from api.database import get_db
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -93,6 +97,15 @@ def _resolve_bedrock_agent_model(model_id: str) -> str:
 # { session_id: { config, messages, created_at, updated_at } }
 session_store: dict[str, dict] = {}
 
+# ── Ended session archive ─────────────────────────────────────────────────────
+# Sessions moved here on DELETE so they remain visible in the Sessions tab.
+ended_sessions: dict[str, dict] = {}
+
+
+def _utc_now_iso() -> str:
+    """Return UTC time with an explicit timezone so browsers do not treat it as local."""
+    return datetime.now(timezone.utc).isoformat()
+
 
 # =============================================================
 # Schemas
@@ -104,18 +117,43 @@ class ToolConfig(BaseModel):
     enabled: bool
     source:  str
 
+class AgentSkillConfig(BaseModel):
+    id: str | None = None
+    identifier: str | None = None
+    skill_id: str | None = None
+    name: str | None = None
+    skill_name: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    inputModes: list[str] | None = None
+    outputModes: list[str] | None = None
+    input_modes: list[str] | None = None
+    output_modes: list[str] | None = None
+
 class SessionConfig(BaseModel):
     agent_name:    str
+    agent_description: str | None = None
     system_prompt: str
     provider:      str = "claude"
     model:         str = ANTHROPIC_MODEL_DEFAULT
     temperature:   float = 0.7
     max_tokens:    int = 2048
     tools:         list[ToolConfig] = []
+    skills:        list[AgentSkillConfig] = []
     company_id:    str | None = None
     company_name:  str | None = None
     use_case_id:   str | None = None
     use_case_title: str | None = None
+    tenant_id:         str | None = None
+    agent_internal_id: str | None = None
+    agent_id:          str | None = None
+
+
+def _agent_description(config: SessionConfig, max_length: int) -> str:
+    description = (config.agent_description or "").strip()
+    if not description:
+        description = f"Tavro playground agent for {config.use_case_title or config.agent_name}"
+    return description[:max_length]
 
 class Attachment(BaseModel):
     name:      str          # original filename
@@ -146,6 +184,7 @@ class AzureFoundryAgentProvisioning(BaseModel):
     enabled: bool = False
     agent_name: str | None = None
     agent: dict[str, Any] | None = None
+    a2a_enabled: bool = False
 
 class BedrockAgentProvisioning(BaseModel):
     enabled: bool = False
@@ -358,6 +397,36 @@ def _build_user_content(text_message: str, attachments: list["Attachment"]) -> l
         blocks.append({"type": "text", "text": text_message})
 
     return blocks
+
+
+async def _resolve_agent_identifiers(
+    agent_id: str | None, db: AsyncSession
+) -> tuple[str | None, str | None]:
+    """
+    Look up tenant_id and agent_internal_id from core.agents.
+    Returns (tenant_id, agent_internal_id) — either may be None if not found.
+    """
+    if not agent_id:
+        return None, None
+    try:
+        row = await db.execute(
+            text("""
+                SELECT tenant_id, company_id, agent_internal_id
+                FROM core.agents
+                WHERE agent_id = :aid AND is_current = true
+                LIMIT 1
+            """),
+            {"aid": agent_id},
+        )
+        r = row.mappings().first()
+        if not r:
+            return None, None
+        return (
+            r.get("tenant_id") or r.get("company_id"),
+            r.get("agent_internal_id"),
+        )
+    except Exception:
+        return None, None
 
 
 async def _fetch_company_dims(company_id: str, db: AsyncSession) -> list[dict]:
@@ -695,12 +764,180 @@ def _azure_foundry_auth_hint(status_code: int) -> str:
     )
 
 
+def _slugify_skill_id(value: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (value or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return (slug or fallback)[:64]
+
+
+def _portal_agent_skills(config: SessionConfig) -> list[dict[str, Any]] | None:
+    skills = []
+    for idx, skill in enumerate(config.skills or [], start=1):
+        name = (skill.name or skill.skill_name or skill.identifier or skill.skill_id or skill.id or "").strip()
+        if not name:
+            continue
+        description = (skill.description or name).strip()
+        skill_id = _slugify_skill_id(
+            skill.identifier or skill.skill_id or skill.id or name,
+            f"skill-{idx}",
+        )
+        item: dict[str, Any] = {
+            "id": skill_id,
+            "name": name[:512],
+            "description": description[:512],
+        }
+        tags = [str(tag).strip() for tag in (skill.tags or []) if str(tag).strip()]
+        input_modes = skill.inputModes or skill.input_modes or []
+        output_modes = skill.outputModes or skill.output_modes or []
+        if tags:
+            item["tags"] = tags[:10]
+        if input_modes:
+            item["inputModes"] = [str(mode).strip() for mode in input_modes if str(mode).strip()][:10]
+        if output_modes:
+            item["outputModes"] = [str(mode).strip() for mode in output_modes if str(mode).strip()][:10]
+        skills.append(item)
+    return skills or None
+
+
+async def _derive_agent_skills_via_llm(config: SessionConfig) -> list[dict[str, Any]] | None:
+    """Ask the deployed model to distill the system prompt into a short skills list.
+
+    Works for any prompt structure since the model, not a fixed pattern, identifies the
+    distinct capabilities — matching what Foundry's own agent card editor expects (short
+    kebab-case ids, title-case names, one-sentence descriptions).
+    """
+    try:
+        url, api_key, _, deployment, uses_v1_api = _azure_openai_settings(config)
+    except HTTPException:
+        return None
+
+    extraction_prompt = (
+        "Analyze this AI agent's instructions and produce its \"agent skills\" list for an A2A agent card.\n"
+        "Identify 3-8 distinct capabilities the agent performs.\n"
+        "Respond ONLY with a JSON array.\n\n"
+        "Each item must be:\n"
+        "{\n"
+        '  "id": "kebab-case-slug",\n'
+        '  "name": "Title Case Name",\n'
+        '  "description": "One concise sentence.",\n'
+        '  "tags": ["keyword1","keyword2","keyword3"],\n'
+        '  "examples": [\n'
+        '      "Example user request 1",\n'
+        '      "Example user request 2"\n'
+        "  ]\n"
+        "}\n\n"
+        f"AGENT INSTRUCTIONS:\n{config.system_prompt}"
+    )
+    payload: dict[str, Any] = {
+        "messages": [{"role": "user", "content": extraction_prompt}],
+        "temperature": 0,
+    }
+    if uses_v1_api:
+        payload["model"] = deployment
+        payload["max_completion_tokens"] = 1200
+    else:
+        payload["max_tokens"] = 1200
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+        except httpx.HTTPError:
+            return None
+
+    if resp.status_code != 200:
+        return None
+
+    content = (
+        resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    ).strip()
+    content = re.sub(r"^```(?:json)?|```$", "", content, flags=re.MULTILINE).strip()
+
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+
+    skills = []
+    for idx, item in enumerate(parsed, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        skill_description = str(item.get("description") or "").strip()
+        if not name or not skill_description:
+            continue
+        skill_id = _slugify_skill_id(str(item.get("id") or name), f"skill-{idx}")
+        skills.append({
+            "id": skill_id,
+            "name": name[:512],
+            "description": skill_description[:512],
+            "tags": item.get("tags", [])[:10],
+            "examples": item.get("examples", [])[:5],
+        })
+    return skills or None
+
+
+async def _build_agent_skills(agent_name: str, description: str, config: SessionConfig) -> list[dict[str, Any]]:
+    portal_skills = _portal_agent_skills(config)
+    if portal_skills:
+        return portal_skills
+    llm_skills = await _derive_agent_skills_via_llm(config)
+    if llm_skills:
+        return llm_skills
+    # Only reached if the LLM extraction call itself fails (e.g. deployment misconfigured);
+    # Azure Foundry's A2A endpoint requires at least one skill, so fall back to a single
+    # generic entry built from data every agent already has, with no format assumptions.
+    return [{"id": agent_name, "name": agent_name, "description": description}]
+
+
+async def _enable_azure_foundry_a2a(
+    endpoint: str,
+    token: str,
+    api_version: str,
+    agent_name: str,
+    description: str,
+    config: SessionConfig,
+) -> None:
+    patch_url = f"{endpoint}/agents/{agent_name}?api-version={api_version}"
+    skills = await _build_agent_skills(agent_name, description, config)
+    payload = {
+        "agent_card": {
+            "description": description,
+            "version": "1.0",
+            # Azure Foundry's preview A2A endpoint 500s (instead of validating)
+            # when agent_card.skills is missing or empty, so at least one entry is required.
+            "skills": skills,
+        },
+        "agent_endpoint": {
+            "protocols": ["responses", "a2a"],
+        },
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.patch(
+            patch_url,
+            headers=_azure_agent_headers(token),
+            json=payload,
+        )
+
+    if resp.status_code not in (200, 201):
+        detail = resp.text[:600]
+        if resp.status_code in (401, 403):
+            detail += _azure_foundry_auth_hint(resp.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Azure Foundry A2A enablement failed {resp.status_code}: {detail}",
+        )
+
+
 async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryAgentProvisioning:
     endpoint, token, api_version, deployment = _azure_foundry_project_settings(config)
     agent_name = _azure_agent_resource_name(config.agent_name)
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:512]
+    description = _agent_description(config, 512)
     payload = {
         "name": agent_name,
         "description": description,
@@ -741,10 +978,13 @@ async def _provision_azure_foundry_agent(config: SessionConfig) -> AzureFoundryA
             detail=f"Azure Foundry agent provisioning failed {resp.status_code}: {detail}",
         )
 
+    await _enable_azure_foundry_a2a(endpoint, token, api_version, agent_name, description, config)
+
     return AzureFoundryAgentProvisioning(
         enabled=True,
         agent_name=agent_name,
         agent=resp.json(),
+        a2a_enabled=True,
     )
 
 
@@ -1296,10 +1536,10 @@ async def _run_bedrock_agent_chat(
 
         response_text = ""
         trace_events = []
-        print("SESSION ID:", bedrock_session_id)
-        print("AGENT ID:", agent_id)
-        print("ALIAS ID:", agent_alias_id)
-        print("INVOCATION ID:", response.get("invocationId"))
+        logger.debug("SESSION ID: %s", bedrock_session_id)
+        logger.debug("AGENT ID: %s", agent_id)
+        logger.debug("ALIAS ID: %s", agent_alias_id)
+        logger.debug("INVOCATION ID: %s", response.get("invocationId"))
 
         for event in response.get("completion", []):
             if "chunk" in event:
@@ -1322,8 +1562,8 @@ async def _run_bedrock_agent_chat(
                 "traces": trace_events,
             }
 
-            print("COMBINED TRACE EVENT:")
-            print(json.dumps(combined_trace_payload, indent=2, default=str))
+            logger.debug("COMBINED TRACE EVENT:")
+            logger.debug("%s", json.dumps(combined_trace_payload, indent=2, default=str))
 
             _put_bedrock_trace_log(
                 access_key=access_key,
@@ -1528,7 +1768,7 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     """
     # Check if model is supported for agent runtime
     model_key = config.model or AWS_BEDROCK_MODEL_DEFAULT
-    print(f"Creating Bedrock Agent with model: {model_key}")
+    logger.debug("Creating Bedrock Agent with model: %s", model_key)
     if model_key not in BEDROCK_AGENT_SUPPORTED_MODELS:
         # Model not supported for agent runtime - return disabled
         return BedrockAgentProvisioning(
@@ -1547,12 +1787,10 @@ async def _provision_bedrock_agent(config: SessionConfig) -> BedrockAgentProvisi
     )
 
     agent_name = _azure_agent_resource_name(config.agent_name)  # Reuse naming convention
-    description = (
-        f"Tavro playground agent for {config.use_case_title or config.agent_name}"
-    )[:200]
+    description = _agent_description(config, 200)
     # Use agent-supported model ID (no 'us.' prefix)
     model_id = BEDROCK_AGENT_SUPPORTED_MODELS.get(model_key, BEDROCK_AGENT_SUPPORTED_MODELS["claude-3-5-sonnet"])
-    print(f"Resolved Bedrock model ID: {model_id}")
+    logger.debug("Resolved Bedrock model ID: %s", model_id)
 
     try:
         # Get or create the agent role
@@ -1637,7 +1875,7 @@ async def _provision_bedrock_agent_background(session_id: str, config: SessionCo
         session = session_store.get(session_id)
         if session:
             session["bedrock_agent"] = bedrock_agent.model_dump()
-            session["updated_at"] = datetime.utcnow().isoformat()
+            session["updated_at"] = _utc_now_iso()
     except Exception as e:
         session = session_store.get(session_id)
         if session:
@@ -1646,7 +1884,7 @@ async def _provision_bedrock_agent_background(session_id: str, config: SessionCo
                 agent_name=config.agent_name,
                 agent={"error": str(e)},
             ).model_dump()
-            session["updated_at"] = datetime.utcnow().isoformat()
+            session["updated_at"] = _utc_now_iso()
 
 
 def _get_aws_account_id(access_key: str, secret_key: str) -> str:
@@ -1665,10 +1903,223 @@ def _get_aws_account_id(access_key: str, secret_key: str) -> str:
 
 # =============================================================
 
+# =============================================================
+# DB helpers — persist sessions to core.playground_session
+# =============================================================
+
+def _parse_dt(v) -> "datetime | None":
+    """Convert an ISO string or None to a datetime object (required by asyncpg for timestamptz)."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    try:
+        return datetime.fromisoformat(str(v))
+    except (ValueError, TypeError):
+        return None
+
+
+async def _db_upsert_session(session: dict, db: AsyncSession) -> None:
+    """Insert or update a session row in the database."""
+    import traceback
+    try:
+        interactions_json = json.dumps(session.get("messages", []))
+        summary_json      = json.dumps(session["cached_summary"]) if session.get("cached_summary") else None
+        observations_json = json.dumps(session.get("observations", []))
+
+        config = session.get("config") or {}
+        await db.execute(
+            text("""
+                INSERT INTO core.playground_session
+                    (session_id, tenant_id, company_id, agent_internal_id, agent_id,
+                     agent_name, provider, model,
+                     interactions, token_total, summary, observations,
+                     status, created_at, updated_at, ended_at)
+                VALUES
+                    (:session_id, :tenant_id, :company_id, :agent_internal_id, :agent_id,
+                     :agent_name, :provider, :model,
+                     CAST(:interactions AS jsonb), :token_total,
+                     CAST(:summary AS jsonb), CAST(:observations AS jsonb),
+                     :status, :created_at, :updated_at, :ended_at)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    interactions  = EXCLUDED.interactions,
+                    token_total   = EXCLUDED.token_total,
+                    summary       = EXCLUDED.summary,
+                    observations  = EXCLUDED.observations,
+                    status        = EXCLUDED.status,
+                    updated_at    = EXCLUDED.updated_at,
+                    ended_at      = EXCLUDED.ended_at
+            """),
+            {
+                "session_id":        session["session_id"],
+                "tenant_id":         session.get("tenant_id") or config.get("tenant_id"),
+                "company_id":        session.get("company_id") or config.get("company_id"),
+                "agent_internal_id": session.get("agent_internal_id"),
+                "agent_id":          session.get("agent_id"),
+                "agent_name":        config.get("agent_name"),
+                "provider":          config.get("provider"),
+                "model":             config.get("model"),
+                "interactions":      interactions_json,
+                "token_total":       session.get("token_total", 0),
+                "summary":           summary_json,
+                "observations":      observations_json,
+                "status":            session.get("status", "active"),
+                "created_at":        _parse_dt(session["created_at"]),
+                "updated_at":        _parse_dt(session["updated_at"]),
+                "ended_at":          _parse_dt(session.get("ended_at")),
+            },
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        print(f"[playground] DB upsert failed for session {session.get('session_id')}: {e}")
+        print(traceback.format_exc())
+
+
+async def _db_get_session(session_id: str, db: AsyncSession) -> dict | None:
+    """Fetch a single session row from the database."""
+    try:
+        row = await db.execute(
+            text("SELECT * FROM core.playground_session WHERE session_id = :sid"),
+            {"sid": session_id},
+        )
+        r = row.mappings().first()
+        if not r:
+            return None
+        return dict(r)
+    except Exception as e:
+        print(f"DB get session error: {e}")
+        return None
+
+
+async def _db_list_sessions(agent_id: str | None, db: AsyncSession, tenant_id: str | None = None, company_id: str | None = None) -> list[dict]:
+    """List sessions from the database, optionally filtered by agent_id, tenant_id, and company_id."""
+    try:
+        filters = []
+        params: dict = {}
+        if agent_id:
+            filters.append("agent_id = :aid")
+            params["aid"] = agent_id
+        if tenant_id:
+            filters.append("tenant_id = :tenant_id")
+            params["tenant_id"] = tenant_id
+        if company_id:
+            filters.append("company_id = :company_id")
+            params["company_id"] = company_id
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await db.execute(
+            text(f"""
+                SELECT session_id, agent_id, agent_name, provider, model,
+                       token_total, status, created_at, updated_at, ended_at,
+                       jsonb_array_length(COALESCE(interactions, '[]'::jsonb)) AS raw_count
+                FROM core.playground_session
+                {where}
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """),
+            params,
+        )
+        return [dict(r) for r in rows.mappings()]
+    except Exception as e:
+        print(f"DB list sessions error: {e}")
+        return []
+
+
+def _db_row_to_summary(r: dict) -> dict:
+    """Convert a DB row to the session-list summary shape."""
+    raw_count = r.get("raw_count") or 0
+    # messages column stores ALL messages; subtract system messages (estimate 1 per session)
+    msg_count = max(0, int(raw_count) - 1)
+    # A session with ended_at set is definitively over regardless of the status column
+    effective_status = "ended" if r.get("ended_at") else r.get("status", "ended")
+    return {
+        "session_id":    str(r["session_id"]),
+        "status":        effective_status,
+        "agent_name":    r.get("agent_name"),
+        "provider":      r.get("provider"),
+        "model":         r.get("model"),
+        "created_at":    r["created_at"].isoformat() if hasattr(r.get("created_at"), "isoformat") else str(r.get("created_at", "")),
+        "updated_at":    r["updated_at"].isoformat() if hasattr(r.get("updated_at"), "isoformat") else str(r.get("updated_at", "")),
+        "ended_at":      r["ended_at"].isoformat() if r.get("ended_at") and hasattr(r["ended_at"], "isoformat") else (str(r["ended_at"]) if r.get("ended_at") else None),
+        "token_total":   int(r.get("token_total") or 0),
+        "message_count": msg_count,
+    }
+
+
+# =============================================================
+# GET /sessions — list sessions (DB + active in-memory)
+# =============================================================
+
+@router.get("/sessions")
+async def list_sessions(
+    agent_id: str | None = None,
+    tenant_id: str | None = None,
+    company_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    # DB rows (ended + any active that were persisted)
+    db_rows = await _db_list_sessions(agent_id, db, tenant_id=tenant_id, company_id=company_id)
+    db_ids  = {r["session_id"] for r in db_rows}
+
+    # In-memory active sessions not yet in DB (just started, not yet flushed)
+    mem_active = list(session_store.values())
+    if agent_id:
+        mem_active = [s for s in mem_active if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_active = [s for s in mem_active if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_active = [s for s in mem_active if s.get("company_id") == company_id]
+
+    results = [_db_row_to_summary(r) for r in db_rows]
+
+    # Add any purely in-memory active sessions missing from DB
+    for s in mem_active:
+        if s["session_id"] not in db_ids:
+            results.append({
+                "session_id":    s["session_id"],
+                "status":        "active",
+                "agent_name":    s["config"].get("agent_name"),
+                "provider":      s["config"].get("provider"),
+                "model":         s["config"].get("model"),
+                "created_at":    s["created_at"],
+                "updated_at":    s["updated_at"],
+                "ended_at":      None,
+                "token_total":   s.get("token_total", 0),
+                "message_count": len([m for m in s.get("messages", []) if m["role"] in ("user", "assistant")]),
+            })
+
+    # Add any in-memory ended sessions missing from DB
+    # (covers the case where the DB write failed or the table doesn't exist yet)
+    mem_ended = list(ended_sessions.values())
+    if agent_id:
+        mem_ended = [s for s in mem_ended if s.get("agent_id") == agent_id]
+    if tenant_id:
+        mem_ended = [s for s in mem_ended if s.get("tenant_id") == tenant_id]
+    if company_id:
+        mem_ended = [s for s in mem_ended if s.get("company_id") == company_id]
+    for s in mem_ended:
+        if s["session_id"] not in db_ids and s["session_id"] not in {r["session_id"] for r in results}:
+            results.append({
+                "session_id":    s["session_id"],
+                "status":        "ended",
+                "agent_name":    s["config"].get("agent_name"),
+                "provider":      s["config"].get("provider"),
+                "model":         s["config"].get("model"),
+                "created_at":    s["created_at"],
+                "updated_at":    s.get("updated_at", s["created_at"]),
+                "ended_at":      s.get("ended_at"),
+                "token_total":   s.get("token_total", 0),
+                "message_count": len([m for m in s.get("messages", []) if m["role"] in ("user", "assistant")]),
+            })
+
+    results.sort(key=lambda x: x["updated_at"], reverse=True)
+    return results
+
+
 @router.post("/session", status_code=201)
 async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_db)):
     session_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
+    now = _utc_now_iso()
 
     provider = (config.provider or "claude").lower()
     azure_agent = AzureFoundryAgentProvisioning()
@@ -1679,8 +2130,18 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
     elif provider in ("aws_bedrock", "bedrock", "aws"):
         bedrock_agent = BedrockAgentProvisioning()
 
+    # Resolve tenant_id / agent_internal_id: prefer what the frontend sent,
+    # fall back to a DB lookup so active sessions are never missing these fields.
+    db_tenant_id, db_agent_internal_id = await _resolve_agent_identifiers(config.agent_id, db)
+    resolved_tenant_id       = config.tenant_id or config.company_id or db_tenant_id
+    resolved_agent_internal_id = config.agent_internal_id or db_agent_internal_id
+
     session_store[session_id] = {
         "session_id":  session_id,
+        "tenant_id":         resolved_tenant_id,
+        "company_id":        config.company_id,
+        "agent_internal_id": resolved_agent_internal_id,
+        "agent_id":          config.agent_id,
         "config":      config.model_dump(),
         "messages":    [],
         "created_at":  now,
@@ -1694,6 +2155,9 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
         await _ensure_azure_foundry_conversation(config, session_store[session_id])
     elif provider in ("aws_bedrock", "bedrock", "aws"):
         asyncio.create_task(_provision_bedrock_agent_background(session_id, config))
+
+    # Persist to DB
+    await _db_upsert_session({**session_store[session_id], "status": "active"}, db)
 
     return {
         "session_id": session_id,
@@ -1709,11 +2173,44 @@ async def create_session(config: SessionConfig, db: AsyncSession = Depends(get_d
 # =============================================================
 
 @router.get("/session/{session_id}")
-async def get_session(session_id: str):
-    session = session_store.get(session_id)
-    if not session:
+async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    # Check in-memory first (active session)
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
+    if session:
+        return session
+    # Fall back to DB (survived a server restart / logout)
+    row = await _db_get_session(session_id, db)
+    if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    # Reconstruct the session dict from the DB row
+    interactions = row.get("interactions")
+    if isinstance(interactions, str):
+        interactions = json.loads(interactions or "[]")
+    elif not interactions:
+        interactions = []
+    summary = row.get("summary")
+    if summary and isinstance(summary, str):
+        summary = json.loads(summary)
+    obs = row.get("observations")
+    if obs and isinstance(obs, str):
+        obs = json.loads(obs)
+    elif not obs:
+        obs = []
+    ts = lambda v: v.isoformat() if hasattr(v, "isoformat") else str(v)
+    return {
+        "session_id":    str(row["session_id"]),
+        "agent_name":    row.get("agent_name"),
+        "provider":      row.get("provider"),
+        "model":         row.get("model"),
+        "interactions":  interactions,
+        "observations":  obs,
+        "token_total":   int(row.get("token_total") or 0),
+        "summary":       summary,
+        "status":        row.get("status", "ended"),
+        "created_at":    ts(row["created_at"]),
+        "updated_at":    ts(row["updated_at"]),
+        "ended_at":      ts(row["ended_at"]) if row.get("ended_at") else None,
+    }
 
 
 # =============================================================
@@ -1759,7 +2256,7 @@ async def send_message(
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported playground provider: {config.provider}")
 
-    now         = datetime.utcnow().isoformat()
+    now         = _utc_now_iso()
     user_msg_id = str(uuid.uuid4())
 
     # Add user message to session
@@ -1836,19 +2333,22 @@ async def send_message(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     # Add assistant message to session
     assistant_msg = {
         "id":        str(uuid.uuid4()),
         "role":      "assistant",
         "content":   response_text,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _utc_now_iso(),
         "tokens":    tokens_used,
     }
     session["messages"].append(assistant_msg)
     session["token_total"] = session.get("token_total", 0) + tokens_used
-    session["updated_at"]  = datetime.utcnow().isoformat()
+    session["updated_at"]  = _utc_now_iso()
+
+    # Persist updated messages + token total to DB
+    await _db_upsert_session({**session, "status": "active"}, db)
 
     if provider in ("azure_foundry", "azure", "azure_openai") and _azure_foundry_use_chat_completions():
         await _append_azure_foundry_conversation_items(
@@ -1886,10 +2386,19 @@ async def send_message(
 # =============================================================
 
 @router.delete("/session/{session_id}", status_code=200)
-async def end_session(session_id: str):
+async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = session_store.pop(session_id, None)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Archive in memory
+    session["ended_at"]  = _utc_now_iso()
+    session["updated_at"] = session["ended_at"]
+    session["status"]    = "ended"
+    ended_sessions[session_id] = session
+
+    # Persist final state to DB
+    await _db_upsert_session({**session, "status": "ended"}, db)
 
     msg_count   = len([m for m in session["messages"] if m["role"] != "system"])
     token_total = session.get("token_total", 0)
@@ -1919,7 +2428,7 @@ async def end_session(session_id: str):
                 )
 
         except Exception as e:
-            print("END_SESSION ERROR:", str(e))
+            logger.warning("END_SESSION ERROR: %s", e)
     return {
         "session_id":  session_id,
         "status":      "ended",
@@ -1929,15 +2438,57 @@ async def end_session(session_id: str):
 
 
 # =============================================================
+# POST /session/{session_id}/observations — save observations
+# =============================================================
+
+class ObservationsPayload(BaseModel):
+    observations: list[dict] = []
+
+@router.post("/session/{session_id}/observations")
+async def save_observations(session_id: str, body: ObservationsPayload, db: AsyncSession = Depends(get_db)):
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session["observations"] = body.observations
+    session["updated_at"] = _utc_now_iso()
+    status = "ended" if session_id in ended_sessions else session.get("status", "active")
+    await _db_upsert_session({**session, "status": status}, db)
+    return {"ok": True}
+
+
+# =============================================================
 # GET /session/{session_id}/summary — AI-generated session summary
 # Returns gaps, capabilities, info requirements found during session
 # =============================================================
 
 @router.get("/session/{session_id}/summary")
-async def get_session_summary(session_id: str):
-    session = session_store.get(session_id)
+async def get_session_summary(session_id: str, db: AsyncSession = Depends(get_db)):
+    session = session_store.get(session_id) or ended_sessions.get(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # Fall back to DB (server restarted, or session loaded from DB)
+        row = await _db_get_session(session_id, db)
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        interactions = row.get("interactions")
+        if isinstance(interactions, str):
+            interactions = json.loads(interactions or "[]")
+        elif not interactions:
+            interactions = []
+        summary_raw = row.get("summary")
+        if summary_raw and isinstance(summary_raw, str):
+            summary_raw = json.loads(summary_raw)
+        session = {
+            "session_id":   str(row["session_id"]),
+            "config":       {"agent_name": row.get("agent_name"), "provider": row.get("provider")},
+            "messages":     interactions,
+            "token_total":  int(row.get("token_total") or 0),
+            "cached_summary": summary_raw,
+            "status":       row.get("status", "ended"),
+        }
+
+    # Return cached summary if already generated
+    if session.get("cached_summary"):
+        return {"summary": session["cached_summary"], "token_total": session.get("token_total", 0), "cached": True}
 
     messages = [m for m in session["messages"] if m["role"] in ("user", "assistant")]
     if not messages:
@@ -2055,6 +2606,10 @@ Return ONLY a JSON object with this structure:
     raw = re.sub(r"\s*```$", "", raw).strip()
 
     try:
-        return {"summary": json.loads(raw), "token_total": session.get("token_total", 0)}
+        parsed = json.loads(raw)
+        session["cached_summary"] = parsed
+        await _db_upsert_session({**session, "status": session.get("status", "active")}, db)
+        return {"summary": parsed, "token_total": session.get("token_total", 0)}
     except json.JSONDecodeError:
+        session["cached_summary"] = raw
         return {"summary": raw, "token_total": session.get("token_total", 0)}

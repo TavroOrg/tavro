@@ -32,11 +32,13 @@ COPY enterprise/api/routers/compliance.py           /enterprise/api/routers/comp
 COPY enterprise/api/routers/compliance_research.py  /enterprise/api/routers/compliance_research.py
 COPY enterprise/api/routers/audit.py                /enterprise/api/routers/audit.py
 COPY enterprise/api/llm.py                          /enterprise/api/llm.py
+COPY enterprise/services                            /enterprise/services
 
 COPY tavro/tavro_api/entrypoint.enterprise.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r//' /entrypoint.sh && chmod +x /entrypoint.sh
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/enterprise
+ENV CREWAI_MAX_TOKENS=5000
 
 EXPOSE 8000
 

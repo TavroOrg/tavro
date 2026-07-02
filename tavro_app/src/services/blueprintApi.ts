@@ -15,14 +15,17 @@ import type {
   DimNodeAttachment,
 } from '../types/blueprint';
 import { getValidToken, refreshAccessToken } from './auth';
+import { parseApiError } from '../utils/errorUtils';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
 
 function buildHeaders(token: string | null): Record<string, string> {
-  return token
-    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    : { 'Content-Type': 'application/json' };
+  const tenantId = localStorage.getItem('tavro_tenant_id');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (tenantId) headers['x-tenant-id'] = tenantId;
+  return headers;
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -45,7 +48,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
       if (retry.status === 401) {
         throw new Error('Request unauthorized. Please check your credentials.');
       }
-      if (!retry.ok) throw new Error(`API ${retry.status}: ${await retry.text()}`);
+      if (!retry.ok) { const retryBody = await retry.text(); throw new Error(parseApiError(retry.status, retryBody)); }
       if (retry.status === 204) return undefined as T;
       return retry.json();
     }
@@ -54,7 +57,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    throw new Error(parseApiError(res.status, body));
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -91,6 +94,19 @@ class BlueprintApiService {
 
   async listCompanies(offset = 0, limit = 50): Promise<Page<Company>> {
     return req(`/companies?offset=${offset}&limit=${limit}`);
+  }
+
+  async listAllCompanies(): Promise<Company[]> {
+    const pageSize = 200;
+    const first = await this.listCompanies(0, pageSize);
+    if (first.total <= first.items.length) return first.items;
+    const totalPages = Math.ceil(first.total / pageSize);
+    const remaining = await Promise.all(
+      Array.from({ length: totalPages - 1 }, (_, i) =>
+        this.listCompanies((i + 1) * pageSize, pageSize),
+      ),
+    );
+    return [first.items, ...remaining.map(p => p.items)].flat();
   }
 
   async getCompany(id: string): Promise<Company> {
@@ -183,6 +199,23 @@ class BlueprintApiService {
     return req(`/source-refs/${refId}/fetch`, { method: 'POST' });
   }
 
+  async createSourceRef(
+    dimNodeId: string,
+    systemName: string,
+    externalId: string,
+    mcpTool: string = '',
+  ): Promise<SourceRef> {
+    return req('/source-refs', {
+      method: 'POST',
+      body: JSON.stringify({
+        dim_node_id: dimNodeId,
+        system_name: systemName,
+        external_id: externalId,
+        mcp_tool: mcpTool,
+      }),
+    });
+  }
+
   async deleteSourceRef(id: string): Promise<void> {
     return req(`/source-refs/${id}`, { method: 'DELETE' });
   }
@@ -199,6 +232,14 @@ class BlueprintApiService {
 
   async getRiskPaths(nodeId: string): Promise<GraphData> {
     return req(`/graph/node/${nodeId}/paths?target_category=risk`);
+  }
+
+  async getLinkedEntity(nodeId: string): Promise<{ entity_type: string; entity_id: string } | null> {
+    try {
+      return await req(`/dim-nodes/${nodeId}/linked-entity`);
+    } catch {
+      return null;
+    }
   }
 
   // ── Research ───────────────────────────────────────────────────────────────
@@ -280,15 +321,16 @@ class BlueprintApiService {
   }
 
   async uploadAttachment(nodeId: string, file: File): Promise<DimNodeAttachment> {
-    const token = await import('./auth').then(m => m.getValidToken());
+    const token = await getValidToken();
     const form = new FormData();
     form.append('file', file);
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
     const res = await fetch(`${V1}/dim-nodes/${nodeId}/attachments`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: headersWithoutContentType,
       body: form,
     });
-    if (!res.ok) throw new Error(`Upload failed ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new Error(parseApiError(res.status, await res.text()));
     return res.json();
   }
 
@@ -297,9 +339,10 @@ class BlueprintApiService {
   }
 
   async downloadAttachment(attachmentId: string, filename: string): Promise<void> {
-    const token = await import('./auth').then(m => m.getValidToken());
+    const token = await getValidToken();
+    const { 'Content-Type': _, ...headersWithoutContentType } = buildHeaders(token);
     const res = await fetch(`${V1}/dim-nodes/attachments/${attachmentId}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: headersWithoutContentType,
     });
     if (!res.ok) throw new Error(`Download failed ${res.status}`);
     const blob = await res.blob();

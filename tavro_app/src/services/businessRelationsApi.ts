@@ -6,8 +6,11 @@ import type {
   BusinessProcessUpsertPayload,
   IntegrationRecord,
   IntegrationUpsertPayload,
+  IntegrationAttachmentRecord,
 } from '../types/businessRelations';
 import { portalActivity } from './portalActivity';
+import { parseApiError } from '../utils/errorUtils';
+import { appLogger } from './logger';
 
 export interface AgentTableRecord {
   table_id: string;
@@ -76,6 +79,24 @@ function authHeaders(): Record<string, string> {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
   };
+}
+
+async function reqFormData<T>(path: string, formData: FormData): Promise<T> {
+  const token = localStorage.getItem('tavro_access_token');
+  const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
+  const res = await fetch(`${V1}${path}`, {
+    method: 'POST',
+    body: formData,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+  }
+  return res.json();
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -171,9 +192,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/applications', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/applications${suffix}`);
-    if (Array.isArray(data)) return data as BusinessApplicationRecord[];
-    return (data?.items ?? []) as BusinessApplicationRecord[];
+    const items = Array.isArray(data) ? data as BusinessApplicationRecord[] : (data?.items ?? []) as BusinessApplicationRecord[];
+    appLogger.res('GET /api/v1/applications', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countApplications(companyId?: string): Promise<number> {
@@ -226,6 +250,29 @@ class BusinessRelationsApi {
     });
   }
 
+  async uploadApplications(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }>(
+      `/applications/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business application${result.uploaded_count === 1 ? '' : 's'}`,
+      'emerald',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
+  }
+
   async listProcesses(search?: string, companyId?: string): Promise<BusinessProcessRecord[]> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());
@@ -233,9 +280,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/processes', { search, companyId });
+    const t0 = Date.now();
     const data = await req<any>(`/processes${suffix}`);
-    if (Array.isArray(data)) return data as BusinessProcessRecord[];
-    return (data?.items ?? []) as BusinessProcessRecord[];
+    const items = Array.isArray(data) ? data as BusinessProcessRecord[] : (data?.items ?? []) as BusinessProcessRecord[];
+    appLogger.res('GET /api/v1/processes', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countProcesses(companyId?: string): Promise<number> {
@@ -268,6 +318,13 @@ class BusinessRelationsApi {
     });
   }
 
+  async suggestIntegrationDescription(integrationName: string): Promise<{ description: string }> {
+    return req('/integrations/suggest-description', {
+      method: 'POST',
+      body: JSON.stringify({ integration_name: integrationName }),
+    });
+  }
+
   async updateProcess(
     processId: string,
     payload: BusinessProcessUpsertPayload,
@@ -288,6 +345,29 @@ class BusinessRelationsApi {
     });
   }
 
+  async uploadProcesses(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[]; warnings: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[]; warnings: string[] }>(
+      `/processes/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business process${result.uploaded_count === 1 ? '' : 'es'}`,
+      'emerald',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
+  }
+  
   async getAgentRelations(agentId: string, companyId?: string): Promise<AgentRelationsPayload> {
     const params = new URLSearchParams();
     if (companyId) params.set('company_id', companyId);
@@ -321,7 +401,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -352,7 +432,7 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
@@ -383,43 +463,98 @@ class BusinessRelationsApi {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`API ${res.status}: ${body.slice(0, 250)}`);
+      throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
   }
 
-  async linkAgentToApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
-      method: 'PUT',
+  async listIntegrationAttachments(integrationId: string): Promise<IntegrationAttachmentRecord[]> {
+    return req(`/integrations/${encodeURIComponent(integrationId)}/attachments`);
+  }
+
+  async uploadIntegrationAttachment(
+    integrationId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<IntegrationAttachmentRecord> {
+    return req(`/integrations/${encodeURIComponent(integrationId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   }
 
-  async unlinkAgentFromApplication(agentId: string, applicationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}`, {
+  async deleteIntegrationAttachment(integrationId: string, attachmentId: string): Promise<void> {
+    await req(`/integrations/${encodeURIComponent(integrationId)}/attachments/${encodeURIComponent(attachmentId)}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async downloadIntegrationAttachment(integrationId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/integrations/${encodeURIComponent(integrationId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(parseApiError(res.status, body));
+    }
+    return res.blob();
+  }
+
+  async syncBlueprintAttachmentsToApplication(applicationId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
+  }
+
+  async syncBlueprintAttachmentsToProcess(processId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
+  }
+
+  async syncBlueprintAttachmentsToIntegration(integrationId: string): Promise<void> {
+    await req(`/integrations/${encodeURIComponent(integrationId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
+  }
+
+  async linkAgentToApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromProcess(agentId: string, processId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}`, {
+  async unlinkAgentFromApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/applications/${encodeURIComponent(applicationId)}${qs}`, {
       method: 'DELETE',
     });
   }
 
-  async linkAgentToIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async linkAgentToProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
       method: 'PUT',
     });
   }
 
-  async unlinkAgentFromIntegration(agentId: string, integrationId: string): Promise<void> {
-    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}`, {
+  async unlinkAgentFromProcess(agentId: string, processId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/processes/${encodeURIComponent(processId)}${qs}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async linkAgentToIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
+      method: 'PUT',
+    });
+  }
+
+  async unlinkAgentFromIntegration(agentId: string, integrationId: string, companyId?: string): Promise<void> {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+    await req(`/agents/${encodeURIComponent(agentId)}/integrations/${encodeURIComponent(integrationId)}${qs}`, {
       method: 'DELETE',
     });
   }
@@ -496,9 +631,12 @@ class BusinessRelationsApi {
     params.set('offset', '0');
     params.set('limit', '500');
     const suffix = params.toString() ? `?${params.toString()}` : '';
+    appLogger.req('GET /api/v1/integrations', { search, companyId });
+    const t0 = Date.now();
     const data = await req<unknown>(`/integrations${suffix}`);
-    if (Array.isArray(data)) return data as IntegrationRecord[];
-    return ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+    const items = Array.isArray(data) ? data as IntegrationRecord[] : ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
+    appLogger.res('GET /api/v1/integrations', { count: items.length }, Date.now() - t0);
+    return items;
   }
 
   async countIntegrations(companyId?: string): Promise<number> {
@@ -544,6 +682,29 @@ class BusinessRelationsApi {
     await req(`/integrations/${encodeURIComponent(integrationId)}`, {
       method: 'DELETE',
     });
+  }
+
+  async uploadIntegrations(
+    files: File[],
+    companyId?: string,
+    companyName?: string,
+  ): Promise<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }> {
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file, file.name);
+    const qp = new URLSearchParams();
+    if (companyId) qp.set('company_id', companyId);
+    if (companyName) qp.set('company_name', companyName);
+    const qs = qp.toString() ? `?${qp}` : '';
+    const result = await reqFormData<{ uploaded_count: number; total_submitted: number; failed_count: number; message: string; errors: string[] }>(
+      `/integrations/upload${qs}`,
+      formData,
+    );
+    portalActivity.record(
+      `Loaded ${result.uploaded_count} business integration${result.uploaded_count === 1 ? '' : 's'}`,
+      'violet',
+    );
+    window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+    return result;
   }
 }
 

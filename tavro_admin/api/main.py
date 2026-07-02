@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 
 from api.routers import connectors, docker_logs, env_config, business_applications, companies
 from api.dependencies.auth import require_portal_admin
+from catalog_connector.connector.agent365_inbound_connector import router as agent365_router
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ app.include_router(env_config.router,            prefix="/api/v1/admin",       t
 app.include_router(business_applications.router, prefix="/api/v1/admin",       tags=["Integrations"])
 app.include_router(companies.router,             prefix="/api/v1/admin",       tags=["Companies"])
 app.include_router(docker_logs.router,           prefix="/api/v1/docker-logs", tags=["Docker Logs"])
+app.include_router(agent365_router,                                                tags=["Agent365"])
 
 
 @app.get("/health", tags=["Health"])

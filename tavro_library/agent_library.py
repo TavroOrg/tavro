@@ -20,7 +20,7 @@ COMPANY_API_BASE_URL = os.getenv("COMPANY_API_BASE_URL")
 class AgentMetadataExporter:
     CORE_DB_NAME=os.getenv("CORE_DB_NAME")
     CURATED_DB_NAME=os.getenv("CURATED_DB_NAME")
-    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME")
+    RISK_MANAGEMENT_DB_NAME=os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
 
     @classmethod
     @contextmanager
@@ -52,7 +52,7 @@ class AgentMetadataExporter:
             return cursor.rowcount
 
     @classmethod
-    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None) -> Optional[str]:
+    def _get_agent_id_from_name(cls, agent_name: str, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Optional[str]:
         if not agent_name:
             return None
 
@@ -67,6 +67,12 @@ class AgentMetadataExporter:
         else:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
+
+        # ---------- 1b. Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
 
         safe_input = cls.sanitize(lower_input)
         prefix = (
@@ -90,6 +96,19 @@ class AgentMetadataExporter:
             """
             params.append(tenant_id)
 
+        # ---------- 2b. Company WHERE ----------
+        company_where = ""
+        if company_id:
+            company_where = """
+            AND (
+                company_id = %s
+                OR company_id IS NULL
+                OR TRIM(CAST(company_id AS text)) = ''
+                OR company_id = 'None'
+            )
+            """
+            params.append(company_id)
+
         # ---------- 3. Query ----------
         query = f"""
         SELECT agent_id, agent_name
@@ -99,6 +118,7 @@ class AgentMetadataExporter:
             OR lower(agent_name) LIKE %s
         )
         {tenant_where}
+        {company_where}
         LIMIT 200
         """
 
@@ -189,7 +209,7 @@ class AgentMetadataExporter:
         return None
 
     @classmethod
-    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_agent_card(cls, agent_name: Optional[str] = None, agent_id: Optional[str] = None, tenant_id: Optional[str] = None, company_id: Optional[str] = None) -> Dict[str, Any]:
         print(f"Fetching agent card for name='{agent_name}', id='{agent_id}'")
 
         if not agent_name and not agent_id:
@@ -212,9 +232,15 @@ class AgentMetadataExporter:
                 tenant_mode = "TENANT"
                 tenant_id = cls.sanitize(str(tenant_id).strip())
 
+            # ---------- 1b. Normalize company ----------
+            if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+                company_id = None
+            else:
+                company_id = cls.sanitize(str(company_id).strip())
+
             # ---------- 2. Resolve agent_id ----------
             if agent_name and not agent_id:
-                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id)
+                agent_id = cls._get_agent_id_from_name(agent_name, tenant_id, company_id)
                 print(f"Resolved agent_id='{agent_id}' from agent_name='{agent_name}'")
                 if not agent_id:
                     return {
@@ -246,12 +272,26 @@ class AgentMetadataExporter:
                 """
                 params.append(tenant_id)
 
+            # ---------- 4b. Build company filter ----------
+            company_where = ""
+            if company_id:
+                company_where = """
+                AND (
+                    company_id = %s
+                    OR company_id IS NULL
+                    OR TRIM(CAST(company_id AS text)) = ''
+                    OR company_id = 'None'
+                )
+                """
+                params.append(company_id)
+
             # ---------- 5. Existence check ----------
             check_query = f"""
             SELECT 1
             FROM {cls.CORE_DB_NAME}.agents
             WHERE agent_id = %s
             {tenant_where}
+            {company_where}
             LIMIT 1
             """
 
@@ -2225,6 +2265,7 @@ class AgentMetadataExporter:
                     u.updated_ts,
                     u.agent_risk_exposure_are,
                     u.no_of_associated_agents,
+                    u.blended_risk_score,
                     u.inherent_risk_classification,
                     u.residual_risk_classification,
                     u.inherent_risk_classification_score,
@@ -2297,6 +2338,7 @@ class AgentMetadataExporter:
                     "updated_ts": row.get("updated_ts"),
                     "agent_risk_exposure_are": row.get("agent_risk_exposure_are"),
                     "no_of_associated_agents": row.get("no_of_associated_agents"),
+                    "blended_risk_score": row.get("blended_risk_score"),
                     "inherent_risk_classification": row.get("inherent_risk_classification"),
                     "residual_risk_classification": row.get("residual_risk_classification"),
                     "inherent_risk_classification_score": row.get("inherent_risk_classification_score"),
@@ -2440,11 +2482,11 @@ class AgentMetadataExporter:
                     agent_risk_exposure_are = 0,
                     blended_risk_score = 0,
                     no_of_associated_agents = 0,
-                    inherent_risk_classification = '',
-                    residual_risk_classification = '',
+                    inherent_risk_classification = 'None',
+                    residual_risk_classification = 'None',
                     inherent_risk_classification_score = 0,
                     residual_risk_classification_score = 0,
-                    agent_risk_tier_art = 'Low',
+                    agent_risk_tier_art = 'None',
                     updated_ts = TIMESTAMP '{now}'
                 WHERE ai_use_case_id = '{ai_use_case_id}'
                   {tenant_uc_where}
@@ -2454,19 +2496,29 @@ class AgentMetadataExporter:
 
         ids_sql = ", ".join([f"'{cls.sanitize(str(x))}'" for x in remaining_ids])
         metrics_q = f"""
-            WITH risk_metrics AS (
+            WITH latest_agent_scores AS (
+                SELECT DISTINCT ON (agent_internal_id)
+                    agent_internal_id,
+                    blended_risk_score
+                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
+                WHERE agent_internal_id IN ({ids_sql})
+                  AND blended_risk_score IS NOT NULL
+                ORDER BY
+                    agent_internal_id,
+                    CASE WHEN is_current = TRUE THEN 0 ELSE 1 END,
+                    assessment_ts DESC NULLS LAST,
+                    updated_ts DESC NULLS LAST
+            ),
+            risk_metrics AS (
                 SELECT
                     MAX(blended_risk_score) AS max_score,
                     (
                         SELECT agent_internal_id
-                        FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                        WHERE agent_internal_id IN ({ids_sql})
-                        ORDER BY blended_risk_score DESC
+                        FROM latest_agent_scores
+                        ORDER BY blended_risk_score DESC NULLS LAST
                         LIMIT 1
                     ) AS worst_agent_id
-                FROM {cls.CORE_DB_NAME}.agent_risk_assessments
-                WHERE agent_internal_id IN ({ids_sql})
-                  AND is_current = true
+                FROM latest_agent_scores
             )
             SELECT * FROM risk_metrics
         """
@@ -2476,21 +2528,26 @@ class AgentMetadataExporter:
         blended_score = float(metrics.get("max_score") or 0.0)
 
         inherent_class = ""
+        inherent_score = 0.0
         residual_class = ""
+        residual_score = 0.0
         if worst_agent_id and cls.RISK_MANAGEMENT_DB_NAME:
             risk_detail_q = f"""
-                SELECT type_of_risk, risk_classification
+                SELECT type_of_risk, risk_classification, risk_classification_score
                 FROM {cls.RISK_MANAGEMENT_DB_NAME}.agent_risk_assessment
                 WHERE agent_internal_id = '{cls.sanitize(str(worst_agent_id))}'
                   AND type_of_risk IN ('Inherent Risk', 'Residual Risk')
                 ORDER BY created_ts DESC
             """
             risk_rows = cls.execute_select(risk_detail_q)
-            inherent_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Inherent Risk'), "")
-            residual_class = next((r['risk_classification'] for r in risk_rows if r['type_of_risk'] == 'Residual Risk'), "")
-
-        inherent_score = cls._regulatory_risk_score(inherent_class)
-        residual_score = cls._regulatory_risk_score(residual_class)
+            for r in risk_rows:
+                tor = r.get("type_of_risk")
+                if tor == "Inherent Risk" and not inherent_class:
+                    inherent_class = r.get("risk_classification") or ""
+                    inherent_score = float(r.get("risk_classification_score") or 0.0)
+                elif tor == "Residual Risk" and not residual_class:
+                    residual_class = r.get("risk_classification") or ""
+                    residual_score = float(r.get("risk_classification_score") or 0.0)
         risk_tier = cls._get_risk_tier(blended_score)
 
         sync_q = f"""
@@ -2539,7 +2596,7 @@ class AgentMetadataExporter:
         )
 
         use_case_q = f"""
-            SELECT u.ai_use_case_id, u.name
+            SELECT u.ai_use_case_id, u.name, u.company_id
             FROM {cls.CORE_DB_NAME}.ai_use_cases u
             WHERE u.ai_use_case_id = '{ai_use_case_id}'
               {tenant_where_uc}
@@ -2549,6 +2606,7 @@ class AgentMetadataExporter:
         if not use_case_rows:
             raise ValueError(f"AI Use Case {ai_use_case_id} not found.")
         use_case_name = cls.sanitize(str(use_case_rows[0].get("name") or ai_use_case_id))
+        use_case_company_id = use_case_rows[0].get("company_id")
 
         check_q = f"""
             SELECT 1
@@ -2578,12 +2636,14 @@ class AgentMetadataExporter:
         target_agent_name = cls.sanitize(str(agent_res[0].get("agent_name") or agent_catalog_id))
 
         if not is_duplicate:
+            company_id_sql = f"'{cls.sanitize(str(use_case_company_id))}'" if use_case_company_id else "NULL"
             action_q = f"""
                 INSERT INTO {cls.CORE_DB_NAME}.agent_ai_use_cases (
-                    tenant_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
+                    tenant_id, company_id, ai_use_case_id, ai_use_case_name, agent_id, agent_name,
                     agent_internal_id, created_ts, updated_ts
                 ) VALUES (
                     {f"'{tenant_clean}'" if tenant_clean else "NULL"},
+                    {company_id_sql},
                     '{ai_use_case_id}',
                     '{use_case_name}',
                     '{agent_catalog_id}',
@@ -2594,6 +2654,7 @@ class AgentMetadataExporter:
                 )
                 ON CONFLICT (tenant_id, ai_use_case_id, agent_id)
                 DO UPDATE SET
+                    company_id = EXCLUDED.company_id,
                     ai_use_case_name = EXCLUDED.ai_use_case_name,
                     agent_name = EXCLUDED.agent_name,
                     agent_internal_id = EXCLUDED.agent_internal_id,
@@ -3603,7 +3664,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated application catalog with single optimized query.
@@ -3622,16 +3684,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
@@ -3670,7 +3735,8 @@ class AgentMetadataExporter:
         start_record: int = 1,
         max_records: int = 10,
         record_range: str = "1-10",
-        tenant_id: Optional[str] = None
+        tenant_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve paginated process catalog with single optimized query.
@@ -3689,16 +3755,19 @@ class AgentMetadataExporter:
             tenant_mode = "TENANT"
             tenant_id = cls.sanitize(str(tenant_id).strip())
 
-        where_clause = ""
+        # ---------- Normalize company ----------
+        if not company_id or str(company_id).strip().lower() in ["none", "null", ""]:
+            company_id = None
+        else:
+            company_id = cls.sanitize(str(company_id).strip())
+
+        where_parts = []
         if tenant_mode == "TENANT":
-            where_clause = f"""
-            WHERE (
-                tenant_id = '{tenant_id}'
-                OR tenant_id IS NULL
-                OR tenant_id = ''
-                OR tenant_id = 'None'
-            )
-            """
+            where_parts.append(f"(tenant_id = '{tenant_id}' OR tenant_id IS NULL OR tenant_id = '' OR tenant_id = 'None')")
+        if company_id:
+            where_parts.append(f"(company_id = '{company_id}' OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')")
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
         query = f"""
             SELECT *
@@ -3755,13 +3824,17 @@ class AgentMetadataExporter:
         }
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.post(
                 COMPANY_API_BASE_URL,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3807,9 +3880,13 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {"accept": "application/json"}
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.get(
                 url,
-                headers={"accept": "application/json"},
+                headers=req_headers,
                 timeout=30
             )
 
@@ -3865,13 +3942,17 @@ class AgentMetadataExporter:
         url = f"{COMPANY_API_BASE_URL}/{company_id}"
 
         try:
+            req_headers: Dict[str, str] = {
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            if tenant_id and str(tenant_id).strip() not in ("", "None", "none", "null"):
+                req_headers["x-tenant-id"] = str(tenant_id).strip()
+
             response = requests.patch(
                 url,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "application/json"
-                },
+                headers=req_headers,
                 timeout=30
             )
 

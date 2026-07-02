@@ -36,6 +36,7 @@ class CompanyUpdate(BaseModel):
 
 class Company(CompanyBase):
     id:         UUID
+    tenant_id:  Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -144,7 +145,7 @@ class DimEdge(DimEdgeBase):
 class SourceRefBase(BaseModel):
     system_name: str
     external_id: str
-    mcp_tool:    str
+    mcp_tool:    str = ""
 
 class SourceRefCreate(SourceRefBase):
     dim_node_id: UUID

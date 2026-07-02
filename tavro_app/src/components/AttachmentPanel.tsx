@@ -13,7 +13,7 @@ export interface Attachment {
     url?: string;
 }
 
-type AttachmentEntityType = 'agent' | 'use_case' | 'application' | 'process';
+type AttachmentEntityType = 'agent' | 'use_case' | 'application' | 'process' | 'integration';
 
 const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_SIZE_LABEL = '10 MB';
@@ -43,6 +43,7 @@ const getAttachmentErrorMessage = (error: unknown, fileName?: string): string =>
 
     if (
         error.message.includes('API 413') ||
+        error.message.includes('too large to upload') ||
         error.message.includes('Attachment exceeds 10 MB limit') ||
         error.message.includes('413 Request Entity Too Large')
     ) {
@@ -67,13 +68,8 @@ const AttachmentRow: React.FC<{
         return '📎';
     };
 
-    const timeStr = attachment.uploadedAt.toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
-    const dateStr = attachment.uploadedAt.toLocaleDateString();
+    const d = attachment.uploadedAt;
+    const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`;
 
     return (
         <div className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors px-3 py-2 flex items-center gap-2">
@@ -81,7 +77,7 @@ const AttachmentRow: React.FC<{
             <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-slate-800 truncate">{attachment.name}</p>
                 <p className="text-[10px] text-slate-400">
-                    {formatFileSize(attachment.size)} • {dateStr} {timeStr}
+                    {formatFileSize(attachment.size)} • {dateStr}
                 </p>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
@@ -125,7 +121,9 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                 ? 'application'
                 : location.pathname.startsWith('/processes/')
                     ? 'process'
-                    : 'agent'
+                    : location.pathname.startsWith('/integrations/')
+                        ? 'integration'
+                        : 'agent'
     );
     const resolvedEntityId = entityId || params.id;
     const [isUploading, setIsUploading] = useState(false);
@@ -142,6 +140,21 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
 
         setLoading(true);
         setError(null);
+
+        // Silently backfill any blueprint attachments not yet synced to entity table,
+        // then fetch the full list so newly backfilled items are included.
+        try {
+            if (resolvedEntityType === 'application') {
+                await businessRelationsApi.syncBlueprintAttachmentsToApplication(resolvedEntityId);
+            } else if (resolvedEntityType === 'process') {
+                await businessRelationsApi.syncBlueprintAttachmentsToProcess(resolvedEntityId);
+            } else if (resolvedEntityType === 'integration') {
+                await businessRelationsApi.syncBlueprintAttachmentsToIntegration(resolvedEntityId);
+            }
+        } catch {
+            // non-fatal — continue to load whatever is already synced
+        }
+
         try {
             const rows = resolvedEntityType === 'use_case'
                 ? await useCaseApi.listUseCaseAttachments(resolvedEntityId)
@@ -149,7 +162,9 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     ? await businessRelationsApi.listApplicationAttachments(resolvedEntityId)
                     : resolvedEntityType === 'process'
                         ? await businessRelationsApi.listProcessAttachments(resolvedEntityId)
-                        : await businessRelationsApi.listAgentAttachments(resolvedEntityId);
+                        : resolvedEntityType === 'integration'
+                            ? await businessRelationsApi.listIntegrationAttachments(resolvedEntityId)
+                            : await businessRelationsApi.listAgentAttachments(resolvedEntityId);
             setLocalAttachments(rows.map(row => ({
                 id: row.id,
                 name: row.filename,
@@ -174,6 +189,16 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
         if (onAttachmentAdd || onAttachmentDelete) return;
         loadAttachments();
     }, [resolvedEntityId, resolvedEntityType, onAttachmentAdd, onAttachmentDelete]);
+
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ entityType?: string; entityId?: string }>).detail;
+            if (detail?.entityId && detail.entityId !== resolvedEntityId) return;
+            loadAttachments();
+        };
+        window.addEventListener('tavro:attachment-uploaded', handler);
+        return () => window.removeEventListener('tavro:attachment-uploaded', handler);
+    }, [resolvedEntityId]);
 
     const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.currentTarget.files;
@@ -237,6 +262,12 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                         mime_type: file.type || 'application/octet-stream',
                         content_base64: base64,
                     });
+                } else if (resolvedEntityType === 'integration') {
+                    await businessRelationsApi.uploadIntegrationAttachment(resolvedEntityId, {
+                        filename: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        content_base64: base64,
+                    });
                 } else {
                     await businessRelationsApi.uploadAgentAttachment(resolvedEntityId, {
                         filename: file.name,
@@ -271,6 +302,8 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     await businessRelationsApi.deleteApplicationAttachment(resolvedEntityId, id);
                 } else if (resolvedEntityType === 'process') {
                     await businessRelationsApi.deleteProcessAttachment(resolvedEntityId, id);
+                } else if (resolvedEntityType === 'integration') {
+                    await businessRelationsApi.deleteIntegrationAttachment(resolvedEntityId, id);
                 } else {
                     await businessRelationsApi.deleteAgentAttachment(resolvedEntityId, id);
                 }
@@ -300,7 +333,9 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                     ? await businessRelationsApi.downloadApplicationAttachment(resolvedEntityId, attachment.id)
                     : resolvedEntityType === 'process'
                         ? await businessRelationsApi.downloadProcessAttachment(resolvedEntityId, attachment.id)
-                : await businessRelationsApi.downloadAgentAttachment(resolvedEntityId, attachment.id);
+                        : resolvedEntityType === 'integration'
+                            ? await businessRelationsApi.downloadIntegrationAttachment(resolvedEntityId, attachment.id)
+                            : await businessRelationsApi.downloadAgentAttachment(resolvedEntityId, attachment.id);
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
@@ -376,7 +411,9 @@ const AttachmentPanel: React.FC<AttachmentPanelProps> = ({
                                         ? 'Open an application to add attachments'
                                         : resolvedEntityType === 'process'
                                             ? 'Open a process to add attachments'
-                                    : 'Open an agent to add attachments'}
+                                            : resolvedEntityType === 'integration'
+                                                ? 'Open an integration to add attachments'
+                                                : 'Open an agent to add attachments'}
                         </p>
                     </div>
                 ) : (

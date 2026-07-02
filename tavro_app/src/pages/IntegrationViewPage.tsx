@@ -4,12 +4,17 @@ import {
   Network,
   AlertCircle,
   ArrowLeft,
+  CheckCircle2,
   Info,
   Loader2,
   Pencil,
+  Plus,
   PlusCircle,
+  RefreshCw,
   Save,
   Search,
+  ShieldAlert,
+  Sparkles,
   Trash2,
   Unlink2,
   XCircle,
@@ -18,12 +23,17 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import { agentApi } from '../services/agentApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCatalog } from '../context/CatalogContext';
+import { mcpClient } from '../services/mcpClient';
 import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import type { DimEdge, SourceRef } from '../types/blueprint';
+import { toUserMessage } from '../utils/errorUtils';
+import { blueprintApi } from '../services/blueprintApi';
+import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related';
+type Tab = 'overview' | 'related' | 'blueprint';
 type Option = { label: string; value: string };
 
 const PROTOCOL_OPTIONS: Option[] = [
@@ -60,6 +70,20 @@ const AVAILABILITY_STATUS_OPTIONS: Option[] = [
   { label: 'Unknown', value: 'Unknown' },
 ];
 
+const INT_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const INT_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: '-- None --', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
+];
+
 interface IntegrationFormState {
   integration_name: string;
   integration_description: string;
@@ -75,6 +99,8 @@ interface IntegrationFormState {
   sla: string;
   version: string;
   parent_application_id: string;
+  business_criticality: string;
+  emergency_tier: string;
 }
 
 type IntegrationInlineField =
@@ -91,7 +117,38 @@ type IntegrationInlineField =
   | 'data_sensitivity'
   | 'availability_status'
   | 'sla'
-  | 'parent_application_id';
+  | 'parent_application_id'
+  | 'business_criticality'
+  | 'emergency_tier';
+
+type MetricTone = 'high' | 'medium' | 'low' | 'neutral';
+const metricToneClass = (tone: MetricTone) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+const getCriticalityTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low') return 'low';
+  return 'neutral';
+};
+const getEmergencyTierTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v.includes('mission critical')) return 'high';
+  if (v.includes('business critical')) return 'medium';
+  if (v.includes('non-critical')) return 'low';
+  return 'neutral';
+};
+const getArtTone = (value: string | null | undefined): MetricTone => {
+  const v = (value ?? '').toLowerCase();
+  if (v === 'critical' || v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low' || v === 'none') return 'low';
+  return 'neutral';
+};
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -122,6 +179,8 @@ const emptyForm = (): IntegrationFormState => ({
   sla: '',
   version: '',
   parent_application_id: '',
+  business_criticality: '',
+  emergency_tier: '',
 });
 
 const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => ({
@@ -139,6 +198,8 @@ const formFromIntegration = (item: IntegrationRecord): IntegrationFormState => (
   sla: toText(item.sla),
   version: toText(item.version),
   parent_application_id: toText(item.parent_application_id),
+  business_criticality: toText(item.business_criticality),
+  emergency_tier: toText(item.emergency_tier),
 });
 
 const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertPayload => ({
@@ -156,6 +217,8 @@ const buildIntegrationPayload = (form: IntegrationFormState): IntegrationUpsertP
   sla: toNullable(form.sla),
   version: toNullable(form.version),
   parent_application_id: toNullable(form.parent_application_id),
+  business_criticality: toNullable(form.business_criticality),
+  emergency_tier: toNullable(form.emergency_tier),
 });
 
 const changedIntegrationPayload = (
@@ -167,7 +230,7 @@ const changedIntegrationPayload = (
   const changed: IntegrationUpsertPayload = {};
   (Object.keys(nextPayload) as Array<keyof IntegrationUpsertPayload>).forEach(key => {
     if (nextPayload[key] !== currentPayload[key]) {
-      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+      Object.assign(changed, { [key]: nextPayload[key] ?? null });
     }
   });
   return changed;
@@ -210,6 +273,11 @@ const IntegrationViewPage: React.FC = () => {
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
   const [form, setForm] = useState<IntegrationFormState>(emptyForm);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [visibility, setVisibility] = useState<string>('internal');
+  const [sensitive, setSensitive] = useState<boolean>(false);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -224,6 +292,19 @@ const IntegrationViewPage: React.FC = () => {
   const [searchAgents, setSearchAgents] = useState('');
   const [actingAgent, setActingAgent] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
+
+  // Blueprint
+  const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
+  const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
+  const [showAddEdge, setShowAddEdge] = useState(false);
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName, setNewSysName] = useState('');
+  const [newExtId, setNewExtId] = useState('');
+  const [addingRef, setAddingRef] = useState(false);
+  const [deletingEdge, setDeletingEdge] = useState<string | null>(null);
+  const [deletingRef, setDeletingRef] = useState<string | null>(null);
 
   const load = async () => {
     if (!id || isCreateMode) return;
@@ -233,18 +314,51 @@ const IntegrationViewPage: React.FC = () => {
       const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
       setIntegration(data);
       setForm(formFromIntegration(data));
+      setTags(Array.isArray(data.tags) ? data.tags : []);
+      setVisibility(data.visibility ?? 'internal');
+      setSensitive(data.sensitive ?? false);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load integration');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
+  const loadBlueprint = async (dimNodeId: string) => {
+    if (!dimNodeId || !activeCompany?.id) return;
+    setBlueprintLoading(true);
+    try {
+      const edgesPage = await blueprintApi.listEdges({ company_id: activeCompany.id, node_id: dimNodeId });
+      setBlueprintEdges(edgesPage.items);
+    } catch {
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const loadSourceRefs = async (dimNodeId: string) => {
+    try {
+      const refs = await blueprintApi.listSourceRefs(dimNodeId);
+      setBlueprintSourceRefs(refs);
+    } catch {
+    }
+  };
+
+  useEffect(() => {
+    if (integration?.dim_node_id) loadSourceRefs(integration.dim_node_id);
+  }, [integration?.dim_node_id]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint' || !integration?.dim_node_id) return;
+    loadBlueprint(integration.dim_node_id);
+  }, [tab, integration?.dim_node_id]);
+
   useEffect(() => {
     if (isCreateMode) {
       setIntegration(null);
       setForm(emptyForm());
+      setTags([]);
       setEditing(true);
       setAttemptedSave(false);
       setLoading(false);
@@ -254,7 +368,19 @@ const IntegrationViewPage: React.FC = () => {
     }
     setEditing(false);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = () => {
+      mcpClient.invalidateCache();
+      load();
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing]);
 
   const relatedAgentCount = useMemo(
     () => integration?.related_agents?.length ?? 0,
@@ -296,10 +422,10 @@ const IntegrationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
+      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id, activeCompany?.id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -310,10 +436,10 @@ const IntegrationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id, activeCompany?.id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -361,10 +487,13 @@ const IntegrationViewPage: React.FC = () => {
       );
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -449,6 +578,25 @@ const IntegrationViewPage: React.FC = () => {
 
   // ── Bulk save / cancel ─────────────────────────────────────────────────────
 
+  const handleSuggestDescription = async () => {
+    if (!form.integration_name.trim()) {
+      setActionError('Integration Name is required before generating the description.');
+      return;
+    }
+    setGeneratingDescription(true);
+    setActionError(null);
+    try {
+      const result = await businessRelationsApi.suggestIntegrationDescription(form.integration_name.trim());
+      if (result.description) {
+        setField('integration_description', result.description);
+      }
+    } catch (err: any) {
+      setActionError(toUserMessage(err));
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const handleSave = async () => {
     setAttemptedSave(true);
     if (isNameMissing) {
@@ -461,11 +609,14 @@ const IntegrationViewPage: React.FC = () => {
     try {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
+        if (tags.length > 0) payload.tags = tags;
+        payload.visibility = visibility;
+        payload.sensitive = sensitive;
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id);
+            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Integration created but auto-link to agent failed.', linkErr);
           }
@@ -485,10 +636,13 @@ const IntegrationViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateIntegration(integration.integration_id, changedPayload, activeCompany?.id);
       setIntegration(updated);
       setForm(formFromIntegration(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setAttemptedSave(false);
       setEditing(false);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to save integration');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -516,7 +670,7 @@ const IntegrationViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/integrations');
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete integration');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -645,6 +799,41 @@ const IntegrationViewPage: React.FC = () => {
                 <span className="text-xs font-bold text-slate-700">{form.availability_status}</span>
               </div>
             )}
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Emergency Tier</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getEmergencyTierTone(form.emergency_tier))}`}>
+                {getEmergencyTierTone(form.emergency_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.emergency_tier || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Business Criticality</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getCriticalityTone(form.business_criticality))}`}>
+                {getCriticalityTone(form.business_criticality) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.business_criticality || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
+              <span className="text-xs font-bold text-slate-700">{String(integration?.agent_risk_exposure ?? 'N/A')}</span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(integration?.agent_risk_tier))}`}>
+                {getArtTone(integration?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {integration?.agent_risk_tier ?? 'None'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -661,16 +850,28 @@ const IntegrationViewPage: React.FC = () => {
           Details
         </button>
         {!isCreateMode && !editing && (
-          <button
-            onClick={() => setTab('related')}
-            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
-              tab === 'related'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Related Agents ({relatedAgentCount})
-          </button>
+          <>
+            <button
+              onClick={() => setTab('related')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Agents ({relatedAgentCount})
+            </button>
+            <button
+              onClick={() => setTab('blueprint')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'blueprint'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Blueprint Relationships
+            </button>
+          </>
         )}
       </div>
 
@@ -717,13 +918,34 @@ const IntegrationViewPage: React.FC = () => {
               </div>
 
               <div className="md:col-span-2 flex flex-col gap-1.5">
-                <HintLabel label="Integration Description" />
+                <div className="flex items-center justify-between">
+                  <HintLabel label="Integration Description" />
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={handleSuggestDescription}
+                      disabled={generatingDescription || !form.integration_name.trim()}
+                      title={form.integration_name.trim() ? 'Generate description with AI' : 'Enter an integration name first'}
+                      className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
+                        generatingDescription
+                          ? 'bg-violet-50 border-violet-200 text-violet-500 cursor-wait'
+                          : form.integration_name.trim()
+                            ? 'bg-violet-50 border-violet-200 text-violet-600 hover:bg-violet-100 hover:border-violet-300'
+                            : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                      }`}
+                    >
+                      {generatingDescription ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                      {generatingDescription ? 'Generating...' : 'AI assist'}
+                    </button>
+                  )}
+                </div>
                 {editing ? (
                   <textarea
                     value={form.integration_description}
                     onChange={(e) => setField('integration_description', e.target.value)}
                     rows={3}
-                    className={textAreaCls}
+                    className={`${textAreaCls} ${generatingDescription ? 'opacity-50' : ''}`}
+                    disabled={generatingDescription}
                   />
                 ) : (
                   renderInlineEditable('integration_description', form.integration_description || 'N/A', {
@@ -731,6 +953,98 @@ const IntegrationViewPage: React.FC = () => {
                     className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[84px] whitespace-pre-wrap',
                   })
                 )}
+              </div>
+              <div className="flex flex-col gap-1.5 col-span-full">
+                <HintLabel label="Tags" />
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[32px] bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+                  {tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-semibold bg-white text-slate-600 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                      {tag}
+                      <button
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={async () => {
+                          const next = tags.filter(t => t !== tag);
+                          if (isCreateMode) { setTags(next); return; }
+                          if (!integration) return;
+                          setTagSaving(true);
+                          try {
+                            const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { tags: next }, activeCompany?.id);
+                            setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                          } catch { setTags(next); }
+                          finally { setTagSaving(false); }
+                        }}
+                        className="text-slate-400 hover:text-red-400 leading-none ml-0.5"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={async e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const newTag = tagInput.trim().replace(/,$/, '');
+                        if (!newTag || tags.includes(newTag)) { setTagInput(''); return; }
+                        const next = [...tags, newTag];
+                        setTagInput('');
+                        if (isCreateMode) { setTags(next); return; }
+                        setTagSaving(true);
+                        try {
+                          const updated = await businessRelationsApi.updateIntegration(integration!.integration_id, { tags: next }, activeCompany?.id);
+                          setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                        } catch { setTags(next); }
+                        finally { setTagSaving(false); }
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter…"
+                    disabled={tagSaving}
+                    className="text-[11px] bg-transparent outline-none text-slate-500 placeholder:text-slate-300 min-w-[60px]"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Visibility" />
+                <select
+                  value={visibility}
+                  onChange={async e => {
+                    const next = e.target.value;
+                    setVisibility(next);
+                    if (isCreateMode || !integration) return;
+                    try {
+                      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { visibility: next }, activeCompany?.id);
+                      setIntegration(updated);
+                      setVisibility(updated.visibility ?? next);
+                    } catch { setVisibility(integration.visibility ?? 'internal'); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 capitalize"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="confidential">Confidential</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Sensitive" />
+                <select
+                  value={sensitive ? 'true' : 'false'}
+                  onChange={async e => {
+                    const next = e.target.value === 'true';
+                    setSensitive(next);
+                    if (isCreateMode || !integration) return;
+                    try {
+                      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { sensitive: next }, activeCompany?.id);
+                      setIntegration(updated);
+                      setSensitive(updated.sensitive ?? next);
+                    } catch { setSensitive(integration.sensitive ?? false); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
               </div>
             </div>
           </Section>
@@ -755,6 +1069,63 @@ const IntegrationViewPage: React.FC = () => {
                   className: 'text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[100px] whitespace-pre-wrap',
                 })
               )}
+            </div>
+          </Section>
+
+          <Section title="Agent Risk Exposure">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Business Criticality" hint="Business Criticality defines how vital the integration is to core operations." />
+                {editing ? (
+                  <select value={form.business_criticality} onChange={(e) => setField('business_criticality', e.target.value)} className={inputCls}>
+                    {INT_BUSINESS_CRITICALITY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('business_criticality', form.business_criticality || 'N/A', { kind: 'select', options: INT_BUSINESS_CRITICALITY_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Emergency Tier" hint="The Emergency Tier categorizes an integration's crisis criticality to prioritize recovery execution order." />
+                {editing ? (
+                  <select value={form.emergency_tier} onChange={(e) => setField('emergency_tier', e.target.value)} className={inputCls}>
+                    {INT_EMERGENCY_TIER_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                ) : (
+                  renderInlineEditable('emergency_tier', form.emergency_tier || 'N/A', { kind: 'select', options: INT_EMERGENCY_TIER_OPTIONS })
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="ARE" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.agent_risk_exposure ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="ART" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Blended Risk Score" hint="The highest current blended risk score across agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.blended_risk_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="# Of Associated Agents" hint="Indicates the total number of agents associated with this integration." />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.num_of_associated_agents ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.inherent_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Inherent Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.inherent_risk_classification_score ?? 0)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.residual_risk_classification || 'N/A'}</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Residual Risk Classification Score" />
+                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.residual_risk_classification_score ?? 0)}</p>
+              </div>
             </div>
           </Section>
 
@@ -945,6 +1316,73 @@ const IntegrationViewPage: React.FC = () => {
               </div>
             </div>
           </Section>
+
+          {/* Source Systems */}
+          {integration?.dim_node_id && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Source Systems ({blueprintSourceRefs.length})</p>
+                <button
+                  onClick={() => setShowAddSourceRef(p => !p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {showAddSourceRef && (
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={newSysName} onChange={e => setNewSysName(e.target.value)} placeholder="System name (e.g. Salesforce)" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                    <input value={newExtId} onChange={e => setNewExtId(e.target.value)} placeholder="External ID" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!newSysName.trim() || !newExtId.trim() || !integration.dim_node_id) return;
+                        setAddingRef(true);
+                        try {
+                          const ref = await blueprintApi.createSourceRef(integration.dim_node_id, newSysName.trim(), newExtId.trim());
+                          setBlueprintSourceRefs(p => [...p, ref]);
+                          setNewSysName(''); setNewExtId(''); setShowAddSourceRef(false);
+                        } finally { setAddingRef(false); }
+                      }}
+                      disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addingRef ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save
+                    </button>
+                    <button onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }} className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {blueprintSourceRefs.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-slate-400 italic">No source systems linked.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintSourceRefs.map(ref => (
+                    <div key={ref.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-700">{ref.system_name}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{ref.external_id}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setDeletingRef(ref.id);
+                          try { await blueprintApi.deleteSourceRef(ref.id); setBlueprintSourceRefs(p => p.filter(r => r.id !== ref.id)); }
+                          finally { setDeletingRef(null); }
+                        }}
+                        disabled={deletingRef === ref.id}
+                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingRef === ref.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1037,6 +1475,85 @@ const IntegrationViewPage: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'blueprint' && (
+        <div className="flex flex-col gap-4">
+          {integration?.dim_node_id ? (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Network size={14} className="text-slate-400" />
+                  Blueprint Relationships ({blueprintEdges.length})
+                </p>
+                <button onClick={() => setShowAddEdge(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Add Relationship
+                </button>
+              </div>
+              {blueprintLoading ? (
+                <div className="px-5 py-4 text-sm text-slate-400 animate-pulse">Loading…</div>
+              ) : blueprintEdges.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-slate-400 italic">No blueprint relationships defined.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintEdges.map(edge => {
+                    const isSource = edge.source_id === integration.dim_node_id;
+                    const otherLabel = isSource ? edge.target_label : edge.source_label;
+                    return (
+                      <div key={edge.id} className="px-5 py-3 flex items-center gap-3">
+                        <span className="text-slate-300">{isSource ? '→' : '←'}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{otherLabel ?? '—'}</span>
+                        <span className="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{edge.rel_type.replace('_', ' ')}</span>
+                        <span className="text-[11px] text-slate-400">{Math.round(edge.weight * 100)}%</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingEdge(edge.id);
+                            try { await blueprintApi.deleteEdge(edge.id); setBlueprintEdges(p => p.filter(e => e.id !== edge.id)); }
+                            finally { setDeletingEdge(null); }
+                          }}
+                          disabled={deletingEdge === edge.id}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Delete relationship"
+                        >
+                          {deletingEdge === edge.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 px-5 py-6 text-center">
+              <Info size={18} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">This integration is not yet linked to a Blueprint dimension.</p>
+              <p className="text-xs text-slate-400 mt-1">Create an Integration dimension in the Blueprint to enable relationships.</p>
+            </div>
+          )}
+          {showAddEdge && integration?.dim_node_id && (
+            <AddDimEdgeModal
+              sourceNode={{
+                id: integration.dim_node_id,
+                company_id: activeCompany?.id ?? '',
+                dim_type_id: '',
+                label: integration.integration_name ?? '',
+                category: 'application',
+                dim_type_name: 'Integration',
+                summary: null,
+                tags: [],
+                visibility: 'internal',
+                sensitive: false,
+                valid_from: new Date().toISOString(),
+                valid_to: null,
+                updated_at: new Date().toISOString(),
+              }}
+              onClose={() => setShowAddEdge(false)}
+              onCreated={() => {
+                setShowAddEdge(false);
+                if (integration.dim_node_id) loadBlueprint(integration.dim_node_id);
+              }}
+            />
+          )}
         </div>
       )}
     </div>

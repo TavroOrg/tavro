@@ -1,8 +1,4 @@
-# =============================================================
-# api/llm.py
-# Shared LLM helpers for all enterprise routers.
-# =============================================================
-
+"""Shared LLM HTTP helpers used by blueprint and business_relations routers."""
 import os
 import re
 from typing import Any
@@ -15,30 +11,7 @@ ANTHROPIC_MODEL   = "claude-sonnet-4-6"
 OPENAI_API_URL    = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL      = "gpt-4o"
 
-
-def _resolve_agent_llm() -> tuple[str, str]:
-    """Try Anthropic first, fall back to OpenAI."""
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if anthropic_key:
-        return "anthropic", anthropic_key
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if openai_key:
-        return "openai", openai_key
-    raise HTTPException(
-        status_code=500,
-        detail="No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
-    )
-
-
-def _resolve_compliance_llm() -> tuple[str, str]:
-    """Research flows require Anthropic (web search tool support)."""
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if anthropic_key:
-        return "anthropic", anthropic_key
-    raise HTTPException(
-        status_code=500,
-        detail="Anthropic research is required but ANTHROPIC_API_KEY is not configured.",
-    )
+RESEARCH_MAX_OUTPUT_TOKENS: int = int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "3000"))
 
 
 def _extract_json(raw: str) -> str:
@@ -46,6 +19,7 @@ def _extract_json(raw: str) -> str:
     fenced = re.search(r'```(?:json)?[\s\n]*(\{[\s\S]*?\})[\s\n]*```', raw)
     if fenced:
         return fenced.group(1).strip()
+
     fenced_open = re.search(r'```(?:json)?[\s\n]*(\{[\s\S]*)', raw)
     if fenced_open:
         candidate = fenced_open.group(1).strip()
@@ -58,6 +32,7 @@ def _extract_json(raw: str) -> str:
                     depth -= 1
                     if depth == 0:
                         return candidate[start:i + 1]
+
     start = raw.find('{')
     if start != -1:
         depth = 0
@@ -67,13 +42,8 @@ def _extract_json(raw: str) -> str:
                 depth -= 1
                 if depth == 0:
                     return raw[start:i + 1]
+
     return raw.strip()
-
-
-def _collect_text(data: dict) -> str:
-    return "\n".join(
-        b["text"] for b in data.get("content", []) if b.get("type") == "text"
-    ).strip()
 
 
 async def _call_anthropic(
@@ -81,7 +51,7 @@ async def _call_anthropic(
     messages:   list[dict],
     system:     str,
     tools:      list[dict] | None = None,
-    max_tokens: int = 4096,
+    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
 ) -> dict:
     payload: dict[str, Any] = {
         "model":      ANTHROPIC_MODEL,
@@ -91,6 +61,7 @@ async def _call_anthropic(
     }
     if tools:
         payload["tools"] = tools
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             ANTHROPIC_API_URL,
@@ -101,10 +72,11 @@ async def _call_anthropic(
             },
             json=payload,
         )
+
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
-            detail=f"Anthropic API error {resp.status_code}: {resp.text[:400]}"
+            detail=f"Anthropic API error {resp.status_code}: {resp.text[:400]}",
         )
     return resp.json()
 
@@ -113,14 +85,15 @@ async def _call_openai(
     api_key:    str,
     messages:   list[dict],
     system:     str,
-    max_tokens: int = 4096,
+    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
 ) -> dict:
     payload: dict[str, Any] = {
-        "model":       OPENAI_MODEL,
-        "messages":    [{"role": "system", "content": system}] + messages,
-        "max_tokens":  max_tokens,
+        "model":    OPENAI_MODEL,
+        "messages": [{"role": "system", "content": system}] + messages,
+        "max_tokens": max_tokens,
         "temperature": 0.2,
     }
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             OPENAI_API_URL,
@@ -130,16 +103,24 @@ async def _call_openai(
             },
             json=payload,
         )
+
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
             detail=f"OpenAI API error {resp.status_code}: {resp.text[:400]}",
         )
-    data         = resp.json()
+
+    data = resp.json()
     content      = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
     finish_reason = data.get("choices", [{}])[0].get("finish_reason", "stop")
     return {
         "stop_reason": "max_tokens" if finish_reason == "length" else "end_turn",
-        "content":     [{"type": "text", "text": content}],
-        "usage":       data.get("usage", {}),
+        "content": [{"type": "text", "text": content}],
+        "usage": data.get("usage", {}),
     }
+
+
+def _collect_text(data: dict) -> str:
+    return "\n".join(
+        b["text"] for b in data.get("content", []) if b.get("type") == "text"
+    ).strip()

@@ -8,6 +8,7 @@ import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCaseApi } from '../services/useCaseApi';
 import { fetchPagesProgressive } from '../utils/fetchAllPages';
+import { toUserMessage } from '../utils/errorUtils';
 
 const PAGE_SIZE = 10;
 
@@ -57,7 +58,7 @@ const UseCasePage: React.FC = () => {
                 100,
             );
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : 'Failed to load use case catalog');
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
         }

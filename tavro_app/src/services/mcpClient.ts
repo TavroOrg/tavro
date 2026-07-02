@@ -462,7 +462,7 @@ class McpClientService {
             ...(this.tenantId ? { 'tenant_id': this.tenantId } : {})
         };
 
-        appLogger.tool(`${name} -> request`, { headers: requestHeaders, body: requestBody });
+        appLogger.tool(`${name} -> request`, toolArgs);
 
         const executeToolCall = async (): Promise<any> => {
             const controller = new AbortController();
@@ -558,7 +558,7 @@ class McpClientService {
                     throw err;
                 }
             }
-            appLogger.tool(`${name} <- result`, { response: result, durationMs: Date.now() - t0 });
+            appLogger.tool(`${name} <- result`, result && typeof result === 'object' ? result : { value: result });
             return result;
         } catch (err: any) {
             appLogger.error(`callTool failed - ${name}`, { error: err.message });
@@ -808,10 +808,14 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
                 ? args.original_prompt
                 : originalPrompt || `User requested ${name} via Dashboard UI`,
         };
-        // Guarantee company_id/company_name are set for write tools — Claude may omit them even when instructed
-        if (name === 'create_agent' || name === 'create_ai_use_case' || name === 'generate_spark_ideas' || name === 'convert_spark_idea') {
-            if (companyId && !toolArgs.company_id) toolArgs.company_id = companyId;
-            if (companyName && !toolArgs.company_name) toolArgs.company_name = companyName;
+        // Only inject company_id if the tool's schema declares it, to avoid Pydantic
+        // validation errors on tools that don't accept it (e.g. create_company).
+        const toolSchema = this._mcpTools?.find(t => t.name === name);
+        if (toolSchema?.inputSchema?.properties?.company_id && !('company_id' in toolArgs)) {
+            toolArgs.company_id = companyId || null;
+        }
+        if ((name === 'create_agent' || name === 'create_ai_use_case' || name === 'generate_spark_ideas' || name === 'convert_spark_idea') && companyName && !toolArgs.company_name) {
+            toolArgs.company_name = companyName;
         }
 
         // Spark idea tools need an active company profile as context, exactly like the
@@ -994,7 +998,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             return { agents: sliced, totalRecords: this._agentCache.length };
         }
         try {
-            const data = await this.callTool('get_agent_catalog', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}` });
+            const data = await this.callTool('get_agent_catalog', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}`, company_id: localStorage.getItem('tavro_active_company_id') });
             let rawList: any[] = [];
             if (Array.isArray(data)) rawList = data;
             else if (data) {
@@ -1035,7 +1039,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     async getAgentDetails(id: string): Promise<AgentData | undefined> {
         if (this._agentDetailCache.has(id)) return this._agentDetailCache.get(id);
         try {
-            const data = await this.callTool('get_agent_card', { agent_id: id });
+            const data = await this.callTool('get_agent_card', { agent_id: id, company_id: localStorage.getItem('tavro_active_company_id') });
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
@@ -1063,7 +1067,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         // The MCP tool overlays risk_assessment from DB on every call, so we must
         // not serve a stale cached copy.
         try {
-            const data = await this.callTool('get_agent_card', { agent_id: agentId });
+            const data = await this.callTool('get_agent_card', { agent_id: agentId, company_id: localStorage.getItem('tavro_active_company_id') });
             if (data?.error) return undefined;
             const agent = unwrapToolResponse(data, ['agent_card', 'agent', 'data', 'details']);
             if (!agent || agent?.error) return undefined;
@@ -1120,7 +1124,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             return { useCases: sliced, totalRecords: this._useCaseCache.length };
         }
         try {
-            const data = await this.callTool('get_ai_use_case', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}` });
+            const data = await this.callTool('get_ai_use_case', { start_record: startRecord, record_range: `${startRecord}-${startRecord + 9}`, company_id: localStorage.getItem('tavro_active_company_id') });
             let rawList: any[] = [];
             if (Array.isArray(data)) rawList = data;
             else if (data) {
@@ -1178,7 +1182,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             // The previous approach seems to be searching for ServiceNow specific IDs or titles
             // const isId = /^[0-9a-f]{32}|[0-9a-f-]{36}|TAV/i.test(id);
             // const data = await this.callTool('get_ai_use_case', isId ? { use_case_id: id } : { title: id });
-            const data = await this.callTool('get_ai_use_case', { use_case_id: id });
+            const data = await this.callTool('get_ai_use_case', { use_case_id: id, company_id: localStorage.getItem('tavro_active_company_id') });
             const unwrapped = unwrapToolResponse(data, ['ai_use_case_agent_card', 'use_case_card', 'ai_use_case', 'data']);
             if (unwrapped) {
                 const detail = normaliseUseCase(unwrapped);
@@ -1229,7 +1233,16 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(fields?.impacted_business_applications ? { impacted_business_applications: fields.impacted_business_applications } : {}),
             ...(fields?.impacted_business_processes ? { impacted_business_processes: fields.impacted_business_processes } : {}),
             ...(fields?.original_prompt ? { original_prompt: fields.original_prompt } : {}),
-            ...(companyId ? { company_id: companyId } : {}),
+            ...(fields?.executive_summary ? { executive_summary: fields.executive_summary } : {}),
+            ...(fields?.assumptions ? { assumptions: fields.assumptions } : {}),
+            ...(fields?.quantified_financial_benefits ? { quantified_financial_benefits: fields.quantified_financial_benefits } : {}),
+            ...(fields?.total_financial_impact_summary ? { total_financial_impact_summary: fields.total_financial_impact_summary } : {}),
+            ...(fields?.implementation_cost_estimate ? { implementation_cost_estimate: fields.implementation_cost_estimate } : {}),
+            ...(fields?.return_on_investment ? { return_on_investment: fields.return_on_investment } : {}),
+            ...(fields?.risk_considerations ? { risk_considerations: fields.risk_considerations } : {}),
+            ...(fields?.implementation_roadmap ? { implementation_roadmap: fields.implementation_roadmap } : {}),
+            ...(fields?.recommendation ? { recommendation: fields.recommendation } : {}),
+            company_id: companyId,
             ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_ai_use_case', payload);
@@ -1262,6 +1275,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
     async createAgent(args: any): Promise<any> {
         // Server-side create_agent has a strict signature; drop unsupported
         // UI-only fields (owner/role/environment) to avoid tool validation errors.
+        const source: string | undefined = args?.source;
         const agentName = (args?.agent_name ?? '').trim();
         const description = (args?.description ?? '').trim() || agentName;
         const instruction = (args?.instruction ?? '').trim() || description;
@@ -1280,12 +1294,12 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             ...(args?.skills ? { skills: args.skills } : {}),
             ...(args?.issues ? { issues: args.issues } : {}),
             ...(args?.original_prompt ? { original_prompt: args.original_prompt } : {}),
-            ...(companyId ? { company_id: companyId } : {}),
+            company_id: companyId,
             ...(companyName ? { company_name: companyName } : {}),
         };
         const data = await this.callTool('create_agent', payload);
         this.invalidateCache();
-        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload } }));
+        window.dispatchEvent(new CustomEvent('tavro:agent-created', { detail: { result: data, args: payload, source } }));
         return data;
     }
 
@@ -1294,6 +1308,7 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
             original_prompt: args.original_prompt,
             start_record: args.start_record ?? 1,
             record_range: args.record_range ?? '1-20',
+            company_id: localStorage.getItem('tavro_active_company_id'),
         });
     }
 

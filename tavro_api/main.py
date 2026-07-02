@@ -1,12 +1,17 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 load_dotenv(override=False)
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 from temporalio.worker import Worker
 from temporalio.client import Client
 
@@ -48,8 +53,10 @@ from services.activity.activities import (
     create_aict_ai_system_activity,
 )
 
-TASK_QUEUE = "risk-classification-queue"
-TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+TASK_QUEUE        = "risk-classification-queue"
+AUDIT_TASK_QUEUE  = "audit-assessment-queue"
+TEMPORAL_ADDRESS  = os.getenv("TEMPORAL_ADDRESS", "risk-temporal:7233")
+_ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
 
 
 async def _run_temporal_worker():
@@ -78,6 +85,30 @@ async def _run_temporal_worker():
     await worker.run()
 
 
+async def _run_audit_temporal_worker():
+    from services.workflow.audit_workflow import AuditWorkflow
+    from services.activity.audit_activities import (
+        setup_audit_activity,
+        assess_compliance_pair_activity,
+        finalize_audit_activity,
+    )
+
+    print("Connecting enterprise audit Temporal worker...")
+    client = await Client.connect(TEMPORAL_ADDRESS)
+    worker = Worker(
+        client,
+        task_queue=AUDIT_TASK_QUEUE,
+        workflows=[AuditWorkflow],
+        activities=[
+            setup_audit_activity,
+            assess_compliance_pair_activity,
+            finalize_audit_activity,
+        ],
+    )
+    print(f"Audit Temporal worker listening on queue: {AUDIT_TASK_QUEUE}")
+    await worker.run()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize database tables
@@ -89,8 +120,17 @@ async def lifespan(app: FastAPI):
     await ensure_spark_table()
     await start_log_collector()
     worker_task = asyncio.create_task(_run_temporal_worker())
+    audit_worker_task = None
+    if _ENTERPRISE_ENABLED:
+        audit_worker_task = asyncio.create_task(_run_audit_temporal_worker())
     yield
     worker_task.cancel()
+    if audit_worker_task:
+        audit_worker_task.cancel()
+        try:
+            await audit_worker_task
+        except asyncio.CancelledError:
+            pass
     try:
         await worker_task
     except asyncio.CancelledError:
@@ -112,6 +152,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
+    messages = []
+    for error in errors:
+        field = " → ".join(str(loc) for loc in error.get("loc", [])[1:]) if len(error.get("loc", [])) > 1 else "input"
+        messages.append(f"{field}: {error.get('msg', 'Invalid value')}")
+    detail = "; ".join(messages) if messages else "The request data is invalid. Please check your input."
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "A server error occurred. Please try again or contact support if the issue persists."},
+    )
+
 # ── Digital Twin routes ───────────────────────────────────────────────────────
 app.include_router(companies.router,   prefix="/api/v1/companies",   tags=["Companies"])
 app.include_router(dim_types.router,   prefix="/api/v1/dim-types",   tags=["Dimension Types"])
@@ -122,8 +182,8 @@ app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Grap
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
-# BUILD_MODE=enterprise means the entrypoint copied enterprise routers into
-# /app/api/routers/ before uvicorn started.  Any other value uses stubs.
+# BUILD_MODE=enterprise means PYTHONPATH=/enterprise:/app so these modules
+# resolve from the enterprise image layer.  Any other value uses stubs.
 _ENTERPRISE_ENABLED = os.getenv("BUILD_MODE", "").strip().lower() == "enterprise"
 if _ENTERPRISE_ENABLED:
     from api.routers import compliance, compliance_research, audit

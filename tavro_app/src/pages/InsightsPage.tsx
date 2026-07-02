@@ -14,6 +14,7 @@ import {
     type LabelDistribution,
     type InsightsRiskAgent,
 } from '../services/insightsApi';
+import { toUserMessage } from '../utils/errorUtils';
 
 // All page data is now computed by the backend (GET /api/v1/insights/summary),
 // which aggregates live over the core.* / twin.* tables. This page only fetches
@@ -707,7 +708,7 @@ const InsightsPage: React.FC = () => {
             const summary = await insightsApi.getSummary(companyId);
             setData(summary);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load insights');
+            setError(toUserMessage(err));
         } finally {
             setLoading(false);
         }
@@ -827,20 +828,20 @@ const InsightsPage: React.FC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <LifecycleDistribution
-                    title="Agent Lifecycle Distribution"
-                    subtitle="Agent portfolio across all 5 lifecycle stages"
-                    totalClass="text-slate-700"
-                    accent="bg-slate-400"
-                    icon={<div className="p-2 bg-slate-100 rounded-lg border border-slate-200"><GitBranch size={16} className="text-slate-600" /></div>}
-                    data={agentDistribution}
-                />
-                <LifecycleDistribution
                     title="Use Case Lifecycle Distribution"
                     subtitle="AI use cases tracked from idea to live"
                     totalClass="text-sky-700"
                     accent="bg-sky-500"
                     icon={<div className="p-2 bg-sky-100 rounded-lg border border-sky-200"><Layers size={16} className="text-sky-600" /></div>}
                     data={useCaseDistribution}
+                />
+                <LifecycleDistribution
+                    title="Agent Lifecycle Distribution"
+                    subtitle="Agent portfolio across all 5 lifecycle stages"
+                    totalClass="text-slate-700"
+                    accent="bg-slate-400"
+                    icon={<div className="p-2 bg-slate-100 rounded-lg border border-slate-200"><GitBranch size={16} className="text-slate-600" /></div>}
+                    data={agentDistribution}
                 />
             </div>
 

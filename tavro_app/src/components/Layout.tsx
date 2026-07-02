@@ -6,7 +6,7 @@ import {
     LogOut, ClipboardList, MessageCircle, X, Terminal,
     ChevronLeft, ChevronRight, FlaskConical, Scale, ShieldCheck,
     AppWindow, Paperclip, Network, Zap, Plug, CircleHelp,
-    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, Unlock
+    Map, TestTube2, Shield, AlertTriangle, Boxes, Lock, User
 } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
@@ -26,6 +26,7 @@ import { portalActivity } from '../services/portalActivity';
 const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
+import { getUserDisplayName, fetchUserDisplayName } from '../services/auth';
 
 import travoLogo from '../assets/travo_logo.png';
 
@@ -51,9 +52,13 @@ function isProcessPage(pathname: string): boolean {
     return /^\/processes\/(?!new$)/.test(pathname);
 }
 
+/** Check if current route is an integration view page */
+function isIntegrationPage(pathname: string): boolean {
+    return /^\/integrations\/(?!new$)/.test(pathname);
+}
+
 const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
-
 
 function LockedNavItem({
     icon,
@@ -111,8 +116,8 @@ const Layout: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [showLogs] = useShowLogs();
-    useCatalog();
-    useUseCases();
+    const { agents } = useCatalog();
+    const { useCases } = useUseCases();
     const { activeCompany } = useBlueprint();
     const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
@@ -122,6 +127,11 @@ const Layout: React.FC = () => {
     const [agentCount, setAgentCount] = useState(0);
     const [useCaseCount, setUseCaseCount] = useState(0);
     const [sparkCount, setSparkCount] = useState(0);
+    const [userName, setUserName] = useState<string | null>(() => getUserDisplayName());
+
+    useEffect(() => {
+        fetchUserDisplayName().then(name => { if (name) setUserName(name); });
+    }, []);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;
@@ -129,14 +139,14 @@ const Layout: React.FC = () => {
             businessRelationsApi.countApplications(companyId),
             businessRelationsApi.countProcesses(companyId),
             businessRelationsApi.countIntegrations(companyId),
-            aiModelApi.listModels(undefined, companyId),
+            aiModelApi.countModels(companyId),
             agentApi.countAgents(companyId),
             useCaseApi.countUseCases(companyId),
         ]).then(([apps, processes, integrations, models, agents, useCases]) => {
             if (apps.status === 'fulfilled') setAppCount(apps.value);
             if (processes.status === 'fulfilled') setProcessCount(processes.value);
             if (integrations.status === 'fulfilled') setIntegrationCount(integrations.value);
-            if (models.status === 'fulfilled') setAiModelCount(models.value.length);
+            if (models.status === 'fulfilled') setAiModelCount(models.value);
             if (agents.status === 'fulfilled') setAgentCount(agents.value);
             if (useCases.status === 'fulfilled') setUseCaseCount(useCases.value);
         });
@@ -257,7 +267,8 @@ const Layout: React.FC = () => {
     const isOnUseCasePage = isUseCasePage(location.pathname);
     const isOnApplicationPage = isApplicationPage(location.pathname);
     const isOnProcessPage = isProcessPage(location.pathname);
-    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage;
+    const isOnIntegrationPage = isIntegrationPage(location.pathname);
+    const isOnAttachmentPage = isOnAgentPage || isOnUseCasePage || isOnApplicationPage || isOnProcessPage || isOnIntegrationPage;
 
     useEffect(() => {
         const rightRailWidth = isPanelOpen ? panelWidth : 72;
@@ -274,6 +285,8 @@ const Layout: React.FC = () => {
         <div className="h-screen overflow-hidden flex bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             {/* Global artifact-ready notification — appears centered at top of viewport */}
             <TimedInfoToast storageKey="tavro_artifacts_notice" position="center" durationMs={8000} />
+            {/* Spark use-case enrichment notifications — bottom-right */}
+            <TimedInfoToast storageKey="tavro_spark_notice" position="bottom-right" durationMs={12000} />
 
             {/* ── Left Navigation Sidebar ──────────────────────────────────── */}
             <aside className={`relative bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40 flex-shrink-0 overflow-visible transition-all duration-300 ${isLeftPanelOpen ? 'w-[280px]' : 'w-[72px]'}`}>
@@ -384,7 +397,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Map size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/roadmap') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Roadmap</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -468,7 +480,6 @@ const Layout: React.FC = () => {
                                 >
                                     <TestTube2 size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/agent-evals') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Agent evals</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -496,7 +507,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Shield size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/guardrails') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Guardrails</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -519,7 +529,6 @@ const Layout: React.FC = () => {
                                 >
                                     <Scale size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/compliance') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Compliance</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -542,7 +551,6 @@ const Layout: React.FC = () => {
                                 >
                                     <ShieldCheck size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/audit') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Audit center</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -565,7 +573,6 @@ const Layout: React.FC = () => {
                                 >
                                     <AlertTriangle size={16} className={`flex-shrink-0 ${location.pathname.startsWith('/issues') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                                     <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Issues</span>
-                                    {isLeftPanelOpen && <Unlock size={13} className="ml-auto flex-shrink-0 text-slate-400 dark:text-slate-400" />}
                                 </button>
                             ) : (
                                 <LockedNavItem
@@ -603,10 +610,16 @@ const Layout: React.FC = () => {
                         <button
                             onClick={handleLogout}
                             className={`flex items-center py-1 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/25 hover:text-red-600 dark:hover:text-red-300 transition-all w-full group outline-none ${isLeftPanelOpen ? 'px-3 justify-start' : 'px-0 justify-center'}`}
-                            title={!isLeftPanelOpen ? "Sign Out" : undefined}
+                            title={!isLeftPanelOpen ? (userName ? `Sign Out (${userName})` : "Sign Out") : undefined}
                         >
                             <LogOut size={16} className="flex-shrink-0 text-slate-400 dark:text-slate-300 group-hover:text-red-500 dark:group-hover:text-red-300 transition-colors" />
                             <span className={`whitespace-nowrap overflow-hidden transition-all duration-300 ${isLeftPanelOpen ? 'max-w-[200px] ml-3 opacity-100' : 'max-w-0 ml-0 opacity-0'}`}>Sign Out</span>
+                            {userName && (
+                                <span className={`flex items-center gap-1 overflow-hidden transition-all duration-300 text-xs text-slate-400 dark:text-slate-500 group-hover:text-red-400 dark:group-hover:text-red-400 ml-auto ${isLeftPanelOpen ? 'max-w-[120px] opacity-100' : 'max-w-0 opacity-0'}`} title={userName}>
+                                    <User size={11} className="flex-shrink-0" />
+                                    <span className="truncate">{userName}</span>
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>
@@ -626,7 +639,7 @@ const Layout: React.FC = () => {
 
                 <div className={location.pathname === '/settings/logs'
                     ? 'flex-1 min-h-0 flex flex-col overflow-hidden'
-                    : 'p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto'}>
+                    : `p-8 w-full max-w-[1600px] mx-auto flex-1 overflow-y-auto${location.pathname.includes('/use-cases/') ? ' scrollbar-hide' : ''}`}>
                     <Outlet />
                 </div>
                 <footer className={`flex-shrink-0 border-t border-slate-200 dark:border-slate-800 py-2 px-6 text-[11px] text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-900 transition-colors flex items-center justify-between${location.pathname === '/settings/logs' ? ' hidden' : ''}`}>
@@ -769,7 +782,9 @@ const Layout: React.FC = () => {
                                                     ? 'application'
                                                     : isOnProcessPage
                                                         ? 'process'
-                                                        : 'agent'
+                                                        : isOnIntegrationPage
+                                                            ? 'integration'
+                                                            : 'agent'
                                         }
                                     />
                                 )}

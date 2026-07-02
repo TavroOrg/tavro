@@ -21,6 +21,22 @@ export interface UseCaseSummary {
     overall_risk?: string | null;
     related_agent_count?: number | string | null;
     no_of_associated_agents?: number | string | null;
+    agent_risk_exposure_are?: number | string | null;
+    agent_risk_tier_art?: string | null;
+    blended_risk_score?: number | string | null;
+    inherent_risk_classification?: string | null;
+    inherent_risk_classification_score?: number | string | null;
+    residual_risk_classification?: string | null;
+    residual_risk_classification_score?: number | string | null;
+    executive_summary?: string | null;
+    assumptions?: string | null;
+    quantified_financial_benefits?: string | null;
+    total_financial_impact_summary?: string | null;
+    implementation_cost_estimate?: string | null;
+    return_on_investment?: string | null;
+    risk_considerations?: string | null;
+    implementation_roadmap?: string | null;
+    recommendation?: string | null;
 }
 
 // ── Related entities on the detail page ───────────────────────────────────────

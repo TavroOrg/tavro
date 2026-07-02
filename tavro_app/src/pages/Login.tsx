@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { generatePKCE } from '../services/pkce';
 import { loadAuthConfig } from '../services/authConfig';
+import { toUserMessage } from '../utils/errorUtils';
 
 /**
  * Login Page - ZITADEL OAuth 2.0 Authorization Code + PKCE flow.
@@ -75,7 +76,7 @@ const Login: React.FC = () => {
         redirectToZitadel().catch((err: Error) => {
             console.error('[Login] ZITADEL redirect failed:', err);
             setLoading(false);
-            setError(err.message || 'Unable to start ZITADEL login.');
+            setError(toUserMessage(err));
         });
     }, []);
 

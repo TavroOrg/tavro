@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, CalendarDays, Loader2, RefreshCw, UserRound } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
 import type { AgentIssue } from '../types/agent';
+import { toUserMessage } from '../utils/errorUtils';
 
 type IssueDetail = AgentIssue & {
   linked_agents?: Array<{ agent_id: string; agent_name: string }>;
@@ -28,7 +29,9 @@ const formatDate = (value?: string | null): string => {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${date.getFullYear()}`;
 };
 
 const Field: React.FC<{ label: string; value?: string | null }> = ({ label, value }) => (
@@ -53,7 +56,7 @@ const IssueViewPage: React.FC = () => {
       const data = await agentApi.getIssue(id);
       setIssue(data as IssueDetail);
     } catch (err: any) {
-      setError(err.message || 'Failed to load issue.');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }

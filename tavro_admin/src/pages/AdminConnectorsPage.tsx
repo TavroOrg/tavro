@@ -1,29 +1,28 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-    ChevronRight, Play, RotateCcw, CheckCircle2, AlertCircle,
-    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save, Building2,
+    ChevronRight, ChevronDown, Play, RotateCcw, CheckCircle2, AlertCircle,
+    Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save, Building2, Search,
+    Bot, AppWindow, Workflow, Plug,
 } from 'lucide-react';
+import logoServicenow  from '../assets/logos/logo-servicenow.png';
+import logoMicrosoft   from '../assets/logos/logo-microsoft.png';
+import logoAws         from '../assets/logos/logo-aws.png';
+import logoSalesforce  from '../assets/logos/logo-salesforce.png';
+import logoSnowflake   from '../assets/logos/logo-snowflake.png';
+import logoDatabricks  from '../assets/logos/logo-databricks.png';
+import logoGoogle      from '../assets/logos/logo-google.png';
+import logoGithub      from '../assets/logos/logo-github.png';
+import logoCopilot     from '../assets/logos/logo-copilot.png';
+import logoAgent365    from '../assets/logos/logo-agent365.png';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface ConnectorField {
     key: string;
     label: string;
     type: 'text' | 'password';
     placeholder?: string;
-}
-
-interface ConnectorDef {
-    id: string;
-    name: string;
-    description: string;
-    category: string;
-    initials: string;
-    color: string;
-    note?: string;
-    fields: ConnectorField[];
 }
 
 type RunStatus = 'idle' | 'running' | 'success' | 'error';
@@ -35,12 +34,12 @@ interface ExtractedAgent {
 }
 
 interface ExtractedApplication {
-    name:                     string;
-    business_application_id:  string;
+    name:                    string;
+    business_application_id: string;
 }
 
 interface ExtractedProcess {
-    name:                string;
+    name:               string;
     business_process_id: string;
 }
 
@@ -52,124 +51,211 @@ interface RunResult {
     applications?:     ExtractedApplication[];
     processes?:        ExtractedProcess[];
     error?:            string;
-    // legacy — not displayed
     files_saved?:      string[];
     logs?:             string;
 }
 
 type ServiceNowMode = 'agents' | 'business_applications' | 'business_processes';
 
-// ---------------------------------------------------------------------------
-// Static connector definitions (mirrors admin_connectors.py)
-// ---------------------------------------------------------------------------
+type DeviceCodePhase = 'idle' | 'loading' | 'waiting' | 'done' | 'error';
 
-const CONNECTORS: ConnectorDef[] = [
+interface DeviceCodeState {
+    phase:           DeviceCodePhase;
+    userCode?:       string;
+    verificationUri?: string;
+    deviceCode?:     string;
+    message?:        string;
+}
+
+interface ProviderCapability {
+    id:              string;
+    connectorId:     string;
+    name:            string;
+    description:     string;
+    snMode?:         ServiceNowMode;
+    useSharedCreds?: boolean;
+    note?:           string;
+    fields?:         ConnectorField[];
+    isGemini?:       boolean;
+    isAgent365?:     boolean;
+    isOutbound?:     boolean;
+    capLogo?:        string;
+    capIcon?:        React.ReactNode;
+    runName?:        string;
+}
+
+interface ProviderDef {
+    id:                 string;
+    name:               string;
+    description:        string;
+    initials:           string;
+    color:              string;
+    sharedConnectorIds?: string[];
+    sharedFields?:      ConnectorField[];
+    gridLayout?:        boolean;
+    capabilities:       ProviderCapability[];
+}
+
+// ── Provider definitions ────────────────────────────────────────────────────────
+
+const PROVIDERS: ProviderDef[] = [
     {
-        id: 'copilot', name: 'Microsoft Copilot', description: 'Azure Copilot Studio bots and agents',
-        category: 'Microsoft Azure', initials: 'MC', color: 'from-blue-500 to-blue-700',
-        fields: [
-            { key: 'client_id',     label: 'Client ID',        type: 'text' },
-            { key: 'client_secret', label: 'Client Secret',    type: 'password' },
-            { key: 'tenant_id',     label: 'Tenant ID',        type: 'text' },
-            { key: 'scope',         label: 'Scope',            type: 'text', placeholder: 'https://org.crm.dynamics.com/.default' },
-            { key: 'org_url',       label: 'Organization URL', type: 'text', placeholder: 'https://org.crm.dynamics.com' },
-        ],
-    },
-    {
-        id: 'bedrock', name: 'AWS Bedrock', description: 'Amazon Bedrock agents and knowledge bases',
-        category: 'Amazon Web Services', initials: 'AB', color: 'from-orange-500 to-orange-700',
-        fields: [
-            { key: 'access_key', label: 'Access Key ID',     type: 'text' },
-            { key: 'secret_key', label: 'Secret Access Key', type: 'password' },
-            { key: 'region',     label: 'Region',            type: 'text', placeholder: 'us-east-2' },
-        ],
-    },
-    {
-        id: 'salesforce', name: 'Salesforce', description: 'Salesforce Einstein AI agents and bots',
-        category: 'Salesforce', initials: 'SF', color: 'from-sky-500 to-sky-700',
-        fields: [
-            { key: 'instance_url', label: 'Instance URL', type: 'text',     placeholder: 'https://myorg.my.salesforce.com' },
-            { key: 'api_version',  label: 'API Version',  type: 'text',     placeholder: 'v59.0' },
-            { key: 'access_token', label: 'Access Token', type: 'password' },
-        ],
-    },
-    {
-        id: 'servicenow', name: 'ServiceNow', description: 'ServiceNow AI agents and workflows',
-        category: 'ServiceNow', initials: 'SN', color: 'from-green-500 to-green-700',
-        fields: [
+        id: 'servicenow', name: 'ServiceNow', description: 'IT service management platform',
+        initials: 'SN', color: 'from-green-500 to-green-700',
+        sharedConnectorIds: ['servicenow'],
+        sharedFields: [
             { key: 'instance_url', label: 'Instance URL', type: 'text',     placeholder: 'https://myinstance.service-now.com' },
             { key: 'username',     label: 'Username',     type: 'text' },
             { key: 'password',     label: 'Password',     type: 'password' },
         ],
-    },
-    {
-        id: 'snowflake', name: 'Snowflake', description: 'Snowflake Cortex AI agents',
-        category: 'Snowflake', initials: 'SW', color: 'from-cyan-500 to-cyan-700',
-        fields: [
-            { key: 'account',   label: 'Account URL',  type: 'text',     placeholder: 'https://account.snowflakecomputing.com' },
-            { key: 'database',  label: 'Database',     type: 'text' },
-            { key: 'schema',    label: 'Schema',       type: 'text' },
-            { key: 'token',     label: 'Bearer Token', type: 'password' },
+        capabilities: [
+            { id: 'sn_agents',   connectorId: 'servicenow',    name: 'Agent discovery',                description: 'Extract AI agents registered in ServiceNow',                   snMode: 'agents',                useSharedCreds: true, capIcon: <Bot       size={18} className="text-blue-500" /> },
+            { id: 'sn_aict',     connectorId: 'aict_inbound',  name: 'AICT agent discovery',           description: 'Extract AI agents registered via ServiceNow AI Control Tower', useSharedCreds: true,             capIcon: <Bot       size={18} className="text-blue-500" /> },
+            { id: 'sn_apps',     connectorId: 'servicenow',    name: 'Business Application Discovery', description: 'Export Business Application from CMDB Application',            snMode: 'business_applications', useSharedCreds: true, capIcon: <AppWindow size={18} className="text-violet-500" /> },
+            { id: 'sn_procs',    connectorId: 'servicenow',    name: 'Business Process Discovery',     description: 'Export Business Process from CMDB Application',                snMode: 'business_processes',    useSharedCreds: true, capIcon: <Workflow  size={18} className="text-amber-500" /> },
+            { id: 'sn_aict_out', connectorId: 'aict_outbound', name: 'AICT agent discovery',           description: 'Register Tavro agents in ServiceNow AI Control Tower',          isOutbound: true,                 capIcon: <Bot       size={18} className="text-purple-500" /> },
         ],
     },
     {
-        id: 'databricks', name: 'Databricks', description: 'Databricks model serving endpoints',
-        category: 'Databricks', initials: 'DB', color: 'from-red-500 to-red-700',
-        fields: [
-            { key: 'workspace_url',    label: 'Workspace URL', type: 'text',     placeholder: 'https://dbc-xxx.azuredatabricks.net' },
-            { key: 'databricks_token', label: 'Access Token',  type: 'password' },
+        id: 'microsoft', name: 'Microsoft', description: 'Azure and Copilot Studio',
+        initials: 'MS', color: 'from-blue-500 to-blue-700',
+        gridLayout: true,
+        capabilities: [
+            {
+                id: 'copilot', connectorId: 'copilot', name: 'Microsoft Copilot', description: 'Azure Copilot Studio bots and agents',
+                capLogo: logoCopilot, runName: 'Agent Discovery', capIcon: <Bot size={18} className="text-blue-500" />,
+                fields: [
+                    { key: 'client_id',     label: 'Client ID',        type: 'text' },
+                    { key: 'client_secret', label: 'Client Secret',    type: 'password' },
+                    { key: 'tenant_id',     label: 'Tenant ID',        type: 'text' },
+                    { key: 'scope',         label: 'Scope',            type: 'text', placeholder: 'https://org.crm.dynamics.com/.default' },
+                    { key: 'org_url',       label: 'Organization URL', type: 'text', placeholder: 'https://org.crm.dynamics.com' },
+                ],
+            },
+            {
+                id: 'agent365', connectorId: 'agent365', name: 'Microsoft Agent 365', description: 'Microsoft 365 Admin Center — all agents',
+                capLogo: logoAgent365, runName: 'Agent Discovery', capIcon: <Bot size={18} className="text-blue-500" />,
+                isAgent365: true,
+                note: 'Requires Microsoft delegated sign-in. Save credentials, then complete Device Code authentication.',
+                fields: [
+                    { key: 'tenant_id',     label: 'Azure Tenant ID',     type: 'text' },
+                    { key: 'client_id',     label: 'Azure Client ID',     type: 'text' },
+                    { key: 'client_secret', label: 'Azure Client Secret', type: 'password' },
+                ],
+            },
         ],
     },
     {
-        id: 'gemini', name: 'Google Gemini', description: 'Google Vertex AI Agent Builder agents',
-        category: 'Google Cloud', initials: 'GG', color: 'from-yellow-500 to-yellow-700',
-        note: "Fill in your OAuth credentials, click 'Get Authorization URL', authorize with Google, then paste the code into Authorization Code.",
-        fields: [
-            { key: 'client_id',     label: 'Client ID',           type: 'text' },
-            { key: 'client_secret', label: 'Client Secret',        type: 'password' },
-            { key: 'project_id',    label: 'Project ID',           type: 'text' },
-            { key: 'collection_id', label: 'Collection ID',        type: 'text' },
-            { key: 'engine_id',     label: 'Engine ID',            type: 'text' },
-            { key: 'auth_uri',      label: 'Auth URI',             type: 'text', placeholder: 'https://accounts.google.com/o/oauth2/auth' },
-            { key: 'token_uri',     label: 'Token URI',            type: 'text', placeholder: 'https://oauth2.googleapis.com/token' },
-            { key: 'auth_code',     label: 'Authorization Code',   type: 'text', placeholder: 'Paste the code from the redirect URL' },
-        ],
+        id: 'aws', name: 'AWS', description: 'Amazon Web Services',
+        initials: 'AW', color: 'from-orange-500 to-orange-700',
+        capabilities: [{
+            id: 'bedrock', connectorId: 'bedrock', name: 'Agent Discovery', description: 'Amazon Bedrock agents and knowledge bases', capIcon: <Bot size={18} className="text-blue-500" />,
+            fields: [
+                { key: 'access_key', label: 'Access Key ID',     type: 'text' },
+                { key: 'secret_key', label: 'Secret Access Key', type: 'password' },
+                { key: 'region',     label: 'Region',            type: 'text', placeholder: 'us-east-2' },
+            ],
+        }],
     },
     {
-        id: 'github', name: 'GitHub MCP', description: 'GitHub MCP server tools and prompts',
-        category: 'GitHub', initials: 'GH', color: 'from-slate-500 to-slate-700',
-        fields: [
-            { key: 'base_url', label: 'MCP Server URL', type: 'text',     placeholder: 'https://api.githubcopilot.com/mcp/' },
-            { key: 'token',    label: 'Token',          type: 'password' },
-        ],
+        id: 'salesforce', name: 'Salesforce', description: 'CRM and Einstein AI',
+        initials: 'SF', color: 'from-sky-500 to-sky-700',
+        capabilities: [{
+            id: 'salesforce', connectorId: 'salesforce', name: 'Agent Discovery', description: 'Salesforce Einstein AI agents and bots', capIcon: <Bot size={18} className="text-blue-500" />,
+            fields: [
+                { key: 'instance_url', label: 'Instance URL', type: 'text',     placeholder: 'https://myorg.my.salesforce.com' },
+                { key: 'api_version',  label: 'API Version',  type: 'text',     placeholder: 'v59.0' },
+                { key: 'access_token', label: 'Access Token', type: 'password' },
+            ],
+        }],
     },
     {
-        id: 'servicenow_aict', name: 'ServiceNow AICT', description: 'ServiceNow AI Control Tower — AI system governance',
-        category: 'ServiceNow', initials: 'SA', color: 'from-emerald-500 to-emerald-700',
-        fields: [
-            { key: 'instance_url',          label: 'Instance URL',           type: 'text',     placeholder: 'https://myinstance.service-now.com' },
-            { key: 'username',              label: 'Username',               type: 'text' },
-            { key: 'password',              label: 'Password',               type: 'password' },
-            { key: 'provider_name',         label: 'Provider Name',          type: 'text',     placeholder: 'Tavro' },
-            { key: 'model_category_sys_id', label: 'Model Category Sys ID',  type: 'text',     placeholder: '5383f164ffec2a10c0fbffffffffff82' },
-        ],
+        id: 'snowflake', name: 'Snowflake', description: 'Cloud data warehouse',
+        initials: 'SW', color: 'from-cyan-500 to-cyan-700',
+        capabilities: [{
+            id: 'snowflake', connectorId: 'snowflake', name: 'Agent Discovery', description: 'Snowflake Cortex AI agents', capIcon: <Bot size={18} className="text-blue-500" />,
+            fields: [
+                { key: 'account',  label: 'Account URL',  type: 'text',     placeholder: 'https://account.snowflakecomputing.com' },
+                { key: 'database', label: 'Database',     type: 'text' },
+                { key: 'schema',   label: 'Schema',       type: 'text' },
+                { key: 'token',    label: 'Bearer Token', type: 'password' },
+            ],
+        }],
+    },
+    {
+        id: 'databricks', name: 'Databricks', description: 'Lakehouse platform',
+        initials: 'DB', color: 'from-red-500 to-red-700',
+        capabilities: [{
+            id: 'databricks', connectorId: 'databricks', name: 'Agent Discovery', description: 'Databricks model serving endpoints', capIcon: <Bot size={18} className="text-blue-500" />,
+            fields: [
+                { key: 'workspace_url',    label: 'Workspace URL', type: 'text',     placeholder: 'https://dbc-xxx.azuredatabricks.net' },
+                { key: 'databricks_token', label: 'Access Token',  type: 'password' },
+            ],
+        }],
+    },
+    {
+        id: 'google', name: 'Google', description: 'Google Cloud AI services',
+        initials: 'GG', color: 'from-yellow-500 to-yellow-700',
+        capabilities: [{
+            id: 'gemini', connectorId: 'gemini', name: 'Agent Discovery', description: 'Google Vertex AI Agent Builder agents', capIcon: <Bot size={18} className="text-blue-500" />,
+            isGemini: true,
+            note: "Fill in your OAuth credentials, click 'Get Authorization URL', authorize with Google, then paste the code into Authorization Code.",
+            fields: [
+                { key: 'client_id',     label: 'Client ID',     type: 'text' },
+                { key: 'client_secret', label: 'Client Secret', type: 'password' },
+                { key: 'project_id',    label: 'Project ID',    type: 'text' },
+                { key: 'collection_id', label: 'Collection ID', type: 'text' },
+                { key: 'engine_id',     label: 'Engine ID',     type: 'text' },
+                { key: 'auth_uri',      label: 'Auth URI',      type: 'text', placeholder: 'https://accounts.google.com/o/oauth2/auth' },
+                { key: 'token_uri',     label: 'Token URI',     type: 'text', placeholder: 'https://oauth2.googleapis.com/token' },
+            ],
+        }],
+    },
+    {
+        id: 'github', name: 'GitHub', description: 'Source code and MCP',
+        initials: 'GH', color: 'from-slate-600 to-slate-800',
+        capabilities: [{
+            id: 'github', connectorId: 'github', name: 'MCP Discovery', description: 'GitHub MCP server tools and prompts', capIcon: <Plug size={18} className="text-slate-500" />,
+            fields: [
+                { key: 'base_url', label: 'MCP Server URL', type: 'text',     placeholder: 'https://api.githubcopilot.com/mcp/' },
+                { key: 'token',    label: 'Token',          type: 'password' },
+            ],
+        }],
     },
 ];
 
-// ---------------------------------------------------------------------------
-// Small sub-components
-// ---------------------------------------------------------------------------
+// ── Provider categories ────────────────────────────────────────────────────────
+
+const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
+    { label: 'Cloud Platforms',  ids: ['microsoft', 'aws', 'google'] },
+    { label: 'Enterprise & CRM', ids: ['servicenow', 'salesforce'] },
+    { label: 'Data Platforms',   ids: ['snowflake', 'databricks'] },
+    { label: 'Developer Tools',  ids: ['github'] },
+];
+
+// ── Brand logos (Simple Icons via react-icons) ─────────────────────────────────
+
+const LOGOS: Record<string, { icon: React.ReactNode; bg: string }> = {
+    servicenow: { icon: <img src={logoServicenow} alt="ServiceNow" className="w-10 h-10 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    microsoft:  { icon: <img src={logoMicrosoft}  alt="Microsoft"  className="w-10 h-10 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    aws:        { icon: <img src={logoAws}         alt="AWS"        className="w-11 h-11 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    salesforce: { icon: <img src={logoSalesforce}  alt="Salesforce" className="w-10 h-10 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    snowflake:  { icon: <img src={logoSnowflake}   alt="Snowflake"  className="w-12 h-12 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    databricks: { icon: <img src={logoDatabricks}  alt="Databricks" className="w-10 h-10 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    google:     { icon: <img src={logoGoogle}      alt="Google"     className="w-14 h-14 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+    github:     { icon: <img src={logoGithub}      alt="GitHub"     className="w-14 h-14 object-contain" />, bg: 'bg-white dark:bg-slate-800' },
+};
+
+// ── Shared styles ──────────────────────────────────────────────────────────────
 
 const inputBase =
     'w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ' +
     'text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 ' +
     'rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all';
 
-function PasswordInput({
-    value, onChange, placeholder,
-}: {
-    value: string; onChange: (v: string) => void; placeholder?: string;
-}) {
+// ── PasswordInput ──────────────────────────────────────────────────────────────
+
+function PasswordInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
     const [show, setShow] = useState(false);
     return (
         <div className="relative">
@@ -191,66 +277,145 @@ function PasswordInput({
     );
 }
 
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
+// ── SaveButton helper ──────────────────────────────────────────────────────────
+
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+function SaveButton({ state, onClick, disabled }: { state: SaveStatus; onClick: () => void; disabled?: boolean }) {
+    return (
+        <button
+            onClick={onClick}
+            disabled={disabled || state === 'saving'}
+            className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
+        >
+            {state === 'saving' ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                : state === 'saved'  ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
+                : state === 'error'  ? <><AlertCircle  size={14} className="text-red-500"     /> Error</>
+                : <><Save size={14} /> Save credentials</>
+            }
+        </button>
+    );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 const AdminConnectorsPage: React.FC = () => {
-    const [selected, setSelected] = useState<string | null>(null);
-    const [credentials, setCredentials] = useState<Record<string, Record<string, string>>>({});
-    const [runState, setRunState] = useState<Record<string, { status: RunStatus; result?: RunResult }>>({});
-    const [geminiAuthUrl, setGeminiAuthUrl] = useState<{ url?: string; loading: boolean; error?: string }>({ loading: false });
-    const [credsLoading, setCredsLoading] = useState(false);
-    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-    const [snMode, setSnMode] = useState<ServiceNowMode>('agents');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const selectedProvider = searchParams.get('provider');
+    const selectedCapId    = searchParams.get('cap');
+    const setSelectedProvider = (id: string | null) => {
+        if (id) setSearchParams({ provider: id }, { replace: false });
+        else setSearchParams({}, { replace: false });
+    };
+    const setSelectedCap = (capId: string | null) => {
+        if (capId && selectedProvider) setSearchParams({ provider: selectedProvider, cap: capId }, { replace: false });
+        else if (selectedProvider)     setSearchParams({ provider: selectedProvider }, { replace: false });
+    };
+    const [search, setSearch] = useState('');
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+    const toggleGroup = (label: string) =>
+        setCollapsedGroups(prev => { const next = new Set(prev); next.has(label) ? next.delete(label) : next.add(label); return next; });
+    const [credentials, setCredentials]           = useState<Record<string, Record<string, string>>>({});
+    const [runState, setRunState]                 = useState<Record<string, { status: RunStatus; result?: RunResult }>>({});
+    const [saveStates, setSaveStates]             = useState<Record<string, SaveStatus>>({});
+    const [credsLoading, setCredsLoading]         = useState<Record<string, boolean>>({});
+    const [geminiAuthUrl, setGeminiAuthUrl]       = useState<{ url?: string; loading: boolean; error?: string }>({ loading: false });
+    const [deviceCodeState, setDeviceCodeState]   = useState<DeviceCodeState>({ phase: 'idle' });
 
-    const selectedConnector = CONNECTORS.find(c => c.id === selected) ?? null;
+    const provider = PROVIDERS.find(p => p.id === selectedProvider) ?? null;
 
     const getCred = (connId: string, key: string) => credentials[connId]?.[key] ?? '';
+    const setCred = (connId: string, key: string, value: string) =>
+        setCredentials(prev => ({ ...prev, [connId]: { ...(prev[connId] ?? {}), [key]: value } }));
 
-    const setCred = (connId: string, key: string, value: string) => {
-        setCredentials(prev => ({
-            ...prev,
-            [connId]: { ...(prev[connId] ?? {}), [key]: value },
-        }));
+    const getSaveState = (key: string): SaveStatus => saveStates[key] ?? 'idle';
+    const setSave = (key: string, s: SaveStatus) => {
+        setSaveStates(prev => ({ ...prev, [key]: s }));
+        if (s === 'saved' || s === 'error') setTimeout(() => setSaveStates(prev => ({ ...prev, [key]: 'idle' })), 3000);
     };
 
-    // Auto-load credentials from .env when a connector is selected
     const loadCredentials = useCallback(async (connId: string) => {
-        setCredsLoading(true);
+        setCredsLoading(prev => ({ ...prev, [connId]: true }));
         try {
             const res = await fetch(`/api/v1/admin/connectors/${connId}/credentials`);
             if (res.ok) {
                 const data = await res.json();
                 setCredentials(prev => ({ ...prev, [connId]: { ...(prev[connId] ?? {}), ...data } }));
             }
-        } catch { /* silently ignore — user can type manually */ }
-        finally { setCredsLoading(false); }
+        } catch { /* ignore */ }
+        finally { setCredsLoading(prev => ({ ...prev, [connId]: false })); }
     }, []);
 
+    // Pre-load first connector of each provider so the grid can show configured status
     useEffect(() => {
-        if (selected) loadCredentials(selected);
-    }, [selected, loadCredentials]);
+        PROVIDERS.forEach(p => {
+            const firstId = p.sharedConnectorIds?.[0] ?? p.capabilities[0]?.connectorId;
+            if (firstId) loadCredentials(firstId);
+        });
+    }, [loadCredentials]);
+
+    // Load all connectors for the selected provider (shared + all capability connectors)
+    useEffect(() => {
+        if (!provider) return;
+        const sharedIds = provider.sharedConnectorIds ?? [];
+        const capIds    = provider.capabilities.map(c => c.connectorId);
+        const allIds    = [...new Set([...sharedIds, ...capIds])];
+        allIds.forEach(id => loadCredentials(id));
+        setDeviceCodeState({ phase: 'idle' });
+    }, [selectedProvider, provider, loadCredentials]);
+
+    const isProviderConfigured = (p: ProviderDef): boolean => {
+        const connId = p.sharedConnectorIds?.[0] ?? p.capabilities[0]?.connectorId;
+        if (!connId) return false;
+        return Object.values(credentials[connId] ?? {}).some(v => v && v.trim().length > 0);
+    };
 
     const saveCredentials = async (connId: string) => {
-        setSaveState('saving');
+        setSave(connId, 'saving');
         try {
             const res = await fetch(`/api/v1/admin/connectors/${connId}/credentials`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ credentials: credentials[connId] ?? {} }),
             });
-            setSaveState(res.ok ? 'saved' : 'error');
-        } catch { setSaveState('error'); }
-        finally { setTimeout(() => setSaveState('idle'), 3000); }
+            setSave(connId, res.ok ? 'saved' : 'error');
+        } catch { setSave(connId, 'error'); }
     };
 
-    // Company — must be selected before running any connector
+    const saveSharedCredentials = async (p: ProviderDef) => {
+        const ids = p.sharedConnectorIds ?? [];
+        if (!ids.length) return;
+        const key = ids[0];
+        const sharedCreds = credentials[key] ?? {};
+        setSave(key, 'saving');
+        try {
+            const promises: Promise<Response>[] = ids.map(id =>
+                fetch(`/api/v1/admin/connectors/${id}/credentials`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credentials: sharedCreds }),
+                })
+            );
+            // Also persist outbound-specific settings (enabled, provider_name)
+            const outboundCap = p.capabilities.find(c => c.isOutbound);
+            if (outboundCap) {
+                promises.push(
+                    fetch(`/api/v1/admin/connectors/${outboundCap.connectorId}/credentials`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ credentials: credentials[outboundCap.connectorId] ?? {} }),
+                    })
+                );
+            }
+            await Promise.all(promises);
+            setSave(key, 'saved');
+        } catch { setSave(key, 'error'); }
+    };
+
+    // Tenant + company from localStorage
     const companyId   = localStorage.getItem('tavro_active_company_id')   ?? '';
     const companyName = localStorage.getItem('tavro_active_company_name') ?? '';
 
-    // Resolve tenant_id: prefer what was stored at login, fall back to decoding
-    // the stored id_token so existing sessions don't need a re-login.
     const tenantId = (() => {
         const stored = localStorage.getItem('tavro_admin_tenant_id');
         if (stored) return stored;
@@ -258,14 +423,9 @@ const AdminConnectorsPage: React.FC = () => {
             const idToken = localStorage.getItem('tavro_admin_id_token');
             if (!idToken) return '';
             const payload = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-            // ZITADEL v2+: nested object
             const ro = payload['urn:zitadel:iam:user:resourceowner'];
             if (ro && typeof ro === 'object' && ro.id) return String(ro.id);
-            // Flat keys
-            return payload['urn:zitadel:iam:user:resourceowner:id']
-                || payload['urn:zitadel:iam:org:id']
-                || payload['org_id']
-                || '';
+            return payload['urn:zitadel:iam:user:resourceowner:id'] || payload['urn:zitadel:iam:org:id'] || payload['org_id'] || '';
         } catch { return ''; }
     })();
 
@@ -284,530 +444,678 @@ const AdminConnectorsPage: React.FC = () => {
                 }),
             });
             const data = await res.json();
-            if (data.auth_url) {
-                setGeminiAuthUrl({ loading: false, url: data.auth_url });
-            } else {
-                setGeminiAuthUrl({ loading: false, error: data.error ?? 'Failed to generate URL' });
-            }
+            data.auth_url
+                ? setGeminiAuthUrl({ loading: false, url: data.auth_url })
+                : setGeminiAuthUrl({ loading: false, error: data.error ?? 'Failed to generate URL' });
         } catch (err: unknown) {
             setGeminiAuthUrl({ loading: false, error: err instanceof Error ? err.message : 'Network error' });
         }
     };
 
-    const runConnector = async (connector: ConnectorDef) => {
-        // Company must be selected before running
+    const startDeviceCode = async () => {
+        setDeviceCodeState({ phase: 'loading' });
+        const creds = credentials['agent365'] ?? {};
+        const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
+        const authHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization:  `Bearer ${accessToken}` } : {}),
+            ...(tenantId    ? { 'x-tenant-id':  tenantId }                : {}),
+        };
+        try {
+            const res = await fetch('/api/v1/admin/connectors/agent365/auth/start', {
+                method: 'POST',
+                headers: authHeaders,
+                body: JSON.stringify({ credentials: { tenant_id: creds.tenant_id ?? '', client_id: creds.client_id ?? '', client_secret: creds.client_secret ?? '' } }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setDeviceCodeState({ phase: 'error', message: data.detail ?? 'Failed to start sign-in' }); return; }
+            const { user_code, verification_uri, device_code } = data;
+            setDeviceCodeState({ phase: 'waiting', userCode: user_code, verificationUri: verification_uri, deviceCode: device_code });
+            const poll = async () => {
+                try {
+                    const pr = await fetch('/api/v1/admin/connectors/agent365/auth/poll', {
+                        method: 'POST', headers: authHeaders,
+                        body: JSON.stringify({ device_code, tenant_id: creds.tenant_id ?? '', client_id: creds.client_id ?? '', client_secret: creds.client_secret ?? '' }),
+                    });
+                    const pd = await pr.json();
+                    if (pr.ok && pd.status === 'ok')    { setDeviceCodeState({ phase: 'done' }); }
+                    else if (pd.pending)                 { setTimeout(poll, pd.slow_down ? 10000 : 5000); }
+                    else                                 { setDeviceCodeState({ phase: 'error', message: pd.detail ?? pd.error ?? 'Sign-in failed' }); }
+                } catch (e: unknown) { setDeviceCodeState({ phase: 'error', message: e instanceof Error ? e.message : 'Network error' }); }
+            };
+            setTimeout(poll, 5000);
+        } catch (e: unknown) {
+            setDeviceCodeState({ phase: 'error', message: e instanceof Error ? e.message : 'Network error' });
+        }
+    };
+
+    const runCapability = async (p: ProviderDef, cap: ProviderCapability) => {
         if (!companyId) {
-            setRunState(prev => ({
-                ...prev,
-                [connector.id]: {
-                    status: 'error',
-                    result: { status: 'error', error: 'No company selected. Please go to the Company tab and select a company before running.' },
-                },
-            }));
+            setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'No company selected. Please go to the Company tab and select a company before running.' } } }));
             return;
         }
 
-        // Persist credentials to .env before running
-        await saveCredentials(connector.id);
-        setRunState(prev => ({ ...prev, [connector.id]: { status: 'running' } }));
+        // Outbound-specific guards — show red error in result area, still allow retry
+        if (cap.isOutbound) {
+            const enabled = getCred(cap.connectorId, 'enabled');
+            const providerName = getCred(cap.connectorId, 'provider_name');
+            if (enabled === 'false') {
+                setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'AICT outbound sync is disabled. Enable it in the shared credentials section above.' } } }));
+                return;
+            }
+            if (!providerName.trim()) {
+                setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'Provider name is required. Set it in the shared credentials section above.' } } }));
+                return;
+            }
+        }
+
+        if (cap.useSharedCreds && p.sharedConnectorIds?.length) {
+            await saveSharedCredentials(p);
+        } else {
+            await saveCredentials(cap.connectorId);
+        }
+
+        setRunState(prev => ({ ...prev, [cap.id]: { status: 'running' } }));
+
+        const creds = cap.useSharedCreds
+            ? (credentials[p.sharedConnectorIds![0]] ?? {})
+            : (credentials[cap.connectorId] ?? {});
 
         const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
         const authHeaders = {
-            'Content-Type': 'application/json',
+            'Content-Type':  'application/json',
             ...(tenantId    ? { 'x-tenant-id':    tenantId }               : {}),
-            ...(accessToken ? { 'Authorization':  `Bearer ${accessToken}` } : {}),
+            ...(accessToken ? { Authorization:    `Bearer ${accessToken}` } : {}),
             ...(companyId   ? { 'x-company-id':   companyId }              : {}),
             ...(companyName ? { 'x-company-name': companyName }            : {}),
         };
 
-        try {
-            const snIntegrationUrl: Record<ServiceNowMode, string | null> = {
-                agents:                null,
-                business_applications: '/api/v1/admin/integrations/business-applications/run',
-                business_processes:    '/api/v1/admin/integrations/business-processes/run',
-            };
-            const integrationUrl = connector.id === 'servicenow' ? snIntegrationUrl[snMode] : null;
-            const url = integrationUrl ?? `/api/v1/admin/connectors/${connector.id}/run`;
-            const body = integrationUrl
-                ? undefined
-                : JSON.stringify({ config: credentials[connector.id] ?? {} });
+        const snUrls: Record<ServiceNowMode, string | null> = {
+            agents:                null,
+            business_applications: '/api/v1/admin/integrations/business-applications/run',
+            business_processes:    '/api/v1/admin/integrations/business-processes/run',
+        };
 
-            const res = await fetch(url, { method: 'POST', headers: authHeaders, body });
+        const integrationUrl = cap.snMode ? snUrls[cap.snMode] : null;
+        const url  = integrationUrl ?? `/api/v1/admin/connectors/${cap.connectorId}/run`;
+        const body = integrationUrl ? undefined : JSON.stringify({ config: creds });
+
+        try {
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), cap.connectorId === 'agent365' ? 660000 : 120000);
+            const res = await fetch(url, { method: 'POST', headers: authHeaders, body, signal: controller.signal });
             const data: RunResult = await res.json();
-            setRunState(prev => ({ ...prev, [connector.id]: { status: data.status as RunStatus, result: data } }));
+            setRunState(prev => ({ ...prev, [cap.id]: { status: data.status as RunStatus, result: data } }));
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : 'Network error';
-            setRunState(prev => ({
-                ...prev,
-                [connector.id]: { status: 'error', result: { status: 'error', error: msg } },
-            }));
+            setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: msg } } }));
         }
     };
 
-    const state = selected ? runState[selected] : undefined;
-    const isRunning = state?.status === 'running';
+    // ── Grid view ──────────────────────────────────────────────────────────────
 
-    // ---------------------------------------------------------------------------
-    // Render
-    // ---------------------------------------------------------------------------
-    return (
-        <div className="flex gap-6 h-full animate-fade-in p-6 overflow-hidden">
+    const filteredProviders = PROVIDERS.filter(p =>
+        p.name.toLowerCase().includes(search.toLowerCase()) ||
+        p.description.toLowerCase().includes(search.toLowerCase())
+    );
 
-            {/* ── LEFT: connector list ─────────────────────────────────────── */}
-            <div className="w-72 shrink-0 space-y-2">
-                <h1 className="text-2xl font-bold text-slate-800 dark:text-white mb-4">Connectors</h1>
-                {CONNECTORS.map(c => {
-                    const s = runState[c.id];
-                    const isActive = selected === c.id;
-                    return (
-                        <button
-                            key={c.id}
-                            onClick={() => setSelected(c.id)}
-                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left group
-                                ${isActive
-                                    ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/30'
-                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                                }`}
-                        >
-                            {/* avatar */}
-                            <div className={`h-9 w-9 rounded-lg bg-gradient-to-br ${c.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
-                                {c.initials}
+    if (!provider) {
+        return (
+            <div className="h-full overflow-y-auto p-6 animate-fade-in">
+                <h1 className="text-2xl font-bold text-slate-800 dark:text-white mb-6">Connectors</h1>
+
+                <div className="relative mb-6 max-w-xs">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search providers..."
+                        className="w-full pl-9 pr-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                    />
+                </div>
+
+                <div className="flex flex-col gap-8">
+                    {PROVIDER_GROUPS.map(group => {
+                        const groupProviders = filteredProviders.filter(p => group.ids.includes(p.id));
+                        if (groupProviders.length === 0) return null;
+                        const isCollapsed = collapsedGroups.has(group.label);
+                        return (
+                            <div key={group.label}>
+                                <button
+                                    onClick={() => toggleGroup(group.label)}
+                                    className="flex items-center gap-1.5 mb-3 px-0.5 group cursor-pointer"
+                                >
+                                    {isCollapsed
+                                        ? <ChevronRight size={14} className="text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors" />
+                                        : <ChevronDown  size={14} className="text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors" />
+                                    }
+                                    <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300 uppercase tracking-wider transition-colors">{group.label}</p>
+                                </button>
+                                {!isCollapsed && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {groupProviders.map(p => {
+                                        const configured = isProviderConfigured(p);
+                                        const capCount   = p.capabilities.length;
+                                        return (
+                                            <button
+                                                key={p.id}
+                                                onClick={() => setSelectedProvider(p.id)}
+                                                className="text-left bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all"
+                                            >
+                                                <div className="flex items-center gap-4 mb-4">
+                                                    {LOGOS[p.id] ? (
+                                                        <div className={`h-14 w-14 rounded-xl ${LOGOS[p.id].bg} border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-sm`}>
+                                                            {LOGOS[p.id].icon}
+                                                        </div>
+                                                    ) : (
+                                                        <div className={`h-14 w-14 rounded-xl bg-gradient-to-br ${p.color} flex items-center justify-center text-white text-base font-bold shrink-0`}>
+                                                            {p.initials}
+                                                        </div>
+                                                    )}
+                                                    <div className="min-w-0">
+                                                        <p className="font-semibold text-slate-800 dark:text-white text-base leading-tight">{p.name}</p>
+                                                        <p className="text-sm text-slate-500 dark:text-slate-500 mt-1 leading-tight">{p.description}</p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-1.5">
+                                                    {configured
+                                                        ? <><CheckCircle2 size={13} className="text-emerald-500 shrink-0" /><span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Configured</span></>
+                                                        : <><div className="h-3 w-3 rounded-full border border-slate-300 dark:border-slate-600 shrink-0" /><span className="text-xs text-slate-400 dark:text-slate-500">Not configured</span></>
+                                                    }
+                                                    <span className="text-slate-300 dark:text-slate-600 text-xs mx-0.5">·</span>
+                                                    <span className="text-xs text-slate-400 dark:text-slate-500">{capCount} {capCount === 1 ? 'capability' : 'capabilities'}</span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>}
                             </div>
-
-                            <div className="flex-1 min-w-0">
-                                <p className={`text-sm font-semibold truncate ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-800 dark:text-white'}`}>
-                                    {c.name}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-500 truncate">{c.category}</p>
-                            </div>
-
-                            {/* status dot */}
-                            {s?.status === 'success' && <CheckCircle2 size={15} className="text-emerald-500 shrink-0" />}
-                            {s?.status === 'error'   && <AlertCircle  size={15} className="text-red-500 shrink-0" />}
-                            {s?.status === 'running' && <Loader2      size={15} className="text-blue-500 animate-spin shrink-0" />}
-                            {(!s || s.status === 'idle') && (
-                                <ChevronRight size={15} className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 shrink-0" />
-                            )}
-                        </button>
-                    );
-                })}
+                        );
+                    })}
+                </div>
             </div>
+        );
+    }
 
-            {/* ── RIGHT: config + run panel ────────────────────────────────── */}
-            {selectedConnector ? (
-                <div className="flex-1 min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 overflow-y-auto">
+    // ── Provider detail view ───────────────────────────────────────────────────
 
-                    {/* header */}
-                    <div className="flex items-start gap-4">
-                        <div className={`h-12 w-12 rounded-xl bg-gradient-to-br ${selectedConnector.color} flex items-center justify-center text-white font-bold shrink-0`}>
-                            {selectedConnector.initials}
+    const isShared      = !!provider.sharedConnectorIds?.length;
+    const sharedConnId  = provider.sharedConnectorIds?.[0] ?? '';
+    const sharedLoading = credsLoading[sharedConnId];
+    const anyRunning    = provider.capabilities.some(c => runState[c.id]?.status === 'running');
+
+    // For gridLayout providers: show sub-grid of capability cards, then drill into one
+    const selectedCap = provider.gridLayout
+        ? (provider.capabilities.find(c => c.id === selectedCapId) ?? null)
+        : null;
+
+    // Sub-grid view for gridLayout providers (e.g. Microsoft) when no cap is selected
+    if (provider.gridLayout && !selectedCap) {
+        return (
+            <div className="h-full overflow-y-auto p-6 animate-fade-in">
+                {/* Breadcrumb */}
+                <div className="flex items-center gap-1.5 text-sm mb-5">
+                    <button onClick={() => setSelectedProvider(null)} className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+                        Connectors
+                    </button>
+                    <ChevronRight size={14} className="text-slate-400 dark:text-slate-600 shrink-0" />
+                    <span className="text-slate-800 dark:text-white font-medium">{provider.name}</span>
+                </div>
+
+                {/* Provider header */}
+                <div className="flex items-center gap-4 mb-6">
+                    {LOGOS[provider.id] ? (
+                        <div className={`rounded-xl ${LOGOS[provider.id].bg} border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-sm`} style={{ height: 52, width: 52 }}>
+                            {LOGOS[provider.id].icon}
                         </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-slate-800 dark:text-white">{selectedConnector.name}</h2>
-                            <p className="text-sm text-slate-500 dark:text-slate-500 mt-0.5">{selectedConnector.description}</p>
-                        </div>
-                    </div>
-
-                    {/* note (Gemini etc.) */}
-                    {selectedConnector.note && (
-                        <div className="flex gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs">
-                            <Info size={14} className="shrink-0 mt-0.5" />
-                            {selectedConnector.note}
+                    ) : (
+                        <div className={`rounded-xl bg-gradient-to-br ${provider.color} flex items-center justify-center text-white font-bold text-lg shrink-0`} style={{ height: 52, width: 52 }}>
+                            {provider.initials}
                         </div>
                     )}
+                    <div>
+                        <h1 className="text-xl font-bold text-slate-800 dark:text-white">{provider.name}</h1>
+                        <p className="text-sm text-slate-500 dark:text-slate-500">{provider.description}</p>
+                    </div>
+                </div>
 
-                    {/* credential fields — AICT renders its own fields inside the toggle section */}
-                    {selectedConnector.id !== 'servicenow_aict' && (
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                                Credentials
-                            </h3>
-                            {credsLoading && <Loader2 size={13} className="animate-spin text-slate-400" />}
-                        </div>
-                        <div className="grid grid-cols-1 gap-4">
-                            {selectedConnector.fields.filter(f => f.key !== 'auth_code').map(field => (
-                                <div key={field.key}>
-                                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                                        {field.label}
-                                    </label>
-                                    {field.type === 'password' ? (
-                                        <PasswordInput
-                                            value={getCred(selectedConnector.id, field.key)}
-                                            onChange={v => setCred(selectedConnector.id, field.key, v)}
-                                            placeholder={field.placeholder}
-                                        />
+                {/* Capability sub-grid */}
+                <div className="grid grid-cols-2 gap-4 items-start">
+                    {provider.capabilities.map(cap => {
+                        const isConfigured = Object.values(credentials[cap.connectorId] ?? {}).some(v => v && v.trim().length > 0);
+                        return (
+                            <button
+                                key={cap.id}
+                                onClick={() => setSelectedCap(cap.id)}
+                                className="text-left bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all"
+                            >
+                                <div className="flex items-center gap-4 mb-4">
+                                    {cap.capLogo ? (
+                                        <div className="h-14 w-14 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-sm">
+                                            <img src={cap.capLogo} alt={cap.name} className="w-10 h-10 object-contain" />
+                                        </div>
                                     ) : (
-                                        <input
-                                            type="text"
-                                            value={getCred(selectedConnector.id, field.key)}
-                                            onChange={e => setCred(selectedConnector.id, field.key, e.target.value)}
-                                            placeholder={field.placeholder ?? ''}
-                                            className={inputBase}
-                                        />
+                                        <div className={`h-14 w-14 rounded-xl bg-gradient-to-br ${provider.color} flex items-center justify-center text-white text-base font-bold shrink-0`}>
+                                            {cap.name.slice(0, 2).toUpperCase()}
+                                        </div>
                                     )}
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-slate-800 dark:text-white text-base leading-tight">{cap.name}</p>
+                                        <p className="text-sm text-slate-500 dark:text-slate-500 mt-1 leading-tight">{cap.description}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    {isConfigured
+                                        ? <><CheckCircle2 size={13} className="text-emerald-500 shrink-0" /><span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Configured</span></>
+                                        : <><div className="h-3 w-3 rounded-full border border-slate-300 dark:border-slate-600 shrink-0" /><span className="text-xs text-slate-400 dark:text-slate-500">Not configured</span></>
+                                    }
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
+    // For gridLayout providers with a selected cap: show single capability credential form
+    const activeCaps    = selectedCap ? [selectedCap] : provider.capabilities;
+    const activeAnyRunning = activeCaps.some(c => runState[c.id]?.status === 'running');
+
+    return (
+        <div className="h-full overflow-y-auto p-6 animate-fade-in">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 text-sm mb-5">
+                <button
+                    onClick={() => setSelectedProvider(null)}
+                    className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
+                >
+                    Connectors
+                </button>
+                <ChevronRight size={14} className="text-slate-400 dark:text-slate-600 shrink-0" />
+                {selectedCap ? (
+                    <>
+                        <button
+                            onClick={() => setSelectedCap(null)}
+                            className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
+                        >
+                            {provider.name}
+                        </button>
+                        <ChevronRight size={14} className="text-slate-400 dark:text-slate-600 shrink-0" />
+                        <span className="text-slate-800 dark:text-white font-medium">{selectedCap.name}</span>
+                    </>
+                ) : (
+                    <span className="text-slate-800 dark:text-white font-medium">{provider.name}</span>
+                )}
+            </div>
+
+            {/* Provider header — shows capability logo/name when drilled into a gridLayout cap */}
+            <div className="flex items-center gap-4 mb-6">
+                {selectedCap?.capLogo ? (
+                    <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-sm" style={{ height: 52, width: 52 }}>
+                        <img src={selectedCap.capLogo} alt={selectedCap.name} className="w-9 h-9 object-contain" />
+                    </div>
+                ) : LOGOS[provider.id] ? (
+                    <div className={`rounded-xl ${LOGOS[provider.id].bg} border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-sm`} style={{ height: 52, width: 52 }}>
+                        {LOGOS[provider.id].icon}
+                    </div>
+                ) : (
+                    <div className={`rounded-xl bg-gradient-to-br ${provider.color} flex items-center justify-center text-white font-bold text-lg shrink-0`} style={{ height: 52, width: 52 }}>
+                        {provider.initials}
+                    </div>
+                )}
+                <div>
+                    <h1 className="text-xl font-bold text-slate-800 dark:text-white">{selectedCap ? selectedCap.name : provider.name}</h1>
+                    <p className="text-sm text-slate-500 dark:text-slate-500">{selectedCap ? selectedCap.description : provider.description}</p>
+                </div>
+            </div>
+
+            <div className="space-y-4">
+
+                {/* Shared credentials section (ServiceNow) */}
+                {isShared && provider.sharedFields && (
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+                        <div className="flex items-center gap-2 mb-1">
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Shared Credentials</p>
+                            {sharedLoading && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                        </div>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">Used by all {provider.capabilities.length} capabilities below</p>
+
+                        <div className="space-y-3 mb-4">
+                            {/* First field (Instance URL) — full width */}
+                            {provider.sharedFields.slice(0, 1).map(field => (
+                                <div key={field.key}>
+                                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">{field.label}</label>
+                                    <input type="text" value={getCred(sharedConnId, field.key)} onChange={e => setCred(sharedConnId, field.key, e.target.value)} placeholder={field.placeholder ?? ''} className={inputBase} />
+                                </div>
+                            ))}
+                            {/* Remaining fields (Username + Password) — side by side */}
+                            {provider.sharedFields.length > 1 && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    {provider.sharedFields.slice(1).map(field => (
+                                        <div key={field.key}>
+                                            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">{field.label}</label>
+                                            {field.type === 'password'
+                                                ? <PasswordInput value={getCred(sharedConnId, field.key)} onChange={v => setCred(sharedConnId, field.key, v)} placeholder={field.placeholder} />
+                                                : <input type="text" value={getCred(sharedConnId, field.key)} onChange={e => setCred(sharedConnId, field.key, e.target.value)} placeholder={field.placeholder ?? ''} className={inputBase} />
+                                            }
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Provider Name — only for providers with an outbound capability */}
+                        {provider.capabilities.some(c => c.isOutbound) && (() => {
+                            const outCap = provider.capabilities.find(c => c.isOutbound)!;
+                            return (
+                                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Provider Name</label>
+                                    <input
+                                        type="text"
+                                        value={getCred(outCap.connectorId, 'provider_name')}
+                                        onChange={e => setCred(outCap.connectorId, 'provider_name', e.target.value)}
+                                        placeholder="Tavro"
+                                        className={inputBase}
+                                    />
+                                </div>
+                            );
+                        })()}
+
+                        <div className="flex items-center gap-2">
+                            <SaveButton state={getSaveState(sharedConnId)} onClick={() => saveSharedCredentials(provider)} disabled={anyRunning} />
+                        </div>
+                    </div>
+                )}
+
+                {/* Credentials card — for non-shared connectors (AWS, Salesforce, Microsoft capabilities, etc.) */}
+                {!isShared && activeCaps[0]?.fields && (
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+                        <div className="flex items-center gap-2 mb-1">
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Credentials</p>
+                            {credsLoading[activeCaps[0].connectorId] && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                        </div>
+                        <div className="space-y-3 mb-4 mt-3">
+                            {activeCaps[0].fields.filter(f => f.key !== 'auth_code').map(field => (
+                                <div key={field.key}>
+                                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">{field.label}</label>
+                                    {field.type === 'password'
+                                        ? <PasswordInput value={getCred(activeCaps[0].connectorId, field.key)} onChange={v => setCred(activeCaps[0].connectorId, field.key, v)} placeholder={field.placeholder} />
+                                        : <input type="text" value={getCred(activeCaps[0].connectorId, field.key)} onChange={e => setCred(activeCaps[0].connectorId, field.key, e.target.value)} placeholder={field.placeholder ?? ''} className={inputBase} />
+                                    }
                                 </div>
                             ))}
                         </div>
-                    </div>
-                    )}
-
-                    {/* Gemini: Get Authorization URL */}
-                    {selectedConnector.id === 'gemini' && (
-                        <div className="space-y-3">
-                            <button
-                                onClick={getGeminiAuthUrl}
-                                disabled={geminiAuthUrl.loading}
-                                className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
-                            >
-                                {geminiAuthUrl.loading
-                                    ? <><Loader2 size={14} className="animate-spin" /> Generating URL…</>
-                                    : <><ExternalLink size={14} /> Get Authorization URL</>
-                                }
-                            </button>
-
-                            {geminiAuthUrl.url && (
-                                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 space-y-3">
-                                    <a
-                                        href={geminiAuthUrl.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-1.5 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline break-all"
-                                    >
-                                        <ExternalLink size={13} className="shrink-0" />
-                                        Click here to authorize with Google
-                                    </a>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                                        After authorizing, copy the <code className="bg-white dark:bg-slate-700 px-1 rounded">code=</code> value from the redirect URL and paste it below.
-                                    </p>
-
-                                    <div>
-                                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                                            Authorization Code
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={getCred('gemini', 'auth_code')}
-                                            onChange={e => setCred('gemini', 'auth_code', e.target.value)}
-                                            placeholder="Paste the code from the redirect URL"
-                                            className={inputBase}
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center gap-3 pt-1 flex-wrap">
-                                        <button
-                                            onClick={() => runConnector(selectedConnector)}
-                                            disabled={isRunning || saveState === 'saving'}
-                                            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
-                                        >
-                                            {isRunning
-                                                ? <><Loader2 size={15} className="animate-spin" /> Running…</>
-                                                : <><Play size={15} /> Run Connector</>
-                                            }
-                                        </button>
-                                        <button
-                                            onClick={() => saveCredentials(selectedConnector.id)}
-                                            disabled={saveState === 'saving' || isRunning}
-                                            className="flex items-center gap-2 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-600"
-                                        >
-                                            {saveState === 'saving'
-                                                ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
-                                                : saveState === 'saved'
-                                                    ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
-                                                    : saveState === 'error'
-                                                        ? <><AlertCircle size={14} className="text-red-500" /> Error</>
-                                                        : <><Save size={14} /> Save Credentials</>
-                                            }
-                                        </button>
-                                        {state && state.status !== 'idle' && (
-                                            <button
-                                                onClick={() => setRunState(prev => ({ ...prev, gemini: { status: 'idle' } }))}
-                                                className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
-                                            >
-                                                <RotateCcw size={13} /> Reset
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {geminiAuthUrl.error && (
-                                <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-600 dark:text-red-400">
-                                    <AlertCircle size={13} className="shrink-0" />
-                                    {geminiAuthUrl.error}
-                                </div>
-                            )}
+                        <div className="flex items-center gap-2">
+                            <SaveButton state={getSaveState(activeCaps[0].connectorId)} onClick={() => saveCredentials(activeCaps[0].connectorId)} />
                         </div>
-                    )}
+                    </div>
+                )}
 
-                    {/* ServiceNow AICT: toggle at top, fields + save only when enabled */}
-                    {selectedConnector.id === 'servicenow_aict' && (
-                        <div className="space-y-5">
-                            {/* Enable/Disable toggle */}
-                            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable AICT Sync</p>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                                        When enabled, agents created in Tavro are automatically registered in ServiceNow AI Control Tower
-                                    </p>
+                {/* Capabilities label */}
+                {!provider.gridLayout && (
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-1 pt-1">Capabilities</p>
+                )}
+
+                {/* Capability cards — 2-col grid for shared providers, single-col for others */}
+                <div className={isShared ? 'grid grid-cols-2 gap-4 items-start' : 'space-y-4'}>
+                {activeCaps.map(cap => {
+                    const capRun    = runState[cap.id];
+                    const isRunning = capRun?.status === 'running';
+                    const hasRun    = capRun && capRun.status !== 'idle';
+                    const capLoading = credsLoading[cap.connectorId];
+
+                    return (
+                        <div key={cap.id} className={`relative bg-white dark:bg-slate-900 border rounded-2xl p-5 flex flex-col gap-3 ${
+                            capRun?.status === 'success'
+                                ? 'border-emerald-300 dark:border-emerald-500/40'
+                                : 'border-slate-200 dark:border-slate-800'
+                        }`}>
+
+                            {/* Direction badge — top-right corner */}
+                            {cap.isOutbound ? (
+                                <span className="absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20">
+                                    Outbound
+                                </span>
+                            ) : (
+                                <span className="absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">
+                                    Inbound
+                                </span>
+                            )}
+
+                            {/* Card header: icon + name + description */}
+                            <div className="flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0">
+                                    {cap.capIcon ?? <Play size={14} className="text-slate-400" />}
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const current = getCred('servicenow_aict', 'enabled');
-                                        setCred('servicenow_aict', 'enabled', current === 'false' ? 'true' : 'false');
-                                    }}
-                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/30
-                                        ${getCred('servicenow_aict', 'enabled') === 'false'
-                                            ? 'bg-slate-300 dark:bg-slate-600'
-                                            : 'bg-emerald-500'
-                                        }`}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
-                                        ${getCred('servicenow_aict', 'enabled') === 'false' ? 'translate-x-1' : 'translate-x-6'}`}
-                                    />
-                                </button>
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">{cap.runName ?? cap.name}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-500 mt-0.5 leading-snug">{cap.description}</p>
+                                </div>
                             </div>
 
-                            {/* Credential fields + Save — only shown when enabled */}
-                            {getCred('servicenow_aict', 'enabled') !== 'false' && (
-                                <div className="space-y-4">
-                                    {selectedConnector.fields.map(field => (
-                                        <div key={field.key}>
-                                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                                                {field.label}
-                                            </label>
-                                            {field.type === 'password' ? (
-                                                <PasswordInput
-                                                    value={getCred('servicenow_aict', field.key)}
-                                                    onChange={v => setCred('servicenow_aict', field.key, v)}
-                                                    placeholder={field.placeholder}
-                                                />
-                                            ) : (
-                                                <input
-                                                    type="text"
-                                                    value={getCred('servicenow_aict', field.key)}
-                                                    onChange={e => setCred('servicenow_aict', field.key, e.target.value)}
-                                                    placeholder={field.placeholder ?? ''}
-                                                    className={inputBase}
-                                                />
-                                            )}
+                            {/* Note */}
+                            {cap.note && (
+                                <div className="flex gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs">
+                                    <Info size={14} className="shrink-0 mt-0.5" /> {cap.note}
+                                </div>
+                            )}
+
+                            {/* Gemini OAuth flow */}
+                            {cap.isGemini && (
+                                <div className="space-y-3">
+                                    <button
+                                        onClick={getGeminiAuthUrl}
+                                        disabled={geminiAuthUrl.loading}
+                                        className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 text-slate-700 dark:text-slate-200 font-semibold px-4 py-2 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
+                                    >
+                                        {geminiAuthUrl.loading ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : <><ExternalLink size={14} /> Get Authorization URL</>}
+                                    </button>
+                                    {geminiAuthUrl.url && (
+                                        <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 space-y-3">
+                                            <a href={geminiAuthUrl.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline break-all">
+                                                <ExternalLink size={13} className="shrink-0" /> Click here to authorize with Google
+                                            </a>
+                                            <p className="text-xs text-slate-500 dark:text-slate-400">After authorizing, copy the <code className="bg-white dark:bg-slate-700 px-1 rounded">code=</code> value and paste it below.</p>
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Authorization Code</label>
+                                                <input type="text" value={getCred('gemini', 'auth_code')} onChange={e => setCred('gemini', 'auth_code', e.target.value)} placeholder="Paste the code from the redirect URL" className={inputBase} />
+                                            </div>
                                         </div>
-                                    ))}
+                                    )}
+                                    {geminiAuthUrl.error && (
+                                        <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-600 dark:text-red-400">
+                                            <AlertCircle size={13} className="shrink-0" /> {geminiAuthUrl.error}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Agent 365 device code flow */}
+                            {cap.isAgent365 && (
+                                <div className="space-y-3">
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Microsoft Sign-in</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">A Global Admin must sign in once. Tavro stores a refresh token to fetch all agents.</p>
+                                    {deviceCodeState.phase === 'idle' && (
+                                        <button onClick={startDeviceCode} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold px-4 py-2 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700">
+                                            <ExternalLink size={14} /> Connect with Microsoft
+                                        </button>
+                                    )}
+                                    {deviceCodeState.phase === 'loading' && <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={14} className="animate-spin" /> Starting sign-in…</div>}
+                                    {deviceCodeState.phase === 'waiting' && (
+                                        <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 space-y-3">
+                                            <p className="text-sm text-blue-700 dark:text-blue-300">1. Open this URL and sign in with a <strong>Global Admin</strong> account:</p>
+                                            <a href={deviceCodeState.verificationUri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline"><ExternalLink size={13} className="shrink-0" />{deviceCodeState.verificationUri}</a>
+                                            <p className="text-sm text-blue-700 dark:text-blue-300">2. Enter this code:</p>
+                                            <span className="inline-block font-mono text-2xl font-bold tracking-widest text-slate-800 dark:text-white bg-white dark:bg-slate-800 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700">{deviceCodeState.userCode}</span>
+                                            <div className="flex items-center gap-2 text-xs text-blue-600/70 dark:text-blue-400/70 pt-1"><Loader2 size={12} className="animate-spin shrink-0" /> Waiting for sign-in…</div>
+                                        </div>
+                                    )}
+                                    {deviceCodeState.phase === 'done' && (
+                                        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
+                                            <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                            <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Connected — you can now run the connector.</span>
+                                        </div>
+                                    )}
+                                    {deviceCodeState.phase === 'error' && (
+                                        <div className="space-y-2">
+                                            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-600 dark:text-red-400">
+                                                <AlertCircle size={13} className="shrink-0 mt-0.5" /> {deviceCodeState.message}
+                                            </div>
+                                            <button onClick={() => setDeviceCodeState({ phase: 'idle' })} className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-white flex items-center gap-1"><RotateCcw size={12} /> Try again</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Outbound — toggle replaces Run button; locked until all 4 credentials are filled */}
+                            {cap.isOutbound && (() => {
+                                const outEnabled = getCred(cap.connectorId, 'enabled') !== 'false';
+                                const allFilled  =
+                                    !!getCred(sharedConnId, 'instance_url').trim() &&
+                                    !!getCred(sharedConnId, 'username').trim() &&
+                                    !!getCred(sharedConnId, 'password').trim() &&
+                                    !!getCred(cap.connectorId, 'provider_name').trim();
+                                return (
+                                    <div className={`flex items-center justify-between ${!allFilled ? 'opacity-40' : ''}`}>
+                                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable AICT Sync</p>
+                                        <button
+                                            type="button"
+                                            disabled={!allFilled}
+                                            onClick={() => {
+                                                if (!allFilled) return;
+                                                const next = outEnabled ? 'false' : 'true';
+                                                setCred(cap.connectorId, 'enabled', next);
+                                                // auto-save so the change persists immediately
+                                                fetch(`/api/v1/admin/connectors/${cap.connectorId}/credentials`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ credentials: { ...credentials[cap.connectorId], enabled: next } }),
+                                                });
+                                            }}
+                                            title={!allFilled ? 'Fill all credentials and provider name first' : undefined}
+                                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                                                !allFilled ? 'cursor-not-allowed' : 'focus:ring-2 focus:ring-emerald-500/30 cursor-pointer'
+                                            } ${outEnabled && allFilled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                                                outEnabled && allFilled ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Run button — inbound only */}
+                            {!cap.isOutbound && (!cap.isGemini || geminiAuthUrl.url) && (
+                                <div className="flex items-center gap-2 flex-wrap">
                                     <button
-                                        onClick={() => saveCredentials('servicenow_aict')}
-                                        disabled={saveState === 'saving'}
-                                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
+                                        onClick={() => runCapability(provider, cap)}
+                                        disabled={isRunning}
+                                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-4 py-2 rounded-xl text-sm transition-all"
                                     >
-                                        {saveState === 'saving'
-                                            ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
-                                            : saveState === 'saved'
-                                                ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
-                                                : saveState === 'error'
-                                                    ? <><AlertCircle size={14} className="text-red-500" /> Error</>
-                                                    : <><Save size={14} /> Save Settings</>
-                                        }
+                                        {isRunning ? <><Loader2 size={14} className="animate-spin" /> Running…</> : hasRun ? <><RotateCcw size={14} /> Run again</> : <><Play size={14} /> Run</>}
                                     </button>
+                                    {capRun && capRun.status !== 'idle' && (
+                                        <button onClick={() => setRunState(prev => ({ ...prev, [cap.id]: { status: 'idle' } }))} className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+                                            <RotateCcw size={13} /> Reset
+                                        </button>
+                                    )}
                                 </div>
                             )}
 
-                            {/* When disabled, just show a Save to persist the disabled state */}
-                            {getCred('servicenow_aict', 'enabled') === 'false' && (
-                                <button
-                                    onClick={() => saveCredentials('servicenow_aict')}
-                                    disabled={saveState === 'saving'}
-                                    className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-5 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
-                                >
-                                    {saveState === 'saving'
-                                        ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
-                                        : saveState === 'saved'
-                                            ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
-                                            : saveState === 'error'
-                                                ? <><AlertCircle size={14} className="text-red-500" /> Error</>
-                                                : <><Save size={14} /> Save Settings</>
-                                    }
-                                </button>
-                            )}
-                        </div>
-                    )}
+                            {/* Result area */}
+                            {capRun && capRun.status !== 'idle' && capRun.result && (
+                                <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-4">
+                                    {capRun.status === 'success' && (
+                                        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
+                                            <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                            <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                                                {cap.isOutbound
+                                                    ? 'AICT connection validated successfully.'
+                                                    : cap.connectorId === 'agent365'
+                                                        ? `Completed — ${(capRun.result as any).agents_synced ?? capRun.result.count ?? 0} agents synced.`
+                                                        : capRun.result.processes
+                                                            ? `Completed — ${capRun.result.count ?? 0} process${(capRun.result.count ?? 0) !== 1 ? 'es' : ''} imported`
+                                                            : capRun.result.applications
+                                                                ? `Completed — ${capRun.result.count ?? 0} application${(capRun.result.count ?? 0) !== 1 ? 's' : ''} imported`
+                                                                : `Completed — ${capRun.result.count ?? 0} agent${(capRun.result.count ?? 0) !== 1 ? 's' : ''} extracted`
+                                                }
+                                            </span>
+                                        </div>
+                                    )}
+                                    {capRun.status === 'error' && (
+                                        <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
+                                            <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
+                                            <span className="text-sm text-red-600 dark:text-red-400 break-all">{capRun.result.error}</span>
+                                        </div>
+                                    )}
 
-                    {/* run button — hidden for Gemini and ServiceNow AICT */}
-                    {selectedConnector.id !== 'gemini' && selectedConnector.id !== 'servicenow_aict' && (
-                    {/* ServiceNow: run mode selector */}
-                    {selectedConnector.id === 'servicenow' && (
-                        <div className="space-y-2">
-                            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                                What to extract
-                            </h3>
-                            <div className="flex gap-2">
-                                {([
-                                    { mode: 'agents',                label: 'Agents',                icon: <FileJson size={14} /> },
-                                    { mode: 'business_applications', label: 'Business Applications', icon: <Building2 size={14} /> },
-                                    { mode: 'business_processes',    label: 'Business Processes',    icon: <Building2 size={14} /> },
-                                ] as { mode: ServiceNowMode; label: string; icon: React.ReactNode }[]).map(opt => (
-                                    <button
-                                        key={opt.mode}
-                                        onClick={() => { setSnMode(opt.mode); setRunState(prev => ({ ...prev, servicenow: { status: 'idle' } })); }}
-                                        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold border transition-all
-                                            ${snMode === opt.mode
-                                                ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-300 dark:border-blue-500/40 text-blue-700 dark:text-blue-400'
-                                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                                            }`}
-                                    >
-                                        {opt.icon}
-                                        <span className="truncate">{opt.label}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* run button — hidden for Gemini (shown inside the auth URL block instead) */}
-                    {selectedConnector.id !== 'gemini' && (
-                        <div className="flex items-center gap-3 pt-2 flex-wrap">
-                            <button
-                                onClick={() => runConnector(selectedConnector)}
-                                disabled={isRunning || saveState === 'saving'}
-                                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-all"
-                            >
-                                {isRunning
-                                    ? <><Loader2 size={15} className="animate-spin" /> Running…</>
-                                    : <><Play size={15} /> Run Connector</>
-                                }
-                            </button>
-
-                            <button
-                                onClick={() => saveCredentials(selectedConnector.id)}
-                                disabled={saveState === 'saving' || isRunning}
-                                className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-sm transition-all border border-slate-200 dark:border-slate-700"
-                            >
-                                {saveState === 'saving'
-                                    ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
-                                    : saveState === 'saved'
-                                        ? <><CheckCircle2 size={14} className="text-emerald-500" /> Saved</>
-                                        : saveState === 'error'
-                                            ? <><AlertCircle size={14} className="text-red-500" /> Error</>
-                                            : <><Save size={14} /> Save Credentials</>
-                                }
-                            </button>
-
-                            {state && state.status !== 'idle' && (
-                                <button
-                                    onClick={() => setRunState(prev => ({ ...prev, [selectedConnector.id]: { status: 'idle' } }))}
-                                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
-                                >
-                                    <RotateCcw size={13} /> Reset
-                                </button>
-                            )}
-                        </div>
-                    )}
-
-                    {/* result area */}
-                    {state && state.status !== 'idle' && state.result && (
-                        <div className="space-y-4">
-                            {/* success banner */}
-                            {state.status === 'success' && (
-                                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
-                                    <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                                    <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                                        {state.result.processes
-                                            ? `Completed — ${state.result.count ?? 0} process${(state.result.count ?? 0) !== 1 ? 'es' : ''} imported`
-                                            : state.result.applications
-                                                ? `Completed — ${state.result.count ?? 0} application${(state.result.count ?? 0) !== 1 ? 's' : ''} imported`
-                                                : `Completed — ${state.result.count ?? 0} agent${(state.result.count ?? 0) !== 1 ? 's' : ''} extracted`
-                                        }
-                                    </span>
-                                </div>
-                            )}
-                            {state.status === 'error' && (
-                                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
-                                    <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
-                                    <span className="text-sm text-red-600 dark:text-red-400 break-all">{state.result.error}</span>
-                                </div>
-                            )}
-
-                            {/* extracted agents list */}
-                            {state.result.agents_extracted && state.result.agents_extracted.length > 0 && (
-                                <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Extracted Agents</h4>
-                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                                        {state.result.agents_extracted.map(a => (
-                                            <div key={a.filename} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
-                                                <FileJson size={14} className="text-blue-500 shrink-0" />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{a.agent_name || a.agent_id}</p>
-                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{a.filename}</p>
+                                    {capRun.result.agents_extracted && capRun.result.agents_extracted.length > 0 && (
+                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                            {capRun.result.agents_extracted.map(a => (
+                                                <div key={a.filename} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                    <FileJson size={14} className="text-blue-500 shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{a.agent_name || a.agent_id}</p>
+                                                        <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">{a.filename}</p>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                            ))}
+                                        </div>
+                                    )}
 
-                            {/* imported business applications list */}
-                            {state.result.applications && state.result.applications.length > 0 && (
-                                <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Imported Applications</h4>
-                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                                        {state.result.applications.map(app => (
-                                            <div key={app.business_application_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
-                                                <Building2 size={14} className="text-green-500 shrink-0" />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{app.name || '—'}</p>
-                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{app.business_application_id}</p>
+                                    {capRun.result.applications && capRun.result.applications.length > 0 && (
+                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                            {capRun.result.applications.map(app => (
+                                                <div key={app.business_application_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                    <Building2 size={14} className="text-green-500 shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{app.name || '—'}</p>
+                                                        <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">{app.business_application_id}</p>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                            ))}
+                                        </div>
+                                    )}
 
-                            {/* imported business processes list */}
-                            {state.result.processes && state.result.processes.length > 0 && (
-                                <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Imported Processes</h4>
-                                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                                        {state.result.processes.map(proc => (
-                                            <div key={proc.business_process_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
-                                                <Building2 size={14} className="text-blue-500 shrink-0" />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{proc.name || '—'}</p>
-                                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate mt-0.5">{proc.business_process_id}</p>
+                                    {capRun.result.processes && capRun.result.processes.length > 0 && (
+                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                            {capRun.result.processes.map(proc => (
+                                                <div key={proc.business_process_id} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                    <Building2 size={14} className="text-blue-500 shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{proc.name || '—'}</p>
+                                                        <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">{proc.business_process_id}</p>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                            ))}
+                                        </div>
+                                    )}
 
-                            {/* risk assessment background notice */}
-                            {state.status === 'success' && state.result.risk_queued && state.result.risk_queued > 0 && (
-                                <div className="flex items-start gap-3 p-3.5 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
-                                    <Clock size={15} className="text-blue-500 shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Risk assessments running in background</p>
-                                        <p className="text-xs text-blue-600/80 dark:text-blue-400/70 mt-0.5 leading-relaxed">
-                                            Assessments for all {state.result.risk_queued} agent{state.result.risk_queued !== 1 ? 's' : ''} have been queued.
-                                            Results will appear in the Agent Catalog once complete.
-                                        </p>
-                                    </div>
+                                    {capRun.status === 'success' && capRun.result.risk_queued && capRun.result.risk_queued > 0 && (
+                                        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
+                                            <Clock size={15} className="text-blue-500 shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Risk assessments running in background</p>
+                                                <p className="text-xs text-blue-600/80 dark:text-blue-400/70 mt-0.5">Assessments for all {capRun.result.risk_queued} agent{capRun.result.risk_queued !== 1 ? 's' : ''} queued. Results appear in the Agent Catalog once complete.</p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {cap.useSharedCreds && (
+                                        <button onClick={() => setRunState(prev => ({ ...prev, [cap.id]: { status: 'idle' } }))} className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors">
+                                            <RotateCcw size={13} /> Reset
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </div>
-                    )}
+                    );
+                })}
                 </div>
-            ) : (
-                /* empty state */
-                <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-center p-12">
-                    <div className="h-16 w-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4">
-                        <Play size={28} className="text-slate-400 dark:text-slate-600" />
-                    </div>
-                    <p className="text-slate-700 dark:text-slate-300 font-semibold mb-1">Select a connector</p>
-                    <p className="text-sm text-slate-400 dark:text-slate-500">
-                        Choose a connector from the list, enter your credentials, and click Run.
-                    </p>
-                </div>
-            )}
+            </div>
         </div>
     );
 };

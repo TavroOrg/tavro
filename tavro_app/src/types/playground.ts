@@ -55,6 +55,20 @@ export interface AgentTool {
   source:      'mcp' | 'builtin' | 'custom';
 }
 
+export interface PlaygroundAgentSkill {
+  id?: string | null;
+  identifier?: string | null;
+  skill_id?: string | null;
+  name?: string | null;
+  skill_name?: string | null;
+  description?: string | null;
+  tags?: string[] | null;
+  inputModes?: string[] | null;
+  outputModes?: string[] | null;
+  input_modes?: string[] | null;
+  output_modes?: string[] | null;
+}
+
 export const BUILTIN_TOOLS: AgentTool[] = [
   { id: 'web_search',        name: 'Web search',          description: 'Search the public web for current information', enabled: false, source: 'builtin' },
   { id: 'code_interpreter',  name: 'Code interpreter',     description: 'Execute Python for data analysis and calculations', enabled: false, source: 'builtin' },
@@ -73,6 +87,8 @@ export interface PlaygroundConfig {
 
   // Agent identity
   agentName:    string;
+  agentDescription?: string;
+  skills?: PlaygroundAgentSkill[];
   systemPrompt: string;
 
   // Capability
@@ -83,6 +99,11 @@ export interface PlaygroundConfig {
   // Blueprint context
   companyId?:   string;
   companyName?: string;
+
+  // Identity / tenancy
+  tenantId?:         string;
+  agentInternalId?:  string;
+  agentId?:          string;
 
   // Agent type (drives Code tab visibility)
   agentType?:   string;
@@ -117,6 +138,6 @@ export const OBSERVATION_TYPES: Record<PlaygroundObservation['type'], { label: s
 
 export const PROVIDER_MODELS: Record<InfraProvider, string[]> = {
   claude:        ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
-  azure_foundry: ['gpt-4o', 'gpt-4o-mini', 'phi-4'],
+  azure_foundry: ['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini'],
   aws_bedrock:   ['gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-120b'],
 };

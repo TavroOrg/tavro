@@ -5,6 +5,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { blueprintApi } from '../services/blueprintApi';
 import type { Company, DimType, DimNode, GraphData } from '../types/blueprint';
+import { toUserMessage } from '../utils/errorUtils';
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -66,11 +67,11 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // ── Fetch companies list ─────────────────────────────────────────────────
   const fetchCompanies = useCallback(async () => {
     try {
-      const companiesPage = await blueprintApi.listCompanies();
-      setCompanies(companiesPage.items);
+      const companies = await blueprintApi.listAllCompanies();
+      setCompanies(companies);
       setError(null);
     } catch (err: any) {
-      setError(err.message ?? 'Failed to load companies');
+      setError(toUserMessage(err));
     }
   }, []);
 
@@ -78,19 +79,19 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     (async () => {
       try {
-        const [companiesPage, types] = await Promise.all([
-          blueprintApi.listCompanies(),
+        const [companies, types] = await Promise.all([
+          blueprintApi.listAllCompanies(),
           blueprintApi.listDimTypes(),
         ]);
-        setCompanies(companiesPage.items);
+        setCompanies(companies);
         setDimTypes(types);
 
         // Restore last-selected company from localStorage
         const savedId = localStorage.getItem(STORAGE_KEY);
-        const saved = companiesPage.items.find(c => c.id === savedId) ?? companiesPage.items[0] ?? null;
+        const saved = companies.find(c => c.id === savedId) ?? companies[0] ?? null;
         if (saved) setActiveCompany(saved);
       } catch (err: any) {
-        setError(err.message ?? 'Failed to load blueprint data');
+        setError(toUserMessage(err));
       }
     })();
   }, []);
@@ -106,7 +107,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setNodes(page.items);
       setLastFetched(new Date());
     } catch (err: any) {
-      setError(err.message ?? 'Failed to load dimensions');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
       fetchingRef.current = false;
@@ -121,7 +122,7 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setGraph(g);
     } catch (err: any) {
       // Graph errors are non-fatal — nodes list still works
-      console.warn('[Blueprint] Graph fetch failed:', err.message);
+      console.warn('[Blueprint] Graph fetch failed:', toUserMessage(err));
     } finally {
       setGraphLoading(false);
     }
@@ -134,6 +135,17 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(STORAGE_NAME_KEY, activeCompany.name ?? '');
     fetchNodes(activeCompany);
     fetchGraph(activeCompany);
+  }, [activeCompany, fetchNodes, fetchGraph]);
+
+  // Auto-refresh blueprint when applications/processes/integrations are created or uploaded
+  useEffect(() => {
+    const handleCatalogChange = () => {
+      if (!activeCompany) return;
+      fetchNodes(activeCompany);
+      fetchGraph(activeCompany);
+    };
+    window.addEventListener('tavro:catalog-item-changed', handleCatalogChange);
+    return () => window.removeEventListener('tavro:catalog-item-changed', handleCatalogChange);
   }, [activeCompany, fetchNodes, fetchGraph]);
 
   const selectCompany = useCallback((company: Company) => {

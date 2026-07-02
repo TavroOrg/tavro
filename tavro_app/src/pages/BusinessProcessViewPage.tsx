@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import {
   AlertCircle,
   ArrowLeft,
@@ -7,7 +8,9 @@ import {
   CheckCircle2,
   Info,
   Loader2,
+  Network,
   Pencil,
+  Plus,
   PlusCircle,
   RefreshCw,
   Save,
@@ -27,12 +30,15 @@ import type {
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 import type { AiModelRecord } from '../types/aiModel';
+import type { DimEdge, SourceRef } from '../types/blueprint';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
+import { blueprintApi } from '../services/blueprintApi';
+import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models';
+type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models' | 'blueprint';
 type Option = { label: string; value: string };
 
 const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
@@ -120,7 +126,7 @@ const HINTS: Record<string, string> = {
   associated_agents:
     'Indicates the total number of agents associated with the process.',
   agent_risk_exposure:
-    'ARE represents process risk using highest related agent AIVSS and average criticality/financial/reputational/regulatory impacts.',
+    'ARE represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
 };
 
 const inputCls =
@@ -210,7 +216,7 @@ const changedProcessPayload = (
   const changed: BusinessProcessUpsertPayload = {};
   (Object.keys(nextPayload) as Array<keyof BusinessProcessUpsertPayload>).forEach(key => {
     if (nextPayload[key] !== currentPayload[key]) {
-      (changed as Record<string, string | null>)[key] = nextPayload[key] ?? null;
+      Object.assign(changed, { [key]: nextPayload[key] ?? null });
     }
   });
   return changed;
@@ -253,6 +259,15 @@ const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
   if (tone === 'medium') return 'text-amber-600';
   if (tone === 'low') return 'text-emerald-600';
   return 'text-slate-600';
+};
+
+const getArtMeta = (value: string): HeaderMetricMeta => {
+  const label = value || 'N/A';
+  const normalized = label.toLowerCase();
+  if (normalized === 'critical' || normalized === 'high') return { label, tone: 'high' };
+  if (normalized === 'medium') return { label, tone: 'medium' };
+  if (normalized === 'low' || normalized === 'none') return { label, tone: 'low' };
+  return { label, tone: 'neutral' };
 };
 
 const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
@@ -318,6 +333,11 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [visibility, setVisibility] = useState<string>('internal');
+  const [sensitive, setSensitive] = useState<boolean>(false);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
@@ -341,6 +361,18 @@ const BusinessProcessViewPage: React.FC = () => {
   const [searchModels, setSearchModels] = useState('');
   const [actingModel, setActingModel] = useState<string | null>(null);
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
+
+  // Blueprint
+  const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
+  const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
+  const [showAddEdge, setShowAddEdge] = useState(false);
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName, setNewSysName] = useState('');
+  const [newExtId, setNewExtId] = useState('');
+  const [addingRef, setAddingRef] = useState(false);
+  const [deletingEdge, setDeletingEdge] = useState<string | null>(null);
+  const [deletingRef, setDeletingRef] = useState<string | null>(null);
 
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
@@ -411,19 +443,52 @@ const BusinessProcessViewPage: React.FC = () => {
       ]);
       setProcess(proc);
       setForm(formFromProcess(proc));
+      setTags(Array.isArray(proc.tags) ? proc.tags : []);
+      setVisibility(proc.visibility ?? 'internal');
+      setSensitive(proc.sensitive ?? false);
       setAllProcesses(processes);
       setAttemptedSave(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to load business process');
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
+  const loadBlueprint = async (dimNodeId: string) => {
+    if (!dimNodeId || !activeCompany?.id) return;
+    setBlueprintLoading(true);
+    try {
+      const edgesPage = await blueprintApi.listEdges({ company_id: activeCompany.id, node_id: dimNodeId });
+      setBlueprintEdges(edgesPage.items);
+    } catch {
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const loadSourceRefs = async (dimNodeId: string) => {
+    try {
+      const refs = await blueprintApi.listSourceRefs(dimNodeId);
+      setBlueprintSourceRefs(refs);
+    } catch {
+    }
+  };
+
+  useEffect(() => {
+    if (process?.dim_node_id) loadSourceRefs(process.dim_node_id);
+  }, [process?.dim_node_id]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint' || !process?.dim_node_id) return;
+    loadBlueprint(process.dim_node_id);
+  }, [tab, process?.dim_node_id]);
+
   useEffect(() => {
     if (isCreateMode) {
       setProcess(null);
       setForm(emptyForm());
+      setTags([]);
       setEditing(true);
       setInlineEdit(null);
       setAttemptedSave(false);
@@ -436,7 +501,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setEditing(false);
     setInlineEdit(null);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -548,10 +613,13 @@ const BusinessProcessViewPage: React.FC = () => {
       );
       setProcess(updated);
       setForm(formFromProcess(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save process field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -652,7 +720,7 @@ const BusinessProcessViewPage: React.FC = () => {
         setField('process_description', result.description);
       }
     } catch (err: any) {
-      setActionError(err.message || 'Failed to generate process description');
+      setActionError(toUserMessage(err));
     } finally {
       setGeneratingDescription(false);
     }
@@ -672,10 +740,13 @@ const BusinessProcessViewPage: React.FC = () => {
     try {
       const payload = buildProcessPayload(form);
       if (isCreateMode) {
+        if (tags.length > 0) payload.tags = tags;
+        payload.visibility = visibility;
+        payload.sensitive = sensitive;
         const created = await businessRelationsApi.createProcess(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id);
+            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Process created but auto-link to agent failed.', linkErr);
           }
@@ -705,11 +776,14 @@ const BusinessProcessViewPage: React.FC = () => {
       const updated = await businessRelationsApi.updateProcess(process.business_process_id, changedPayload);
       setProcess(updated);
       setForm(formFromProcess(updated));
+      setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setAttemptedSave(false);
       setInlineEdit(null);
       setEditing(false);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save process');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -742,7 +816,7 @@ const BusinessProcessViewPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       navigate('/processes');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to delete process');
+      setActionError(toUserMessage(err));
       setDeleting(false);
     }
   };
@@ -752,10 +826,10 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id);
+      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id, activeCompany?.id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to add relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -766,10 +840,10 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id);
+      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id, activeCompany?.id);
       await load();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove relation');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -784,7 +858,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to add AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -799,7 +873,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await load();
       refreshUseCases();
     } catch (err: any) {
-      setUseCaseRelationError(err.message || 'Failed to remove AI use case relation');
+      setUseCaseRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -813,7 +887,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await aiModelApi.linkProcess(modelId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to link AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }
@@ -827,7 +901,7 @@ const BusinessProcessViewPage: React.FC = () => {
       await aiModelApi.unlinkProcess(modelId, process.business_process_id);
       await load();
     } catch (err: any) {
-      setModelRelationError(err.message || 'Failed to remove AI model.');
+      setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
     }
@@ -873,6 +947,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
   const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
   const regulatoryImpactMeta = getImpactMeta(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS);
+  const artMeta = getArtMeta(form.agent_risk_tier);
 
   const selectableParents = allProcesses.filter(
     p => p.business_process_id !== currentProcessId,
@@ -956,53 +1031,78 @@ const BusinessProcessViewPage: React.FC = () => {
             <div className="flex flex-col gap-1.5 min-w-0">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Process</span>
               <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{processTitle}</h2>
-              <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
+              <p className="text-xs font-mono text-slate-400 mt-1 truncate" title={processId}>{processId}</p>
               <p className="text-sm text-slate-600 line-clamp-2">
                 {form.process_description || 'No description available.'}
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Business Criticality
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
-                {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {businessCriticalityMeta.label}
-              </span>
-            </div>
+          <div className="grid grid-cols-3 gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Business Criticality
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
+                  {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {businessCriticalityMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Financial Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
-                {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {financialImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Financial Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
+                  {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {financialImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Reputational Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
-                {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {reputationalImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Reputational Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
+                  {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {reputationalImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Regulatory Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
-                {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {regulatoryImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Regulatory Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
+                  {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {regulatoryImpactMeta.label}
+                </span>
+              </div>
+
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ARE
+                  <span title="ARE (Agent Risk Exposure) represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className="text-xs font-bold text-slate-700">
+                  {form.agent_risk_exposure || 'N/A'}
+                </span>
+              </div>
+
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ART
+                  <span title="ART (Agent Risk Tier) indicates overall process risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
+                  {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {artMeta.label}
+                </span>
+              </div>
           </div>
         </div>
       </div>
@@ -1059,6 +1159,16 @@ const BusinessProcessViewPage: React.FC = () => {
               }`}
             >
               Related AI Models({relatedAiModelCount})
+            </button>
+            <button
+              onClick={() => setTab('blueprint')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'blueprint'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Blueprint Relationships
             </button>
           </>
         )}
@@ -1143,6 +1253,98 @@ const BusinessProcessViewPage: React.FC = () => {
                   })
                 )}
               </div>
+              <div className="flex flex-col gap-1.5 col-span-full">
+                <HintLabel label="Tags" />
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[32px] bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
+                  {tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-semibold bg-white text-slate-600 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                      {tag}
+                      <button
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={async () => {
+                          const next = tags.filter(t => t !== tag);
+                          if (isCreateMode) { setTags(next); return; }
+                          if (!process) return;
+                          setTagSaving(true);
+                          try {
+                            const updated = await businessRelationsApi.updateProcess(process.business_process_id, { tags: next });
+                            setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                          } catch { setTags(next); }
+                          finally { setTagSaving(false); }
+                        }}
+                        className="text-slate-400 hover:text-red-400 leading-none ml-0.5"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={async e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const newTag = tagInput.trim().replace(/,$/, '');
+                        if (!newTag || tags.includes(newTag)) { setTagInput(''); return; }
+                        const next = [...tags, newTag];
+                        setTagInput('');
+                        if (isCreateMode) { setTags(next); return; }
+                        setTagSaving(true);
+                        try {
+                          const updated = await businessRelationsApi.updateProcess(process!.business_process_id, { tags: next });
+                          setTags(Array.isArray(updated.tags) ? updated.tags : next);
+                        } catch { setTags(next); }
+                        finally { setTagSaving(false); }
+                      }
+                    }}
+                    placeholder="Type a tag and press Enter…"
+                    disabled={tagSaving}
+                    className="text-[11px] bg-transparent outline-none text-slate-500 placeholder:text-slate-300 min-w-[60px]"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Visibility" />
+                <select
+                  value={visibility}
+                  onChange={async e => {
+                    const next = e.target.value;
+                    setVisibility(next);
+                    if (isCreateMode || !process) return;
+                    try {
+                      const updated = await businessRelationsApi.updateProcess(process.business_process_id, { visibility: next });
+                      setProcess(updated);
+                      setVisibility(updated.visibility ?? next);
+                    } catch { setVisibility(process.visibility ?? 'internal'); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 capitalize"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="confidential">Confidential</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Sensitive" />
+                <select
+                  value={sensitive ? 'true' : 'false'}
+                  onChange={async e => {
+                    const next = e.target.value === 'true';
+                    setSensitive(next);
+                    if (isCreateMode || !process) return;
+                    try {
+                      const updated = await businessRelationsApi.updateProcess(process.business_process_id, { sensitive: next });
+                      setProcess(updated);
+                      setSensitive(updated.sensitive ?? next);
+                    } catch { setSensitive(process.sensitive ?? false); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
             </div>
           </Section>
 
@@ -1212,6 +1414,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
           <Section title="Business Criticality and Impact">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row 1: Business Criticality | Financial Impact */}
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
                 {editing ? (
@@ -1234,32 +1437,6 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
-                {editing ? (
-                  <select
-                    value={form.reputational_impact}
-                    onChange={(e) => setField('reputational_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
-                    kind: 'select',
-                    options: REPUTATIONAL_IMPACT_OPTIONS,
-                  })
-                )}
-              </div>
-
-              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
-              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
-              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'N/A'} />
-              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'N/A'} />
-
-              <div className="flex flex-col gap-1.5">
                 <HintLabel label="Financial Impact" hint={HINTS.financial_impact} />
                 {editing ? (
                   <select
@@ -1276,6 +1453,28 @@ const BusinessProcessViewPage: React.FC = () => {
                   renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS), {
                     kind: 'select',
                     options: FINANCIAL_IMPACT_OPTIONS,
+                  })
+                )}
+              </div>
+
+              {/* Row 2: Reputational Impact | Regulatory Impact */}
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
+                {editing ? (
+                  <select
+                    value={form.reputational_impact}
+                    onChange={(e) => setField('reputational_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: REPUTATIONAL_IMPACT_OPTIONS,
                   })
                 )}
               </div>
@@ -1301,9 +1500,20 @@ const BusinessProcessViewPage: React.FC = () => {
                 )}
               </div>
 
+              {/* Row 3: # Of Associated Agents | ARE */}
+              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
               <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+
+              {/* Row 4: ART | Blended Risk Score */}
+              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
               <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
+
+              {/* Row 5: Residual Risk Classification | Residual Risk Classification Score */}
+              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
+
+              {/* Row 6: Inherent Risk Classification | Inherent Risk Classification Score */}
+              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
             </div>
           </Section>
@@ -1345,6 +1555,73 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
             </div>
           </Section>
+
+          {/* Source Systems */}
+          {process?.dim_node_id && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Source Systems ({blueprintSourceRefs.length})</p>
+                <button
+                  onClick={() => setShowAddSourceRef(p => !p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {showAddSourceRef && (
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={newSysName} onChange={e => setNewSysName(e.target.value)} placeholder="System name (e.g. Salesforce)" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                    <input value={newExtId} onChange={e => setNewExtId(e.target.value)} placeholder="External ID" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!newSysName.trim() || !newExtId.trim() || !process.dim_node_id) return;
+                        setAddingRef(true);
+                        try {
+                          const ref = await blueprintApi.createSourceRef(process.dim_node_id, newSysName.trim(), newExtId.trim());
+                          setBlueprintSourceRefs(p => [...p, ref]);
+                          setNewSysName(''); setNewExtId(''); setShowAddSourceRef(false);
+                        } finally { setAddingRef(false); }
+                      }}
+                      disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addingRef ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save
+                    </button>
+                    <button onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }} className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {blueprintSourceRefs.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-slate-400 italic">No source systems linked.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintSourceRefs.map(ref => (
+                    <div key={ref.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-700">{ref.system_name}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{ref.external_id}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setDeletingRef(ref.id);
+                          try { await blueprintApi.deleteSourceRef(ref.id); setBlueprintSourceRefs(p => p.filter(r => r.id !== ref.id)); }
+                          finally { setDeletingRef(null); }
+                        }}
+                        disabled={deletingRef === ref.id}
+                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingRef === ref.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1452,8 +1729,8 @@ const BusinessProcessViewPage: React.FC = () => {
                     <div>Business Criticality</div>
                     <div>Process Health State</div>
                     <div># Of Associated Agents</div>
-                    <div>Agent Risk Exposure (ARE)</div>
-                    <div>Agent Risk Tier (ART)</div>
+                    <div>ARE</div>
+                    <div>ART</div>
                   </div>
                   <div className="divide-y divide-slate-100">
                     {relatedProcessRows.map((row) => {
@@ -1688,6 +1965,85 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'blueprint' && (
+        <div className="flex flex-col gap-4">
+          {process?.dim_node_id ? (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Network size={14} className="text-slate-400" />
+                  Blueprint Relationships ({blueprintEdges.length})
+                </p>
+                <button onClick={() => setShowAddEdge(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Add Relationship
+                </button>
+              </div>
+              {blueprintLoading ? (
+                <div className="px-5 py-4 text-sm text-slate-400 animate-pulse">Loading…</div>
+              ) : blueprintEdges.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-slate-400 italic">No blueprint relationships defined.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintEdges.map(edge => {
+                    const isSource = edge.source_id === process.dim_node_id;
+                    const otherLabel = isSource ? edge.target_label : edge.source_label;
+                    return (
+                      <div key={edge.id} className="px-5 py-3 flex items-center gap-3">
+                        <span className="text-slate-300">{isSource ? '→' : '←'}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{otherLabel ?? '—'}</span>
+                        <span className="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{edge.rel_type.replace('_', ' ')}</span>
+                        <span className="text-[11px] text-slate-400">{Math.round(edge.weight * 100)}%</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingEdge(edge.id);
+                            try { await blueprintApi.deleteEdge(edge.id); setBlueprintEdges(p => p.filter(e => e.id !== edge.id)); }
+                            finally { setDeletingEdge(null); }
+                          }}
+                          disabled={deletingEdge === edge.id}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Delete relationship"
+                        >
+                          {deletingEdge === edge.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 px-5 py-6 text-center">
+              <Info size={18} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">This process is not yet linked to a Blueprint dimension.</p>
+              <p className="text-xs text-slate-400 mt-1">Create a Process dimension in the Blueprint to enable relationships.</p>
+            </div>
+          )}
+          {showAddEdge && process?.dim_node_id && (
+            <AddDimEdgeModal
+              sourceNode={{
+                id: process.dim_node_id,
+                company_id: activeCompany?.id ?? '',
+                dim_type_id: '',
+                label: process.process_name ?? '',
+                category: 'process',
+                dim_type_name: 'Process',
+                summary: null,
+                tags: [],
+                visibility: 'internal',
+                sensitive: false,
+                valid_from: new Date().toISOString(),
+                valid_to: null,
+                updated_at: new Date().toISOString(),
+              }}
+              onClose={() => setShowAddEdge(false)}
+              onCreated={() => {
+                setShowAddEdge(false);
+                if (process.dim_node_id) loadBlueprint(process.dim_node_id);
+              }}
+            />
+          )}
         </div>
       )}
     </div>

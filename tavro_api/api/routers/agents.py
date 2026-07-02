@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from api.database import get_db
 from api.routers.blueprint import (
     _call_anthropic,
@@ -20,6 +22,9 @@ from api.routers.blueprint import (
     _collect_text,
     _extract_json,
 )
+from api.error_handler import raise_server_error
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -103,7 +108,7 @@ async def _fire_risk(payload: Dict[str, Any]) -> None:
         async with httpx.AsyncClient(timeout=60.0) as client:
             await client.post(_RISK_URL, json=payload)
     except Exception as e:
-        print(f"[risk-trigger] {e}")
+        _logger.error("[risk-trigger] Failed to fire risk assessment: %s", e, exc_info=True)
 
 
 async def _sync_to_aict(
@@ -387,7 +392,7 @@ async def get_agent_catalog(
         return {"start_record": start, "end_record": end, "record_count": len(data2),
                 "total_records": total2, "data": data2}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -933,10 +938,10 @@ def _write_agent_card(
         card_path = card_dir / f"{agent_id}_agent_card.json"
         with card_path.open("w", encoding="utf-8") as f:
             json.dump(card, f, indent=2, ensure_ascii=False)
-        print(f"[create_agent] Agent card written: {card_path}")
+        _logger.info("Agent card written: %s", card_path)
 
     except Exception as e:
-        print(f"[create_agent] Warning: failed to write agent card file: {e}")
+        _logger.warning("Failed to write agent card file: %s", e)
 
 
 async def _get_agent_identity(db: AsyncSession, agent_id: str, tenant_id: str):
@@ -1373,7 +1378,7 @@ async def create_agent(
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     _write_agent_card(
         agent_id=agent_id,
@@ -1432,7 +1437,8 @@ Return ONLY the JSON object with the "description" field."""
     try:
         parsed = json.loads(_extract_json(raw))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {str(e)[:200]}")
+        _logger.error("AI response could not be parsed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
 
     return SuggestAgentDescriptionResponse(
         description=str(parsed.get("description", "")).strip(),
@@ -1531,7 +1537,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1579,7 +1585,7 @@ async def get_issue(identifier: str, request: Request, db: AsyncSession = Depend
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 @router.post("/{agent_id}/risk-assessment", summary="Trigger Risk Assessment")
@@ -1617,7 +1623,7 @@ async def trigger_risk_assessment(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     background_tasks.add_task(
         _fire_risk,
@@ -1885,7 +1891,7 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1970,7 +1976,7 @@ async def delete_agent(agent_id: str, request: Request, db: AsyncSession = Depen
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
 
 # ---------------------------------------------------------------------------

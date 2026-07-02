@@ -3,6 +3,8 @@
 // Triggered from the "+ Add dimension" button on BlueprintPage.
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { X, Plus, RefreshCw, Shield, Eye, EyeOff, Sparkles, Paperclip } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -106,7 +108,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
       if (result.summary) setSummary(result.summary);
       if (result.tags?.length) setTags(result.tags);
     } catch (err: any) {
-      setError(err.message ?? 'AI suggestion failed');
+      setError(toUserMessage(err));
     } finally {
       setGenerating(false);
     }
@@ -136,7 +138,7 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
       onCreated();
       onClose();
     } catch (err: any) {
-      setError(err.message ?? 'Failed to create dimension');
+      setError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -415,14 +417,18 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
 };
 
 // ── Shared overlay ────────────────────────────────────────────────────────────
-export const Overlay: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({ onClose, children }) => (
-  <div
-    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-    onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-  >
-    {children}
-  </div>
-);
+// Rendered via portal to document.body so it is never clipped by an ancestor's
+// overflow:hidden or transform (common in Safari / older Chrome).
+export const Overlay: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({ onClose, children }) =>
+  createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
 
 // ── Shared field wrapper ──────────────────────────────────────────────────────
 export const Field: React.FC<{ label: string; required?: boolean; children: React.ReactNode }> = ({ label, required, children }) => (

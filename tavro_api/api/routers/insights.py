@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import CORE, _require_tenant
+from api.error_handler import raise_server_error
 
 router = APIRouter()
 
@@ -549,7 +550,10 @@ LIMIT :limit
 """
 
 _COMPANY_PICK_SQL = """
-SELECT id FROM twin.company ORDER BY updated_at DESC NULLS LAST LIMIT 1
+SELECT id FROM twin.company
+WHERE (tenant_id = :tid OR tenant_id IS NULL)
+ORDER BY (tenant_id IS NULL) ASC, updated_at DESC NULLS LAST
+LIMIT 1
 """
 
 _PROFILE_NODES_SQL = """
@@ -616,7 +620,7 @@ async def get_insights_summary(
         agent_rows = [dict(r) for r in (await db.execute(text(agent_sql), params)).mappings().all()]
         uc_rows = [dict(r) for r in (await db.execute(text(usecase_sql), params)).mappings().all()]
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_server_error(e)
 
     total_agents = len(agent_rows)
 
@@ -720,7 +724,7 @@ async def get_insights_summary(
             for a in agent_rows if _risk_not_triggered(a)
         ]
 
-    spark_total, spark_this_week = await _spark_counts(db, company_id)
+    spark_total, spark_this_week = await _spark_counts(db, company_id, tenant_id)
     use_cases_in_progress = sum(
         1
         for uc in uc_rows
@@ -761,8 +765,8 @@ async def get_insights_summary(
         })
 
     # --- company profile (twin) ---
-    company_profile = await _build_company_profile(db, company_id)
-    recent_activity = await _home_recent_activity(db, company_id, agent_rows, uc_rows)
+    company_profile = await _build_company_profile(db, company_id, tenant_id)
+    recent_activity = await _home_recent_activity(db, company_id, agent_rows, uc_rows, tenant_id)
     attention_items = _home_attention_items(agent_rows, uc_rows, company_profile)
 
     return {
@@ -795,11 +799,11 @@ async def get_insights_summary(
     }
 
 
-async def _spark_counts(db: AsyncSession, company_id: Optional[str]) -> tuple[int, int]:
+async def _spark_counts(db: AsyncSession, company_id: Optional[str], tenant_id: Optional[str] = None) -> tuple[int, int]:
     try:
         cid = company_id
         if not cid:
-            row = (await db.execute(text(_COMPANY_PICK_SQL))).first()
+            row = (await db.execute(text(_COMPANY_PICK_SQL), {"tid": tenant_id})).first()
             cid = str(row[0]) if row else None
         if not cid:
             return 0, 0
@@ -811,10 +815,10 @@ async def _spark_counts(db: AsyncSession, company_id: Optional[str]) -> tuple[in
         return 0, 0
 
 
-async def _resolve_company_id(db: AsyncSession, company_id: Optional[str]) -> Optional[str]:
+async def _resolve_company_id(db: AsyncSession, company_id: Optional[str], tenant_id: Optional[str] = None) -> Optional[str]:
     if company_id:
         return company_id
-    row = (await db.execute(text(_COMPANY_PICK_SQL))).first()
+    row = (await db.execute(text(_COMPANY_PICK_SQL), {"tid": tenant_id})).first()
     return str(row[0]) if row else None
 
 
@@ -823,11 +827,12 @@ async def _home_recent_activity(
     company_id: Optional[str],
     agent_rows: List[Dict[str, Any]],
     uc_rows: List[Dict[str, Any]],
+    tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
 
     try:
-        cid = await _resolve_company_id(db, company_id)
+        cid = await _resolve_company_id(db, company_id, tenant_id)
         if cid:
             spark_rows = (await db.execute(text(_RECENT_SPARK_SQL), {"cid": cid, "limit": 4})).mappings().all()
             for row in spark_rows:
@@ -965,12 +970,12 @@ def _home_attention_items(
     return unique
 
 
-async def _build_company_profile(db: AsyncSession, company_id: Optional[str]) -> Dict[str, Any]:
+async def _build_company_profile(db: AsyncSession, company_id: Optional[str], tenant_id: Optional[str] = None) -> Dict[str, Any]:
     empty = {"hasActiveCompany": False, "overallPct": 0, "sections": [], "gaps": [], "refreshes": []}
     try:
         cid = company_id
         if not cid:
-            row = (await db.execute(text(_COMPANY_PICK_SQL))).first()
+            row = (await db.execute(text(_COMPANY_PICK_SQL), {"tid": tenant_id})).first()
             cid = str(row[0]) if row else None
         if not cid:
             return empty

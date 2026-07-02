@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { toUserMessage } from '../utils/errorUtils';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -7,8 +8,10 @@ import {
   ArrowLeft,
   Bot,
   Boxes,
+  CheckCircle2,
   ClipboardList,
   Download,
+  Info,
   Link2,
   Loader2,
   Paperclip,
@@ -16,6 +19,7 @@ import {
   PlusCircle,
   Save,
   Search,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Unlink2,
@@ -28,6 +32,7 @@ import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
+import { mcpClient } from '../services/mcpClient';
 import { useBlueprint } from '../context/BlueprintContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
@@ -69,7 +74,33 @@ const FIELD_KEYS: string[] = [
   'recert_outputs_same', 'recert_outputs_changed', 'recert_users_same', 'recert_users_changed',
   'recert_processing_same', 'recert_processing_changed', 'recert_training_completed',
   'recert_risk_assessment_done',
+  'business_criticality', 'emergency_tier',
 ];
+
+const MODEL_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
+  { label: 'Select...', value: '' },
+  { label: 'High', value: 'High' },
+  { label: 'Medium', value: 'Medium' },
+  { label: 'Low', value: 'Low' },
+];
+
+const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
+  { label: 'Select...', value: '' },
+  { label: 'Mission Critical', value: 'Mission Critical' },
+  { label: 'Business Critical', value: 'Business Critical' },
+  { label: 'Non-Critical', value: 'Non-Critical' },
+];
+
+const MODEL_ARE_HINTS: Record<string, string> = {
+  agent_risk_exposure:
+    'ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.',
+  agent_risk_tier:
+    'ART indicates overall model risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
+  blended_risk_score:
+    'The highest current blended risk score across agents associated with this model.',
+  associated_agents:
+    'Indicates the total number of agents associated with this model.',
+};
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -111,9 +142,45 @@ const changedPayload = (current: FormState, next: FormState): AiModelUpsertPaylo
   return changed as AiModelUpsertPayload;
 };
 
-const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean }> = ({ label, children, full }) => (
+type MetricTone = 'high' | 'medium' | 'low' | 'neutral';
+const metricToneClass = (tone: MetricTone) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+const getCriticalityTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low') return 'low';
+  return 'neutral';
+};
+const getEmergencyTierTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v.includes('mission critical')) return 'high';
+  if (v.includes('business critical')) return 'medium';
+  if (v.includes('non-critical')) return 'low';
+  return 'neutral';
+};
+const getArtTone = (value: string | null | undefined): MetricTone => {
+  const v = (value ?? '').toLowerCase();
+  if (v === 'critical' || v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low' || v === 'none') return 'low';
+  return 'neutral';
+};
+
+const Field: React.FC<{ label: string; children: React.ReactNode; full?: boolean; hint?: string }> = ({ label, children, full, hint }) => (
   <div className={`flex flex-col gap-1.5 ${full ? 'md:col-span-2' : ''}`}>
-    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</label>
+    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+      {label}
+      {hint && (
+        <span title={hint}>
+          <Info size={12} className="text-slate-400" />
+        </span>
+      )}
+    </label>
     {children}
   </div>
 );
@@ -307,13 +374,31 @@ const AiModelViewPage: React.FC = () => {
         setModel(data);
         setForm(formFromModel(data));
       } catch (err: any) {
-        setError(err.message || 'Failed to load AI model');
+        setError(toUserMessage(err));
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
+
+  useEffect(() => {
+    if (!id || isCreateMode || editing) return;
+
+    const handleWorkflowUpdate = async () => {
+      mcpClient.invalidateCache();
+      try {
+        const data = await aiModelApi.getModel(id, activeCompany?.id);
+        setModel(data);
+        setForm(formFromModel(data));
+      } catch {
+        // Keep current UI state on transient refresh failures.
+      }
+    };
+
+    window.addEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+    return () => window.removeEventListener('tavro_temporal_workflow_update', handleWorkflowUpdate);
+  }, [id, isCreateMode, editing, activeCompany?.id]);
 
   const parentOptions = useMemo(
     () => allModels.filter(m => m.ai_model_id !== id),
@@ -327,7 +412,7 @@ const AiModelViewPage: React.FC = () => {
       const res = await aiModelApi.suggestDescription(form.model_name.trim());
       setField('description', res.description);
     } catch (e: any) {
-      setActionError(e.message || 'Failed to generate description.');
+      setActionError(toUserMessage(e));
     } finally {
       setGenerating(false);
     }
@@ -346,7 +431,7 @@ const AiModelViewPage: React.FC = () => {
         const created = await aiModelApi.createModel(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await aiModelApi.linkAgent(created.ai_model_id, linkAgentId);
+            await aiModelApi.linkAgent(created.ai_model_id, linkAgentId, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Model created but auto-link to agent failed.', linkErr);
           }
@@ -382,7 +467,7 @@ const AiModelViewPage: React.FC = () => {
       setEditing(false);
       setInlineEdit(null);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save AI model');
+      setActionError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -407,7 +492,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.deleteModel(model.ai_model_id);
       navigate('/ai-models');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to delete AI model');
+      setActionError(toUserMessage(err));
       setDeleting(false);
       setDeleteConfirm(false);
     }
@@ -437,13 +522,13 @@ const AiModelViewPage: React.FC = () => {
         setInlineEdit(null);
         return;
       }
-      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined);
-      const fresh = await aiModelApi.getModel(model.ai_model_id);
+      await aiModelApi.updateModel(model.ai_model_id, changed, model.model_name ?? undefined, activeCompany?.id);
+      const fresh = await aiModelApi.getModel(model.ai_model_id, activeCompany?.id);
       setModel(fresh);
       setForm(formFromModel(fresh));
       setInlineEdit(null);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to save field');
+      setActionError(toUserMessage(err));
     } finally {
       setInlineSaving(null);
     }
@@ -452,7 +537,7 @@ const AiModelViewPage: React.FC = () => {
   const reloadModel = async () => {
     if (!model) return;
     try {
-      const fresh = await aiModelApi.getModel(model.ai_model_id);
+      const fresh = await aiModelApi.getModel(model.ai_model_id, activeCompany?.id);
       setModel(fresh);
     } catch {
       /* ignore */
@@ -483,10 +568,10 @@ const AiModelViewPage: React.FC = () => {
     setActingAgent(`add:${agentId}`);
     setRelationError(null);
     try {
-      await aiModelApi.linkAgent(model.ai_model_id, agentId);
+      await aiModelApi.linkAgent(model.ai_model_id, agentId, activeCompany?.id);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to attach agent.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -497,10 +582,10 @@ const AiModelViewPage: React.FC = () => {
     setActingAgent(`remove:${agentId}`);
     setRelationError(null);
     try {
-      await aiModelApi.unlinkAgent(model.ai_model_id, agentId);
+      await aiModelApi.unlinkAgent(model.ai_model_id, agentId, activeCompany?.id);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove agent.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingAgent(null);
     }
@@ -534,7 +619,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkUseCase(model.ai_model_id, useCaseId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to attach AI use case.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -548,7 +633,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkUseCase(model.ai_model_id, useCaseId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove AI use case.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingUseCase(null);
     }
@@ -580,7 +665,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkApplication(model.ai_model_id, applicationId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingApplication(null);
     }
@@ -594,7 +679,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkApplication(model.ai_model_id, applicationId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove application.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingApplication(null);
     }
@@ -626,7 +711,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.linkProcess(model.ai_model_id, processId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to link process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingProcess(null);
     }
@@ -640,7 +725,7 @@ const AiModelViewPage: React.FC = () => {
       await aiModelApi.unlinkProcess(model.ai_model_id, processId);
       await reloadModel();
     } catch (err: any) {
-      setRelationError(err.message || 'Failed to remove process.');
+      setRelationError(toUserMessage(err));
     } finally {
       setActingProcess(null);
     }
@@ -737,17 +822,22 @@ const AiModelViewPage: React.FC = () => {
 
   const dateField = (k: string) => {
     if (editableActive) {
-      return <input type="date" className={inputCls} value={form[k]} onChange={e => setField(k, e.target.value)} />;
+      return <input type="date" lang="en-US" className={inputCls} value={form[k]} onChange={e => setField(k, e.target.value)} />;
     }
     if (inlineEdit?.field === k) {
       return (
         <div className="flex items-start gap-2">
-          <input type="date" autoFocus className={inputCls} value={inlineEdit.value} onChange={e => setInlineEdit({ field: k, value: e.target.value })} />
+          <input type="date" lang="en-US" autoFocus className={inputCls} value={inlineEdit.value} onChange={e => setInlineEdit({ field: k, value: e.target.value })} />
           {inlineControls(k)}
         </div>
       );
     }
-    return readOnly(k, form[k]);
+    const raw = form[k];
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [yyyy, mm, dd] = raw.split('-');
+      return readOnly(k, `${mm}/${dd}/${yyyy}`);
+    }
+    return readOnly(k, raw);
   };
 
   const parentField = () => {
@@ -867,21 +957,41 @@ const AiModelViewPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            {[
-              { label: 'Status', value: form.status },
-              // { label: 'Provider', value: form.provider },
-              // { label: 'Vendor or In-house', value: form.vendor_or_inhouse },
-              { label: 'Risk Tier / Materiality', value: form.risk_tier_materiality },
-            ].map(metric => (
-              <div key={metric.label} className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                  {metric.label}
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Emergency Tier</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getEmergencyTierTone(form.emergency_tier))}`}>
+                {getEmergencyTierTone(form.emergency_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.emergency_tier || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Business Criticality</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getCriticalityTone(form.business_criticality))}`}>
+                {getCriticalityTone(form.business_criticality) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.business_criticality || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
                 </span>
-                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-700">
-                  {metric.value?.trim() || 'N/A'}
+              </span>
+              <span className="text-xs font-bold text-slate-700">{String(model?.agent_risk_exposure ?? 'N/A')}</span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
                 </span>
-              </div>
-            ))}
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(model?.agent_risk_tier))}`}>
+                {getArtTone(model?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {model?.agent_risk_tier ?? 'None'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -935,6 +1045,35 @@ const AiModelViewPage: React.FC = () => {
           <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
           <Field label="Parent Model">{parentField()}</Field>
           <Field label="Version Number">{text('version_number')}</Field>
+        </Section>
+
+        <Section title="Agent Risk Exposure">
+          <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
+          <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
+          <Field label="ARE" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
+            <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
+          </Field>
+          <Field label="ART" hint={MODEL_ARE_HINTS.agent_risk_tier}>
+            <p className={`${valueBoxCls}`}>{model?.agent_risk_tier ?? 'None'}</p>
+          </Field>
+          <Field label="Blended Risk Score" hint={MODEL_ARE_HINTS.blended_risk_score}>
+            <p className={`${valueBoxCls}`}>{String(model?.blended_risk_score ?? 0)}</p>
+          </Field>
+          <Field label="# Of Associated Agents" hint={MODEL_ARE_HINTS.associated_agents}>
+            <p className={`${valueBoxCls}`}>{String(model?.no_of_associated_agents ?? 0)}</p>
+          </Field>
+          <Field label="Inherent Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.inherent_risk_classification || 'N/A'}</p>
+          </Field>
+          <Field label="Inherent Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.inherent_risk_classification_score ?? 0)}</p>
+          </Field>
+          <Field label="Residual Risk Classification">
+            <p className={`${valueBoxCls}`}>{model?.residual_risk_classification || 'N/A'}</p>
+          </Field>
+          <Field label="Residual Risk Classification Score">
+            <p className={`${valueBoxCls}`}>{String(model?.residual_risk_classification_score ?? 0)}</p>
+          </Field>
         </Section>
 
         <Section title="Intended Use and Decision Impact">
