@@ -34,6 +34,7 @@ from api.routers import docker_logs
 from api.routers.docker_logs import start_log_collector
 from api.routers import claude_run
 from api.routers import azure_deploy
+from api.routers import chat_attachments
 from api.migrations.init_tables import initialize_tables
 from api.database import get_db
 
@@ -50,6 +51,7 @@ from services.activity.activities import (
     update_data_sources,
     refresh_curated_agent_360_activity,
     create_local_agent_card_activity,
+    create_aict_ai_system_activity,
 )
 
 TASK_QUEUE        = "risk-classification-queue"
@@ -77,6 +79,7 @@ async def _run_temporal_worker():
             update_data_sources,
             refresh_curated_agent_360_activity,
             create_local_agent_card_activity,
+            create_aict_ai_system_activity,
         ],
     )
     print(f"Temporal worker listening on queue: {TASK_QUEUE}")
@@ -203,6 +206,7 @@ app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["
 app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 app.include_router(claude_run.router)
 app.include_router(azure_deploy.router)
+app.include_router(chat_attachments.router, prefix="/api/v1")
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])

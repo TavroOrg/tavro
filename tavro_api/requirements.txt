@@ -25,3 +25,6 @@ requests
 boto3
 docker
 fpdf2
+pypdf
+pytesseract
+Pillow

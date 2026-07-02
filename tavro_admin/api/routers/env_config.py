@@ -77,6 +77,9 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
         "username":     "SERVICENOW_USERNAME",
         "password":     "SERVICENOW_PASSWORD",
     },
+    "aict_outbound": {
+        "enabled": "AICT_ENABLED",
+    },
 }
 
 

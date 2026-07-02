@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from catalog_connector.aict_outbound import sync_agent as _aict_sync
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -109,6 +110,7 @@ async def _fire_risk(payload: Dict[str, Any]) -> None:
             await client.post(_RISK_URL, json=payload)
     except Exception as e:
         _logger.error("[risk-trigger] Failed to fire risk assessment: %s", e, exc_info=True)
+
 
 
 # ---------------------------------------------------------------------------
@@ -1381,6 +1383,8 @@ async def create_agent(
         _risk_payload(agent_internal_id, agent_id, body.agent_name,
                       body.description, body.instruction, tenant_id),
     )
+
+    background_tasks.add_task(_aict_sync, body.agent_name, body.description, None)
 
     return {"agent_id": agent_id, "agent_name": body.agent_name,
             "message": "Agent created successfully and risk assessment triggered."}
