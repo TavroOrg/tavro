@@ -289,6 +289,7 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
     ai_researched       BOOLEAN NOT NULL DEFAULT false,
     ai_research_notes   TEXT,
     research_sources    TEXT[],
+    research_status     TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by          TEXT,
@@ -299,6 +300,20 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
 -- existed before tenant_id was introduced (mirrors the ALTER TYPE ... ADD
 -- VALUE IF NOT EXISTS pattern used above for twin.dim_category).
 ALTER TABLE twin.compliance_item ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+-- research_status tracks an in-flight AI research job on this item (NULL =
+-- never researched / not currently researching) so the UI can show a live
+-- "Running" badge and auto-refresh once it flips to done/error — see
+-- enterprise/mcp/compliance_tools.py, which sets it around each research call.
+ALTER TABLE twin.compliance_item ADD COLUMN IF NOT EXISTS research_status TEXT;
+-- Migrate any rows from the previous 'running' value to 'researching' before
+-- tightening the constraint below (idempotent — no-op once already migrated).
+UPDATE twin.compliance_item SET research_status = 'researching' WHERE research_status = 'running';
+ALTER TABLE twin.compliance_item DROP CONSTRAINT IF EXISTS chk_compliance_item_research_status;
+DO $$ BEGIN
+    ALTER TABLE twin.compliance_item
+        ADD CONSTRAINT chk_compliance_item_research_status
+        CHECK (research_status IN ('researching','done','error'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS compliance_item_type_idx    ON twin.compliance_item (item_type, status);
 CREATE INDEX IF NOT EXISTS compliance_item_company_idx ON twin.compliance_item (company_id) WHERE company_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS compliance_item_tenant_idx  ON twin.compliance_item (tenant_id) WHERE tenant_id IS NOT NULL;

@@ -1325,12 +1325,17 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         industry: string;
         region?: string;
     }): Promise<any> {
-        return await this.callTool('recommend_blueprint_compliance', {
+        const result = await this.callTool('recommend_blueprint_compliance', {
             company_id:   args.company_id,
             company_name: args.company_name,
             industry:     args.industry,
             region:       args.region ?? '',
         });
+        // Compliance items are already persisted with research_status='running'
+        // by the time this resolves — let ComplianceContext know so it can
+        // refresh immediately and start polling until research finishes.
+        window.dispatchEvent(new CustomEvent('tavro:compliance-research-started', { detail: result }));
+        return result;
     }
 
     async getExecutiveRiskSummary(): Promise<any[]> {
