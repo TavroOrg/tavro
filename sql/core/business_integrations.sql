@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     inherent_risk_classification_score NUMERIC,
     residual_risk_classification_score NUMERIC,
     num_of_associated_agents INTEGER,
-    dim_node_id UUID,
     sensitive BOOLEAN DEFAULT FALSE,
     visibility TEXT DEFAULT 'internal',
     valid_from TIMESTAMP,

@@ -224,7 +224,8 @@ async def update_dim_node(
     try:
         cat_r = await db.execute(
             text("""
-                SELECT t.category FROM twin.dim_type t
+                SELECT t.category, n.business_application_id, n.business_process_id, n.integration_id
+                FROM twin.dim_type t
                 JOIN twin.dim_node n ON n.dim_type_id = t.id
                 WHERE n.id = :id
             """),
@@ -241,49 +242,55 @@ async def update_dim_node(
             tags_json = json.dumps(raw_tags if isinstance(raw_tags, list) else [])
 
             if cat_row["category"] == "application":
-                await db.execute(
-                    text("""
-                        UPDATE core.business_applications
-                        SET application_name        = :name,
-                            application_description = :desc,
-                            tags                    = cast(:tags as jsonb),
-                            sensitive               = coalesce(:sensitive, sensitive),
-                            visibility              = coalesce(:visibility, visibility),
-                            updated_ts              = CURRENT_TIMESTAMP
-                        WHERE dim_node_id = :nid
-                    """),
-                    {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "nid": str(node_id)},
-                )
+                entity_id = cat_row.get("business_application_id")
+                if entity_id:
+                    await db.execute(
+                        text("""
+                            UPDATE core.business_applications
+                            SET application_name        = :name,
+                                application_description = :desc,
+                                tags                    = cast(:tags as jsonb),
+                                sensitive               = coalesce(:sensitive, sensitive),
+                                visibility              = coalesce(:visibility, visibility),
+                                updated_ts              = CURRENT_TIMESTAMP
+                            WHERE business_application_id = :eid
+                        """),
+                        {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "eid": entity_id},
+                    )
                 await db.commit()
             elif cat_row["category"] == "process":
-                await db.execute(
-                    text("""
-                        UPDATE core.business_processes
-                        SET process_name        = :name,
-                            process_description = :desc,
-                            tags                = cast(:tags as jsonb),
-                            sensitive           = coalesce(:sensitive, sensitive),
-                            visibility          = coalesce(:visibility, visibility),
-                            updated_ts          = CURRENT_TIMESTAMP
-                        WHERE dim_node_id = :nid
-                    """),
-                    {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "nid": str(node_id)},
-                )
+                entity_id = cat_row.get("business_process_id")
+                if entity_id:
+                    await db.execute(
+                        text("""
+                            UPDATE core.business_processes
+                            SET process_name        = :name,
+                                process_description = :desc,
+                                tags                = cast(:tags as jsonb),
+                                sensitive           = coalesce(:sensitive, sensitive),
+                                visibility          = coalesce(:visibility, visibility),
+                                updated_ts          = CURRENT_TIMESTAMP
+                            WHERE business_process_id = :eid
+                        """),
+                        {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "eid": entity_id},
+                    )
                 await db.commit()
             elif cat_row["category"] == "integration":
-                await db.execute(
-                    text("""
-                        UPDATE core.business_integrations
-                        SET integration_name        = :name,
-                            integration_description = :desc,
-                            tags                    = cast(:tags as jsonb),
-                            sensitive               = coalesce(:sensitive, sensitive),
-                            visibility              = coalesce(:visibility, visibility),
-                            updated_ts              = CURRENT_TIMESTAMP
-                        WHERE dim_node_id = :nid
-                    """),
-                    {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "nid": str(node_id)},
-                )
+                entity_id = cat_row.get("integration_id")
+                if entity_id:
+                    await db.execute(
+                        text("""
+                            UPDATE core.business_integrations
+                            SET integration_name        = :name,
+                                integration_description = :desc,
+                                tags                    = cast(:tags as jsonb),
+                                sensitive               = coalesce(:sensitive, sensitive),
+                                visibility              = coalesce(:visibility, visibility),
+                                updated_ts              = CURRENT_TIMESTAMP
+                            WHERE integration_id = :eid
+                        """),
+                        {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "eid": entity_id},
+                    )
                 await db.commit()
     except Exception:
         pass
@@ -304,31 +311,8 @@ async def soft_delete_dim_node(node_id: UUID, tenant_id: str = Depends(require_t
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Node not found or already deleted")
 
-    # Unlink this dim_node from any linked business entity (non-fatal)
-    try:
-        await db.execute(
-            text("UPDATE core.business_applications SET dim_node_id = NULL WHERE dim_node_id = :nid"),
-            {"nid": str(node_id)},
-        )
-        await db.commit()
-    except Exception:
-        pass
-    try:
-        await db.execute(
-            text("UPDATE core.business_processes SET dim_node_id = NULL WHERE dim_node_id = :nid"),
-            {"nid": str(node_id)},
-        )
-        await db.commit()
-    except Exception:
-        pass
-    try:
-        await db.execute(
-            text("UPDATE core.business_integrations SET dim_node_id = NULL WHERE dim_node_id = :nid"),
-            {"nid": str(node_id)},
-        )
-        await db.commit()
-    except Exception:
-        pass
+    # The entity_id is stored on twin.dim_node (not on entity tables), so soft-deleting the
+    # node is sufficient — no entity-side cleanup is required.
 
 
 # ── Linked Business Entity ────────────────────────────────────────────────────
@@ -342,117 +326,50 @@ async def get_linked_entity(
     """Return the business entity (application/process/integration) linked to this dim_node."""
     await _assert_node_owned(db, str(node_id), tenant_id)
 
-    # Fetch the node's label and company_id for name-based fallback
-    node_row = await db.execute(
-        text("SELECT label, company_id FROM twin.dim_node WHERE id = :id"),
-        {"id": str(node_id)},
-    )
-    node = node_row.mappings().first()
-
-    # Application — dim_node_id match (fastest, for newly created nodes)
+    # Primary: read entity_id columns directly from the dim_node row
     try:
-        app_row = await db.execute(
+        node_row = await db.execute(
             text("""
-                SELECT business_application_id
-                FROM core.business_applications
-                WHERE dim_node_id = :nid
-                LIMIT 1
+                SELECT label, company_id,
+                       business_application_id, business_process_id, integration_id
+                FROM twin.dim_node WHERE id = :id
             """),
-            {"nid": str(node_id)},
+            {"id": str(node_id)},
         )
-        result = app_row.mappings().first()
-        if result:
-            return {"entity_type": "application", "entity_id": result["business_application_id"]}
+        node = node_row.mappings().first()
     except Exception:
-        pass
-
-    # Application — name + company_id fallback (for pre-existing records without dim_node_id)
-    if node:
-        app_row2 = await db.execute(
-            text("""
-                SELECT business_application_id
-                FROM core.business_applications
-                WHERE LOWER(application_name) = LOWER(:name)
-                  AND company_id = :cid
-                LIMIT 1
-            """),
-            {"name": node["label"], "cid": str(node["company_id"])},
-        )
-        result = app_row2.mappings().first()
-        if result:
-            return {"entity_type": "application", "entity_id": result["business_application_id"]}
-
-    # Process — dim_node_id match
-    try:
-        proc_row = await db.execute(
-            text("""
-                SELECT business_process_id
-                FROM core.business_processes
-                WHERE dim_node_id = :nid
-                LIMIT 1
-            """),
-            {"nid": str(node_id)},
-        )
-        result = proc_row.mappings().first()
-        if result:
-            return {"entity_type": "process", "entity_id": result["business_process_id"]}
-    except Exception:
-        pass
-
-    # Process — name + company_id fallback
-    if node:
+        node = None
         try:
-            proc_row2 = await db.execute(
-                text("""
-                    SELECT business_process_id
-                    FROM core.business_processes
-                    WHERE LOWER(process_name) = LOWER(:name)
-                      AND company_id = :cid
-                    LIMIT 1
-                """),
-                {"name": node["label"], "cid": str(node["company_id"])},
-            )
-            result = proc_row2.mappings().first()
-            if result:
-                return {"entity_type": "process", "entity_id": result["business_process_id"]}
+            await db.rollback()
         except Exception:
             pass
 
-    # Integration — dim_node_id match
-    try:
-        int_row = await db.execute(
-            text("""
-                SELECT integration_id
-                FROM core.business_integrations
-                WHERE dim_node_id = :nid
-                LIMIT 1
-            """),
-            {"nid": str(node_id)},
-        )
-        result = int_row.mappings().first()
-        if result:
-            return {"entity_type": "integration", "entity_id": result["integration_id"]}
-    except Exception:
-        pass
-
-    # Integration — name + company_id fallback
     if node:
-        try:
-            int_row2 = await db.execute(
-                text("""
-                    SELECT integration_id
-                    FROM core.business_integrations
-                    WHERE LOWER(integration_name) = LOWER(:name)
-                      AND company_id = :cid
-                    LIMIT 1
-                """),
-                {"name": node["label"], "cid": str(node["company_id"])},
-            )
-            result = int_row2.mappings().first()
-            if result:
-                return {"entity_type": "integration", "entity_id": result["integration_id"]}
-        except Exception:
-            pass
+        if node.get("business_application_id"):
+            return {"entity_type": "application", "entity_id": node["business_application_id"]}
+        if node.get("business_process_id"):
+            return {"entity_type": "process", "entity_id": node["business_process_id"]}
+        if node.get("integration_id"):
+            return {"entity_type": "integration", "entity_id": node["integration_id"]}
+
+    # Final fallback: name + company_id match
+    if node:
+        for tbl, pk, etype in [
+            ("core.business_applications", "business_application_id", "application"),
+            ("core.business_processes", "business_process_id", "process"),
+            ("core.business_integrations", "integration_id", "integration"),
+        ]:
+            name_col = "application_name" if etype == "application" else ("process_name" if etype == "process" else "integration_name")
+            try:
+                fb = await db.execute(
+                    text(f"SELECT {pk} FROM {tbl} WHERE LOWER({name_col}) = LOWER(:name) AND company_id = :cid LIMIT 1"),
+                    {"name": node["label"], "cid": str(node["company_id"])},
+                )
+                fb_result = fb.mappings().first()
+                if fb_result:
+                    return {"entity_type": etype, "entity_id": fb_result[pk]}
+            except Exception:
+                pass
 
     raise HTTPException(status_code=404, detail="No linked business entity found for this node")
 
@@ -513,16 +430,21 @@ async def upload_attachment(
 
     mime = file.content_type or "application/octet-stream"
 
-    # Sync to application_attachment if this dim_node is linked to a business_application (non-fatal)
+    # Read entity_id columns from dim_node — the node is the FK holder
     try:
-        await _ensure_application_attachments_table(db)
-        app_row = await db.execute(
-            text("SELECT business_application_id FROM core.business_applications WHERE dim_node_id = :nid LIMIT 1"),
+        eid_row = await db.execute(
+            text("SELECT business_application_id, business_process_id, integration_id FROM twin.dim_node WHERE id = :nid"),
             {"nid": str(node_id)},
         )
-        app = app_row.mappings().first()
-        if app:
-            app_id = str(app["business_application_id"])
+        eid = eid_row.mappings().first()
+    except Exception:
+        eid = None
+
+    # Sync to application_attachment (non-fatal)
+    try:
+        await _ensure_application_attachments_table(db)
+        app_id = str(eid["business_application_id"]) if eid and eid.get("business_application_id") else None
+        if app_id:
             dup = await db.execute(
                 text("SELECT 1 FROM public.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
                 {"aid": app_id, "fn": fname},
@@ -540,16 +462,11 @@ async def upload_attachment(
     except Exception:
         pass
 
-    # Sync to process_attachment if this dim_node is linked to a business_process (non-fatal)
+    # Sync to process_attachment (non-fatal)
     try:
         await _ensure_process_attachments_table(db)
-        proc_row = await db.execute(
-            text("SELECT business_process_id FROM core.business_processes WHERE dim_node_id = :nid LIMIT 1"),
-            {"nid": str(node_id)},
-        )
-        proc = proc_row.mappings().first()
-        if proc:
-            pid = str(proc["business_process_id"])
+        pid = str(eid["business_process_id"]) if eid and eid.get("business_process_id") else None
+        if pid:
             dup = await db.execute(
                 text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
                 {"pid": pid, "fn": fname},
@@ -567,16 +484,11 @@ async def upload_attachment(
     except Exception:
         pass
 
-    # Sync to integration_attachment if this dim_node is linked to a business_integration (non-fatal)
+    # Sync to integration_attachment (non-fatal)
     try:
         await _ensure_integration_attachments_table(db)
-        int_row = await db.execute(
-            text("SELECT integration_id FROM core.business_integrations WHERE dim_node_id = :nid LIMIT 1"),
-            {"nid": str(node_id)},
-        )
-        int_rec = int_row.mappings().first()
-        if int_rec:
-            iid = str(int_rec["integration_id"])
+        iid = str(eid["integration_id"]) if eid and eid.get("integration_id") else None
+        if iid:
             dup = await db.execute(
                 text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
                 {"iid": iid, "fn": fname},
@@ -646,18 +558,24 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
     node_id_str = str(att_row["node_id"])
     fname = att_row["filename"]
 
+    # Read entity_id columns from dim_node — the node is the FK holder
+    try:
+        eid_row = await db.execute(
+            text("SELECT business_application_id, business_process_id, integration_id FROM twin.dim_node WHERE id = :nid"),
+            {"nid": node_id_str},
+        )
+        eid = eid_row.mappings().first()
+    except Exception:
+        eid = None
+
     # Also remove from application_attachment by filename (non-fatal)
     try:
         await _ensure_application_attachments_table(db)
-        app_row = await db.execute(
-            text("SELECT business_application_id FROM core.business_applications WHERE dim_node_id = :nid LIMIT 1"),
-            {"nid": node_id_str},
-        )
-        app = app_row.mappings().first()
-        if app:
+        app_id = str(eid["business_application_id"]) if eid and eid.get("business_application_id") else None
+        if app_id:
             await db.execute(
                 text("DELETE FROM public.application_attachment WHERE application_id = :aid AND filename = :fn"),
-                {"aid": str(app["business_application_id"]), "fn": fname},
+                {"aid": app_id, "fn": fname},
             )
             await db.commit()
     except Exception:
@@ -666,15 +584,11 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
     # Also remove from process_attachment by filename (non-fatal)
     try:
         await _ensure_process_attachments_table(db)
-        proc_row = await db.execute(
-            text("SELECT business_process_id FROM core.business_processes WHERE dim_node_id = :nid LIMIT 1"),
-            {"nid": node_id_str},
-        )
-        proc = proc_row.mappings().first()
-        if proc:
+        pid = str(eid["business_process_id"]) if eid and eid.get("business_process_id") else None
+        if pid:
             await db.execute(
                 text("DELETE FROM public.process_attachment WHERE process_id = :pid AND filename = :fn"),
-                {"pid": str(proc["business_process_id"]), "fn": fname},
+                {"pid": pid, "fn": fname},
             )
             await db.commit()
     except Exception:
@@ -683,15 +597,11 @@ async def delete_attachment(attachment_id: UUID, tenant_id: str = Depends(requir
     # Also remove from integration_attachment by filename (non-fatal)
     try:
         await _ensure_integration_attachments_table(db)
-        int_row = await db.execute(
-            text("SELECT integration_id FROM core.business_integrations WHERE dim_node_id = :nid LIMIT 1"),
-            {"nid": node_id_str},
-        )
-        int_rec = int_row.mappings().first()
-        if int_rec:
+        iid = str(eid["integration_id"]) if eid and eid.get("integration_id") else None
+        if iid:
             await db.execute(
                 text("DELETE FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn"),
-                {"iid": str(int_rec["integration_id"]), "fn": fname},
+                {"iid": iid, "fn": fname},
             )
             await db.commit()
     except Exception:

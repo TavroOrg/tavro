@@ -389,6 +389,14 @@ async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
         return None
 
 
+# Maps dim_type category → the column name on twin.dim_node that holds the entity PK
+_ENTITY_COL_MAP: dict[str, str] = {
+    "application": "business_application_id",
+    "process":     "business_process_id",
+    "integration": "integration_id",
+}
+
+
 async def _upsert_dim_node_for_entity(
     db: AsyncSession,
     company_id: str,
@@ -398,8 +406,9 @@ async def _upsert_dim_node_for_entity(
     tags: Optional[list] = None,
     visibility: Optional[str] = None,
     sensitive: Optional[bool] = None,
+    entity_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Find the system dim_type for the given category and upsert a dim_node. Returns the node id."""
+    """Upsert a dim_node for the given entity. The dim_node carries the entity PK, not the other way. Returns the node id."""
     result = await db.execute(
         text("SELECT id FROM twin.dim_type WHERE category = :category LIMIT 1"),
         {"category": category},
@@ -408,17 +417,42 @@ async def _upsert_dim_node_for_entity(
     if not row:
         return None
     dim_type_id = str(row["id"])
+    entity_col = _ENTITY_COL_MAP.get(category)
 
-    existing = await db.execute(
-        text("""
-            SELECT id FROM twin.dim_node
-            WHERE company_id = :company_id AND dim_type_id = :dim_type_id
-              AND LOWER(label) = LOWER(:label) AND valid_to IS NULL
-            LIMIT 1
-        """),
-        {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
-    )
-    existing_row = existing.mappings().first()
+    existing_row = None
+
+    # Primary lookup: by entity_id column on dim_node (accurate, avoids label collisions)
+    if entity_id and entity_col:
+        try:
+            ex = await db.execute(
+                text(f"""
+                    SELECT id FROM twin.dim_node
+                    WHERE company_id = :company_id AND dim_type_id = :dim_type_id
+                      AND {entity_col} = :entity_id AND valid_to IS NULL
+                    LIMIT 1
+                """),
+                {"company_id": company_id, "dim_type_id": dim_type_id, "entity_id": entity_id},
+            )
+            existing_row = ex.mappings().first()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    # Fallback: by label (for nodes created before this migration)
+    if not existing_row:
+        ex2 = await db.execute(
+            text("""
+                SELECT id FROM twin.dim_node
+                WHERE company_id = :company_id AND dim_type_id = :dim_type_id
+                  AND LOWER(label) = LOWER(:label) AND valid_to IS NULL
+                LIMIT 1
+            """),
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
+        )
+        existing_row = ex2.mappings().first()
+
     if existing_row:
         node_id = str(existing_row["id"])
         set_parts = ["summary = :summary", "updated_at = NOW()"]
@@ -432,27 +466,39 @@ async def _upsert_dim_node_for_entity(
         if sensitive is not None:
             set_parts.append("sensitive = :sensitive")
             params["sensitive"] = sensitive
+        # Stamp the entity_id onto the node if not already set (e.g. matched via label fallback)
+        if entity_id and entity_col:
+            set_parts.append(f"{entity_col} = coalesce({entity_col}, :{entity_col})")
+            params[entity_col] = entity_id
         await db.execute(
             text(f"UPDATE twin.dim_node SET {', '.join(set_parts)} WHERE id = :id"),
             params,
         )
         return node_id
     else:
+        # Build INSERT; include entity_id column when provided
+        ins_cols = "company_id, dim_type_id, label, summary, tags, visibility, sensitive"
+        ins_vals = ":company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive"
+        ins_params: dict = {
+            "company_id": company_id,
+            "dim_type_id": dim_type_id,
+            "label": label,
+            "summary": summary,
+            "tags": json.dumps(tags or []),
+            "visibility": visibility or "internal",
+            "sensitive": sensitive if sensitive is not None else False,
+        }
+        if entity_id and entity_col:
+            ins_cols += f", {entity_col}"
+            ins_vals += f", :{entity_col}"
+            ins_params[entity_col] = entity_id
         ins = await db.execute(
-            text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
-                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive)
+            text(f"""
+                INSERT INTO twin.dim_node ({ins_cols})
+                VALUES ({ins_vals})
                 RETURNING id
             """),
-            {
-                "company_id": company_id,
-                "dim_type_id": dim_type_id,
-                "label": label,
-                "summary": summary,
-                "tags": json.dumps(tags or []),
-                "visibility": visibility or "internal",
-                "sensitive": sensitive if sensitive is not None else False,
-            },
+            ins_params,
         )
         ins_row = ins.mappings().first()
         return str(ins_row["id"]) if ins_row else None
@@ -488,21 +534,10 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
                     {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
                 )
 
-        node_id = await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags, visibility=visibility, sensitive=sensitive)
-
-        # Write dim_node_id back to the integration row when not already set
-        if node_id and integration_id:
-            int_cols2 = await _table_columns(db, "core", "business_integrations")
-            if "dim_node_id" in int_cols2:
-                await db.execute(
-                    text("""
-                        UPDATE core.business_integrations
-                        SET dim_node_id = :node_id
-                        WHERE integration_id = :integration_id
-                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
-                    """),
-                    {"node_id": node_id, "integration_id": integration_id},
-                )
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "integration", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=integration_id,
+        )
 
         await db.commit()
     except Exception:
@@ -510,7 +545,7 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
 
 
 async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, application: dict) -> None:
-    """Sync a saved application into twin.dim_node and populate company fields + dim_node_id on the record."""
+    """Sync a saved application into twin.dim_node and stamp business_application_id on the node."""
     try:
         name = (application.get("application_name") or "").strip()
         if not name:
@@ -536,21 +571,10 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
                     {"company_id": company_id, "company_name": company_name, "application_id": application_id},
                 )
 
-        node_id = await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags, visibility=visibility, sensitive=sensitive)
-
-        # Write dim_node_id back to the application row when not already set
-        if node_id and application_id:
-            app_cols = await _table_columns(db, "core", "business_applications")
-            if "dim_node_id" in app_cols:
-                await db.execute(
-                    text("""
-                        UPDATE core.business_applications
-                        SET dim_node_id = :node_id
-                        WHERE business_application_id = :application_id
-                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
-                    """),
-                    {"node_id": node_id, "application_id": application_id},
-                )
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "application", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=application_id,
+        )
 
         await db.commit()
     except Exception:
@@ -558,7 +582,7 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
 
 
 async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_record: dict) -> None:
-    """Sync a saved process into twin.dim_node and populate company fields + dim_node_id on the record."""
+    """Sync a saved process into twin.dim_node and stamp business_process_id on the node."""
     try:
         name = (process_record.get("process_name") or "").strip()
         if not name:
@@ -584,21 +608,10 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
                     {"company_id": company_id, "company_name": company_name, "process_id": process_id},
                 )
 
-        node_id = await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags, visibility=visibility, sensitive=sensitive)
-
-        # Write dim_node_id back to the process row when not already set
-        if node_id and process_id:
-            proc_cols = await _table_columns(db, "core", "business_processes")
-            if "dim_node_id" in proc_cols:
-                await db.execute(
-                    text("""
-                        UPDATE core.business_processes
-                        SET dim_node_id = :node_id
-                        WHERE business_process_id = :process_id
-                          AND (dim_node_id IS NULL OR dim_node_id != :node_id)
-                    """),
-                    {"node_id": node_id, "process_id": process_id},
-                )
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "process", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=process_id,
+        )
 
         await db.commit()
     except Exception:
@@ -619,15 +632,19 @@ async def sync_dim_node_to_business_entity(
     visibility: Optional[str] = None,
 ) -> None:
     """
-    Called from dim_nodes.py when a dim_node is created under application/process/integration.
+    Called when a dim_node is created/updated under application/process/integration.
     Creates the corresponding business entity record if it doesn't already exist for this company,
-    or updates its tags if it does.
+    or updates its fields if it does.
+    After resolving the entity, the dim_node is stamped with the entity PK — the entity tables
+    no longer hold dim_node_id as the authoritative reference.
     """
     try:
         label = (label or "").strip()
         if not label:
             return
 
+        entity_col = _ENTITY_COL_MAP.get(category)
+        resolved_entity_id: Optional[str] = None
 
         if category == "application":
             app_cols = await _table_columns(db, "core", "business_applications")
@@ -642,89 +659,74 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
-                    updates: dict[str, Any] = {}
+                    resolved_entity_id = existing_row["business_application_id"]
+                    set_parts: list[str] = []
+                    params_upd: dict[str, Any] = {"app_id": resolved_entity_id}
                     if tags and "tags" in app_cols:
-                        updates["tags"] = json.dumps(tags)
-                    if node_id and "dim_node_id" in app_cols:
-                        updates["dim_node_id"] = node_id
+                        set_parts.append("tags = cast(:tags as jsonb)")
+                        params_upd["tags"] = json.dumps(tags)
                     if sensitive is not None and "sensitive" in app_cols:
-                        updates["sensitive"] = sensitive
+                        set_parts.append("sensitive = :sensitive")
+                        params_upd["sensitive"] = sensitive
                     if visibility and "visibility" in app_cols:
-                        updates["visibility"] = visibility
-                    if updates:
-                        set_parts = []
-                        params_upd: dict[str, Any] = {"app_id": existing_row["business_application_id"]}
-                        if "tags" in updates:
-                            set_parts.append("tags = cast(:tags as jsonb)")
-                            params_upd["tags"] = updates["tags"]
-                        if "dim_node_id" in updates:
-                            set_parts.append("dim_node_id = :dim_node_id")
-                            params_upd["dim_node_id"] = updates["dim_node_id"]
-                        if "sensitive" in updates:
-                            set_parts.append("sensitive = :sensitive")
-                            params_upd["sensitive"] = updates["sensitive"]
-                        if "visibility" in updates:
-                            set_parts.append("visibility = :visibility")
-                            params_upd["visibility"] = updates["visibility"]
+                        set_parts.append("visibility = :visibility")
+                        params_upd["visibility"] = visibility
+                    if set_parts:
                         await db.execute(
                             text(f"UPDATE core.business_applications SET {', '.join(set_parts)} WHERE business_application_id = :app_id"),
                             params_upd,
                         )
                         await db.commit()
-                    return
+                else:
+                    app_id = uuid4().hex
+                    resolved_entity_id = app_id
+                    insert_cols: list[str] = ["business_application_id", "application_name"]
+                    params: dict[str, Any] = {"app_id": app_id, "app_name": label}
+                    placeholders: list[str] = [":app_id", ":app_name"]
 
-            app_id = uuid4().hex
-            insert_cols: list[str] = ["business_application_id", "application_name"]
-            params: dict[str, Any] = {"app_id": app_id, "app_name": label}
-            placeholders: list[str] = [":app_id", ":app_name"]
+                    if "application_description" in app_cols:
+                        insert_cols.append("application_description")
+                        placeholders.append(":app_desc")
+                        params["app_desc"] = summary
+                    if "tenant_id" in app_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in app_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in app_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in app_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in app_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in app_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in app_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
+                    for num_col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
+                        if num_col in app_cols:
+                            insert_cols.append(num_col)
+                            placeholders.append(f":def_{num_col}")
+                            params[f"def_{num_col}"] = default_val
 
-            if "application_description" in app_cols:
-                insert_cols.append("application_description")
-                placeholders.append(":app_desc")
-                params["app_desc"] = summary
-            if "tenant_id" in app_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in app_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in app_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in app_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            if node_id and "dim_node_id" in app_cols:
-                insert_cols.append("dim_node_id")
-                placeholders.append(":dim_node_id")
-                params["dim_node_id"] = node_id
-            if sensitive is not None and "sensitive" in app_cols:
-                insert_cols.append("sensitive")
-                placeholders.append(":sensitive")
-                params["sensitive"] = sensitive
-            if visibility and "visibility" in app_cols:
-                insert_cols.append("visibility")
-                placeholders.append(":visibility")
-                params["visibility"] = visibility
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in app_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
-            for num_col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
-                if num_col in app_cols:
-                    insert_cols.append(num_col)
-                    placeholders.append(f":def_{num_col}")
-                    params[f"def_{num_col}"] = default_val
-
-            await db.execute(
-                text(f"INSERT INTO core.business_applications ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+                    await db.execute(
+                        text(f"INSERT INTO core.business_applications ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
         elif category == "process":
             proc_cols = await _table_columns(db, "core", "business_processes")
@@ -739,13 +741,12 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
-                    update_set = ["tags = cast(:tags as jsonb)"] if tags and "tags" in proc_cols else []
-                    update_params: dict = {"proc_id": existing_row["business_process_id"]}
+                    resolved_entity_id = existing_row["business_process_id"]
+                    update_set: list[str] = []
+                    update_params: dict = {"proc_id": resolved_entity_id}
                     if tags and "tags" in proc_cols:
+                        update_set.append("tags = cast(:tags as jsonb)")
                         update_params["tags"] = json.dumps(tags)
-                    if node_id and "dim_node_id" in proc_cols:
-                        update_set.append("dim_node_id = coalesce(dim_node_id, :dim_node_id)")
-                        update_params["dim_node_id"] = node_id
                     if sensitive is not None and "sensitive" in proc_cols:
                         update_set.append("sensitive = coalesce(:sensitive, sensitive)")
                         update_params["sensitive"] = sensitive
@@ -758,60 +759,56 @@ async def sync_dim_node_to_business_entity(
                             update_params,
                         )
                         await db.commit()
-                    return
+                else:
+                    proc_id = uuid4().hex
+                    resolved_entity_id = proc_id
+                    insert_cols = ["business_process_id", "process_name"]
+                    params = {"proc_id": proc_id, "proc_name": label}
+                    placeholders = [":proc_id", ":proc_name"]
 
-            proc_id = uuid4().hex
-            insert_cols = ["business_process_id", "process_name"]
-            params = {"proc_id": proc_id, "proc_name": label}
-            placeholders = [":proc_id", ":proc_name"]
+                    if "process_description" in proc_cols:
+                        insert_cols.append("process_description")
+                        placeholders.append(":proc_desc")
+                        params["proc_desc"] = summary
+                    if "tenant_id" in proc_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in proc_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in proc_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in proc_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in proc_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in proc_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in proc_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
+                    for num_col, default_val in _PROCESS_READONLY_DEFAULTS.items():
+                        if num_col in proc_cols:
+                            insert_cols.append(num_col)
+                            placeholders.append(f":def_{num_col}")
+                            params[f"def_{num_col}"] = default_val
 
-            if "process_description" in proc_cols:
-                insert_cols.append("process_description")
-                placeholders.append(":proc_desc")
-                params["proc_desc"] = summary
-            if "tenant_id" in proc_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in proc_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in proc_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in proc_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            if node_id and "dim_node_id" in proc_cols:
-                insert_cols.append("dim_node_id")
-                placeholders.append(":dim_node_id")
-                params["dim_node_id"] = node_id
-            if sensitive is not None and "sensitive" in proc_cols:
-                insert_cols.append("sensitive")
-                placeholders.append(":sensitive")
-                params["sensitive"] = sensitive
-            if visibility and "visibility" in proc_cols:
-                insert_cols.append("visibility")
-                placeholders.append(":visibility")
-                params["visibility"] = visibility
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in proc_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
-            for num_col, default_val in _PROCESS_READONLY_DEFAULTS.items():
-                if num_col in proc_cols:
-                    insert_cols.append(num_col)
-                    placeholders.append(f":def_{num_col}")
-                    params[f"def_{num_col}"] = default_val
-
-            await db.execute(
-                text(f"INSERT INTO core.business_processes ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+                    await db.execute(
+                        text(f"INSERT INTO core.business_processes ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
         elif category == "integration":
             await _ensure_integrations_table(db)
@@ -827,13 +824,12 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
-                    int_update_set = ["tags = cast(:tags as jsonb)"] if tags and "tags" in int_cols else []
-                    int_update_params: dict = {"int_id": existing_row["integration_id"]}
+                    resolved_entity_id = existing_row["integration_id"]
+                    int_update_set: list[str] = []
+                    int_update_params: dict = {"int_id": resolved_entity_id}
                     if tags and "tags" in int_cols:
+                        int_update_set.append("tags = cast(:tags as jsonb)")
                         int_update_params["tags"] = json.dumps(tags)
-                    if node_id and "dim_node_id" in int_cols:
-                        int_update_set.append("dim_node_id = coalesce(dim_node_id, :dim_node_id)")
-                        int_update_params["dim_node_id"] = node_id
                     if sensitive is not None and "sensitive" in int_cols:
                         int_update_set.append("sensitive = coalesce(:sensitive, sensitive)")
                         int_update_params["sensitive"] = sensitive
@@ -846,55 +842,62 @@ async def sync_dim_node_to_business_entity(
                             int_update_params,
                         )
                         await db.commit()
-                    return
+                else:
+                    int_id = uuid4().hex
+                    resolved_entity_id = int_id
+                    insert_cols = ["integration_id", "integration_name"]
+                    params = {"int_id": int_id, "int_name": label}
+                    placeholders = [":int_id", ":int_name"]
 
-            int_id = uuid4().hex
-            insert_cols = ["integration_id", "integration_name"]
-            params = {"int_id": int_id, "int_name": label}
-            placeholders = [":int_id", ":int_name"]
+                    if "integration_description" in int_cols:
+                        insert_cols.append("integration_description")
+                        placeholders.append(":int_desc")
+                        params["int_desc"] = summary
+                    if "tenant_id" in int_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in int_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in int_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in int_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in int_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in int_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in int_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
 
-            if "integration_description" in int_cols:
-                insert_cols.append("integration_description")
-                placeholders.append(":int_desc")
-                params["int_desc"] = summary
-            if "tenant_id" in int_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in int_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in int_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in int_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            if node_id and "dim_node_id" in int_cols:
-                insert_cols.append("dim_node_id")
-                placeholders.append(":dim_node_id")
-                params["dim_node_id"] = node_id
-            if sensitive is not None and "sensitive" in int_cols:
-                insert_cols.append("sensitive")
-                placeholders.append(":sensitive")
-                params["sensitive"] = sensitive
-            if visibility and "visibility" in int_cols:
-                insert_cols.append("visibility")
-                placeholders.append(":visibility")
-                params["visibility"] = visibility
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in int_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
+                    await db.execute(
+                        text(f"INSERT INTO core.business_integrations ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
-            await db.execute(
-                text(f"INSERT INTO core.business_integrations ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+        # Stamp the entity PK onto the dim_node (the authoritative reference direction)
+        if node_id and resolved_entity_id and entity_col:
+            try:
+                await db.execute(
+                    text(f"UPDATE twin.dim_node SET {entity_col} = coalesce({entity_col}, :{entity_col}) WHERE id = :node_id"),
+                    {entity_col: resolved_entity_id, "node_id": node_id},
+                )
+                await db.commit()
+            except Exception:
+                pass
 
     except Exception:
         pass  # Non-fatal — don't break dim_node creation
@@ -930,7 +933,6 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 company_id TEXT,
                 company_name TEXT,
                 tags JSONB DEFAULT '[]'::jsonb,
-                dim_node_id UUID,
                 sensitive BOOLEAN DEFAULT FALSE,
                 visibility TEXT DEFAULT 'internal',
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1968,11 +1970,21 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "inherent_risk_classification_score"),
         _col_expr("bi", int_cols, "residual_risk_classification_score"),
         _col_expr("bi", int_cols, "num_of_associated_agents"),
-        _col_expr("bi", int_cols, "dim_node_id"),
         _col_expr("bi", int_cols, "sensitive"),
         _col_expr("bi", int_cols, "visibility"),
         _col_expr("bi", int_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_int_cols = await _table_columns(db, "twin", "dim_node")
+        if "integration_id" in dn_int_cols:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.integration_id = bi.integration_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
@@ -2273,7 +2285,6 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "latest_release_date"),
         _col_expr("ba", app_cols, "latest_release_documentation_link"),
         _col_expr("ba", app_cols, "tags"),
-        _col_expr("ba", app_cols, "dim_node_id"),
         _col_expr("ba", app_cols, "sensitive"),
         _col_expr("ba", app_cols, "visibility"),
         _col_expr("ba", app_cols, "valid_from"),
@@ -2285,6 +2296,17 @@ async def _fetch_applications(
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_cols_check = await _table_columns(db, "twin", "dim_node")
+        if "business_application_id" in dn_cols_check:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.business_application_id = ba.business_application_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
 
     has_ara = False
     company_risk_lateral_sql = ""
@@ -2759,10 +2781,20 @@ async def _fetch_processes(
         "proc_rel.related_processes",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
-        _col_expr("bp", process_cols, "dim_node_id"),
         _col_expr("bp", process_cols, "sensitive"),
         _col_expr("bp", process_cols, "visibility"),
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_proc_cols = await _table_columns(db, "twin", "dim_node")
+        if "business_process_id" in dn_proc_cols:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.business_process_id = bp.business_process_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
 
     has_ara_proc = False
     proc_company_risk_lateral_sql = ""
@@ -3459,23 +3491,31 @@ async def update_integration(
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
     else:
-        # Sync visibility/sensitive directly to dim_node even without company_id (non-fatal)
+        # Sync fields directly to dim_node when company_id is absent (non-fatal)
         try:
             raw_row = await db.execute(
                 text(
-                    "SELECT dim_node_id, integration_name, integration_description, tags, visibility, sensitive"
+                    "SELECT integration_name, integration_description, tags, visibility, sensitive"
                     " FROM core.business_integrations WHERE integration_id = :id"
                 ),
                 {"id": integration_id},
             )
             raw = raw_row.mappings().first()
-            if raw and raw.get("dim_node_id"):
+            if raw:
                 i_name = (raw.get("integration_name") or "").strip() or None
                 i_summary = str(raw.get("integration_description") or "") or None
                 i_tags = raw.get("tags") or []
                 i_visibility = raw.get("visibility") or "internal"
                 i_sensitive_raw = raw.get("sensitive")
                 i_sensitive = i_sensitive_raw if isinstance(i_sensitive_raw, bool) else False
+                dim_params = {
+                    "label": i_name,
+                    "summary": i_summary,
+                    "tags": json.dumps(i_tags if isinstance(i_tags, list) else []),
+                    "visibility": i_visibility,
+                    "sensitive": i_sensitive,
+                    "eid": integration_id,
+                }
                 await db.execute(
                     text("""
                         UPDATE twin.dim_node
@@ -3485,16 +3525,9 @@ async def update_integration(
                             visibility = :visibility,
                             sensitive  = :sensitive,
                             updated_at = NOW()
-                        WHERE id = :id
+                        WHERE integration_id = :eid AND valid_to IS NULL
                     """),
-                    {
-                        "label": i_name,
-                        "summary": i_summary,
-                        "tags": json.dumps(i_tags if isinstance(i_tags, list) else []),
-                        "visibility": i_visibility,
-                        "sensitive": i_sensitive,
-                        "id": str(raw["dim_node_id"]),
-                    },
+                    dim_params,
                 )
                 await db.commit()
         except Exception:
@@ -3509,18 +3542,21 @@ async def delete_integration(
 ):
     await _ensure_integrations_table(db)
 
-    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    # Capture the linked dim_node before deletion so we can soft-delete it afterwards
     dim_node_to_delete: str | None = None
     try:
         dn_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :id"),
+            text("SELECT id FROM twin.dim_node WHERE integration_id = :id AND valid_to IS NULL LIMIT 1"),
             {"id": integration_id},
         )
         dn_result = dn_row.mappings().first()
-        if dn_result and dn_result.get("dim_node_id"):
-            dim_node_to_delete = str(dn_result["dim_node_id"])
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
     except Exception:
-        pass
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # Delete integration attachments
     try:
@@ -4113,19 +4149,27 @@ async def update_application(
     try:
         raw_row = await db.execute(
             text(
-                "SELECT company_id, dim_node_id, application_name, application_description, tags, visibility, sensitive"
+                "SELECT application_name, application_description, tags, visibility, sensitive"
                 " FROM core.business_applications WHERE business_application_id = :id"
             ),
             {"id": application_id},
         )
         raw = raw_row.mappings().first()
-        if raw and raw.get("dim_node_id"):
+        if raw:
             name = (raw.get("application_name") or "").strip() or None
             summary = str(raw.get("application_description") or "") or None
             tags_raw = raw.get("tags") or []
             visibility = raw.get("visibility") or "internal"
             sensitive_raw = raw.get("sensitive")
             sensitive = sensitive_raw if isinstance(sensitive_raw, bool) else False
+            dim_params = {
+                "label": name,
+                "summary": summary,
+                "tags": json.dumps(tags_raw if isinstance(tags_raw, list) else []),
+                "visibility": visibility,
+                "sensitive": sensitive,
+                "eid": application_id,
+            }
             await db.execute(
                 text("""
                     UPDATE twin.dim_node
@@ -4135,16 +4179,9 @@ async def update_application(
                         visibility = :visibility,
                         sensitive  = :sensitive,
                         updated_at = NOW()
-                    WHERE id = :id
+                    WHERE business_application_id = :eid AND valid_to IS NULL
                 """),
-                {
-                    "label": name,
-                    "summary": summary,
-                    "tags": json.dumps(tags_raw if isinstance(tags_raw, list) else []),
-                    "visibility": visibility,
-                    "sensitive": sensitive,
-                    "id": str(raw["dim_node_id"]),
-                },
+                dim_params,
             )
             await db.commit()
     except Exception:
@@ -4158,18 +4195,21 @@ async def delete_application(
     application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    # Capture the linked dim_node_id before deleting so we can soft-delete it afterwards
+    # Capture the linked dim_node before deleting so we can soft-delete it afterwards
     dim_node_to_delete: str | None = None
     try:
         dn_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :id"),
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :id AND valid_to IS NULL LIMIT 1"),
             {"id": application_id},
         )
         dn_result = dn_row.mappings().first()
-        if dn_result and dn_result.get("dim_node_id"):
-            dim_node_to_delete = str(dn_result["dim_node_id"])
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
     except Exception:
-        pass
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     if await _table_exists(db, "core", "agent_business_applications"):
         aba_cols = await _table_columns(db, "core", "agent_business_applications")
@@ -4712,23 +4752,31 @@ async def update_process(
         await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
 
-    # Sync visibility/sensitive back to linked dim_node (non-fatal)
+    # Sync updated fields back to linked dim_node (non-fatal)
     try:
         raw_row = await db.execute(
             text(
-                "SELECT dim_node_id, process_name, process_description, tags, visibility, sensitive"
+                "SELECT process_name, process_description, tags, visibility, sensitive"
                 " FROM core.business_processes WHERE business_process_id = :id"
             ),
             {"id": process_id},
         )
         raw = raw_row.mappings().first()
-        if raw and raw.get("dim_node_id"):
+        if raw:
             p_name = (raw.get("process_name") or "").strip() or None
             p_summary = str(raw.get("process_description") or "") or None
             p_tags = raw.get("tags") or []
             p_visibility = raw.get("visibility") or "internal"
             p_sensitive_raw = raw.get("sensitive")
             p_sensitive = p_sensitive_raw if isinstance(p_sensitive_raw, bool) else False
+            dim_params = {
+                "label": p_name,
+                "summary": p_summary,
+                "tags": json.dumps(p_tags if isinstance(p_tags, list) else []),
+                "visibility": p_visibility,
+                "sensitive": p_sensitive,
+                "eid": process_id,
+            }
             await db.execute(
                 text("""
                     UPDATE twin.dim_node
@@ -4738,16 +4786,9 @@ async def update_process(
                         visibility = :visibility,
                         sensitive  = :sensitive,
                         updated_at = NOW()
-                    WHERE id = :id
+                    WHERE business_process_id = :eid AND valid_to IS NULL
                 """),
-                {
-                    "label": p_name,
-                    "summary": p_summary,
-                    "tags": json.dumps(p_tags if isinstance(p_tags, list) else []),
-                    "visibility": p_visibility,
-                    "sensitive": p_sensitive,
-                    "id": str(raw["dim_node_id"]),
-                },
+                dim_params,
             )
             await db.commit()
     except Exception:
@@ -4761,18 +4802,21 @@ async def delete_process(
     process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    # Capture dim_node_id before deletion so we can soft-delete it afterwards
+    # Capture the linked dim_node before deletion so we can soft-delete it afterwards
     dim_node_to_delete: str | None = None
     try:
         dn_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :id"),
+            text("SELECT id FROM twin.dim_node WHERE business_process_id = :id AND valid_to IS NULL LIMIT 1"),
             {"id": process_id},
         )
         dn_result = dn_row.mappings().first()
-        if dn_result and dn_result.get("dim_node_id"):
-            dim_node_to_delete = str(dn_result["dim_node_id"])
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
     except Exception:
-        pass
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     if await _table_exists(db, "core", "agent_business_processes"):
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
@@ -5307,12 +5351,12 @@ async def create_application_attachment(
     # Sync to twin.dim_node_attachment if this application is linked to a dim_node (non-fatal)
     try:
         dim_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
             {"app_id": application_id},
         )
         dim = dim_row.mappings().first()
-        if dim and dim.get("dim_node_id"):
-            node_id = str(dim["dim_node_id"])
+        if dim:
+            node_id = str(dim["id"])
             dup = await db.execute(
                 text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
                 {"nid": node_id, "fn": filename},
@@ -5414,14 +5458,14 @@ async def delete_application_attachment(
     # Mirror delete to twin.dim_node_attachment by filename (non-fatal)
     try:
         dim_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
             {"app_id": application_id},
         )
         dim = dim_row.mappings().first()
-        if dim and dim.get("dim_node_id"):
+        if dim:
             await db.execute(
                 text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
-                {"nid": str(dim["dim_node_id"]), "fn": filename},
+                {"nid": str(dim["id"]), "fn": filename},
             )
             await db.commit()
     except Exception:
@@ -5443,14 +5487,14 @@ async def sync_blueprint_attachments_to_application(
     await _ensure_application_attachments_table(db)
 
     dim_row = await db.execute(
-        text("SELECT dim_node_id FROM core.business_applications WHERE business_application_id = :app_id LIMIT 1"),
+        text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
         {"app_id": application_id},
     )
     dim = dim_row.mappings().first()
-    if not dim or not dim.get("dim_node_id"):
+    if not dim:
         return {"synced": 0}
 
-    node_id = str(dim["dim_node_id"])
+    node_id = str(dim["id"])
     node_attachments = await db.execute(
         text("SELECT filename, content_type, size_bytes, data, uploaded_at FROM twin.dim_node_attachment WHERE node_id = :nid"),
         {"nid": node_id},
@@ -5571,12 +5615,12 @@ async def create_process_attachment(
     # Sync to dim_node_attachment if this process is linked to a dim_node (non-fatal)
     try:
         dim_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+            text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
             {"pid": process_id},
         )
         dim = dim_row.mappings().first()
-        if dim and dim.get("dim_node_id"):
-            node_id = str(dim["dim_node_id"])
+        if dim:
+            node_id = str(dim["id"])
             dup = await db.execute(
                 text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
                 {"nid": node_id, "fn": filename},
@@ -5670,14 +5714,14 @@ async def delete_process_attachment(
     if fname_rec:
         try:
             dim_row = await db.execute(
-                text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+                text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
                 {"pid": process_id},
             )
             dim = dim_row.mappings().first()
-            if dim and dim.get("dim_node_id"):
+            if dim:
                 await db.execute(
                     text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
-                    {"nid": str(dim["dim_node_id"]), "fn": fname_rec["filename"]},
+                    {"nid": str(dim["id"]), "fn": fname_rec["filename"]},
                 )
                 await db.commit()
         except Exception:
@@ -5699,14 +5743,14 @@ async def sync_blueprint_attachments_to_process(
     await _ensure_process_attachments_table(db)
 
     dim_row = await db.execute(
-        text("SELECT dim_node_id FROM core.business_processes WHERE business_process_id = :pid LIMIT 1"),
+        text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
         {"pid": process_id},
     )
     dim = dim_row.mappings().first()
-    if not dim or not dim.get("dim_node_id"):
+    if not dim:
         return {"synced": 0}
 
-    node_id = str(dim["dim_node_id"])
+    node_id = str(dim["id"])
     node_attachments = await db.execute(
         text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
         {"nid": node_id},
@@ -5829,12 +5873,12 @@ async def create_integration_attachment(
     # Sync to dim_node_attachment if this integration is linked to a dim_node (non-fatal)
     try:
         dim_row = await db.execute(
-            text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+            text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
             {"iid": integration_id},
         )
         dim = dim_row.mappings().first()
-        if dim and dim.get("dim_node_id"):
-            node_id = str(dim["dim_node_id"])
+        if dim:
+            node_id = str(dim["id"])
             dup = await db.execute(
                 text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
                 {"nid": node_id, "fn": filename},
@@ -5928,14 +5972,14 @@ async def delete_integration_attachment(
     if fname_rec:
         try:
             dim_row = await db.execute(
-                text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+                text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
                 {"iid": integration_id},
             )
             dim = dim_row.mappings().first()
-            if dim and dim.get("dim_node_id"):
+            if dim:
                 await db.execute(
                     text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
-                    {"nid": str(dim["dim_node_id"]), "fn": fname_rec["filename"]},
+                    {"nid": str(dim["id"]), "fn": fname_rec["filename"]},
                 )
                 await db.commit()
         except Exception:
@@ -5957,14 +6001,14 @@ async def sync_blueprint_attachments_to_integration(
     await _ensure_integration_attachments_table(db)
 
     dim_row = await db.execute(
-        text("SELECT dim_node_id FROM core.business_integrations WHERE integration_id = :iid LIMIT 1"),
+        text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
         {"iid": integration_id},
     )
     dim = dim_row.mappings().first()
-    if not dim or not dim.get("dim_node_id"):
+    if not dim:
         return {"synced": 0}
 
-    node_id = str(dim["dim_node_id"])
+    node_id = str(dim["id"])
     node_attachments = await db.execute(
         text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
         {"nid": node_id},

@@ -95,18 +95,22 @@ CREATE TABLE IF NOT EXISTS twin.dim_type (
 CREATE INDEX IF NOT EXISTS dim_type_category_idx ON twin.dim_type (category);
 
 CREATE TABLE IF NOT EXISTS twin.dim_node (
-    id          UUID                  PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id  UUID                  NOT NULL REFERENCES twin.company (id) ON DELETE CASCADE,
-    dim_type_id UUID                  NOT NULL REFERENCES twin.dim_type (id),
-    label       TEXT                  NOT NULL,
-    summary     TEXT,
-    tags        JSONB                 NOT NULL DEFAULT '[]',
-    visibility  twin.visibility_level NOT NULL DEFAULT 'internal',
-    sensitive   BOOLEAN               NOT NULL DEFAULT false,
-    embedding   VECTOR(1536),
-    valid_from  TIMESTAMPTZ           NOT NULL DEFAULT now(),
-    valid_to    TIMESTAMPTZ,
-    updated_at  TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    id                      UUID                  PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id              UUID                  NOT NULL REFERENCES twin.company (id) ON DELETE CASCADE,
+    dim_type_id             UUID                  NOT NULL REFERENCES twin.dim_type (id),
+    label                   TEXT                  NOT NULL,
+    summary                 TEXT,
+    tags                    JSONB                 NOT NULL DEFAULT '[]',
+    visibility              twin.visibility_level NOT NULL DEFAULT 'internal',
+    sensitive               BOOLEAN               NOT NULL DEFAULT false,
+    -- entity references: the dim_node holds the FK, not the other way around
+    business_application_id TEXT,
+    business_process_id     TEXT,
+    integration_id          TEXT,
+    embedding               VECTOR(1536),
+    valid_from              TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    valid_to                TIMESTAMPTZ,
+    updated_at              TIMESTAMPTZ           NOT NULL DEFAULT now(),
     CONSTRAINT dim_node_valid_range CHECK (valid_to IS NULL OR valid_to > valid_from)
 );
 CREATE INDEX IF NOT EXISTS dim_node_company_type_idx ON twin.dim_node (company_id, dim_type_id);
@@ -116,6 +120,10 @@ CREATE INDEX IF NOT EXISTS dim_node_fts_idx          ON twin.dim_node
 CREATE INDEX IF NOT EXISTS dim_node_tags_gin_idx     ON twin.dim_node USING GIN (tags);
 CREATE INDEX IF NOT EXISTS dim_node_embedding_idx    ON twin.dim_node
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+-- Partial unique indexes so each entity links to at most one active dim_node
+CREATE UNIQUE INDEX IF NOT EXISTS dim_node_application_id_uniq ON twin.dim_node (business_application_id) WHERE business_application_id IS NOT NULL AND valid_to IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS dim_node_process_id_uniq     ON twin.dim_node (business_process_id)     WHERE business_process_id     IS NOT NULL AND valid_to IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS dim_node_integration_id_uniq ON twin.dim_node (integration_id)          WHERE integration_id          IS NOT NULL AND valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS twin.dim_edge (
     id         UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
