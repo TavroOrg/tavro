@@ -60,15 +60,6 @@ const STAT_CARDS = [
     iconBg: 'bg-rose-50 dark:bg-rose-900/20',
     route: null,
   },
-  {
-    key: 'complianceScore',
-    label: 'Compliance Score',
-    subColor: 'text-emerald-600 dark:text-emerald-400',
-    Icon: ShieldCheck,
-    iconColor: 'text-teal-600 dark:text-teal-400',
-    iconBg: 'bg-teal-50 dark:bg-teal-900/20',
-    route: '/compliance',
-  },
 ];
 
 const EMPTY_TOTALS: InsightsTotals = {

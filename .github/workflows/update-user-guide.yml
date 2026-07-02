@@ -26,8 +26,20 @@ jobs:
         with:
           fetch-depth: 2
 
+      # ── 1b. Check whether any UI files actually changed ─────────────────────
+      - name: Check for UI file changes
+        id: check_ui_diff
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- tavro_app/src/pages/ tavro_app/src/components/)
+          if [ -n "$CHANGED" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
       # ── 2. Setup Node ──────────────────────────────────────────────────────
       - name: Setup Node.js
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -36,16 +48,19 @@ jobs:
 
       # ── 3. Install dependencies ────────────────────────────────────────────
       - name: Install dependencies
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         working-directory: tavro_app
         run: npm ci
 
       # ── TEST 1: Build check ────────────────────────────────────────────────
       - name: "[Test 1] App builds without errors"
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         working-directory: tavro_app
         run: npm run build
 
       # ── 4. Install Claude Code CLI ─────────────────────────────────────────
       - name: Install Claude Code
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
       # ── 5. Run the update-user-guide workflow ──────────────────────────────
@@ -55,6 +70,7 @@ jobs:
       # workflow" inside VS Code) — so here we prompt it to do exactly that,
       # in headless (-p) mode, with structured JSON output.
       - name: Understand changes and update user guide
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -66,6 +82,7 @@ jobs:
 
       # ── 6. Sanity-check we actually got output ──────────────────────────────
       - name: Validate Claude output
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         run: |
           test -s /tmp/claude-raw-output.json || (echo "Claude produced no output" && exit 1)
 
@@ -74,6 +91,7 @@ jobs:
       # (result, session_id, total_cost_usd, ...). The actual schema JSON is
       # a string inside the "result" field, so we extract and re-parse it.
       - name: Log guide update result
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         run: |
           node -e "
           const fs = require('fs');
@@ -94,6 +112,7 @@ jobs:
 
       # ── TEST 2: Updated guide compiles ────────────────────────────────────
       - name: "[Test 2] Updated guide compiles"
+        if: steps.check_ui_diff.outputs.has_changes == 'true'
         working-directory: tavro_app
         run: npx tsc --noEmit
 
@@ -153,3 +172,8 @@ jobs:
       - name: Guide already up to date
         if: steps.check_changes.outputs.changed == 'false'
         run: echo "No guide changes needed — user guide is already up to date."
+
+      # ── 11. No UI files changed at all ──────────────────────────────────────
+      - name: No UI files changed
+        if: steps.check_ui_diff.outputs.has_changes == 'false'
+        run: echo "No UI files changed — skipping."
