@@ -1316,26 +1316,13 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         return await this.callTool('create_risk_assessment', { agent_id });
     }
 
-    // Enterprise-only tool (registered by mcp_server when BUILD_MODE=enterprise).
-    // In OSS mode the underlying tool is not registered and this call errors —
-    // callers should treat failures as non-fatal (see BlueprintSetupPage usage).
-    async recommendBlueprintCompliance(args: {
-        company_id: string;
-        company_name: string;
-        industry: string;
-        region?: string;
-    }): Promise<any> {
-        const result = await this.callTool('recommend_blueprint_compliance', {
-            company_id:   args.company_id,
-            company_name: args.company_name,
-            industry:     args.industry,
-            region:       args.region ?? '',
-        });
-        // Compliance items are already persisted with research_status='running'
-        // by the time this resolves — let ComplianceContext know so it can
-        // refresh immediately and start polling until research finishes.
-        window.dispatchEvent(new CustomEvent('tavro:compliance-research-started', { detail: result }));
-        return result;
+    // Escape hatch for enterprise-only/optional MCP tools outside the OSS core
+    // tool set (registered by mcp_server only when BUILD_MODE=enterprise).
+    // Enterprise code should wrap this in its own typed, named function
+    // (e.g. enterprise/tavro_app/src/services/complianceMcp.ts) rather than
+    // calling arbitrary tool names inline elsewhere.
+    async callOptionalTool(name: string, args: Record<string, any> = {}): Promise<any> {
+        return await this.callTool(name, args);
     }
 
     async getExecutiveRiskSummary(): Promise<any[]> {

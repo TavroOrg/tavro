@@ -1,7 +1,13 @@
 -- =============================================================
--- Tavro Portal — Master Database Setup Script
+-- Tavro Portal — Master Database Setup Script (OSS core schema)
 -- Version: 2025-05
--- Run order: extensions → core schema → compliance → audit → seed data
+-- Run order: extensions → core schema → agent attachments → seed data
+--
+-- This file is OSS-only — it never defines compliance/audit tables.
+-- Enterprise builds (BUILD_MODE=enterprise) additionally load
+-- enterprise/sql/zz_enterprise_compliance_audit.sql, baked into the image
+-- by Dockerfile.postgres.enterprise, which runs after this file (its "zz_"
+-- filename prefix sorts after "tavro_setup_all.sql").
 --
 -- Usage (from host):
 --   docker compose exec tavro-postgres \
@@ -18,7 +24,7 @@
 \echo '======================================================'
 
 -- ── 0. Extensions ─────────────────────────────────────────────────────────────
-\echo '[1/5] Loading extensions...'
+\echo '[1/4] Loading extensions...'
 
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
@@ -30,7 +36,7 @@ ALTER DATABASE tavro SET search_path = ag_catalog, "$user", public;
 
 
 -- ── 1. Schema & core types ────────────────────────────────────────────────────
-\echo '[2/5] Creating core schema...'
+\echo '[2/4] Creating core schema...'
 
 CREATE SCHEMA IF NOT EXISTS twin;
 SET search_path = twin, ag_catalog, public;
@@ -256,121 +262,10 @@ ALTER TABLE twin.source_ref  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE twin.context_log ENABLE ROW LEVEL SECURITY;
 
 
--- ── 2. Compliance layer ───────────────────────────────────────────────────────
-\echo '[3/5] Creating compliance tables...'
-
-CREATE TABLE IF NOT EXISTS twin.compliance_dim_type (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name            TEXT NOT NULL,
-    category        TEXT NOT NULL,
-    scope           TEXT NOT NULL DEFAULT 'both',
-    system_defined  BOOLEAN NOT NULL DEFAULT true,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (name, scope)
-);
-
-CREATE TABLE IF NOT EXISTS twin.compliance_item (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    item_type           TEXT NOT NULL CHECK (item_type IN ('regulation', 'policy')),
-    scope               TEXT NOT NULL CHECK (scope IN ('external', 'internal')) DEFAULT 'external',
-    name                TEXT NOT NULL,
-    short_name          TEXT,
-    description         TEXT,
-    issuing_body        TEXT,
-    jurisdiction        TEXT[],
-    industry_tags       TEXT[],
-    company_id          UUID REFERENCES twin.company(id) ON DELETE CASCADE,
-    tenant_id           TEXT,
-    effective_date      DATE,
-    review_date         DATE,
-    sunset_date         DATE,
-    status              TEXT NOT NULL DEFAULT 'active'
-                        CHECK (status IN ('draft','active','superseded','archived')),
-    ai_researched       BOOLEAN NOT NULL DEFAULT false,
-    ai_research_notes   TEXT,
-    research_sources    TEXT[],
-    -- Tracks an in-flight AI research job on this item (NULL = never
-    -- researched / not currently researching) so the UI can show a live
-    -- "Researching" badge and auto-refresh once it flips to done/error —
-    -- see enterprise/mcp/compliance_tools.py, which sets it around each
-    -- research call.
-    research_status     TEXT CHECK (research_status IN ('researching','done','error')),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by          TEXT,
-    CONSTRAINT chk_policy_has_company
-        CHECK (item_type = 'regulation' OR company_id IS NOT NULL)
-);
-CREATE INDEX IF NOT EXISTS compliance_item_type_idx    ON twin.compliance_item (item_type, status);
-CREATE INDEX IF NOT EXISTS compliance_item_company_idx ON twin.compliance_item (company_id) WHERE company_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS compliance_item_tenant_idx  ON twin.compliance_item (tenant_id) WHERE tenant_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS compliance_item_name_idx    ON twin.compliance_item USING GIN(to_tsvector('english', name));
-
-CREATE TABLE IF NOT EXISTS twin.compliance_dimension (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    compliance_item_id   UUID NOT NULL REFERENCES twin.compliance_item(id) ON DELETE CASCADE,
-    dim_type_id          UUID NOT NULL REFERENCES twin.compliance_dim_type(id),
-    label                TEXT NOT NULL,
-    summary              TEXT,
-    tags                 JSONB NOT NULL DEFAULT '[]',
-    visibility           TEXT NOT NULL DEFAULT 'internal'
-                         CHECK (visibility IN ('public','internal','restricted','confidential')),
-    sensitive            BOOLEAN NOT NULL DEFAULT false,
-    sort_order           INT NOT NULL DEFAULT 0,
-    valid_from           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    valid_to             TIMESTAMPTZ,
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS compliance_dim_item_idx ON twin.compliance_dimension (compliance_item_id);
-CREATE INDEX IF NOT EXISTS compliance_dim_type_idx ON twin.compliance_dimension (dim_type_id);
-
-CREATE TABLE IF NOT EXISTS twin.compliance_impact (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    compliance_item_id   UUID NOT NULL REFERENCES twin.compliance_item(id) ON DELETE CASCADE,
-    company_id           UUID NOT NULL REFERENCES twin.company(id) ON DELETE CASCADE,
-    dim_node_id          UUID REFERENCES twin.dim_node(id) ON DELETE SET NULL,
-    impact_level         TEXT NOT NULL DEFAULT 'medium'
-                         CHECK (impact_level IN ('critical','high','medium','low','none')),
-    impact_type          TEXT[] NOT NULL DEFAULT '{}',
-    gap_description      TEXT,
-    gap_status           TEXT NOT NULL DEFAULT 'open'
-                         CHECK (gap_status IN ('open','in_progress','closed','accepted','not_applicable')),
-    current_state        TEXT,
-    target_state         TEXT,
-    remediation_plan     TEXT,
-    due_date             DATE,
-    evidence_notes       TEXT,
-    last_assessed        TIMESTAMPTZ,
-    assessed_by          TEXT,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (compliance_item_id, company_id, dim_node_id)
-);
-CREATE INDEX IF NOT EXISTS compliance_impact_item_idx    ON twin.compliance_impact (compliance_item_id);
-CREATE INDEX IF NOT EXISTS compliance_impact_company_idx ON twin.compliance_impact (company_id);
-CREATE INDEX IF NOT EXISTS compliance_impact_node_idx    ON twin.compliance_impact (dim_node_id) WHERE dim_node_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS compliance_impact_level_idx   ON twin.compliance_impact (impact_level);
-
-CREATE TABLE IF NOT EXISTS twin.compliance_document (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    compliance_item_id   UUID NOT NULL REFERENCES twin.compliance_item(id) ON DELETE CASCADE,
-    doc_type             TEXT NOT NULL DEFAULT 'source'
-                         CHECK (doc_type IN ('source','summary','guidance','evidence','audit','policy_text','custom')),
-    title                TEXT NOT NULL,
-    filename             TEXT,
-    mime_type            TEXT,
-    file_size_bytes      INT,
-    content_text         TEXT,
-    source_url           TEXT,
-    ai_summary           TEXT,
-    ai_key_points        JSONB,
-    ai_processed         BOOLEAN NOT NULL DEFAULT false,
-    version              TEXT,
-    effective_date       DATE,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS compliance_doc_item_idx ON twin.compliance_document (compliance_item_id);
+-- ── 2. Agent attachments ──────────────────────────────────────────────────────
+-- (Compliance/audit tables live in enterprise/sql/zz_enterprise_compliance_audit.sql,
+-- baked in only when BUILD_MODE=enterprise — see Dockerfile.postgres.enterprise.)
+\echo '[3/4] Creating agent attachment table...'
 
 CREATE TABLE IF NOT EXISTS public.agent_attachment (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -384,106 +279,9 @@ CREATE TABLE IF NOT EXISTS public.agent_attachment (
 );
 CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx ON public.agent_attachment (agent_id, created_at DESC);
 
--- Compliance triggers
-DO $$ BEGIN
-    CREATE TRIGGER compliance_item_updated_at
-        BEFORE UPDATE ON twin.compliance_item
-        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-DO $$ BEGIN
-    CREATE TRIGGER compliance_dim_updated_at
-        BEFORE UPDATE ON twin.compliance_dimension
-        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-    CREATE TRIGGER compliance_impact_updated_at
-        BEFORE UPDATE ON twin.compliance_impact
-        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ── 3. Audit layer ────────────────────────────────────────────────────────────
-\echo '[4/5] Creating audit tables...'
-
-CREATE TABLE IF NOT EXISTS twin.audit_run (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        UUID NOT NULL REFERENCES twin.company(id) ON DELETE CASCADE,
-    scope_type        TEXT NOT NULL CHECK (scope_type IN (
-                          'single','use_case_all','catalog_single','full'
-                      )),
-    use_case_id       TEXT,
-    use_case_name     TEXT,
-    agent_id          TEXT,
-    agent_name        TEXT,
-    compliance_item_id UUID REFERENCES twin.compliance_item(id) ON DELETE SET NULL,
-    compliance_item_name TEXT,
-    status            TEXT NOT NULL DEFAULT 'pending'
-                      CHECK (status IN ('pending','running','completed','failed','cancelled')),
-    total_pairs       INT NOT NULL DEFAULT 0,
-    completed_pairs   INT NOT NULL DEFAULT 0,
-    failed_pairs      INT NOT NULL DEFAULT 0,
-    summary_text      TEXT,
-    overall_risk      TEXT CHECK (overall_risk IN ('critical','high','medium','low','none')),
-    orchestrator_session_id TEXT,
-    error_message     TEXT,
-    initiated_by      TEXT,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at      TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS audit_run_company_idx  ON twin.audit_run (company_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS audit_run_status_idx   ON twin.audit_run (status);
-CREATE INDEX IF NOT EXISTS audit_run_usecase_idx  ON twin.audit_run (use_case_id) WHERE use_case_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS twin.audit_finding (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    audit_run_id          UUID NOT NULL REFERENCES twin.audit_run(id) ON DELETE CASCADE,
-    company_id            UUID NOT NULL REFERENCES twin.company(id) ON DELETE CASCADE,
-    use_case_id           TEXT NOT NULL,
-    use_case_name         TEXT NOT NULL,
-    compliance_item_id    UUID REFERENCES twin.compliance_item(id) ON DELETE SET NULL,
-    compliance_item_name  TEXT NOT NULL,
-    compliance_item_type  TEXT NOT NULL,
-    status                TEXT NOT NULL DEFAULT 'pending'
-                          CHECK (status IN ('pending','running','completed','failed','skipped')),
-    risk_level            TEXT CHECK (risk_level IN ('critical','high','medium','low','none')),
-    risk_score            INT,
-    confidence            INT,
-    applicable_rules      JSONB,
-    gaps                  JSONB,
-    compliant_areas       JSONB,
-    recommendations       JSONB,
-    summary               TEXT,
-    agent_session_id      TEXT,
-    tokens_used           INT,
-    assessment_duration_ms INT,
-    error_message         TEXT,
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS audit_finding_run_idx       ON twin.audit_finding (audit_run_id);
-CREATE INDEX IF NOT EXISTS audit_finding_company_idx   ON twin.audit_finding (company_id);
-CREATE INDEX IF NOT EXISTS audit_finding_usecase_idx   ON twin.audit_finding (use_case_id);
-CREATE INDEX IF NOT EXISTS audit_finding_risk_idx      ON twin.audit_finding (risk_level);
-CREATE INDEX IF NOT EXISTS audit_finding_status_idx    ON twin.audit_finding (status);
-
-DO $$ BEGIN
-    CREATE TRIGGER audit_run_updated_at
-        BEFORE UPDATE ON twin.audit_run
-        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-    CREATE TRIGGER audit_finding_updated_at
-        BEFORE UPDATE ON twin.audit_finding
-        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-
--- ── 4. Seed data ──────────────────────────────────────────────────────────────
-\echo '[5/5] Loading seed data...'
+-- ── 3. Seed data ──────────────────────────────────────────────────────────────
+\echo '[4/4] Loading seed data...'
 
 -- System dim_types (blueprint categories)
 INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
@@ -498,110 +296,18 @@ INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
     ('Custom',       'custom',       false, 2)
 ON CONFLICT (name) DO NOTHING;
 
--- Compliance dimension types
-INSERT INTO twin.compliance_dim_type (name, category, scope, system_defined) VALUES
-    ('Regulatory Scope',          'scope',       'regulation', true),
-    ('Applicability',             'scope',       'both',       true),
-    ('Key Requirement',           'requirement', 'both',       true),
-    ('Prohibited Activity',       'requirement', 'regulation', true),
-    ('Mandatory Control',         'control',     'both',       true),
-    ('Compliance Deadline',       'deadline',    'both',       true),
-    ('Penalty & Enforcement',     'penalty',     'regulation', true),
-    ('Audit Requirement',         'audit',       'both',       true),
-    ('Compliance Evidence',       'audit',       'policy',     true),
-    ('Impact on Business',        'impact',      'both',       true),
-    ('Implementation Guidance',   'control',     'policy',     true),
-    ('Exception Process',         'control',     'policy',     true),
-    ('Reporting Obligation',      'requirement', 'regulation', true),
-    ('Data Subject Right',        'requirement', 'regulation', true),
-    ('Custom',                    'custom',       'both',      false)
-ON CONFLICT DO NOTHING;
-
--- Default regulations — cloned per company (not shared/global).
--- Replaces the old "seed once, company_id NULL" model: every company now
--- gets its own copies of these 7 baseline regulations, with company_id and
--- tenant_id populated at insert time, via the AFTER INSERT trigger below.
-
--- Idempotent conflict target for per-company seeding.
-CREATE UNIQUE INDEX IF NOT EXISTS compliance_item_company_name_uidx
-    ON twin.compliance_item (company_id, item_type, lower(name))
-    WHERE company_id IS NOT NULL;
-
--- Single source of truth for the default regulation set — used by both the
--- trigger (new companies) and the one-time backfill (existing companies).
-CREATE OR REPLACE FUNCTION twin.seed_default_regulations_for_company(p_company_id UUID, p_tenant_id TEXT)
-RETURNS void LANGUAGE sql AS $$
-    INSERT INTO twin.compliance_item
-        (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, company_id, tenant_id, status, ai_researched)
-    SELECT 'regulation', 'external', d.name, d.short_name, d.description, d.issuing_body, d.jurisdiction, d.industry_tags,
-           p_company_id, p_tenant_id, 'active', false
-    FROM (VALUES
-        ('Bank Secrecy Act / Anti-Money Laundering', 'BSA/AML',
-         'Federal law requiring financial institutions to assist government agencies in detecting and preventing money laundering.',
-         'FinCEN / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','credit-union']),
-
-        ('Dodd-Frank Wall Street Reform and Consumer Protection Act', 'Dodd-Frank',
-         'Comprehensive financial reform legislation enacted in response to the 2008 financial crisis.',
-         'US Congress / CFPB / SEC', ARRAY['US'], ARRAY['banking','securities','insurance']),
-
-        ('General Data Protection Regulation', 'GDPR',
-         'EU regulation on data protection and privacy for individuals within the EU and EEA.',
-         'European Data Protection Board', ARRAY['EU','EEA'],
-         ARRAY['all-industries','technology','banking','healthcare']),
-
-        ('Health Insurance Portability and Accountability Act', 'HIPAA',
-         'US law providing data privacy and security provisions for safeguarding medical information.',
-         'HHS / OCR', ARRAY['US'], ARRAY['healthcare','insurance','technology']),
-
-        ('OCC Heightened Standards for Large Financial Institutions', 'OCC Heightened Standards',
-         'OCC guidelines establishing minimum standards for the design and implementation of a risk governance framework.',
-         'OCC', ARRAY['US'], ARRAY['banking']),
-
-        ('Equal Credit Opportunity Act', 'ECOA',
-         'Federal law prohibiting creditors from discriminating against credit applicants on the basis of race, color, religion, national origin, sex, marital status, age, or receipt of public assistance.',
-         'CFPB / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','lending']),
-
-        ('Gramm-Leach-Bliley Act', 'GLBA',
-         'Requires financial institutions to explain how they share and protect their customers'' private information.',
-         'Federal Trade Commission', ARRAY['US'], ARRAY['banking','insurance','fintech'])
-    ) AS d(name, short_name, description, issuing_body, jurisdiction, industry_tags)
-    -- Partial unique indexes require the WHERE predicate to be repeated here
-    -- for Postgres to infer it as the conflict target.
-    ON CONFLICT (company_id, item_type, lower(name)) WHERE company_id IS NOT NULL DO NOTHING;
-$$;
-
--- Fires on every company insert, from any code path (Blueprint wizard, MCP
--- create_company, direct API, admin portal), so the defaults are always
--- populated with the correct company_id/tenant_id at creation time.
-CREATE OR REPLACE FUNCTION twin.trg_seed_default_regulations()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-    PERFORM twin.seed_default_regulations_for_company(NEW.id, NEW.tenant_id);
-    RETURN NEW;
-END;
-$$;
-
-DO $$ BEGIN
-    CREATE TRIGGER company_seed_default_regulations
-        AFTER INSERT ON twin.company
-        FOR EACH ROW EXECUTE FUNCTION twin.trg_seed_default_regulations();
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
 \echo '======================================================'
 \echo ' Setup complete.'
 \echo ''
 \echo ' Tables created:'
 \echo '   twin.company, twin.dim_type, twin.dim_node'
 \echo '   twin.dim_edge, twin.source_ref, twin.dim_node_attachment, twin.context_log'
-\echo '   twin.compliance_dim_type, twin.compliance_item'
-\echo '   twin.compliance_dimension, twin.compliance_impact'
-\echo '   twin.compliance_document, public.agent_attachment'
-\echo '   twin.audit_run, twin.audit_finding'
+\echo '   public.agent_attachment'
 \echo ''
 \echo ' Seed data loaded:'
 \echo '   10 blueprint dim_types'
-\echo '   15 compliance dim_types'
-\echo '   7 default regulations cloned per company (company_seed_default_regulations trigger)'
 \echo ''
 \echo ' Next: add companies and run AI research from the UI.'
+\echo ' (Enterprise builds additionally load compliance + audit schema —'
+\echo '  see enterprise/sql/zz_enterprise_compliance_audit.sql)'
 \echo '======================================================'

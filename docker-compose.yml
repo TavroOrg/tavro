@@ -11,8 +11,8 @@ services:
   # ── PostgreSQL 16 + AGE + pgvector + Risk schemas ────────────────────────────
   tavro-postgres:
     build:
-      context: .
-      dockerfile: tavro_Dockerfile
+      context: ..
+      dockerfile: tavro/Dockerfile.postgres.${BUILD_MODE:-oss}
       args:
         AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
