@@ -289,31 +289,18 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
     ai_researched       BOOLEAN NOT NULL DEFAULT false,
     ai_research_notes   TEXT,
     research_sources    TEXT[],
-    research_status     TEXT,
+    -- Tracks an in-flight AI research job on this item (NULL = never
+    -- researched / not currently researching) so the UI can show a live
+    -- "Researching" badge and auto-refresh once it flips to done/error —
+    -- see enterprise/mcp/compliance_tools.py, which sets it around each
+    -- research call.
+    research_status     TEXT CHECK (research_status IN ('researching','done','error')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by          TEXT,
     CONSTRAINT chk_policy_has_company
         CHECK (item_type = 'regulation' OR company_id IS NOT NULL)
 );
--- Idempotent evolution for databases where twin.compliance_item already
--- existed before tenant_id was introduced (mirrors the ALTER TYPE ... ADD
--- VALUE IF NOT EXISTS pattern used above for twin.dim_category).
-ALTER TABLE twin.compliance_item ADD COLUMN IF NOT EXISTS tenant_id TEXT;
--- research_status tracks an in-flight AI research job on this item (NULL =
--- never researched / not currently researching) so the UI can show a live
--- "Running" badge and auto-refresh once it flips to done/error — see
--- enterprise/mcp/compliance_tools.py, which sets it around each research call.
-ALTER TABLE twin.compliance_item ADD COLUMN IF NOT EXISTS research_status TEXT;
--- Migrate any rows from the previous 'running' value to 'researching' before
--- tightening the constraint below (idempotent — no-op once already migrated).
-UPDATE twin.compliance_item SET research_status = 'researching' WHERE research_status = 'running';
-ALTER TABLE twin.compliance_item DROP CONSTRAINT IF EXISTS chk_compliance_item_research_status;
-DO $$ BEGIN
-    ALTER TABLE twin.compliance_item
-        ADD CONSTRAINT chk_compliance_item_research_status
-        CHECK (research_status IN ('researching','done','error'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS compliance_item_type_idx    ON twin.compliance_item (item_type, status);
 CREATE INDEX IF NOT EXISTS compliance_item_company_idx ON twin.compliance_item (company_id) WHERE company_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS compliance_item_tenant_idx  ON twin.compliance_item (tenant_id) WHERE tenant_id IS NOT NULL;
@@ -599,47 +586,6 @@ DO $$ BEGIN
         AFTER INSERT ON twin.company
         FOR EACH ROW EXECUTE FUNCTION twin.trg_seed_default_regulations();
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- Backfill: give every already-existing company its own copies too.
--- Idempotent — safe to rerun (ON CONFLICT DO NOTHING inside the function).
-DO $$
-DECLARE r RECORD;
-BEGIN
-    FOR r IN SELECT id, tenant_id FROM twin.company LOOP
-        PERFORM twin.seed_default_regulations_for_company(r.id, r.tenant_id);
-    END LOOP;
-END $$;
-
--- Retire the old shared/global rows (company_id IS NULL) now that every
--- company has its own copy — but only if nothing already depends on them.
-DO $$
-DECLARE r RECORD;
-BEGIN
-    FOR r IN
-        SELECT id, name FROM twin.compliance_item
-        WHERE company_id IS NULL
-          AND item_type = 'regulation'
-          AND name IN (
-              'Bank Secrecy Act / Anti-Money Laundering',
-              'Dodd-Frank Wall Street Reform and Consumer Protection Act',
-              'General Data Protection Regulation',
-              'Health Insurance Portability and Accountability Act',
-              'OCC Heightened Standards for Large Financial Institutions',
-              'Equal Credit Opportunity Act',
-              'Gramm-Leach-Bliley Act'
-          )
-    LOOP
-        IF EXISTS (SELECT 1 FROM twin.compliance_dimension WHERE compliance_item_id = r.id)
-           OR EXISTS (SELECT 1 FROM twin.compliance_impact WHERE compliance_item_id = r.id)
-           OR EXISTS (SELECT 1 FROM twin.audit_run WHERE compliance_item_id = r.id)
-           OR EXISTS (SELECT 1 FROM twin.audit_finding WHERE compliance_item_id = r.id)
-        THEN
-            RAISE NOTICE 'Skipping delete of global regulation % (%) — has dependent dimension/impact/audit data', r.name, r.id;
-        ELSE
-            DELETE FROM twin.compliance_item WHERE id = r.id;
-        END IF;
-    END LOOP;
-END $$;
 
 \echo '======================================================'
 \echo ' Setup complete.'
