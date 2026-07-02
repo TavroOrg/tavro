@@ -380,8 +380,13 @@ const UserGuidePage: React.FC = () => {
                                 <NavItem icon={<Boxes size={16} />} name="AI Models" route="/ai-models" desc="AI models registered for use across agents" />
 
                                 <GroupLabel label="" />
-                                <NavItem icon={<Map size={16} />} name="Roadmap" route="/roadmap" desc="Priority × Risk matrix for AI adoption planning" enterprise />
-                                <NavItem icon={<Zap size={16} />} name="Spark" route="/spark" desc="AI-generated use case ideas from your business context" />
+                                <div className="col-span-2">
+                                    <NavItem icon={<Map size={16} />} name="Roadmap" route="/roadmap" desc="Priority × Risk matrix for AI adoption planning" enterprise />
+                                </div>
+                                <div className="col-span-2 h-px bg-slate-100 dark:bg-slate-800" />
+                                <div className="col-span-2">
+                                    <NavItem icon={<Zap size={16} />} name="Spark" route="/spark" desc="AI-generated use case ideas from your business context" />
+                                </div>
 
                                 {/* Plan */}
                                 <GroupLabel label="Plan" />
