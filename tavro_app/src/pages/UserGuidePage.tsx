@@ -10,7 +10,7 @@ import {
     ShieldAlert, Unlink2, PlusCircle, Settings2, MessageSquare,
     ClipboardCheck, Loader2,
     Building2, Globe, RefreshCw, Layers,
-    Code2, Boxes, Map, TestTube2, Shield, TrendingUp, Activity,
+    Code2, Boxes, Map, TestTube2, Shield, TrendingUp, Activity, Cpu,
     Upload, Filter, Bookmark, FileText
 } from 'lucide-react';
 
@@ -150,16 +150,13 @@ const TOC_SECTIONS: TocSection[] = [
         ],
     },
     {
-        id: 'end-to-end-workflow', label: 'Blueprint → Spark → Production', icon: <ArrowRight size={14} />,
+        id: 'end-to-end-workflow', label: 'Blueprint → Spark → Plan → Roadmap', icon: <ArrowRight size={14} />,
         children: [
             { id: 'workflow-blueprint', label: 'Blueprint' },
             { id: 'workflow-spark', label: 'Spark' },
             { id: 'workflow-usecases', label: 'AI Use Cases' },
             { id: 'workflow-agents', label: 'Agents' },
             { id: 'workflow-roadmap', label: 'Roadmap' },
-            { id: 'workflow-build', label: 'Build' },
-            { id: 'workflow-deploy', label: 'Deploy' },
-            { id: 'workflow-govern', label: 'Govern' },
         ],
     },
     {
@@ -381,6 +378,8 @@ const UserGuidePage: React.FC = () => {
                                 <NavItem icon={<Workflow size={16} />} name="Processes" route="/processes" desc="Business workflows and their AI exposure" />
                                 <NavItem icon={<Plug size={16} />} name="Integrations" route="/integrations" desc="APIs and connectors used by agents" />
                                 <NavItem icon={<Boxes size={16} />} name="AI Models" route="/ai-models" desc="AI models registered for use across agents" />
+
+                                <GroupLabel label="" />
                                 <NavItem icon={<Map size={16} />} name="Roadmap" route="/roadmap" desc="Priority × Risk matrix for AI adoption planning" enterprise />
                                 <NavItem icon={<Zap size={16} />} name="Spark" route="/spark" desc="AI-generated use case ideas from your business context" />
 
@@ -436,15 +435,15 @@ const UserGuidePage: React.FC = () => {
 
                     <SectionHeading id="home-flow" level={3}>Flow Blueprint</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-3">
-                        Below the KPIs, the Flow Blueprint shows your AI adoption pipeline as a five-stage funnel. Each stage links directly to its corresponding section:
+                        Below the KPIs, the Flow Blueprint shows your AI adoption pipeline as a six-stage funnel. Each stage links directly to its corresponding section:
                     </p>
                     <FlowDiagram steps={[
-                        { icon: <Network size={15} />, label: 'Blueprint', color: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300' },
+                        { icon: <Map size={15} />, label: 'Blueprint', color: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300' },
                         { icon: <Zap size={15} />, label: 'Spark', color: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300' },
                         { icon: <ClipboardList size={15} />, label: 'Plan', color: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300' },
-                        { icon: <FlaskConical size={15} />, label: 'Build', color: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300' },
-                        { icon: <Play size={15} />, label: 'Deploy', color: 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300' },
-                        { icon: <ShieldCheck size={15} />, label: 'Govern', color: 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-300' },
+                        { icon: <Cpu size={15} />, label: 'Build', color: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300' },
+                        { icon: <Layers size={15} />, label: 'Deploy', color: 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300' },
+                        { icon: <Activity size={15} />, label: 'Govern', color: 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-300' },
                     ]} />
                     <ul className="mt-2 space-y-1.5 text-sm text-slate-600 dark:text-slate-400 list-disc list-inside">
                         <li><strong>Blueprint</strong> — Map your company's applications, processes, integrations, and AI models</li>
@@ -550,27 +549,23 @@ const UserGuidePage: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* ── Blueprint → Spark → Production ── */}
-                    <SectionHeading id="end-to-end-workflow" level={2} icon={<ArrowRight size={18} />}>Blueprint → Spark → Production</SectionHeading>
+                    {/* ── Blueprint → Spark → Plan → Roadmap ── */}
+                    <SectionHeading id="end-to-end-workflow" level={2} icon={<ArrowRight size={18} />}>Blueprint → Spark → Plan → Roadmap</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
-                        Tavro is designed around a structured journey — from building your organizational foundation to governing deployed AI agents. Each stage builds on the previous one, so working through them in order gives you the richest, most grounded experience.
+                        Tavro is designed around a structured journey — from building your organizational foundation to formalizing initiatives on the Roadmap. Each stage builds on the previous one, so working through them in order gives you the richest, most grounded experience. Once initiatives are prioritized, they move on to the separate <strong>Build</strong> and <strong>Govern</strong> stages.
                     </p>
                     <FlowDiagram steps={[
                         { icon: <Network size={15} />, label: 'Blueprint', color: 'bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300' },
                         { icon: <Zap size={15} />, label: 'Spark', color: 'bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300' },
                         { icon: <ClipboardList size={15} />, label: 'Plan', color: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' },
-                        { icon: <FlaskConical size={15} />, label: 'Build', color: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300' },
-                        { icon: <Play size={15} />, label: 'Deploy', color: 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300' },
-                        { icon: <ShieldCheck size={15} />, label: 'Govern', color: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300' },
+                        { icon: <Map size={15} />, label: 'Roadmap', color: 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300' },
                     ]} />
                     <div className="mt-4 grid grid-cols-1 gap-2">
                         {[
                             { icon: <Network size={14} />, stage: 'Blueprint', color: 'text-violet-700 dark:text-violet-300', desc: 'Map your company\'s applications, processes, integrations, and AI models' },
                             { icon: <Zap size={14} />, stage: 'Spark', color: 'text-violet-700 dark:text-violet-300', desc: 'Generate AI use case ideas from your company blueprint' },
                             { icon: <ClipboardList size={14} />, stage: 'Plan', color: 'text-blue-700 dark:text-blue-300', desc: 'Formalize ideas into AI Use Cases and create Agents' },
-                            { icon: <FlaskConical size={14} />, stage: 'Build', color: 'text-emerald-700 dark:text-emerald-300', desc: 'Test and iterate on agents in the Playground' },
-                            { icon: <Play size={14} />, stage: 'Deploy', color: 'text-slate-700 dark:text-slate-300', desc: 'Move agents into production with your infrastructure' },
-                            { icon: <ShieldCheck size={14} />, stage: 'Govern', color: 'text-rose-700 dark:text-rose-300', desc: 'Monitor risk, run compliance audits, and manage issues' },
+                            { icon: <Map size={14} />, stage: 'Roadmap', color: 'text-indigo-700 dark:text-indigo-300', desc: 'View your entire AI use case portfolio on a Priority × Risk matrix' },
                         ].map(({ icon, stage, color, desc }) => (
                             <div key={stage} className="flex items-start gap-2.5 text-sm">
                                 <span className={`mt-0.5 flex-shrink-0 ${color}`}>{icon}</span>
@@ -750,6 +745,21 @@ const UserGuidePage: React.FC = () => {
                         </p>
                         <ScreenshotFrame title="Use Case — Overview" src="/assets/images/UseCaseDetail.png" alt="Use Case overview tab" />
 
+                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Agent Risk Exposure (ARE) &amp; Agent Risk Tier (ART)</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            Every use case also carries two auto-computed risk rollups, shown as badges next to the title and in a dedicated card on the Overview tab: <strong>ARE (Agent Risk Exposure)</strong> is the highest Blended Risk score among all agents linked to the use case, and <strong>ART (Agent Risk Tier)</strong> classifies that score into a band.
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-2 mb-3">
+                            <Badge color="green">Low — ARE &lt; 3</Badge>
+                            <Badge color="amber">Medium — ARE 3 to &lt;7</Badge>
+                            <Badge color="red">High — ARE 7 to &lt;9</Badge>
+                            <Badge color="red">Critical — ARE ≥ 9</Badge>
+                            <Badge color="slate">None — no agents linked yet</Badge>
+                        </div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            Both values recalculate automatically — there's no button to click. Every time an agent is linked or unlinked in the <strong>AI Agents</strong> tab, Tavro re-scans the linked agents' latest Risk Assessments, takes the maximum Blended Risk score, and refreshes ARE, ART, the associated agent count, and the Inherent/Residual Risk Classification shown alongside them on the Overview tab. The same ARE and ART values also appear as columns/badges on the <strong>AI Use Cases</strong> catalog (grid and list views), so you can scan portfolio-wide risk exposure without opening each use case.
+                        </p>
+
                         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Use Case Detail — Risk Assessment</p>
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
                             The <strong>Risk Assessment</strong> tab scores the use case itself — independent of any specific agent. Tavro evaluates inherent risk based on scope, data touched, and processes automated across three dimensions: <em>Blended</em> (overall), <em>AIVSS</em> (AI-specific vulnerability), and <em>Regulatory</em> (framework exposure). Run this before creating agents — a high-risk use case warrants more thorough Evals and stricter Guardrails downstream.
@@ -767,7 +777,7 @@ const UserGuidePage: React.FC = () => {
                     <div id="workflow-agents" className="scroll-mt-6" />
                     <Step n={4} title="Agents — Link to Use Case and Explore the Context Graph">
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Once a use case exists, the next step is to populate it with agents.
+                            Once a use case exists, the next step is to populate it with agents. Each link/unlink also refreshes the use case's <strong>ARE</strong> and <strong>ART</strong> rollups (see above) — so as you connect agents with completed Risk Assessments, the use case's overall risk exposure updates automatically.
                         </p>
 
                         <FlowDiagram steps={[
@@ -800,7 +810,7 @@ const UserGuidePage: React.FC = () => {
 
                         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-5 mb-1">Exploring Agent Detail</p>
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Click any agent to open its detail page. The header shows the agent name, status, and quick-action buttons — <strong>Playground</strong>, <strong>Risk Assessment</strong>, Agent Card export, and <strong>Edit</strong>.
+                            Click any agent to open its detail page. The header shows the agent name, status, and quick-action buttons — <strong>Playground</strong>, <strong>Risk Assessment</strong>, Agent Card, and <strong>Edit</strong>.
                         </p>
                         <ScreenshotFrame title="Agent Detail Page" src="/assets/images/Agent Detail Page.png" alt="Agent detail page" />
 
@@ -838,85 +848,21 @@ const UserGuidePage: React.FC = () => {
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-3">
                             Each use case card is positioned based on its computed scores. The four quadrants guide your next actions:
                         </p>
-                        <ul className="space-y-1.5 text-sm text-slate-600 dark:text-slate-400 list-disc list-inside mt-2">
-                            <li><strong>Quick Wins</strong> (High Priority, Low Risk) — start here, highest return for least governance effort</li>
-                            <li><strong>Major Bets</strong> (High Priority, High Risk) — strategic initiatives requiring mitigation planning before build</li>
-                            <li><strong>Fill-ins</strong> (Low Priority, Low Risk) — progress when capacity allows</li>
-                            <li><strong>Reconsider</strong> (Low Priority, High Risk) — revisit scope or deprioritize entirely</li>
-                        </ul>
+                        <div className="space-y-1.5 mt-2">
+                            {[
+                                { dot: 'bg-emerald-500', name: 'Quick Wins', meta: '(High Priority, Low Risk)', desc: 'start here, highest return for least governance effort' },
+                                { dot: 'bg-amber-500', name: 'Major Bets', meta: '(High Priority, High Risk)', desc: 'strategic initiatives requiring mitigation planning before build' },
+                                { dot: 'bg-blue-500', name: 'Fill-ins', meta: '(Low Priority, Low Risk)', desc: 'progress when capacity allows' },
+                                { dot: 'bg-red-500', name: 'Reconsider', meta: '(Low Priority, High Risk)', desc: 'revisit scope or deprioritize entirely' },
+                            ].map(({ dot, name, meta, desc }) => (
+                                <div key={name} className="flex items-start gap-2.5 text-sm text-slate-600 dark:text-slate-400">
+                                    <span className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${dot}`} />
+                                    <span><strong className="text-slate-800 dark:text-slate-200">{name}</strong> {meta} — {desc}</span>
+                                </div>
+                            ))}
+                        </div>
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-3">
                             Priority and Risk scoring weights are fully configurable under <strong>Settings → Roadmap Configuration</strong> to reflect your organization's strategic priorities.
-                        </p>
-                    </Step>
-
-                    {/* ── Stage 6: Build ── */}
-                    <div id="workflow-build" className="scroll-mt-6" />
-                    <Step n={6} title="Build — Test and Iterate in the Playground">
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Before deploying an agent, test it thoroughly in the <strong>Build</strong> stage. From any Agent Detail page, click <strong>Playground</strong> to open the interactive testing environment.
-                        </p>
-
-                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Agent Playground</p>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            The Playground gives you a live chat interface backed by the agent's actual configuration. Set the LLM provider, model, system prompt, temperature, and token limits in the left panel. Send a message to run a test session. Switch to the <strong>Observations</strong> tab to see every tool call, reasoning step, and intermediate output the agent produces. After the session ends, the <strong>Session Summary</strong> gives a structured recap of what happened.
-                        </p>
-                        <ScreenshotFrame title="Build — Agent Playground" src="/assets/images/Agent Playground.png" alt="Agent Playground" />
-
-                        <div className="mt-4 flex items-center gap-2">
-                            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Agent Evals</p>
-                            <Badge color="violet">Coming Soon</Badge>
-                        </div>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-1">
-                            Structured, repeatable evaluation suites for measuring agent quality — coming in a future release.
-                        </p>
-                    </Step>
-
-                    {/* ── Stage 7: Deploy ── */}
-                    <div id="workflow-deploy" className="scroll-mt-6" />
-                    <Step n={7} title="Deploy — Move Validated Agents to Production">
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Once an agent passes Playground testing and Evals, advance its stage to <strong>Deploy</strong>. Confirm the production LLM provider and model — this may differ from testing if cost or latency requirements are different in production.
-                        </p>
-
-                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Export Agent Card</p>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Click <strong>Export Agent Card</strong> to generate a portable specification document — model, system prompt, tool definitions, linked applications and processes, and governance metadata. Hand this to your engineering team for integration into existing orchestration layers, API gateways, or workflow automation tools.
-                        </p>
-                    </Step>
-
-                    {/* ── Stage 8: Govern ── */}
-                    <div id="workflow-govern" className="scroll-mt-6" />
-                    <Step n={8} title="Govern — Monitor Risk, Compliance, and Issues">
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Governance is an ongoing responsibility for every deployed agent. Navigate to <strong>Govern</strong> to manage risk, compliance, behavioral guardrails, and open issues across your entire agent roster.
-                        </p>
-
-                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Risk Analysis</p>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Run a <strong>Risk Assessment</strong> on any agent to get Blended, AIVSS, and Regulatory scores. All agents are plotted on a Risk vs. Impact scatter chart so you can immediately identify high-risk / high-impact agents needing attention.
-                        </p>
-                        <ScreenshotFrame title="Govern — Risk Analysis" src="/assets/images/AI Risk Assessment.png" alt="AI Risk Assessment" />
-
-                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-4 mb-1">Compliance &amp; Audit</p>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Schedule and run compliance audits against regulatory frameworks — EU AI Act, GDPR, SOC 2, HIPAA. Each audit produces control findings by severity. Review, assign owners, and mark items resolved. The audit history provides an auditable compliance trail over time.
-                        </p>
-                        <ScreenshotFrame title="Govern — Compliance & Audit" src="/assets/images/ComplianceAudit.png" alt="Compliance Audit view" />
-
-                        <div className="mt-4 flex items-center gap-2">
-                            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Guardrails</p>
-                            <Badge color="violet">Coming Soon</Badge>
-                        </div>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-1">
-                            Behavioral constraints enforced at agent runtime — coming in a future release.
-                        </p>
-
-                        <div className="mt-4 flex items-center gap-2">
-                            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Issues</p>
-                            <Badge color="violet">Coming Soon</Badge>
-                        </div>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mt-1">
-                            Centralized governance issue tracker — coming in a future release.
                         </p>
                     </Step>
 
@@ -928,8 +874,9 @@ const UserGuidePage: React.FC = () => {
 
                     <SectionHeading id="build-playground" level={3}>Agent Playground</SectionHeading>
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-3">
-                        The Agent Playground is the hands-on workspace where you prototype, test, and iterate on agents before deploying them. Each agent runs in a full session backed by its live configuration. Open the Playground from any Agent Detail page or from <strong>Build → Agent Playground</strong> in the sidebar.
+                        The Agent Playground is the hands-on workspace where you prototype, test, and iterate on agents before deploying them. Each agent runs in a full session backed by its live configuration. Open the Playground from any Agent Detail page by clicking the <strong>Playground</strong> button in the header, or from <strong>Build → Agent Playground</strong> in the sidebar.
                     </p>
+                    <ScreenshotFrame title="Build — Agent Playground" src="/assets/images/Agent Playground.png" alt="Agent Playground" />
                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
                         The Playground header shows the active agent name, its mode badge (<Badge color="blue">CODE-DRIVEN</Badge>), the selected LLM and model, and the <UIButton color="blue" icon={<Play size={11}/>}>Start session</UIButton> button. The workspace is organized into five tabs:
                     </p>
