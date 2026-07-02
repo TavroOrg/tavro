@@ -224,6 +224,7 @@ config.yaml
 
 
 agent_cards/
+uploads/
 
 # Enterprise-only routers injected at container start by entrypoint.enterprise.sh
 tavro_api/api/llm.py

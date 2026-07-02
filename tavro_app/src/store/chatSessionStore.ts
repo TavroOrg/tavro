@@ -3,11 +3,20 @@ import type { LLMProvider } from '../services/llmService';
 const SESSIONS_KEY = 'tavro_chat_sessions';
 const ACTIVE_KEY = 'tavro_chat_active_session';
 
+export interface AttachmentRef {
+  id: string;
+  name: string;
+  mime_type: string;
+  size: number;
+  url: string;
+}
+
 export interface StoredMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   timestamp: string;
+  attachments?: AttachmentRef[];
 }
 
 export interface ChatSession {
