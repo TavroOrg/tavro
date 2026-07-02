@@ -199,7 +199,7 @@ const AdminUserGuidePage: React.FC = () => {
         : TOC_SECTIONS;
 
     return (
-        <div className="flex flex-1 overflow-hidden bg-white dark:bg-slate-950">
+        <div className="flex h-screen overflow-hidden bg-white dark:bg-slate-950">
             <aside className="hidden w-80 shrink-0 border-r border-slate-200 dark:border-slate-800 lg:flex lg:flex-col">
                 <div className="border-b border-slate-200 px-5 py-5 dark:border-slate-800">
                     <div className="flex items-center gap-3">
@@ -267,17 +267,16 @@ const AdminUserGuidePage: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto">
                 <div ref={contentRef} className="mx-auto max-w-5xl px-6 py-8 md:px-10">
-                    <div className="animate-fade-in rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 px-6 py-8 text-white shadow-xl dark:border-slate-800">
-                        <div className="flex flex-wrap items-center gap-3">
-                            <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-blue-100">
-                                Admin Help
-                            </span>
-                            <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-[11px] font-semibold text-emerald-200">
-                                Updated July 2026
-                            </span>
+                    <div className="relative animate-fade-in overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 px-8 py-8">
+                        <div className="absolute top-6 right-6 opacity-20">
+                            <BookOpen size={52} className="text-white" />
                         </div>
-                        <h1 className="mt-5 text-3xl font-bold tracking-tight md:text-4xl">Tavro Admin Portal User Guide</h1>
-                        <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200 md:text-base">
+                        <div className="mb-4 flex items-center gap-2">
+                            <span className="rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold text-white">v3.1</span>
+                            <span className="rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold text-white">User Guide</span>
+                        </div>
+                        <h1 className="mb-2 text-2xl font-extrabold leading-tight text-white">Tavro Admin Portal</h1>
+                        <p className="max-w-xl text-sm leading-relaxed text-blue-100">
                             Use the admin portal to choose the active company, configure external connectors, monitor
                             platform services, manage chat AI provider credentials, and maintain infrastructure settings
                             that support Tavro operations.
@@ -285,15 +284,15 @@ const AdminUserGuidePage: React.FC = () => {
                         <div className="mt-6 grid gap-3 md:grid-cols-3">
                             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-100">Scope</p>
-                                <p className="mt-2 text-sm text-slate-200">Operational setup, integrations, secrets, and platform diagnostics.</p>
+                                <p className="mt-2 text-sm text-slate-100">Operational setup, integrations, secrets, and platform diagnostics.</p>
                             </div>
                             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-100">Best For</p>
-                                <p className="mt-2 text-sm text-slate-200">Admins managing company-specific imports and shared system credentials.</p>
+                                <p className="mt-2 text-sm text-slate-100">Admins managing company-specific imports and shared system credentials.</p>
                             </div>
                             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-100">Tip</p>
-                                <p className="mt-2 text-sm text-slate-200">Set the company first so connector runs and imported data are scoped correctly.</p>
+                                <p className="mt-2 text-sm text-slate-100">Set the company first so connector runs and imported data are scoped correctly.</p>
                             </div>
                         </div>
                     </div>

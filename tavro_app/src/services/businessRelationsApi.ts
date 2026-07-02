@@ -6,6 +6,7 @@ import type {
   BusinessProcessUpsertPayload,
   IntegrationRecord,
   IntegrationUpsertPayload,
+  IntegrationAttachmentRecord,
 } from '../types/businessRelations';
 import { portalActivity } from './portalActivity';
 import { parseApiError } from '../utils/errorUtils';
@@ -465,6 +466,55 @@ class BusinessRelationsApi {
       throw new Error(parseApiError(res.status, body));
     }
     return res.blob();
+  }
+
+  async listIntegrationAttachments(integrationId: string): Promise<IntegrationAttachmentRecord[]> {
+    return req(`/integrations/${encodeURIComponent(integrationId)}/attachments`);
+  }
+
+  async uploadIntegrationAttachment(
+    integrationId: string,
+    payload: { filename: string; mime_type: string; content_base64: string },
+  ): Promise<IntegrationAttachmentRecord> {
+    return req(`/integrations/${encodeURIComponent(integrationId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteIntegrationAttachment(integrationId: string, attachmentId: string): Promise<void> {
+    await req(`/integrations/${encodeURIComponent(integrationId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async downloadIntegrationAttachment(integrationId: string, attachmentId: string): Promise<Blob> {
+    const res = await fetch(`${V1}/integrations/${encodeURIComponent(integrationId)}/attachments/${encodeURIComponent(attachmentId)}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(parseApiError(res.status, body));
+    }
+    return res.blob();
+  }
+
+  async syncBlueprintAttachmentsToApplication(applicationId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
+  }
+
+  async syncBlueprintAttachmentsToProcess(processId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
+  }
+
+  async syncBlueprintAttachmentsToIntegration(integrationId: string): Promise<void> {
+    await req(`/integrations/${encodeURIComponent(integrationId)}/sync-blueprint-attachments`, {
+      method: 'POST',
+    });
   }
 
   async linkAgentToApplication(agentId: string, applicationId: string, companyId?: string): Promise<void> {

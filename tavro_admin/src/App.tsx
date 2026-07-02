@@ -38,6 +38,14 @@ function App() {
                     <Route path="/login" element={<AdminLogin />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
                     <Route
+                        path="/help/user-guide"
+                        element={
+                            <AdminRoute>
+                                <AdminUserGuidePage />
+                            </AdminRoute>
+                        }
+                    />
+                    <Route
                         path="/"
                         element={
                             <AdminRoute>
@@ -51,7 +59,6 @@ function App() {
                         <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />
                         <Route path="infrastructure" element={<AdminInfrastructurePage />} />
-                        <Route path="help/user-guide" element={<AdminUserGuidePage />} />
                     </Route>
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

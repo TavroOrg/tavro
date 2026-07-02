@@ -137,6 +137,17 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     fetchGraph(activeCompany);
   }, [activeCompany, fetchNodes, fetchGraph]);
 
+  // Auto-refresh blueprint when applications/processes/integrations are created or uploaded
+  useEffect(() => {
+    const handleCatalogChange = () => {
+      if (!activeCompany) return;
+      fetchNodes(activeCompany);
+      fetchGraph(activeCompany);
+    };
+    window.addEventListener('tavro:catalog-item-changed', handleCatalogChange);
+    return () => window.removeEventListener('tavro:catalog-item-changed', handleCatalogChange);
+  }, [activeCompany, fetchNodes, fetchGraph]);
+
   const selectCompany = useCallback((company: Company) => {
     setActiveCompany(company);
   }, []);
