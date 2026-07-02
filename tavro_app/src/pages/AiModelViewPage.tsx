@@ -307,6 +307,7 @@ const AiModelViewPage: React.FC = () => {
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
   const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
+  const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
   const { activeCompany } = useBlueprint();
 
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -450,7 +451,18 @@ const AiModelViewPage: React.FC = () => {
             console.warn('Model created but auto-link to process failed.', linkErr);
           }
         }
+        if (linkUseCaseId) {
+          try {
+            await aiModelApi.linkUseCase(created.ai_model_id, linkUseCaseId);
+          } catch (linkErr) {
+            console.warn('Model created but auto-link to use case failed.', linkErr);
+          }
+        }
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+        if (linkUseCaseId) {
+          navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
+          return;
+        }
         navigate(`/ai-models/${encodeURIComponent(created.ai_model_id)}`, { replace: true });
         return;
       }
@@ -892,10 +904,10 @@ const AiModelViewPage: React.FC = () => {
     <div className="flex flex-col gap-5 w-full max-w-[1400px] mx-auto animate-fade-in pb-10">
       <div className="flex items-center justify-between gap-4">
         <button
-          onClick={() => navigate('/ai-models')}
+          onClick={() => navigate(linkUseCaseId ? `/use-case/${encodeURIComponent(linkUseCaseId)}` : '/ai-models')}
           className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> Back to AI Models
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to AI Models'}
         </button>
         <div className="flex items-center gap-2">
           {editableActive ? (
