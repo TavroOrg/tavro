@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir fastembed psycopg2-binary sqlalchemy
+
+# Bake the embedding model into the image at build time so the container
+# never needs outbound internet at runtime (production networks often
+# restrict egress from app containers even when the build step has it).
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+
+WORKDIR /app
+COPY utils/ ./utils/
+COPY sql/twin_datahub_context.sql ./sql/twin_datahub_context.sql
+COPY datahub/ingest_datahub_vectors.py ./datahub/ingest_datahub_vectors.py
+COPY datahub/datahub.json ./datahub/datahub.json
+
+CMD ["python", "datahub/ingest_datahub_vectors.py"]

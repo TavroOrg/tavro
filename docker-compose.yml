@@ -42,6 +42,21 @@ services:
       retries: 5
       start_period: 30s
 
+  # ── One-shot job: embed datahub/datahub.json into twin.datahub_context (global) ──
+  datahub-vector-ingest:
+    build:
+      context: .
+      dockerfile: datahub/Dockerfile.ingest_vectors
+    container_name: tavro-datahub-vector-ingest
+    restart: "no"
+    depends_on:
+      tavro-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+    labels:
+      datahub_setup_job: true
+
   # ── Temporal — Workflow Engine ───────────────────────────────────────────────
   risk-temporal:
     build:
