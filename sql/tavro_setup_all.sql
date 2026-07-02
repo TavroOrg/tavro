@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
     jurisdiction        TEXT[],
     industry_tags       TEXT[],
     company_id          UUID REFERENCES twin.company(id) ON DELETE CASCADE,
+    tenant_id           TEXT,
     effective_date      DATE,
     review_date         DATE,
     sunset_date         DATE,
@@ -294,8 +295,13 @@ CREATE TABLE IF NOT EXISTS twin.compliance_item (
     CONSTRAINT chk_policy_has_company
         CHECK (item_type = 'regulation' OR company_id IS NOT NULL)
 );
+-- Idempotent evolution for databases where twin.compliance_item already
+-- existed before tenant_id was introduced (mirrors the ALTER TYPE ... ADD
+-- VALUE IF NOT EXISTS pattern used above for twin.dim_category).
+ALTER TABLE twin.compliance_item ADD COLUMN IF NOT EXISTS tenant_id TEXT;
 CREATE INDEX IF NOT EXISTS compliance_item_type_idx    ON twin.compliance_item (item_type, status);
 CREATE INDEX IF NOT EXISTS compliance_item_company_idx ON twin.compliance_item (company_id) WHERE company_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS compliance_item_tenant_idx  ON twin.compliance_item (tenant_id) WHERE tenant_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS compliance_item_name_idx    ON twin.compliance_item USING GIN(to_tsvector('english', name));
 
 CREATE TABLE IF NOT EXISTS twin.compliance_dimension (
@@ -509,67 +515,116 @@ INSERT INTO twin.compliance_dim_type (name, category, scope, system_defined) VAL
     ('Custom',                    'custom',       'both',      false)
 ON CONFLICT DO NOTHING;
 
--- Seed regulations (shared — no company_id)
-WITH regulation_seed
-    (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, status, ai_researched)
-AS (
-    VALUES
-        ('regulation', 'external',
-         'Bank Secrecy Act / Anti-Money Laundering', 'BSA/AML',
+-- Default regulations — cloned per company (not shared/global).
+-- Replaces the old "seed once, company_id NULL" model: every company now
+-- gets its own copies of these 7 baseline regulations, with company_id and
+-- tenant_id populated at insert time, via the AFTER INSERT trigger below.
+
+-- Idempotent conflict target for per-company seeding.
+CREATE UNIQUE INDEX IF NOT EXISTS compliance_item_company_name_uidx
+    ON twin.compliance_item (company_id, item_type, lower(name))
+    WHERE company_id IS NOT NULL;
+
+-- Single source of truth for the default regulation set — used by both the
+-- trigger (new companies) and the one-time backfill (existing companies).
+CREATE OR REPLACE FUNCTION twin.seed_default_regulations_for_company(p_company_id UUID, p_tenant_id TEXT)
+RETURNS void LANGUAGE sql AS $$
+    INSERT INTO twin.compliance_item
+        (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, company_id, tenant_id, status, ai_researched)
+    SELECT 'regulation', 'external', d.name, d.short_name, d.description, d.issuing_body, d.jurisdiction, d.industry_tags,
+           p_company_id, p_tenant_id, 'active', false
+    FROM (VALUES
+        ('Bank Secrecy Act / Anti-Money Laundering', 'BSA/AML',
          'Federal law requiring financial institutions to assist government agencies in detecting and preventing money laundering.',
-         'FinCEN / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','credit-union'],
-         'active', false),
+         'FinCEN / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','credit-union']),
 
-        ('regulation', 'external',
-         'Dodd-Frank Wall Street Reform and Consumer Protection Act', 'Dodd-Frank',
+        ('Dodd-Frank Wall Street Reform and Consumer Protection Act', 'Dodd-Frank',
          'Comprehensive financial reform legislation enacted in response to the 2008 financial crisis.',
-         'US Congress / CFPB / SEC', ARRAY['US'], ARRAY['banking','securities','insurance'],
-         'active', false),
+         'US Congress / CFPB / SEC', ARRAY['US'], ARRAY['banking','securities','insurance']),
 
-        ('regulation', 'external',
-         'General Data Protection Regulation', 'GDPR',
+        ('General Data Protection Regulation', 'GDPR',
          'EU regulation on data protection and privacy for individuals within the EU and EEA.',
          'European Data Protection Board', ARRAY['EU','EEA'],
-         ARRAY['all-industries','technology','banking','healthcare'],
-         'active', false),
+         ARRAY['all-industries','technology','banking','healthcare']),
 
-        ('regulation', 'external',
-         'Health Insurance Portability and Accountability Act', 'HIPAA',
+        ('Health Insurance Portability and Accountability Act', 'HIPAA',
          'US law providing data privacy and security provisions for safeguarding medical information.',
-         'HHS / OCR', ARRAY['US'], ARRAY['healthcare','insurance','technology'],
-         'active', false),
+         'HHS / OCR', ARRAY['US'], ARRAY['healthcare','insurance','technology']),
 
-        ('regulation', 'external',
-         'OCC Heightened Standards for Large Financial Institutions', 'OCC Heightened Standards',
+        ('OCC Heightened Standards for Large Financial Institutions', 'OCC Heightened Standards',
          'OCC guidelines establishing minimum standards for the design and implementation of a risk governance framework.',
-         'OCC', ARRAY['US'], ARRAY['banking'],
-         'active', false),
+         'OCC', ARRAY['US'], ARRAY['banking']),
 
-        ('regulation', 'external',
-         'Equal Credit Opportunity Act', 'ECOA',
+        ('Equal Credit Opportunity Act', 'ECOA',
          'Federal law prohibiting creditors from discriminating against credit applicants on the basis of race, color, religion, national origin, sex, marital status, age, or receipt of public assistance.',
-         'CFPB / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','lending'],
-         'active', false),
+         'CFPB / Federal Reserve', ARRAY['US'], ARRAY['banking','fintech','lending']),
 
-        ('regulation', 'external',
-         'Gramm-Leach-Bliley Act', 'GLBA',
+        ('Gramm-Leach-Bliley Act', 'GLBA',
          'Requires financial institutions to explain how they share and protect their customers'' private information.',
-         'Federal Trade Commission', ARRAY['US'], ARRAY['banking','insurance','fintech'],
-         'active', false)
-)
-INSERT INTO twin.compliance_item
-    (item_type, scope, name, short_name, description, issuing_body, jurisdiction, industry_tags, status, ai_researched)
-SELECT
-    s.item_type, s.scope, s.name, s.short_name, s.description, s.issuing_body,
-    s.jurisdiction, s.industry_tags, s.status, s.ai_researched
-FROM regulation_seed s
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM twin.compliance_item ci
-    WHERE ci.item_type = s.item_type
-      AND ci.name = s.name
-      AND COALESCE(ci.short_name, '') = COALESCE(s.short_name, '')
-);
+         'Federal Trade Commission', ARRAY['US'], ARRAY['banking','insurance','fintech'])
+    ) AS d(name, short_name, description, issuing_body, jurisdiction, industry_tags)
+    -- Partial unique indexes require the WHERE predicate to be repeated here
+    -- for Postgres to infer it as the conflict target.
+    ON CONFLICT (company_id, item_type, lower(name)) WHERE company_id IS NOT NULL DO NOTHING;
+$$;
+
+-- Fires on every company insert, from any code path (Blueprint wizard, MCP
+-- create_company, direct API, admin portal), so the defaults are always
+-- populated with the correct company_id/tenant_id at creation time.
+CREATE OR REPLACE FUNCTION twin.trg_seed_default_regulations()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM twin.seed_default_regulations_for_company(NEW.id, NEW.tenant_id);
+    RETURN NEW;
+END;
+$$;
+
+DO $$ BEGIN
+    CREATE TRIGGER company_seed_default_regulations
+        AFTER INSERT ON twin.company
+        FOR EACH ROW EXECUTE FUNCTION twin.trg_seed_default_regulations();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Backfill: give every already-existing company its own copies too.
+-- Idempotent — safe to rerun (ON CONFLICT DO NOTHING inside the function).
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT id, tenant_id FROM twin.company LOOP
+        PERFORM twin.seed_default_regulations_for_company(r.id, r.tenant_id);
+    END LOOP;
+END $$;
+
+-- Retire the old shared/global rows (company_id IS NULL) now that every
+-- company has its own copy — but only if nothing already depends on them.
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN
+        SELECT id, name FROM twin.compliance_item
+        WHERE company_id IS NULL
+          AND item_type = 'regulation'
+          AND name IN (
+              'Bank Secrecy Act / Anti-Money Laundering',
+              'Dodd-Frank Wall Street Reform and Consumer Protection Act',
+              'General Data Protection Regulation',
+              'Health Insurance Portability and Accountability Act',
+              'OCC Heightened Standards for Large Financial Institutions',
+              'Equal Credit Opportunity Act',
+              'Gramm-Leach-Bliley Act'
+          )
+    LOOP
+        IF EXISTS (SELECT 1 FROM twin.compliance_dimension WHERE compliance_item_id = r.id)
+           OR EXISTS (SELECT 1 FROM twin.compliance_impact WHERE compliance_item_id = r.id)
+           OR EXISTS (SELECT 1 FROM twin.audit_run WHERE compliance_item_id = r.id)
+           OR EXISTS (SELECT 1 FROM twin.audit_finding WHERE compliance_item_id = r.id)
+        THEN
+            RAISE NOTICE 'Skipping delete of global regulation % (%) — has dependent dimension/impact/audit data', r.name, r.id;
+        ELSE
+            DELETE FROM twin.compliance_item WHERE id = r.id;
+        END IF;
+    END LOOP;
+END $$;
 
 \echo '======================================================'
 \echo ' Setup complete.'
@@ -585,7 +640,7 @@ WHERE NOT EXISTS (
 \echo ' Seed data loaded:'
 \echo '   10 blueprint dim_types'
 \echo '   15 compliance dim_types'
-\echo '   7 seeded regulations'
+\echo '   7 default regulations cloned per company (company_seed_default_regulations trigger)'
 \echo ''
 \echo ' Next: add companies and run AI research from the UI.'
 \echo '======================================================'
