@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip, AlertCircle } from 'lucide-react';
 import {
-    uploadChatAttachment, extractAttachmentText, formatAttachmentSize, attachmentDownloadUrl,
+    uploadChatAttachment, extractAttachmentText, formatAttachmentSize,
     ACCEPTED_MIME_TYPES, MAX_ATTACHMENT_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE,
 } from '../services/chatAttachmentService';
 import type { AttachmentRef } from '../store/chatSessionStore';
@@ -378,18 +378,15 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
             {isUser && message.attachments && message.attachments.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1 max-w-[85%] justify-end">
                     {message.attachments.map((att, i) => (
-                        <a
+                        <span
                             key={i}
-                            href={attachmentDownloadUrl(att)}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             title={`${att.name} (${formatAttachmentSize(att.size)})`}
-                            className="flex items-center gap-1 text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full hover:bg-blue-200 transition-colors"
+                            className="flex items-center gap-1 text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full"
                         >
                             <Paperclip size={9} />
                             <span className="truncate max-w-[120px]">{att.name}</span>
                             <span className="opacity-60">{formatAttachmentSize(att.size)}</span>
-                        </a>
+                        </span>
                     ))}
                 </div>
             )}
