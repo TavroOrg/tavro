@@ -1401,7 +1401,7 @@ const UseCaseViewPage: React.FC = () => {
       refreshUseCases();
       const name = detail.title || 'Use case';
       window.dispatchEvent(new CustomEvent('tavro_notice', {
-        detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.` },
+        detail: { key: 'tavro_spark_notice', message: `"${name}" use case is ready — please review.`, variant: 'success' },
       }));
     };
     window.addEventListener('tavro_usecase_enriched', handler);

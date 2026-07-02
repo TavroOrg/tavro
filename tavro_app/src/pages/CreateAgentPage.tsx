@@ -140,6 +140,9 @@ const CreateAgentPage: React.FC = () => {
         'tavro_catalog_notice',
         'Agent created successfully. Risk assessment is running in the background.'
       );
+      window.dispatchEvent(new CustomEvent('tavro_notice', {
+        detail: { message: 'Agent created successfully. Risk assessment is running in the background.', variant: 'success' },
+      }));
       refresh();
       redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);
     } catch (err: any) {

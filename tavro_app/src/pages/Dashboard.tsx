@@ -6,7 +6,6 @@ import { useCatalog } from '../context/CatalogContext';
 import { toUserMessage } from '../utils/errorUtils';
 import AgentCatalog from '../components/AgentCatalog';
 import LoadAgentsModal from '../components/LoadAgentsModal';
-import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
@@ -269,9 +268,7 @@ const Dashboard: React.FC = () => {
     return (
         <>
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
-            <TimedInfoToast storageKey="tavro_catalog_notice" />
-
-            <div className="flex items-center justify-between">
+<div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-slate-800">Agent Catalog</h2>
                     <p className="text-sm text-slate-500">

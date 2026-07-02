@@ -85,24 +85,25 @@ const CreateUseCasePage: React.FC = () => {
                 await useCaseApi.linkApplication(created.use_case_id, linkApplicationId);
             }
             setSuccess(true);
-            sessionStorage.setItem(
-                'tavro_use_case_notice',
-                linkAgentId && linkProcessId && linkApplicationId
-                    ? 'AI Use Case created and linked to agent, process, and application successfully.'
-                    : linkAgentId && linkProcessId
-                    ? 'AI Use Case created and linked to agent and process successfully.'
-                    : linkAgentId && linkApplicationId
-                        ? 'AI Use Case created and linked to agent and application successfully.'
-                    : linkProcessId && linkApplicationId
-                        ? 'AI Use Case created and linked to process and application successfully.'
-                    : linkAgentId
-                        ? 'AI Use Case created and linked to agent successfully.'
-                        : linkProcessId
-                            ? 'AI Use Case created and linked to process successfully.'
-                            : linkApplicationId
-                                ? 'AI Use Case created and linked to application successfully.'
-                                : 'AI Use Case created successfully. It will appear in the catalog shortly.'
-            );
+            const useCaseSuccessMessage = linkAgentId && linkProcessId && linkApplicationId
+                ? 'AI Use Case created and linked to agent, process, and application successfully.'
+                : linkAgentId && linkProcessId
+                ? 'AI Use Case created and linked to agent and process successfully.'
+                : linkAgentId && linkApplicationId
+                    ? 'AI Use Case created and linked to agent and application successfully.'
+                : linkProcessId && linkApplicationId
+                    ? 'AI Use Case created and linked to process and application successfully.'
+                : linkAgentId
+                    ? 'AI Use Case created and linked to agent successfully.'
+                    : linkProcessId
+                        ? 'AI Use Case created and linked to process successfully.'
+                        : linkApplicationId
+                            ? 'AI Use Case created and linked to application successfully.'
+                            : 'AI Use Case created successfully. It will appear in the catalog shortly.';
+            sessionStorage.setItem('tavro_use_case_notice', useCaseSuccessMessage);
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: useCaseSuccessMessage, variant: 'success' },
+            }));
             refresh();
             setTimeout(() => {
                 if (linkAgentId) {
