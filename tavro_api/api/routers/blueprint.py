@@ -945,36 +945,43 @@ async def save_researched_nodes(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     saved = skipped = 0
-    to_sync: list[tuple[str, str, str, list]] = []
+    # (category, label, summary, tags, node_id)
+    to_sync: list[tuple[str, str, str | None, list, str | None]] = []
 
     for node in body.nodes:
         dim_type_id = type_map.get(node.category)
         if not dim_type_id:
             continue
 
-        # Track all app/process/integration nodes regardless of whether the dim_node
-        # already exists — _create_business_entity will skip any that are already in DB.
-        if node.category in ("application", "process", "integration"):
-            to_sync.append((node.category, node.label, node.summary, node.tags))
+        is_entity = node.category in ("application", "process", "integration")
 
-        exists = await db.execute(
-            text("SELECT 1 FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL"),
+        ex_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL LIMIT 1"),
             {"cid": body.company_id, "label": node.label},
         )
-        if exists.scalar():
+        existing = ex_row.mappings().first()
+        if existing:
             skipped += 1
+            if is_entity:
+                to_sync.append((node.category, node.label, node.summary, node.tags, str(existing["id"])))
             continue
-        await db.execute(
+
+        ins = await db.execute(
             text("""INSERT INTO twin.dim_node
                     (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
                     VALUES (:company_id, :dim_type_id, :label, :summary,
-                            cast(:tags as jsonb), :visibility, :sensitive)"""),
+                            cast(:tags as jsonb), :visibility, :sensitive)
+                    RETURNING id"""),
             {"company_id": body.company_id, "dim_type_id": dim_type_id,
              "label": node.label, "summary": node.summary,
              "tags": json.dumps(node.tags), "visibility": node.visibility,
              "sensitive": node.sensitive},
         )
+        ins_row = ins.mappings().first()
+        node_id = str(ins_row["id"]) if ins_row else None
         saved += 1
+        if is_entity:
+            to_sync.append((node.category, node.label, node.summary, node.tags, node_id))
 
     await db.commit()
 
@@ -986,8 +993,12 @@ async def save_researched_nodes(
         co = co_row.mappings().first() or {}
         company_name = co.get("name")
         company_tenant_id = co.get("tenant_id")
-        for category, label, summary, tags in to_sync:
-            await _create_business_entity(db, body.company_id, company_name, company_tenant_id, category, label, summary, tags)
+        from api.routers.business_relations import sync_dim_node_to_business_entity
+        for category, label, summary, tags, node_id in to_sync:
+            await sync_dim_node_to_business_entity(
+                db, body.company_id, company_name, category, label, summary, tags,
+                company_tenant_id, node_id=node_id,
+            )
 
     return {"saved": saved, "skipped": skipped}
 
@@ -1008,30 +1019,35 @@ async def seed_template(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     seeded = skipped = 0
-    to_sync: list[tuple[str, str, str, list]] = []
+    # (category, label, summary, tags, node_id)
+    to_sync: list[tuple[str, str, str | None, list, str | None]] = []
 
     for node in template_nodes:
         dim_type_id = type_map.get(node["category"])
         if not dim_type_id:
             continue
 
-        # Track all app/process/integration nodes regardless of whether the dim_node
-        # already exists — _create_business_entity will skip any that are already in DB.
-        if node["category"] in ("application", "process", "integration"):
-            to_sync.append((node["category"], node["label"], node["summary"], node.get("tags", [])))
+        category = node["category"]
+        is_entity = category in ("application", "process", "integration")
 
-        exists = await db.execute(
-            text("SELECT 1 FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL"),
+        # Check existence and capture id in one query
+        ex_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE company_id=:cid AND lower(label)=lower(:label) AND valid_to IS NULL LIMIT 1"),
             {"cid": body.company_id, "label": node["label"]},
         )
-        if exists.scalar():
+        existing = ex_row.mappings().first()
+        if existing:
             skipped += 1
+            if is_entity:
+                to_sync.append((category, node["label"], node["summary"], node.get("tags", []), str(existing["id"])))
             continue
-        await db.execute(
+
+        ins = await db.execute(
             text("""INSERT INTO twin.dim_node
                     (company_id, dim_type_id, label, summary, tags, visibility, sensitive)
                     VALUES (:company_id, :dim_type_id, :label, :summary,
-                            cast(:tags as jsonb), :visibility, :sensitive)"""),
+                            cast(:tags as jsonb), :visibility, :sensitive)
+                    RETURNING id"""),
             {"company_id":  body.company_id,
              "dim_type_id": dim_type_id,
              "label":       node["label"],
@@ -1040,7 +1056,11 @@ async def seed_template(
              "visibility":  node.get("visibility", "internal"),
              "sensitive":   node.get("sensitive", False)},
         )
+        ins_row = ins.mappings().first()
+        node_id = str(ins_row["id"]) if ins_row else None
         seeded += 1
+        if is_entity:
+            to_sync.append((category, node["label"], node["summary"], node.get("tags", []), node_id))
 
     await db.commit()
 
@@ -1052,8 +1072,12 @@ async def seed_template(
         co = co_row.mappings().first() or {}
         company_name = co.get("name")
         company_tenant_id = co.get("tenant_id")
-        for category, label, summary, tags in to_sync:
-            await _create_business_entity(db, body.company_id, company_name, company_tenant_id, category, label, summary, tags)
+        from api.routers.business_relations import sync_dim_node_to_business_entity
+        for category, label, summary, tags, node_id in to_sync:
+            await sync_dim_node_to_business_entity(
+                db, body.company_id, company_name, category, label, summary, tags,
+                company_tenant_id, node_id=node_id,
+            )
 
     return {
         "seeded":  seeded,
@@ -1079,7 +1103,7 @@ async def sync_business_entities(
 ):
     rows = await db.execute(
         text("""
-            SELECT n.label, n.summary, n.tags, t.category
+            SELECT n.id, n.label, n.summary, n.tags, t.category
             FROM twin.dim_node n
             JOIN twin.dim_type t ON t.id = n.dim_type_id
             WHERE n.company_id = :cid
@@ -1098,17 +1122,16 @@ async def sync_business_entities(
     company_name = co.get("name")
     company_tenant_id = co.get("tenant_id")
 
+    from api.routers.business_relations import sync_dim_node_to_business_entity
     created = skipped = 0
     for node in nodes:
         tags = node["tags"] if isinstance(node["tags"], list) else []
-        was_created = await _create_business_entity(
-            db, body.company_id, company_name, company_tenant_id,
-            node["category"], node["label"], node["summary"], tags,
+        await sync_dim_node_to_business_entity(
+            db, body.company_id, company_name, node["category"],
+            node["label"], node["summary"], tags,
+            company_tenant_id, node_id=str(node["id"]),
         )
-        if was_created:
-            created += 1
-        else:
-            skipped += 1
+        created += 1
 
     return {"created": created, "skipped": skipped}
 
