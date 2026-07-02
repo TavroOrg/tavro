@@ -1,0 +1,155 @@
+name: Update User Guide on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - 'tavro_app/src/pages/**'
+      - 'tavro_app/src/components/**'
+  workflow_dispatch:   # allows manual trigger from GitHub UI for testing
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-guide:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # ── 2. Setup Node ──────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tavro_app/package-lock.json
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: tavro_app
+        run: npm ci
+
+      # ── TEST 1: Build check ────────────────────────────────────────────────
+      - name: "[Test 1] App builds without errors"
+        working-directory: tavro_app
+        run: npm run build
+
+      # ── 4. Install Claude Code CLI ─────────────────────────────────────────
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # ── 5. Run the update-user-guide workflow ──────────────────────────────
+      # NOTE: There is no native "--workflow" flag on the Claude Code CLI.
+      # The .js file under .claude/workflows/ is instructions for Claude to
+      # read and follow (same as when you tell Claude Code to "run the
+      # workflow" inside VS Code) — so here we prompt it to do exactly that,
+      # in headless (-p) mode, with structured JSON output.
+      - name: Understand changes and update user guide
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude -p "Read and execute the workflow defined in .claude/workflows/update-user-guide.js exactly as written. Follow the Understand phase, then the Document phase, editing tavro_app/src/pages/UserGuidePage.tsx directly as instructed. When finished, output ONLY a single JSON object with this exact shape: {\"approved\": boolean, \"edited_sections\": string[], \"summary\": string, \"no_changes_needed\"?: boolean} — no prose, no markdown fences." \
+            --output-format json \
+            --dangerously-skip-permissions \
+            > /tmp/claude-raw-output.json
+        timeout-minutes: 10
+
+      # ── 6. Sanity-check we actually got output ──────────────────────────────
+      - name: Validate Claude output
+        run: |
+          test -s /tmp/claude-raw-output.json || (echo "Claude produced no output" && exit 1)
+
+      # ── 7. Parse the result and log it ──────────────────────────────────────
+      # --output-format json wraps Claude's final answer in an envelope
+      # (result, session_id, total_cost_usd, ...). The actual schema JSON is
+      # a string inside the "result" field, so we extract and re-parse it.
+      - name: Log guide update result
+        run: |
+          node -e "
+          const fs = require('fs');
+          const envelope = JSON.parse(fs.readFileSync('/tmp/claude-raw-output.json', 'utf8'));
+          const resultText = envelope.result.trim().replace(/^\`\`\`json\n?|\`\`\`\$/g, '');
+          const result = JSON.parse(resultText);
+          fs.writeFileSync('/tmp/guide-patch.json', JSON.stringify(result));
+          if (result.no_changes_needed) {
+            console.log('Guide already up to date — no edits needed.');
+          } else if (result.approved === false) {
+            console.log('Claude could not complete edits:', result.reason || 'unknown');
+            process.exit(1);
+          } else {
+            console.log('Sections updated:', (result.edited_sections ?? []).join(', '));
+            console.log('Summary:', result.summary);
+          }
+          "
+
+      # ── TEST 2: Updated guide compiles ────────────────────────────────────
+      - name: "[Test 2] Updated guide compiles"
+        working-directory: tavro_app
+        run: npx tsc --noEmit
+
+      # ── 8. Check if anything changed ──────────────────────────────────────
+      - name: Check for guide changes
+        id: check_changes
+        run: |
+          git diff --quiet tavro_app/src/pages/UserGuidePage.tsx \
+            && echo "changed=false" >> $GITHUB_OUTPUT \
+            || echo "changed=true"  >> $GITHUB_OUTPUT
+
+      # ── 9. Open a PR with the updated guide ───────────────────────────────
+      - name: Open guide update PR
+        if: steps.check_changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="docs/user-guide-update-${{ github.run_number }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add tavro_app/src/pages/UserGuidePage.tsx
+          git commit -m "docs: update user guide after PR #${{ github.event.pull_request.number }}
+
+          Triggered by: ${{ github.event.pull_request.title }}
+          PR: ${{ github.event.pull_request.html_url }}
+
+          Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "docs: update user guide after \"${{ github.event.pull_request.title }}\"" \
+            --body "$(cat <<'PREOF'
+          ## Auto-generated User Guide Update
+
+          Triggered by merging:
+          **#${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}**
+
+          ### Tests passed
+          - ✅ Test 1 — App builds without errors
+          - ✅ Test 2 — Updated guide compiles
+
+          ### Review checklist
+          - [ ] New feature is correctly described
+          - [ ] No unrelated sections were changed
+          - [ ] Approve and merge when satisfied
+
+          > Automated by the \`update-user-guide\` workflow.
+          PREOF
+          )" \
+            --base main \
+            --head "$BRANCH"
+
+      # ── 10. Nothing to update ───────────────────────────────────────────────
+      - name: Guide already up to date
+        if: steps.check_changes.outputs.changed == 'false'
+        run: echo "No guide changes needed — user guide is already up to date."
