@@ -14,6 +14,7 @@ from services.db.db_functions import (
     refresh_curated_agent_360,
     create_local_agent_card,
 )
+from catalog_connector.aict_outbound import create_ai_system, is_configured as aict_is_configured
 
 
 @activity.defn
@@ -134,4 +135,25 @@ async def create_local_agent_card_activity(agent_internal_id: str):
     return await asyncio.to_thread(
         create_local_agent_card,
         agent_internal_id,
+    )
+
+
+@activity.defn
+async def create_aict_ai_system_activity(
+    agent_name: str,
+    agent_description: str,
+    provider: str = None,
+) -> dict:
+    """
+    Creates (or finds) an AI System in ServiceNow AICT.
+    Skipped silently when AICT env vars are not set.
+    """
+    if not aict_is_configured():
+        return {"skipped": True, "reason": "AICT not configured"}
+
+    return await asyncio.to_thread(
+        create_ai_system,
+        agent_name,
+        agent_description,
+        provider,
     )

@@ -92,6 +92,11 @@ SERVICENOW_INSTANCE_URL=https://your-instance.service-now.com
 SERVICENOW_USERNAME=
 SERVICENOW_PASSWORD=
 
+# ── AICT (ServiceNow AI Control Tower) Integration ───────────────────────────
+# Uses shared SERVICENOW_INSTANCE_URL / SERVICENOW_USERNAME / SERVICENOW_PASSWORD.
+# Set AICT_ENABLED=false to turn off outbound agent sync without removing credentials.
+AICT_ENABLED=false
+
 # ── Catalog Connector - Salesforce ───────────────────────────────────────────
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
 SALESFORCE_API_VERSION=v59.0

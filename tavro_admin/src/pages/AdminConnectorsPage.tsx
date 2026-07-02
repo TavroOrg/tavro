@@ -78,6 +78,7 @@ interface ProviderCapability {
     fields?:         ConnectorField[];
     isGemini?:       boolean;
     isAgent365?:     boolean;
+    isOutbound?:     boolean;
     capLogo?:        string;
     capIcon?:        React.ReactNode;
     runName?:        string;
@@ -108,10 +109,11 @@ const PROVIDERS: ProviderDef[] = [
             { key: 'password',     label: 'Password',     type: 'password' },
         ],
         capabilities: [
-            { id: 'sn_agents', connectorId: 'servicenow',   name: 'Agent discovery',               description: 'Extract AI agents registered in ServiceNow',                   snMode: 'agents',                useSharedCreds: true, capIcon: <Bot       size={18} className="text-blue-500" /> },
-            { id: 'sn_aict',   connectorId: 'aict_inbound', name: 'AICT agent discovery',          description: 'Extract AI agents registered via ServiceNow AI Control Tower', useSharedCreds: true,             capIcon: <Bot       size={18} className="text-blue-500" /> },
-            { id: 'sn_apps',   connectorId: 'servicenow',   name: 'Business Application Discovery', description: 'Export Business Application from CMDB Application',          snMode: 'business_applications', useSharedCreds: true, capIcon: <AppWindow size={18} className="text-violet-500" /> },
-            { id: 'sn_procs',  connectorId: 'servicenow',   name: 'Business Process Discovery',     description: 'Export Business Process from CMDB Application',              snMode: 'business_processes',    useSharedCreds: true, capIcon: <Workflow  size={18} className="text-amber-500" /> },
+            { id: 'sn_agents',   connectorId: 'servicenow',    name: 'Agent discovery',                description: 'Extract AI agents registered in ServiceNow',                   snMode: 'agents',                useSharedCreds: true, capIcon: <Bot       size={18} className="text-blue-500" /> },
+            { id: 'sn_aict',     connectorId: 'aict_inbound',  name: 'AICT agent discovery',           description: 'Extract AI agents registered via ServiceNow AI Control Tower', useSharedCreds: true,             capIcon: <Bot       size={18} className="text-blue-500" /> },
+            { id: 'sn_apps',     connectorId: 'servicenow',    name: 'Business Application Discovery', description: 'Export Business Application from CMDB Application',            snMode: 'business_applications', useSharedCreds: true, capIcon: <AppWindow size={18} className="text-violet-500" /> },
+            { id: 'sn_procs',    connectorId: 'servicenow',    name: 'Business Process Discovery',     description: 'Export Business Process from CMDB Application',                snMode: 'business_processes',    useSharedCreds: true, capIcon: <Workflow  size={18} className="text-amber-500" /> },
+            { id: 'sn_aict_out', connectorId: 'aict_outbound', name: 'AICT agent discovery',           description: 'Register Tavro agents in ServiceNow AI Control Tower',          isOutbound: true,                 capIcon: <Bot       size={18} className="text-purple-500" /> },
         ],
     },
     {
@@ -352,13 +354,13 @@ const AdminConnectorsPage: React.FC = () => {
         });
     }, [loadCredentials]);
 
-    // Load all connectors for the selected provider
+    // Load all connectors for the selected provider (shared + all capability connectors)
     useEffect(() => {
         if (!provider) return;
-        const ids = provider.sharedConnectorIds?.length
-            ? provider.sharedConnectorIds
-            : provider.capabilities.map(c => c.connectorId);
-        ids.forEach(id => loadCredentials(id));
+        const sharedIds = provider.sharedConnectorIds ?? [];
+        const capIds    = provider.capabilities.map(c => c.connectorId);
+        const allIds    = [...new Set([...sharedIds, ...capIds])];
+        allIds.forEach(id => loadCredentials(id));
         setDeviceCodeState({ phase: 'idle' });
     }, [selectedProvider, provider, loadCredentials]);
 
@@ -387,13 +389,25 @@ const AdminConnectorsPage: React.FC = () => {
         const sharedCreds = credentials[key] ?? {};
         setSave(key, 'saving');
         try {
-            await Promise.all(ids.map(id =>
+            const promises: Promise<Response>[] = ids.map(id =>
                 fetch(`/api/v1/admin/connectors/${id}/credentials`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ credentials: sharedCreds }),
                 })
-            ));
+            );
+            // Also persist outbound-specific settings (enabled)
+            const outboundCap = p.capabilities.find(c => c.isOutbound);
+            if (outboundCap) {
+                promises.push(
+                    fetch(`/api/v1/admin/connectors/${outboundCap.connectorId}/credentials`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ credentials: credentials[outboundCap.connectorId] ?? {} }),
+                    })
+                );
+            }
+            await Promise.all(promises);
             setSave(key, 'saved');
         } catch { setSave(key, 'error'); }
     };
@@ -479,6 +493,15 @@ const AdminConnectorsPage: React.FC = () => {
         if (!companyId) {
             setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'No company selected. Please go to the Company tab and select a company before running.' } } }));
             return;
+        }
+
+        // Outbound-specific guards — show red error in result area, still allow retry
+        if (cap.isOutbound) {
+            const enabled = getCred(cap.connectorId, 'enabled');
+            if (enabled === 'false') {
+                setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'AICT outbound sync is disabled. Enable it in the shared credentials section above.' } } }));
+                return;
+            }
         }
 
         if (cap.useSharedCreds && p.sharedConnectorIds?.length) {
@@ -778,6 +801,7 @@ const AdminConnectorsPage: React.FC = () => {
                             )}
                         </div>
 
+
                         <div className="flex items-center gap-2">
                             <SaveButton state={getSaveState(sharedConnId)} onClick={() => saveSharedCredentials(provider)} disabled={anyRunning} />
                         </div>
@@ -828,12 +852,18 @@ const AdminConnectorsPage: React.FC = () => {
                                 : 'border-slate-200 dark:border-slate-800'
                         }`}>
 
-                            {/* Inbound badge — top-right corner */}
-                            <span className="absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">
-                                Inbound
-                            </span>
+                            {/* Direction badge — top-right corner */}
+                            {cap.isOutbound ? (
+                                <span className="absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20">
+                                    Outbound
+                                </span>
+                            ) : (
+                                <span className="absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">
+                                    Inbound
+                                </span>
+                            )}
 
-                            {/* Card header: icon (capIcon only) + runName/name + description */}
+                            {/* Card header: icon + name + description */}
                             <div className="flex items-center gap-3">
                                 <div className="h-10 w-10 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex items-center justify-center shrink-0">
                                     {cap.capIcon ?? <Play size={14} className="text-slate-400" />}
@@ -850,7 +880,6 @@ const AdminConnectorsPage: React.FC = () => {
                                     <Info size={14} className="shrink-0 mt-0.5" /> {cap.note}
                                 </div>
                             )}
-
 
                             {/* Gemini OAuth flow */}
                             {cap.isGemini && (
@@ -919,8 +948,45 @@ const AdminConnectorsPage: React.FC = () => {
                                 </div>
                             )}
 
-                            {/* Run button — all capabilities (creds are always in the top card) */}
-                            {(!cap.isGemini || geminiAuthUrl.url) && (
+                            {/* Outbound — toggle replaces Run button; locked until all 4 credentials are filled */}
+                            {cap.isOutbound && (() => {
+                                const outEnabled = getCred(cap.connectorId, 'enabled') !== 'false';
+                                const allFilled  =
+                                    !!getCred(sharedConnId, 'instance_url').trim() &&
+                                    !!getCred(sharedConnId, 'username').trim() &&
+                                    !!getCred(sharedConnId, 'password').trim();
+                                return (
+                                    <div className={`flex items-center justify-between ${!allFilled ? 'opacity-40' : ''}`}>
+                                        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Enable AICT Sync</p>
+                                        <button
+                                            type="button"
+                                            disabled={!allFilled}
+                                            onClick={() => {
+                                                if (!allFilled) return;
+                                                const next = outEnabled ? 'false' : 'true';
+                                                setCred(cap.connectorId, 'enabled', next);
+                                                // auto-save so the change persists immediately
+                                                fetch(`/api/v1/admin/connectors/${cap.connectorId}/credentials`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ credentials: { ...credentials[cap.connectorId], enabled: next } }),
+                                                });
+                                            }}
+                                            title={!allFilled ? 'Fill all credentials and provider name first' : undefined}
+                                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                                                !allFilled ? 'cursor-not-allowed' : 'focus:ring-2 focus:ring-emerald-500/30 cursor-pointer'
+                                            } ${outEnabled && allFilled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                                                outEnabled && allFilled ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Run button — inbound only */}
+                            {!cap.isOutbound && (!cap.isGemini || geminiAuthUrl.url) && (
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <button
                                         onClick={() => runCapability(provider, cap)}
@@ -944,13 +1010,15 @@ const AdminConnectorsPage: React.FC = () => {
                                         <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
                                             <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                                             <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                                                {cap.connectorId === 'agent365'
-                                                    ? `Completed — ${(capRun.result as any).agents_synced ?? capRun.result.count ?? 0} agents synced.`
-                                                    : capRun.result.processes
-                                                        ? `Completed — ${capRun.result.count ?? 0} process${(capRun.result.count ?? 0) !== 1 ? 'es' : ''} imported`
-                                                        : capRun.result.applications
-                                                            ? `Completed — ${capRun.result.count ?? 0} application${(capRun.result.count ?? 0) !== 1 ? 's' : ''} imported`
-                                                            : `Completed — ${capRun.result.count ?? 0} agent${(capRun.result.count ?? 0) !== 1 ? 's' : ''} extracted`
+                                                {cap.isOutbound
+                                                    ? 'AICT connection validated successfully.'
+                                                    : cap.connectorId === 'agent365'
+                                                        ? `Completed — ${(capRun.result as any).agents_synced ?? capRun.result.count ?? 0} agents synced.`
+                                                        : capRun.result.processes
+                                                            ? `Completed — ${capRun.result.count ?? 0} process${(capRun.result.count ?? 0) !== 1 ? 'es' : ''} imported`
+                                                            : capRun.result.applications
+                                                                ? `Completed — ${capRun.result.count ?? 0} application${(capRun.result.count ?? 0) !== 1 ? 's' : ''} imported`
+                                                                : `Completed — ${capRun.result.count ?? 0} agent${(capRun.result.count ?? 0) !== 1 ? 's' : ''} extracted`
                                                 }
                                             </span>
                                         </div>

@@ -25,6 +25,7 @@ from services.activity.activities import (
     update_data_sources,
     refresh_curated_agent_360_activity,
     create_local_agent_card_activity,
+    create_aict_ai_system_activity,
 )
 
 TASK_QUEUE = "risk-classification-queue"
@@ -51,6 +52,7 @@ async def run_worker():
             update_data_sources,
             refresh_curated_agent_360_activity,
             create_local_agent_card_activity,
+            create_aict_ai_system_activity,
         ],
     )
 

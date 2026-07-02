@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from catalog_connector.aict_outbound import sync_agent as _aict_sync
 import json
 import logging
 import os
@@ -118,6 +119,12 @@ def _process_card_sync(card_dict: dict, tenant_id: str | None, company_id: str |
         original = copy.deepcopy(card_dict)
         process_card_for_upload(card_dict, tenant_id, company_id=company_id, company_name=company_name)
         _save_card_to_disk(_strip_risk_fields(original))
+
+        agent_name = (card_dict.get("name") or "").strip()
+        if agent_name:
+            provider = (card_dict.get("provider") or {}).get("organization") or None
+            _aict_sync(agent_name, card_dict.get("description") or "", provider)
+
         return {"success": True, "validation_error": False, "error": None}
     except ValueError as e:
         return {"success": False, "validation_error": True, "error": str(e)}
