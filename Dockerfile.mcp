@@ -21,6 +21,12 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
+# Bake the embedding model into the image at build time — same reasoning as
+# datahub/Dockerfile.ingest_vectors: production networks often restrict
+# outbound egress from app containers at runtime, so search_datahub_metadata
+# must not need to reach HuggingFace Hub when it lazy-loads the model.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+
 COPY mcp_server ./mcp_server
 COPY tavro_library ./tavro_library
 COPY tavro_app/copilot-server/templates ./templates

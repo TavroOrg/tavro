@@ -135,6 +135,17 @@ Update an existing company's information.
 
 ---
 
+### DataHub Metadata Search (RAG)
+
+**`search_datahub_metadata`**
+Search over DataHub metadata (tables, datasets, columns, schemas, tags) embedded into pgvector. Has two modes — pick the right one, don't default to semantic search for everything:
+- **Exact filters** (`schema`, `vendor`, `application`, `industry`, `entity_type`, `tags`) — use whenever the user names a specific, known schema/vendor/application, e.g. "how many tables are there in pc schema", "list all tables in schema X", "what tables does vendor X have". These are exact metadata matches, not similarity search, so they are exhaustive. For "how many" questions, set `count_only=true` and report the `count` field directly — do NOT count rows from a semantic/top-K search and do NOT hedge about the result being incomplete when count_only was used.
+- **Semantic `query`** — use only for fuzzy/topical questions where you don't know exact names, e.g. "columns that look sensitive", "tables related to claims". This returns only the top-K most similar matches and is NOT exhaustive — never use it alone to answer a "how many" or "list all" question.
+- ALWAYS call this tool before answering a DataHub/data-catalog question — never guess table/column names or counts from memory.
+- Ground the answer strictly in the returned `chunk_text`/`metadata`. If nothing relevant comes back, say so instead of inventing an answer.
+
+---
+
 ## Intent Detection Rules
 
 1. **Always pass `original_prompt` verbatim.** Every tool requires `original_prompt`. Copy the user's exact message — do not summarize or paraphrase.
