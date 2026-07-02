@@ -1208,13 +1208,23 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
           <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
-            <Link
-              to="/ai-models/new"
-              className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
-            >
-              <PlusCircle size={12} />
-              Create Model
-            </Link>
+            {useCaseId ? (
+              <Link
+                to={`/ai-models/new?linkUseCaseId=${encodeURIComponent(useCaseId)}`}
+                className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <PlusCircle size={12} />
+                Create Model
+              </Link>
+            ) : (
+              <Link
+                to="/ai-models/new"
+                className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <PlusCircle size={12} />
+                Create Model
+              </Link>
+            )}
             <div className="relative w-full sm:w-[320px] max-w-full">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
