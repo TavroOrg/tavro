@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install fastapi
 
+COPY tavro/catalog_connector ./catalog_connector
 COPY tavro/mcp_server ./mcp_server
 COPY tavro/tavro_library ./tavro_library
 COPY tavro/tavro_app/copilot-server/templates ./templates

@@ -21,11 +21,11 @@ COPY tavro/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
-COPY catalog_connector ./catalog_connector
-COPY mcp_server ./mcp_server
-COPY tavro_library ./tavro_library
-COPY tavro_app/copilot-server/templates ./templates
-COPY utils ./utils
-COPY services ./services
+COPY tavro/catalog_connector ./catalog_connector
+COPY tavro/mcp_server ./mcp_server
+COPY tavro/tavro_library ./tavro_library
+COPY tavro/tavro_app/copilot-server/templates ./templates
+COPY tavro/utils ./utils
+COPY tavro/services ./services
 
 CMD ["python", "-m", "mcp_server.server"]
