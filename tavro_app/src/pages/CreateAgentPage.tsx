@@ -136,10 +136,6 @@ const CreateAgentPage: React.FC = () => {
       localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(withoutCurrent));
 
       setSuccess(true);
-      sessionStorage.setItem(
-        'tavro_catalog_notice',
-        'Agent created successfully. Risk assessment is running in the background.'
-      );
       window.dispatchEvent(new CustomEvent('tavro_notice', {
         detail: { message: 'Agent created successfully. Risk assessment is running in the background.', variant: 'success' },
       }));

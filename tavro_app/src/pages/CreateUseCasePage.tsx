@@ -100,7 +100,6 @@ const CreateUseCasePage: React.FC = () => {
                         : linkApplicationId
                             ? 'AI Use Case created and linked to application successfully.'
                             : 'AI Use Case created successfully. It will appear in the catalog shortly.';
-            sessionStorage.setItem('tavro_use_case_notice', useCaseSuccessMessage);
             window.dispatchEvent(new CustomEvent('tavro_notice', {
                 detail: { message: useCaseSuccessMessage, variant: 'success' },
             }));
