@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Network,
   AlertCircle,
   ArrowLeft,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Info,
   Loader2,
   Pencil,
@@ -325,6 +327,16 @@ const IntegrationViewPage: React.FC = () => {
     }
   };
 
+  const reloadIntegration = async () => {
+    if (!id || isCreateMode) return;
+    try {
+      const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
+      setIntegration(data);
+    } catch {
+      /* ignore — relation list will just retry on next successful refetch */
+    }
+  };
+
   const loadBlueprint = async (dimNodeId: string) => {
     if (!dimNodeId || !activeCompany?.id) return;
     setBlueprintLoading(true);
@@ -404,18 +416,34 @@ const IntegrationViewPage: React.FC = () => {
     return set;
   }, [integration]);
 
-  const availableAgents = useMemo(() => {
+  const filteredCatalogAgents = useMemo(() => {
     const q = searchAgents.trim().toLowerCase();
     return agents.filter(agent => {
       const agentId = agent.identification?.agent_id || '';
-      if (!agentId || linkedAgentIds.has(agentId)) return false;
+      if (!agentId) return false;
       if (!q) return true;
-      return (
-        agentId.toLowerCase().includes(q) ||
-        agent.name.toLowerCase().includes(q)
-      );
+      return agentId.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q);
     });
-  }, [agents, linkedAgentIds, searchAgents]);
+  }, [agents, searchAgents]);
+
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const key = openDropdown;
+    const idTimer = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      const el = dropdownRefs.current[key];
+      if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(idTimer);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [openDropdown]);
 
   const addAgent = async (agentId: string) => {
     if (!integration) return;
@@ -423,7 +451,7 @@ const IntegrationViewPage: React.FC = () => {
     setRelationError(null);
     try {
       await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id, activeCompany?.id);
-      await load();
+      await reloadIntegration();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -437,7 +465,7 @@ const IntegrationViewPage: React.FC = () => {
     setRelationError(null);
     try {
       await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id, activeCompany?.id);
-      await load();
+      await reloadIntegration();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -1395,9 +1423,80 @@ const IntegrationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.agents = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'agents' ? null : 'agents')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'agents'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add agent
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'agents' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.agents = el; }}
+                          value={searchAgents}
+                          onChange={(e) => setSearchAgents(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search agent..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogAgents.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No agents found</div>
+                      )}
+                      {filteredCatalogAgents.map((agent) => {
+                        const agentId = agent.identification?.agent_id || '';
+                        const isLinked = linkedAgentIds.has(agentId);
+                        const busy = actingAgent === agentId;
+                        return (
+                          <button
+                            key={agentId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!agentId || busy}
+                            onClick={() => (isLinked ? removeAgent(agentId) : addAgent(agentId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{agent.name}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{agentId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/agents/new?linkIntegrationId=${encodeURIComponent(integration.integration_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add agent
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {integration.related_agents.length === 0 && (
@@ -1429,46 +1528,6 @@ const IntegrationViewPage: React.FC = () => {
                     >
                       {actingAgent === rel.agent_id ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                       Remove
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add Agent Relation</p>
-              <div className="relative w-full max-w-sm">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchAgents}
-                  onChange={(e) => setSearchAgents(e.target.value)}
-                  placeholder="Filter agents..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableAgents.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available agents to link.</div>
-              )}
-              {availableAgents.map(agent => {
-                const agentId = agent.identification?.agent_id || '';
-                const busy = actingAgent === agentId;
-                return (
-                  <div key={agentId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{agent.name}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{agentId}</p>
-                    </div>
-                    <button
-                      onClick={() => addAgent(agentId)}
-                      disabled={!agentId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
                     </button>
                   </div>
                 );

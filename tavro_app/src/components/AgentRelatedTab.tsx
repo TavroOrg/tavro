@@ -7,7 +7,9 @@ import {
   Bot,
   Boxes,
   BriefcaseBusiness,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Link2,
   Loader2,
   Plus,
@@ -237,6 +239,24 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [aiModelSearch, setAiModelSearch] = useState('');
   const [allIntegrations, setAllIntegrations] = useState<IntegrationRecord[]>([]);
   const [integrationSearch, setIntegrationSearch] = useState('');
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const key = openDropdown;
+    const id = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      const el = dropdownRefs.current[key];
+      if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [openDropdown]);
   const lastBusinessImpactSignatureRef = useRef<string>('');
   const { useCases: allUseCases } = useUseCases();
   const { agents: catalogAgents } = useCatalog();
@@ -407,31 +427,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     );
   }, [liveProcesses]);
 
-  const availableApplications = useMemo(() => {
+  const filteredCatalogApplications = useMemo(() => {
     const q = applicationSearch.trim().toLowerCase();
-    return allApplications.filter(app => {
-      if (linkedApplicationIds.has(app.business_application_id)) return false;
-      if (!q) return true;
-      return (
-        app.business_application_id.toLowerCase().includes(q) ||
-        (app.application_name ?? '').toLowerCase().includes(q) ||
-        (app.application_description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allApplications, applicationSearch, linkedApplicationIds]);
+    if (!q) return allApplications;
+    return allApplications.filter(app =>
+      app.business_application_id.toLowerCase().includes(q) ||
+      (app.application_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allApplications, applicationSearch]);
 
-  const availableProcesses = useMemo(() => {
+  const filteredCatalogProcesses = useMemo(() => {
     const q = processSearch.trim().toLowerCase();
-    return allProcesses.filter(proc => {
-      if (linkedProcessIds.has(proc.business_process_id)) return false;
-      if (!q) return true;
-      return (
-        proc.business_process_id.toLowerCase().includes(q) ||
-        (proc.process_name ?? '').toLowerCase().includes(q) ||
-        (proc.process_description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allProcesses, processSearch, linkedProcessIds]);
+    if (!q) return allProcesses;
+    return allProcesses.filter(proc =>
+      proc.business_process_id.toLowerCase().includes(q) ||
+      (proc.process_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allProcesses, processSearch]);
 
   const linkedChildAgentIds = useMemo(() => {
     return new Set(
@@ -441,75 +453,57 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
     );
   }, [liveChildAgents]);
 
-  const availableChildAgents = useMemo(() => {
+  const filteredCatalogChildAgents = useMemo(() => {
     const q = childAgentSearch.trim().toLowerCase();
     const selfId = agentId ?? '';
     const source = allCompanyAgents.length > 0 ? allCompanyAgents : catalogAgents;
     return source.filter(a => {
       const id = a.identification?.agent_id ?? '';
       if (!id || id === selfId) return false;
-      if (linkedChildAgentIds.has(id)) return false;
       if (!q) return true;
-      return (
-        id.toLowerCase().includes(q) ||
-        (a.name ?? '').toLowerCase().includes(q) ||
-        (a.description ?? '').toLowerCase().includes(q)
-      );
+      return id.toLowerCase().includes(q) || (a.name ?? '').toLowerCase().includes(q);
     });
-  }, [allCompanyAgents, catalogAgents, childAgentSearch, linkedChildAgentIds, agentId]);
+  }, [allCompanyAgents, catalogAgents, childAgentSearch, agentId]);
 
   const linkedAiModelIds = useMemo(() => {
     return new Set(liveAiModels.map(m => m.ai_model_id).filter(Boolean));
   }, [liveAiModels]);
 
-  const availableAiModels = useMemo(() => {
+  const filteredCatalogAiModels = useMemo(() => {
     const q = aiModelSearch.trim().toLowerCase();
-    return allAiModels.filter(m => {
-      if (linkedAiModelIds.has(m.ai_model_id)) return false;
-      if (!q) return true;
-      return (
-        m.ai_model_id.toLowerCase().includes(q) ||
-        (m.model_name ?? '').toLowerCase().includes(q) ||
-        (m.description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allAiModels, aiModelSearch, linkedAiModelIds]);
+    if (!q) return allAiModels;
+    return allAiModels.filter(m =>
+      m.ai_model_id.toLowerCase().includes(q) ||
+      (m.model_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allAiModels, aiModelSearch]);
 
   const linkedIntegrationIds = useMemo(() => {
     return new Set(liveIntegrations.map(i => i.integration_id).filter(Boolean));
   }, [liveIntegrations]);
 
-  const availableIntegrations = useMemo(() => {
+  const filteredCatalogIntegrations = useMemo(() => {
     const q = integrationSearch.trim().toLowerCase();
-    return allIntegrations.filter(i => {
-      if (linkedIntegrationIds.has(i.integration_id)) return false;
-      if (!q) return true;
-      return (
-        i.integration_id.toLowerCase().includes(q) ||
-        (i.integration_name ?? '').toLowerCase().includes(q) ||
-        (i.integration_description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allIntegrations, integrationSearch, linkedIntegrationIds]);
+    if (!q) return allIntegrations;
+    return allIntegrations.filter(i =>
+      i.integration_id.toLowerCase().includes(q) ||
+      (i.integration_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allIntegrations, integrationSearch]);
 
   const linkedUseCaseIds = useMemo(() => {
     return new Set(linkedUseCases.map(uc => uc.identifier).filter(Boolean));
   }, [linkedUseCases]);
 
-  const availableUseCases = useMemo(() => {
+  const filteredCatalogUseCases = useMemo(() => {
     const q = useCaseSearch.trim().toLowerCase();
     const source = allCompanyUseCases.length > 0 ? allCompanyUseCases : allUseCases;
+    if (!q) return source;
     return source.filter(uc => {
       const id = uc.identifier ?? '';
-      if (!id || linkedUseCaseIds.has(id)) return false;
-      if (!q) return true;
-      return (
-        id.toLowerCase().includes(q) ||
-        (uc.name ?? '').toLowerCase().includes(q) ||
-        (uc.description ?? '').toLowerCase().includes(q)
-      );
+      return id.toLowerCase().includes(q) || (uc.name ?? '').toLowerCase().includes(q);
     });
-  }, [allCompanyUseCases, allUseCases, useCaseSearch, linkedUseCaseIds]);
+  }, [allCompanyUseCases, allUseCases, useCaseSearch]);
 
   const handleAddApplication = async (businessApplicationId: string) => {
     if (!agentId) return;
@@ -718,7 +712,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <AppWindow size={13} /> Applications ({displayedApplications.length})
               </h3>
-              {agentId && (
+              {agentId && !showingLiveData && (
                 <Link
                   to={createApplicationHref}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
@@ -726,6 +720,82 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   <Plus size={11} />
                   New Application
                 </Link>
+              )}
+              {showingLiveData && (
+                <div className="relative" ref={(el) => { dropdownRefs.current.applications = el; }}>
+                  <button
+                    onClick={() => setOpenDropdown(openDropdown === 'applications' ? null : 'applications')}
+                    className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                    aria-haspopup="listbox"
+                    aria-expanded={openDropdown === 'applications'}
+                  >
+                    <PlusCircle size={13} className="text-blue-600" />
+                    Add application
+                    <ChevronDown size={13} className="text-slate-400" />
+                  </button>
+                  {openDropdown === 'applications' && (
+                    <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            ref={(el) => { searchInputRefs.current.applications = el; }}
+                            value={applicationSearch}
+                            onChange={(e) => setApplicationSearch(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                            placeholder="Search application..."
+                            className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                        {filteredCatalogApplications.length === 0 && (
+                          <div className="px-4 py-6 text-center text-xs text-slate-400">No applications found</div>
+                        )}
+                        {filteredCatalogApplications.map((app) => {
+                          const isLinked = linkedApplicationIds.has(app.business_application_id);
+                          const addKey = `add-app:${app.business_application_id}`;
+                          const removeKey = `remove-app:${app.business_application_id}`;
+                          const busy = actingKey === addKey || actingKey === removeKey;
+                          return (
+                            <button
+                              key={app.business_application_id}
+                              type="button"
+                              role="option"
+                              aria-selected={isLinked}
+                              disabled={busy}
+                              onClick={() => (isLinked ? handleRemoveApplication(app.business_application_id) : handleAddApplication(app.business_application_id))}
+                              className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block font-semibold truncate">{app.application_name || app.business_application_id}</span>
+                                <span className="block text-[11px] font-mono text-slate-400 truncate">{app.business_application_id}</span>
+                              </span>
+                              {busy ? (
+                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                              ) : isLinked ? (
+                                <Check size={15} className="shrink-0 text-blue-600" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {agentId && (
+                        <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                          <Link
+                            to={createApplicationHref}
+                            onClick={() => setOpenDropdown(null)}
+                            className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Plus size={11} /> Add application
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="flex flex-col gap-3">
@@ -772,51 +842,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-
-            {showingLiveData && (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                    <Link2 size={12} /> Add Application Relation
-                  </p>
-                  <div className="relative w-full max-w-sm">
-                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      value={applicationSearch}
-                      onChange={(e) => setApplicationSearch(e.target.value)}
-                      placeholder="Filter applications..."
-                      className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
-                  </div>
-                </div>
-                <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                  {availableApplications.length === 0 && (
-                    <div className="p-3 text-xs text-slate-500">No available applications to link.</div>
-                  )}
-                  {availableApplications.map(app => {
-                    const addKey = `add-app:${app.business_application_id}`;
-                    return (
-                      <div key={app.business_application_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-700 truncate">
-                            {app.application_name || app.business_application_id}
-                          </p>
-                          <p className="text-[11px] font-mono text-slate-400 truncate">{app.business_application_id}</p>
-                        </div>
-                        <button
-                          onClick={() => handleAddApplication(app.business_application_id)}
-                          disabled={actingKey === addKey}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                          Link
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -828,7 +853,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <BriefcaseBusiness size={13} /> Processes ({displayedProcesses.length})
               </h3>
-              {agentId && (
+              {agentId && !showingLiveData && (
                 <Link
                   to={createProcessHref}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
@@ -836,6 +861,82 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   <Plus size={11} />
                   New Process
                 </Link>
+              )}
+              {showingLiveData && (
+                <div className="relative" ref={(el) => { dropdownRefs.current.processes = el; }}>
+                  <button
+                    onClick={() => setOpenDropdown(openDropdown === 'processes' ? null : 'processes')}
+                    className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                    aria-haspopup="listbox"
+                    aria-expanded={openDropdown === 'processes'}
+                  >
+                    <PlusCircle size={13} className="text-blue-600" />
+                    Add process
+                    <ChevronDown size={13} className="text-slate-400" />
+                  </button>
+                  {openDropdown === 'processes' && (
+                    <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            ref={(el) => { searchInputRefs.current.processes = el; }}
+                            value={processSearch}
+                            onChange={(e) => setProcessSearch(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                            placeholder="Search process..."
+                            className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                        {filteredCatalogProcesses.length === 0 && (
+                          <div className="px-4 py-6 text-center text-xs text-slate-400">No processes found</div>
+                        )}
+                        {filteredCatalogProcesses.map((proc) => {
+                          const isLinked = linkedProcessIds.has(proc.business_process_id);
+                          const addKey = `add-proc:${proc.business_process_id}`;
+                          const removeKey = `remove-proc:${proc.business_process_id}`;
+                          const busy = actingKey === addKey || actingKey === removeKey;
+                          return (
+                            <button
+                              key={proc.business_process_id}
+                              type="button"
+                              role="option"
+                              aria-selected={isLinked}
+                              disabled={busy}
+                              onClick={() => (isLinked ? handleRemoveProcess(proc.business_process_id) : handleAddProcess(proc.business_process_id))}
+                              className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block font-semibold truncate">{proc.process_name || proc.business_process_id}</span>
+                                <span className="block text-[11px] font-mono text-slate-400 truncate">{proc.business_process_id}</span>
+                              </span>
+                              {busy ? (
+                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                              ) : isLinked ? (
+                                <Check size={15} className="shrink-0 text-blue-600" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {agentId && (
+                        <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                          <Link
+                            to={createProcessHref}
+                            onClick={() => setOpenDropdown(null)}
+                            className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Plus size={11} /> Add process
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="flex flex-col gap-3">
@@ -901,51 +1002,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-
-            {showingLiveData && (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                    <Link2 size={12} /> Add Process Relation
-                  </p>
-                  <div className="relative w-full max-w-sm">
-                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      value={processSearch}
-                      onChange={(e) => setProcessSearch(e.target.value)}
-                      placeholder="Filter processes..."
-                      className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
-                  </div>
-                </div>
-                <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                  {availableProcesses.length === 0 && (
-                    <div className="p-3 text-xs text-slate-500">No available processes to link.</div>
-                  )}
-                  {availableProcesses.map(proc => {
-                    const addKey = `add-proc:${proc.business_process_id}`;
-                    return (
-                      <div key={proc.business_process_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-700 truncate">
-                            {proc.process_name || proc.business_process_id}
-                          </p>
-                          <p className="text-[11px] font-mono text-slate-400 truncate">{proc.business_process_id}</p>
-                        </div>
-                        <button
-                          onClick={() => handleAddProcess(proc.business_process_id)}
-                          disabled={actingKey === addKey}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                          Link
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -957,6 +1013,70 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <Bot size={13} /> Agent to Agent ({liveChildAgents.length})
               </h3>
+              <div className="relative" ref={(el) => { dropdownRefs.current.childAgents = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'childAgents' ? null : 'childAgents')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'childAgents'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add agent
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'childAgents' && (
+                  <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.childAgents = el; }}
+                          value={childAgentSearch}
+                          onChange={(e) => setChildAgentSearch(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search agent..."
+                          className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogChildAgents.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No agents found</div>
+                      )}
+                      {filteredCatalogChildAgents.map((a) => {
+                        const id = a.identification?.agent_id ?? '';
+                        const isLinked = linkedChildAgentIds.has(id);
+                        const addKey = `add-child:${id}`;
+                        const removeKey = `remove-child:${id}`;
+                        const busy = actingKey === addKey || actingKey === removeKey;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={busy}
+                            onClick={() => (isLinked ? handleRemoveChildAgent(id) : handleAddChildAgent(id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{a.name || id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex flex-col gap-3">
               {liveChildAgents.map((ca, idx) => {
@@ -1013,48 +1133,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                  <Link2 size={12} /> Add Agent to Agent Relation
-                </p>
-                <div className="relative w-full max-w-sm">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={childAgentSearch}
-                    onChange={(e) => setChildAgentSearch(e.target.value)}
-                    placeholder="Filter agents..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                {availableChildAgents.length === 0 && (
-                  <div className="p-3 text-xs text-slate-500">No available agents to link.</div>
-                )}
-                {availableChildAgents.map(a => {
-                  const id = a.identification?.agent_id ?? '';
-                  const addKey = `add-child:${id}`;
-                  return (
-                    <div key={id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-700 truncate">{a.name || id}</p>
-                        <p className="text-[11px] font-mono text-slate-400 truncate">{id}</p>
-                      </div>
-                      <button
-                        onClick={() => handleAddChildAgent(id)}
-                        disabled={actingKey === addKey}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                        Link
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
         )}
 
@@ -1066,7 +1144,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <Boxes size={13} /> AI Models ({liveAiModels.length})
               </h3>
-              {agentId && (
+              {agentId && !showingLiveData && (
                 <Link
                   to={`/ai-models/new?linkAgentId=${encodeURIComponent(agentId)}`}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
@@ -1074,6 +1152,82 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   <Plus size={11} />
                   New Model
                 </Link>
+              )}
+              {showingLiveData && (
+                <div className="relative" ref={(el) => { dropdownRefs.current.aiModels = el; }}>
+                  <button
+                    onClick={() => setOpenDropdown(openDropdown === 'aiModels' ? null : 'aiModels')}
+                    className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                    aria-haspopup="listbox"
+                    aria-expanded={openDropdown === 'aiModels'}
+                  >
+                    <PlusCircle size={13} className="text-blue-600" />
+                    Add AI model
+                    <ChevronDown size={13} className="text-slate-400" />
+                  </button>
+                  {openDropdown === 'aiModels' && (
+                    <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            ref={(el) => { searchInputRefs.current.aiModels = el; }}
+                            value={aiModelSearch}
+                            onChange={(e) => setAiModelSearch(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                            placeholder="Search AI model..."
+                            className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                        {filteredCatalogAiModels.length === 0 && (
+                          <div className="px-4 py-6 text-center text-xs text-slate-400">No AI models found</div>
+                        )}
+                        {filteredCatalogAiModels.map((m) => {
+                          const isLinked = linkedAiModelIds.has(m.ai_model_id);
+                          const addKey = `add-model:${m.ai_model_id}`;
+                          const removeKey = `remove-model:${m.ai_model_id}`;
+                          const busy = actingKey === addKey || actingKey === removeKey;
+                          return (
+                            <button
+                              key={m.ai_model_id}
+                              type="button"
+                              role="option"
+                              aria-selected={isLinked}
+                              disabled={busy}
+                              onClick={() => (isLinked ? handleRemoveAiModel(m.ai_model_id) : handleAddAiModel(m.ai_model_id))}
+                              className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block font-semibold truncate">{m.model_name || m.ai_model_id}</span>
+                                <span className="block text-[11px] font-mono text-slate-400 truncate">{m.ai_model_id}</span>
+                              </span>
+                              {busy ? (
+                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                              ) : isLinked ? (
+                                <Check size={15} className="shrink-0 text-blue-600" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {agentId && (
+                        <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                          <Link
+                            to={`/ai-models/new?linkAgentId=${encodeURIComponent(agentId)}`}
+                            onClick={() => setOpenDropdown(null)}
+                            className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Plus size={11} /> Add AI model
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="flex flex-col gap-3">
@@ -1122,47 +1276,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                  <Link2 size={12} /> Add AI Model Relation
-                </p>
-                <div className="relative w-full max-w-sm">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={aiModelSearch}
-                    onChange={(e) => setAiModelSearch(e.target.value)}
-                    placeholder="Filter models..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                {availableAiModels.length === 0 && (
-                  <div className="p-3 text-xs text-slate-500">No available AI models to link.</div>
-                )}
-                {availableAiModels.map(m => {
-                  const addKey = `add-model:${m.ai_model_id}`;
-                  return (
-                    <div key={m.ai_model_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-700 truncate">{m.model_name || m.ai_model_id}</p>
-                        <p className="text-[11px] font-mono text-slate-400 truncate">{m.ai_model_id}</p>
-                      </div>
-                      <button
-                        onClick={() => handleAddAiModel(m.ai_model_id)}
-                        disabled={actingKey === addKey}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                        Link
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
         )}
 
@@ -1174,15 +1287,81 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <BriefcaseBusiness size={13} /> AI Use Cases ({linkedUseCases.length})
               </h3>
-              {agentId && (
-                <Link
-                  to={createUseCaseHref}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
+              <div className="relative" ref={(el) => { dropdownRefs.current.useCases = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'useCases' ? null : 'useCases')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'useCases'}
                 >
-                  <Plus size={11} />
-                  New Use Case
-                </Link>
-              )}
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add use case
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'useCases' && (
+                  <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.useCases = el; }}
+                          value={useCaseSearch}
+                          onChange={(e) => setUseCaseSearch(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search use case..."
+                          className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogUseCases.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No use cases found</div>
+                      )}
+                      {filteredCatalogUseCases.map((uc) => {
+                        const id = uc.identifier ?? '';
+                        const isLinked = linkedUseCaseIds.has(id);
+                        const addKey = `add-uc:${id}`;
+                        const removeKey = `remove-uc:${id}`;
+                        const busy = actingKey === addKey || actingKey === removeKey;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!id || busy}
+                            onClick={() => (isLinked ? handleUnlinkUseCase(id) : handleLinkUseCase(id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{uc.name || id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {agentId && (
+                      <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                        <Link
+                          to={createUseCaseHref}
+                          onClick={() => setOpenDropdown(null)}
+                          className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          <Plus size={12} /> Add use case
+                        </Link>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-col gap-3">
@@ -1225,47 +1404,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                  <Link2 size={12} /> Add AI Use Case Relation
-                </p>
-                <div className="relative w-full max-w-sm">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={useCaseSearch}
-                    onChange={(e) => setUseCaseSearch(e.target.value)}
-                    placeholder="Filter use cases..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                {availableUseCases.length === 0 && (
-                  <div className="p-3 text-xs text-slate-500">No available AI use cases to link.</div>
-                )}
-                {availableUseCases.map(uc => {
-                  const addKey = `add-uc:${uc.identifier}`;
-                  return (
-                    <div key={uc.identifier} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-700 truncate">{uc.name || uc.identifier}</p>
-                        <p className="text-[11px] font-mono text-slate-400 truncate">{uc.identifier}</p>
-                      </div>
-                      <button
-                        onClick={() => handleLinkUseCase(uc.identifier)}
-                        disabled={actingKey === addKey}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                        Link
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
         )}
 
@@ -1275,7 +1413,7 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <Link2 size={13} /> Integrations ({liveIntegrations.length})
               </h3>
-              {agentId && (
+              {agentId && !showingLiveData && (
                 <Link
                   to={createIntegrationHref}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700"
@@ -1283,6 +1421,82 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   <Plus size={11} />
                   New Integration
                 </Link>
+              )}
+              {showingLiveData && (
+                <div className="relative" ref={(el) => { dropdownRefs.current.integrations = el; }}>
+                  <button
+                    onClick={() => setOpenDropdown(openDropdown === 'integrations' ? null : 'integrations')}
+                    className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                    aria-haspopup="listbox"
+                    aria-expanded={openDropdown === 'integrations'}
+                  >
+                    <PlusCircle size={13} className="text-blue-600" />
+                    Add integration
+                    <ChevronDown size={13} className="text-slate-400" />
+                  </button>
+                  {openDropdown === 'integrations' && (
+                    <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            ref={(el) => { searchInputRefs.current.integrations = el; }}
+                            value={integrationSearch}
+                            onChange={(e) => setIntegrationSearch(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                            placeholder="Search integration..."
+                            className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                        {filteredCatalogIntegrations.length === 0 && (
+                          <div className="px-4 py-6 text-center text-xs text-slate-400">No integrations found</div>
+                        )}
+                        {filteredCatalogIntegrations.map((i) => {
+                          const isLinked = linkedIntegrationIds.has(i.integration_id);
+                          const addKey = `add-integration:${i.integration_id}`;
+                          const removeKey = `remove-integration:${i.integration_id}`;
+                          const busy = actingKey === addKey || actingKey === removeKey;
+                          return (
+                            <button
+                              key={i.integration_id}
+                              type="button"
+                              role="option"
+                              aria-selected={isLinked}
+                              disabled={busy}
+                              onClick={() => (isLinked ? handleRemoveIntegration(i.integration_id) : handleAddIntegration(i.integration_id))}
+                              className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block font-semibold truncate">{i.integration_name || i.integration_id}</span>
+                                <span className="block text-[11px] font-mono text-slate-400 truncate">{i.integration_id}</span>
+                              </span>
+                              {busy ? (
+                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                              ) : isLinked ? (
+                                <Check size={15} className="shrink-0 text-blue-600" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {agentId && (
+                        <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                          <Link
+                            to={createIntegrationHref}
+                            onClick={() => setOpenDropdown(null)}
+                            className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Plus size={11} /> Add integration
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -1331,47 +1545,6 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   No linked integrations.
                 </div>
               )}
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                  <Link2 size={12} /> Add Integration Relation
-                </p>
-                <div className="relative w-full max-w-sm">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={integrationSearch}
-                    onChange={(e) => setIntegrationSearch(e.target.value)}
-                    placeholder="Filter integrations..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-              <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                {availableIntegrations.length === 0 && (
-                  <div className="p-3 text-xs text-slate-500">No available integrations to link.</div>
-                )}
-                {availableIntegrations.map(i => {
-                  const addKey = `add-integration:${i.integration_id}`;
-                  return (
-                    <div key={i.integration_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-700 truncate">{i.integration_name || i.integration_id}</p>
-                        <p className="text-[11px] font-mono text-slate-400 truncate">{i.integration_id}</p>
-                      </div>
-                      <button
-                        onClick={() => handleAddIntegration(i.integration_id)}
-                        disabled={actingKey === addKey}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {actingKey === addKey ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                        Link
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
           </div>
         )}
