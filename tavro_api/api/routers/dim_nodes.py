@@ -326,6 +326,19 @@ async def soft_delete_dim_node(node_id: UUID, tenant_id: str = Depends(require_t
         await db.rollback()
         raise HTTPException(status_code=404, detail="Node not found or already deleted")
 
+    # Soft-delete all edges involving this node so they no longer appear in Blueprint Relationships
+    try:
+        await db.execute(
+            text("""
+                UPDATE twin.dim_edge
+                SET valid_to = now()
+                WHERE (source_id = :id OR target_id = :id) AND valid_to IS NULL
+            """),
+            {"id": str(node_id)},
+        )
+    except Exception:
+        pass  # Non-fatal
+
     # Cascade hard-delete to the linked business entity (non-fatal)
     try:
         if entity_data:
