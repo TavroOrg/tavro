@@ -559,6 +559,32 @@ class BusinessRelationsApi {
     });
   }
 
+  async linkApplicationToProcess(processId: string, applicationId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}/applications`, {
+      method: 'POST',
+      body: JSON.stringify({ business_application_id: applicationId }),
+    });
+  }
+
+  async unlinkApplicationFromProcess(processId: string, applicationId: string): Promise<void> {
+    await req(`/processes/${encodeURIComponent(processId)}/applications/${encodeURIComponent(applicationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async linkProcessToApplication(applicationId: string, processId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}/processes`, {
+      method: 'POST',
+      body: JSON.stringify({ business_process_id: processId }),
+    });
+  }
+
+  async unlinkProcessFromApplication(applicationId: string, processId: string): Promise<void> {
+    await req(`/applications/${encodeURIComponent(applicationId)}/processes/${encodeURIComponent(processId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async listAgentTables(agentId: string, search?: string): Promise<{ items: AgentTableRecord[]; total: number }> {
     const params = new URLSearchParams();
     if (search?.trim()) params.set('q', search.trim());

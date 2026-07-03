@@ -30,6 +30,7 @@ import { aiModelApi } from '../services/aiModelApi';
 import type {
   BusinessApplicationRecord,
   BusinessApplicationUpsertPayload,
+  BusinessProcessRecord,
 } from '../types/businessRelations';
 import type { AiModelRecord } from '../types/aiModel';
 import type { DimEdge, SourceRef } from '../types/blueprint';
@@ -40,7 +41,7 @@ import { agentApi } from '../services/agentApi';
 import { blueprintApi } from '../services/blueprintApi';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models' | 'blueprint';
+type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models' | 'related_processes' | 'blueprint';
 type Option = { label: string; value: string };
 
 const EMERGENCY_TIER_OPTIONS: Option[] = [
@@ -419,6 +420,11 @@ const BusinessApplicationViewPage: React.FC = () => {
   const [actingModel, setActingModel] = useState<string | null>(null);
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
+  const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
+  const [searchProcesses, setSearchProcesses] = useState('');
+  const [actingProcess, setActingProcess] = useState<string | null>(null);
+  const [processRelationError, setProcessRelationError] = useState<string | null>(null);
+
   // Blueprint
   const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
   const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
@@ -433,6 +439,10 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    businessRelationsApi.listProcesses(undefined, activeCompany?.id).then(setAllProcesses).catch(() => setAllProcesses([]));
   }, [activeCompany?.id]);
 
   const linkedModels = application?.related_ai_models ?? [];
@@ -467,6 +477,24 @@ const BusinessApplicationViewPage: React.FC = () => {
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [openDropdown]);
+
+  const linkedProcesses = application?.related_processes ?? [];
+  const linkedProcessIds = useMemo(
+    () => new Set(linkedProcesses.map(p => p.business_process_id).filter(Boolean)),
+    [linkedProcesses],
+  );
+  const availableProcesses = useMemo(() => {
+    const q = searchProcesses.trim().toLowerCase();
+    return allProcesses.filter(p => {
+      if (linkedProcessIds.has(p.business_process_id)) return false;
+      if (!q) return true;
+      return (
+        p.business_process_id.toLowerCase().includes(q) ||
+        (p.process_name ?? '').toLowerCase().includes(q) ||
+        (p.process_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allProcesses, searchProcesses, linkedProcessIds]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -919,6 +947,34 @@ const BusinessApplicationViewPage: React.FC = () => {
     }
   };
 
+  const addProcess = async (processId: string) => {
+    if (!application) return;
+    setActingProcess(processId);
+    setProcessRelationError(null);
+    try {
+      await businessRelationsApi.linkProcessToApplication(application.business_application_id, processId);
+      await load();
+    } catch (err: any) {
+      setProcessRelationError(toUserMessage(err));
+    } finally {
+      setActingProcess(null);
+    }
+  };
+
+  const removeProcess = async (processId: string) => {
+    if (!application) return;
+    setActingProcess(processId);
+    setProcessRelationError(null);
+    try {
+      await businessRelationsApi.unlinkProcessFromApplication(application.business_application_id, processId);
+      await load();
+    } catch (err: any) {
+      setProcessRelationError(toUserMessage(err));
+    } finally {
+      setActingProcess(null);
+    }
+  };
+
   const addUseCase = async (useCaseId: string) => {
     if (!application) return;
     setActingUseCase(useCaseId);
@@ -1176,6 +1232,16 @@ const BusinessApplicationViewPage: React.FC = () => {
               }`}
             >
               Related AI Models({linkedModels.length})
+            </button>
+            <button
+              onClick={() => setTab('related_processes')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_processes'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Processes({linkedProcesses.length})
             </button>
             <button
               onClick={() => setTab('blueprint')}
@@ -1985,6 +2051,88 @@ const BusinessApplicationViewPage: React.FC = () => {
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                       Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+      {tab === 'related_processes' && application && (
+        <div className="flex flex-col gap-4">
+          {processRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {processRelationError}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Currently Related Processes ({linkedProcesses.length})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {linkedProcesses.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No processes linked.</div>
+              )}
+              {linkedProcesses.map((process, idx) => {
+                const processId = process.business_process_id || `missing-${idx}`;
+                const busy = actingProcess === processId;
+                return (
+                  <div key={`${processId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/processes/${encodeURIComponent(processId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {process.process_name || processId}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{processId}</p>
+                    </div>
+                    <button
+                      onClick={() => removeProcess(processId)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add Process Relation</p>
+              <div className="relative w-full sm:w-[320px] max-w-full ml-auto">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={searchProcesses}
+                  onChange={(e) => setSearchProcesses(e.target.value)}
+                  placeholder="Filter processes..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableProcesses.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available processes to link.</div>
+              )}
+              {availableProcesses.map(process => {
+                const busy = actingProcess === process.business_process_id;
+                return (
+                  <div key={process.business_process_id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{process.process_name || process.business_process_id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{process.business_process_id}</p>
+                    </div>
+                    <button
+                      onClick={() => addProcess(process.business_process_id)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
                     </button>
                   </div>
                 );

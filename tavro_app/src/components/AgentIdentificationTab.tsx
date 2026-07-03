@@ -4,6 +4,16 @@ import { User, Tag, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
+// Some connectors (e.g. Microsoft 365) store descriptions as raw HTML markup.
+// Strip tags and decode entities for clean plain-text display.
+const stripHtml = (html?: string | null): string => {
+    if (!html) return '';
+    const withoutTags = html.replace(/<[^>]*>/g, ' ');
+    const el = document.createElement('textarea');
+    el.innerHTML = withoutTags;
+    return el.value.replace(/\s+/g, ' ').trim();
+};
+
 interface AgentIdentificationTabProps {
     agent: AgentData;
     isEditing?: boolean;
@@ -80,7 +90,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
 
                 {isEditing ? (
                     <textarea
-                        value={editDescription ?? agent.description ?? ''}
+                        value={editDescription ?? stripHtml(agent.description) ?? ''}
                         onChange={e => onEditDescriptionChange?.(e.target.value)}
                         rows={6}
                         className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 mb-4 bg-blue-50/40 outline-none resize-none rounded-r-lg"
@@ -88,7 +98,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
                 ) : isInlineDescription && inlineEdit ? (
                     <div className="flex items-start gap-2 mb-4">
                         <textarea
-                            value={inlineEdit.value}
+                            value={stripHtml(inlineEdit.value)}
                             onChange={e => onInlineValueChange?.(e.target.value)}
                             rows={6}
                             className="w-full text-sm text-slate-600 leading-relaxed border-l-2 border-blue-400 pl-4 py-1 bg-blue-50/40 outline-none resize-none rounded-r-lg"
@@ -102,7 +112,7 @@ export const AgentIdentificationTab: React.FC<AgentIdentificationTabProps> = ({
                         title="Double-click to edit"
                         className="text-sm text-slate-600 leading-relaxed border-l-2 border-blue-200 pl-4 py-1 mb-4 cursor-text rounded-r-lg hover:bg-blue-50/40 transition-colors"
                     >
-                        {agent.description || '-'}
+                        {stripHtml(agent.description) || '-'}
                     </p>
                 )}
 
