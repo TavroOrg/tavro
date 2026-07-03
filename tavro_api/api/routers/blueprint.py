@@ -945,8 +945,8 @@ async def save_researched_nodes(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     saved = skipped = 0
-    # (category, label, summary, tags, node_id)
-    to_sync: list[tuple[str, str, str | None, list, str | None]] = []
+    # (category, label, summary, tags, node_id, visibility, sensitive)
+    to_sync: list[tuple[str, str, str | None, list, str | None, str | None, bool | None]] = []
 
     for node in body.nodes:
         dim_type_id = type_map.get(node.category)
@@ -963,7 +963,7 @@ async def save_researched_nodes(
         if existing:
             skipped += 1
             if is_entity:
-                to_sync.append((node.category, node.label, node.summary, node.tags, str(existing["id"])))
+                to_sync.append((node.category, node.label, node.summary, node.tags, str(existing["id"]), node.visibility, node.sensitive))
             continue
 
         ins = await db.execute(
@@ -981,7 +981,7 @@ async def save_researched_nodes(
         node_id = str(ins_row["id"]) if ins_row else None
         saved += 1
         if is_entity:
-            to_sync.append((node.category, node.label, node.summary, node.tags, node_id))
+            to_sync.append((node.category, node.label, node.summary, node.tags, node_id, node.visibility, node.sensitive))
 
     await db.commit()
 
@@ -994,10 +994,10 @@ async def save_researched_nodes(
         company_name = co.get("name")
         company_tenant_id = co.get("tenant_id")
         from api.routers.business_relations import sync_dim_node_to_business_entity
-        for category, label, summary, tags, node_id in to_sync:
+        for category, label, summary, tags, node_id, visibility, sensitive in to_sync:
             await sync_dim_node_to_business_entity(
                 db, body.company_id, company_name, category, label, summary, tags,
-                company_tenant_id, node_id=node_id,
+                company_tenant_id, node_id=node_id, visibility=visibility, sensitive=sensitive,
             )
 
     return {"saved": saved, "skipped": skipped}
@@ -1019,8 +1019,8 @@ async def seed_template(
     type_rows = await db.execute(text("SELECT id, category FROM twin.dim_type ORDER BY category"))
     type_map  = {row.category: str(row.id) for row in type_rows}
     seeded = skipped = 0
-    # (category, label, summary, tags, node_id)
-    to_sync: list[tuple[str, str, str | None, list, str | None]] = []
+    # (category, label, summary, tags, node_id, visibility, sensitive)
+    to_sync: list[tuple[str, str, str | None, list, str | None, str | None, bool | None]] = []
 
     for node in template_nodes:
         dim_type_id = type_map.get(node["category"])
@@ -1029,6 +1029,8 @@ async def seed_template(
 
         category = node["category"]
         is_entity = category in ("application", "process", "integration")
+        node_visibility = node.get("visibility", "internal")
+        node_sensitive = node.get("sensitive", False)
 
         # Check existence and capture id in one query
         ex_row = await db.execute(
@@ -1039,7 +1041,7 @@ async def seed_template(
         if existing:
             skipped += 1
             if is_entity:
-                to_sync.append((category, node["label"], node["summary"], node.get("tags", []), str(existing["id"])))
+                to_sync.append((category, node["label"], node["summary"], node.get("tags", []), str(existing["id"]), node_visibility, node_sensitive))
             continue
 
         ins = await db.execute(
@@ -1053,14 +1055,14 @@ async def seed_template(
              "label":       node["label"],
              "summary":     node["summary"],
              "tags":        json.dumps(node["tags"]),
-             "visibility":  node.get("visibility", "internal"),
-             "sensitive":   node.get("sensitive", False)},
+             "visibility":  node_visibility,
+             "sensitive":   node_sensitive},
         )
         ins_row = ins.mappings().first()
         node_id = str(ins_row["id"]) if ins_row else None
         seeded += 1
         if is_entity:
-            to_sync.append((category, node["label"], node["summary"], node.get("tags", []), node_id))
+            to_sync.append((category, node["label"], node["summary"], node.get("tags", []), node_id, node_visibility, node_sensitive))
 
     await db.commit()
 
@@ -1073,10 +1075,10 @@ async def seed_template(
         company_name = co.get("name")
         company_tenant_id = co.get("tenant_id")
         from api.routers.business_relations import sync_dim_node_to_business_entity
-        for category, label, summary, tags, node_id in to_sync:
+        for category, label, summary, tags, node_id, visibility, sensitive in to_sync:
             await sync_dim_node_to_business_entity(
                 db, body.company_id, company_name, category, label, summary, tags,
-                company_tenant_id, node_id=node_id,
+                company_tenant_id, node_id=node_id, visibility=visibility, sensitive=sensitive,
             )
 
     return {

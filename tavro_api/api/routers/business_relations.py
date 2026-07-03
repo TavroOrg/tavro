@@ -455,8 +455,8 @@ async def _upsert_dim_node_for_entity(
 
     if existing_row:
         node_id = str(existing_row["id"])
-        set_parts = ["summary = :summary", "updated_at = NOW()"]
-        params: dict = {"summary": summary, "id": node_id}
+        set_parts = ["label = :label", "summary = :summary", "updated_at = NOW()"]
+        params: dict = {"label": label, "summary": summary, "id": node_id}
         if tags is not None:
             set_parts.append("tags = cast(:tags as jsonb)")
             params["tags"] = json.dumps(tags)

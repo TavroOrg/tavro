@@ -300,19 +300,54 @@ async def update_dim_node(
 
 @router.delete("/{node_id}", status_code=204)
 async def soft_delete_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
-    """Soft delete — sets valid_to = now() rather than deleting the row."""
+    """Soft delete — sets valid_to = now() rather than deleting the row, then hard-deletes the linked entity."""
     await _assert_node_owned(db, str(node_id), tenant_id)
+
+    # Read entity FK columns before soft-deleting so we can cascade to the entity table.
+    entity_data = None
+    try:
+        entity_row = await db.execute(
+            text("""
+                SELECT dn.business_application_id, dn.business_process_id, dn.integration_id
+                FROM twin.dim_node dn
+                WHERE dn.id = :id AND dn.valid_to IS NULL
+            """),
+            {"id": str(node_id)},
+        )
+        entity_data = entity_row.mappings().first()
+    except Exception:
+        await db.rollback()
 
     result = await db.execute(
         text("UPDATE twin.dim_node SET valid_to = now() WHERE id = :id AND valid_to IS NULL"),
         {"id": str(node_id)},
     )
-    await db.commit()
     if result.rowcount == 0:
+        await db.rollback()
         raise HTTPException(status_code=404, detail="Node not found or already deleted")
 
-    # The entity_id is stored on twin.dim_node (not on entity tables), so soft-deleting the
-    # node is sufficient — no entity-side cleanup is required.
+    # Cascade hard-delete to the linked business entity (non-fatal)
+    try:
+        if entity_data:
+            if entity_data.get("business_application_id"):
+                await db.execute(
+                    text("DELETE FROM core.business_applications WHERE business_application_id = :eid"),
+                    {"eid": entity_data["business_application_id"]},
+                )
+            elif entity_data.get("business_process_id"):
+                await db.execute(
+                    text("DELETE FROM core.business_processes WHERE business_process_id = :eid"),
+                    {"eid": entity_data["business_process_id"]},
+                )
+            elif entity_data.get("integration_id"):
+                await db.execute(
+                    text("DELETE FROM core.business_integrations WHERE integration_id = :eid"),
+                    {"eid": entity_data["integration_id"]},
+                )
+    except Exception:
+        pass  # Entity delete is best-effort; dim_node soft-delete is already done
+
+    await db.commit()
 
 
 # ── Linked Business Entity ────────────────────────────────────────────────────
