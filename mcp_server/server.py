@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import time
 import hashlib
@@ -23,7 +23,6 @@ from contextlib import asynccontextmanager
 
 from tavro_library.agent_library import AgentMetadataExporter
 from tavro_library.users import get_approved_user
-from tavro_library.datahub_search import search_datahub_context
 
 TAVRO_API_URL = os.getenv("TAVRO_API_URL")
 COPILOT_SERVER_URL = os.getenv("COPILOT_SERVER_URL")
@@ -1394,140 +1393,6 @@ async def convert_spark_idea(
     except ValueError as ve:
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
-        return {"error": "INTERNAL_ERROR", "details": str(e)}
-
-
-# =============================================================
-# ── DATAHUB METADATA SEARCH (RAG over pgvector) ───────────────
-# =============================================================
-
-
-@core.tool(name="search_datahub_metadata")
-async def search_datahub_metadata(
-    original_prompt: str,
-    *,
-    query: Optional[str] = None,
-    schema: Optional[str] = None,
-    vendor: Optional[str] = None,
-    application: Optional[str] = None,
-    industry: Optional[str] = None,
-    entity_type: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-    count_only: bool = False,
-    company_id: Optional[str] = None,
-    limit: int = 5,
-) -> Dict[str, Any]:
-    """
-    Search DataHub metadata (tables, datasets, columns, schemas, tags) that has
-    been embedded into pgvector. Use this whenever the user asks a question
-    about the data catalog that needs grounding in actual DataHub metadata —
-    table/column names, schemas, table counts, data lineage, sensitive-data
-    classification, or which datasets belong to a given application/vendor/
-    schema. Always call this tool BEFORE answering a DataHub/catalog question —
-    never guess table/column counts or names from memory.
-
-    Two retrieval modes — pick the one that matches the question, or combine them:
-
-    1. SEMANTIC (`query`): fuzzy/topical questions where you don't know exact
-       names, e.g. "columns that look like PII", "tables related to claims
-       processing". Ranks by embedding similarity and returns only the top
-       `limit` matches — it is NOT exhaustive, so never use it alone for
-       "how many" or "list all" questions.
-
-    2. EXACT FILTERS (`schema`, `vendor`, `application`, `industry`,
-       `entity_type`, `tags`): use whenever the user names a specific,
-       already-known schema/vendor/application/industry — e.g. "how many
-       tables are there in pc schema", "list all tables in the pc schema",
-       "what tables does Guidewire vendor have". These match metadata exactly
-       (not by similarity), so they are exhaustive. For pure counting
-       questions ("how many..."), set `count_only=True` and read the
-       `count` field — don't count rows returned by a semantic search.
-
-    You can combine filters with `query` (e.g. schema="pc" + query="sensitive
-    columns") to semantically rank within an exact-filtered subset.
-
-    Ground your answer strictly in the returned `chunk_text`/`metadata`, and
-    cite table/column names exactly as returned. If results don't contain what's
-    needed, say so rather than inventing an answer.
-
-    Args:
-        original_prompt (str): REQUIRED. Copy the user's EXACT verbatim message here word-for-word.
-        query (str, optional): Focused natural-language search text for semantic ranking.
-                      Omit when you only need an exact filter match/count.
-        schema (str, optional): Exact schema name to filter to, e.g. "pc".
-        vendor (str, optional): Exact vendor name to filter to, e.g. "Guidewire".
-        application (str, optional): Exact application name to filter to.
-        industry (str, optional): Exact industry name to filter to.
-        entity_type (str, optional): Exact entity type to filter to (e.g. "dataset").
-        tags (List[str], optional): Match rows tagged with any of these tags.
-        count_only (bool, optional): If True, return only the matching row count
-                      (no result rows) — use for "how many" questions.
-        company_id (str, optional): Active company's UUID, to additionally include
-                      that company's DataHub context. Global/template metadata is
-                      always included regardless of this value.
-        limit (int, optional): Max number of matching rows to return (ignored when
-                      count_only). Defaults to 5 for semantic search, up to 100 for
-                      filter-only browsing.
-
-    Returns:
-        Dict[str, Any]: When count_only: { "count": int }. Otherwise:
-        { "results": [ { urn, entity_type, label, chunk_text, metadata, similarity }, ... ],
-        "count": int }. "metadata" includes industry, vendor, application, schema,
-        category, tags, column_names, columns, sensitive_columns, column_count.
-        On failure: { "error": ..., "details": ... }.
-    """
-    print(
-        f"DataHub metadata search requested | query={query!r} schema={schema!r} "
-        f"vendor={vendor!r} application={application!r} industry={industry!r} "
-        f"entity_type={entity_type!r} tags={tags!r} count_only={count_only} "
-        f"company_id={company_id}"
-    )
-    try:
-        token = get_access_token()
-        tenant_id = token.claims.get("tenant_id") if token else None
-        log_tool_call(
-            "search_datahub_metadata",
-            original_prompt,
-            {
-                "query": query,
-                "schema": schema,
-                "vendor": vendor,
-                "application": application,
-                "industry": industry,
-                "entity_type": entity_type,
-                "tags": tags,
-                "count_only": count_only,
-                "company_id": company_id,
-                "limit": limit,
-            },
-            tenant_id,
-        )
-
-        has_filter = any([query, schema, vendor, application, industry, entity_type, tags])
-        if not has_filter:
-            return {
-                "error": "VALIDATION_ERROR",
-                "details": "Provide a query or at least one exact filter (schema, vendor, application, industry, entity_type, tags).",
-            }
-
-        return search_datahub_context(
-            query=query,
-            company_id=company_id,
-            schema=schema,
-            vendor=vendor,
-            application=application,
-            industry=industry,
-            entity_type=entity_type,
-            tags=tags,
-            limit=limit,
-            count_only=count_only,
-        )
-
-    except ValueError as ve:
-        print("Validation error: %s", ve)
-        return {"error": "VALIDATION_ERROR", "details": str(ve)}
-    except Exception as e:
-        print(f"Unexpected error in search_datahub_metadata: {e}")
         return {"error": "INTERNAL_ERROR", "details": str(e)}
 
 
