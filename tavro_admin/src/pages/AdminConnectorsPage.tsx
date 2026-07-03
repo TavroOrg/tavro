@@ -21,7 +21,7 @@ import logoAgent365    from '../assets/logos/logo-agent365.png';
 interface ConnectorField {
     key: string;
     label: string;
-    type: 'text' | 'password';
+    type: 'text' | 'password' | 'number';
     placeholder?: string;
 }
 
@@ -141,6 +141,7 @@ const PROVIDERS: ProviderDef[] = [
                     { key: 'tenant_id',     label: 'Azure Tenant ID',     type: 'text' },
                     { key: 'client_id',     label: 'Azure Client ID',     type: 'text' },
                     { key: 'client_secret', label: 'Azure Client Secret', type: 'password' },
+                    { key: 'num_agents',    label: 'No. of agents to fetch', type: 'number', placeholder: 'Agents to fetch' },
                 ],
             },
         ],
@@ -495,6 +496,10 @@ const AdminConnectorsPage: React.FC = () => {
             return;
         }
 
+        if (cap.isAgent365 && !(credentials[cap.connectorId]?.num_agents ?? '').trim()) {
+            setRunState(prev => ({ ...prev, [cap.id]: { status: 'error', result: { status: 'error', error: 'Select no. of agents to fetch before running.' } } }));
+            return;
+        }
         // Outbound-specific guards — show red error in result area, still allow retry
         if (cap.isOutbound) {
             const enabled = getCred(cap.connectorId, 'enabled');
@@ -821,7 +826,14 @@ const AdminConnectorsPage: React.FC = () => {
                                     <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">{field.label}</label>
                                     {field.type === 'password'
                                         ? <PasswordInput value={getCred(activeCaps[0].connectorId, field.key)} onChange={v => setCred(activeCaps[0].connectorId, field.key, v)} placeholder={field.placeholder} />
-                                        : <input type="text" value={getCred(activeCaps[0].connectorId, field.key)} onChange={e => setCred(activeCaps[0].connectorId, field.key, e.target.value)} placeholder={field.placeholder ?? ''} className={inputBase} />
+                                        : <input
+                                            type={field.type === 'number' ? 'number' : 'text'}
+                                            min={field.type === 'number' ? 1 : undefined}
+                                            value={getCred(activeCaps[0].connectorId, field.key)}
+                                            onChange={e => setCred(activeCaps[0].connectorId, field.key, e.target.value)}
+                                            placeholder={field.placeholder ?? ''}
+                                            className={inputBase}
+                                          />
                                     }
                                 </div>
                             ))}
