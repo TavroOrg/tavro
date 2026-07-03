@@ -11,8 +11,10 @@ services:
   # ── PostgreSQL 16 + AGE + pgvector + Risk schemas ────────────────────────────
   tavro-postgres:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.postgres.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.postgres.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
       args:
         AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
@@ -58,8 +60,10 @@ services:
   # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
   tavro-api:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.api.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.api.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -218,8 +222,10 @@ services:
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.app.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.app.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
@@ -503,8 +509,10 @@ services:
 # ── MCP Server — FastMCP Authentication & Tool Exposure ──────────────────────  
   risk-mcp-server:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.mcp.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.mcp.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
     container_name: risk-mcp-server
     restart: unless-stopped
     deploy:

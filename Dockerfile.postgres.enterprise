@@ -57,12 +57,12 @@ ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
 # sorts every *.sql file, and zz_enterprise_compliance_audit.sql's "zz_"
 # prefix guarantees it runs after tavro_setup_all.sql (whose tables it
 # depends on: twin.company, twin.dim_node, twin.set_updated_at()).
-# Requires the enterprise repo to be a sibling of tavro/:
-#   parent/
-#   ├── tavro/       ← this repo
-#   └── enterprise/  ← enterprise repo
-COPY tavro/sql/       /docker-entrypoint-initdb.d/sql/
-COPY enterprise/sql/  /docker-entrypoint-initdb.d/sql/
+# The enterprise repo is pulled in as a named build context (see
+# docker-compose.yml's additional_contexts: enterprise=../enterprise) rather
+# than widening this build's own context, so each repo's .dockerignore keeps
+# applying to itself.
+COPY sql/                       /docker-entrypoint-initdb.d/sql/
+COPY --from=enterprise sql/     /docker-entrypoint-initdb.d/sql/
 
 RUN printf '#!/bin/sh\n\
 set -eu\n\

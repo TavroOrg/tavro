@@ -11,13 +11,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc
 
-COPY tavro/dist/tavro_agent_card-0.1.1-py3-none-any.whl .
+COPY dist/tavro_agent_card-0.1.1-py3-none-any.whl .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install tavro_agent_card-0.1.1-py3-none-any.whl
 
-COPY tavro/worker.py .
-COPY tavro/requirements.txt .
+COPY worker.py .
+COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
@@ -26,22 +26,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install fastapi
 
-COPY tavro/catalog_connector ./catalog_connector
-COPY tavro/mcp_server ./mcp_server
-COPY tavro/tavro_library ./tavro_library
-COPY tavro/tavro_app/copilot-server/templates ./templates
-COPY tavro/utils ./utils
-COPY tavro/services ./services
+COPY catalog_connector ./catalog_connector
+COPY mcp_server ./mcp_server
+COPY tavro_library ./tavro_library
+COPY tavro_app/copilot-server/templates ./templates
+COPY utils ./utils
+COPY services ./services
 
-# Enterprise MCP tool — requires the enterprise repo to be a sibling of tavro/:
-#   parent/
-#   ├── tavro/       ← this repo
-#   └── enterprise/  ← enterprise repo
-# Copied verbatim into the app's own package tree, mirroring
-# Dockerfile.api.enterprise's approach: the source file's existing
+# Enterprise MCP tool — pulled in as a named build context (see
+# docker-compose.yml's additional_contexts: enterprise=../enterprise) rather
+# than widening this build's own context, so each repo's .dockerignore keeps
+# applying to itself. Copied verbatim into the app's own package tree,
+# mirroring Dockerfile.api.enterprise's approach: the source file's existing
 # `from api.llm import ...` import resolves naturally once api/llm.py lands
 # under /app (as a namespace package — no separate PYTHONPATH entry needed).
-COPY enterprise/api/llm.py             /app/api/llm.py
-COPY enterprise/mcp/compliance_tools.py /app/mcp_server/enterprise_compliance_tools.py
+COPY --from=enterprise api/llm.py             /app/api/llm.py
+COPY --from=enterprise mcp/compliance_tools.py /app/mcp_server/enterprise_compliance_tools.py
 
 CMD ["python", "-m", "mcp_server.server"]

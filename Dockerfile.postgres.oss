@@ -54,7 +54,7 @@ ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
 
 # SQL bootstrap: copy and execute every SQL file under sql/ on first DB init.
 # OSS-only — no compliance/audit schema here, see Dockerfile.postgres.enterprise.
-COPY tavro/sql/ /docker-entrypoint-initdb.d/sql/
+COPY sql/ /docker-entrypoint-initdb.d/sql/
 
 RUN printf '#!/bin/sh\n\
 set -eu\n\

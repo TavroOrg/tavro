@@ -1,10 +1,10 @@
 FROM node:20-alpine AS builder
 WORKDIR /build
 
-COPY tavro/tavro_app/package*.json ./
+COPY tavro_app/package*.json ./
 RUN npm ci
 
-COPY tavro/tavro_app/ .
+COPY tavro_app/ .
 
 ARG VITE_TWIN_API_URL=""
 ENV VITE_TWIN_API_URL=$VITE_TWIN_API_URL
@@ -23,6 +23,6 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /build/dist /usr/share/nginx/html
-COPY tavro/tavro_app/nginx.conf /etc/nginx/conf.d/default.conf
+COPY tavro_app/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
