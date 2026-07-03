@@ -311,6 +311,14 @@ class SuggestIntegrationDescriptionRequest(BaseModel):
     integration_name: str
 
 
+class LinkApplicationToProcessRequest(BaseModel):
+    business_application_id: str
+
+
+class LinkProcessToApplicationRequest(BaseModel):
+    business_process_id: str
+
+
 class SuggestIntegrationDescriptionResponse(BaseModel):
     description: str
 
@@ -1170,6 +1178,48 @@ def _normalize_related_ai_models(row: dict[str, Any]) -> None:
     row["related_ai_models"] = normalized
 
 
+def _normalize_related_applications(row: dict[str, Any]) -> None:
+    raw = _json_list(row.get("related_applications"))
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rel in raw:
+        if not isinstance(rel, dict):
+            continue
+        app_id = _text_or_none(rel.get("business_application_id"))
+        if not app_id or app_id in seen:
+            continue
+        seen.add(app_id)
+        normalized.append(
+            {
+                "business_application_id": app_id,
+                "application_name": _text_or_none(rel.get("application_name")),
+                "description": _text_or_none(rel.get("description")),
+            }
+        )
+    row["related_applications"] = normalized
+
+
+def _normalize_related_business_processes(row: dict[str, Any]) -> None:
+    raw = _json_list(row.get("related_processes"))
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rel in raw:
+        if not isinstance(rel, dict):
+            continue
+        process_id = _text_or_none(rel.get("business_process_id"))
+        if not process_id or process_id in seen:
+            continue
+        seen.add(process_id)
+        normalized.append(
+            {
+                "business_process_id": process_id,
+                "process_name": _text_or_none(rel.get("process_name")),
+                "description": _text_or_none(rel.get("description")),
+            }
+        )
+    row["related_processes"] = normalized
+
+
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     row["tags"] = _json_list(row.get("tags"))
@@ -1195,6 +1245,7 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     _normalize_related_ai_models(row)
+    _normalize_related_business_processes(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
@@ -1256,6 +1307,7 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     _normalize_related_ai_models(row)
+    _normalize_related_applications(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
@@ -2284,6 +2336,7 @@ async def _fetch_applications(
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
+        "proc_rel.related_processes",
     ]
 
     has_ara = False
@@ -2651,6 +2704,68 @@ async def _fetch_applications(
             ) mdl_rel ON TRUE
         """
 
+    has_app_proc_rel = await _table_exists(db, "core", "business_process_business_applications")
+    has_business_processes = await _table_exists(db, "core", "business_processes")
+    app_proc_tenant_filter = ""
+    if tenant_id and has_app_proc_rel:
+        app_proc_cols = await _table_columns(db, "core", "business_process_business_applications")
+        if "tenant_id" in app_proc_cols:
+            app_proc_tenant_filter = "AND rproc.tenant_id = :tenant_id"
+    if has_app_proc_rel:
+        proc_name_expr = "bp.process_name" if has_business_processes else "NULL::text"
+        proc_desc_expr = "bp.process_description" if has_business_processes else "NULL::text"
+        _app_proc_tenant = "AND bp.tenant_id = :tenant_id" if tenant_id and has_business_processes else ""
+        proc_join = (
+            f"LEFT JOIN core.business_processes bp ON LOWER(TRIM(bp.business_process_id)) = LOWER(TRIM(rproc.business_process_id)) {_app_proc_tenant}"
+            if has_business_processes else ""
+        )
+        app_proc_company_filter = ""
+        if filter_related_by_company_id and has_business_processes:
+            proc_catalog_cols = await _table_columns(db, "core", "business_processes")
+            if "company_id" in proc_catalog_cols:
+                app_proc_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.business_processes bp_cf"
+                    " WHERE bp_cf.business_process_id = rproc.business_process_id"
+                    " AND (bp_cf.company_id = :related_company_id"
+                    "  OR bp_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(bp_cf.company_id AS text)) = ''"
+                    "  OR bp_cf.company_id = 'None')"
+                    ")"
+                )
+        proc_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'business_process_id', related.business_process_id,
+                            'process_name', related.process_name,
+                            'description', related.description
+                        )
+                        ORDER BY LOWER(COALESCE(related.process_name, related.business_process_id))
+                    ) AS related_processes
+                FROM (
+                    SELECT DISTINCT
+                        rproc.business_process_id,
+                        COALESCE({proc_name_expr}, rproc.process_name, rproc.business_process_id) AS process_name,
+                        {proc_desc_expr} AS description
+                    FROM core.business_process_business_applications rproc
+                    {proc_join}
+                    WHERE rproc.business_application_id = ba.business_application_id
+                      AND rproc.business_process_id IS NOT NULL
+                      AND rproc.business_process_id <> ''
+                      {app_proc_tenant_filter}
+                      {app_proc_company_filter}
+                ) related
+            ) proc_rel ON TRUE
+        """
+    else:
+        proc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_processes
+            ) proc_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(ba.application_name, ba.business_application_id))"
@@ -2697,6 +2812,7 @@ async def _fetch_applications(
             {rel_join_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {proc_rel_sql}
             {company_risk_lateral_sql}
             {company_risk_class_lateral_sql}
             {where_sql}
@@ -2759,6 +2875,7 @@ async def _fetch_processes(
         "proc_rel.related_processes",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
+        "app_rel.related_applications",
         _col_expr("bp", process_cols, "dim_node_id"),
         _col_expr("bp", process_cols, "sensitive"),
         _col_expr("bp", process_cols, "visibility"),
@@ -3196,6 +3313,68 @@ async def _fetch_processes(
             ) mdl_rel ON TRUE
         """
 
+    has_proc_app_rel = await _table_exists(db, "core", "business_process_business_applications")
+    has_business_applications = await _table_exists(db, "core", "business_applications")
+    proc_app_tenant_filter = ""
+    if tenant_id and has_proc_app_rel:
+        proc_app_cols = await _table_columns(db, "core", "business_process_business_applications")
+        if "tenant_id" in proc_app_cols:
+            proc_app_tenant_filter = "AND rapp.tenant_id = :tenant_id"
+    if has_proc_app_rel:
+        app_name_expr = "ba.application_name" if has_business_applications else "NULL::text"
+        app_desc_expr = "ba.application_description" if has_business_applications else "NULL::text"
+        _proc_app_tenant = "AND ba.tenant_id = :tenant_id" if tenant_id and has_business_applications else ""
+        app_join = (
+            f"LEFT JOIN core.business_applications ba ON LOWER(TRIM(ba.business_application_id)) = LOWER(TRIM(rapp.business_application_id)) {_proc_app_tenant}"
+            if has_business_applications else ""
+        )
+        proc_app_company_filter = ""
+        if filter_related_by_company_id and has_business_applications:
+            app_catalog_cols = await _table_columns(db, "core", "business_applications")
+            if "company_id" in app_catalog_cols:
+                proc_app_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.business_applications ba_cf"
+                    " WHERE ba_cf.business_application_id = rapp.business_application_id"
+                    " AND (ba_cf.company_id = :related_company_id"
+                    "  OR ba_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(ba_cf.company_id AS text)) = ''"
+                    "  OR ba_cf.company_id = 'None')"
+                    ")"
+                )
+        app_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'business_application_id', related.business_application_id,
+                            'application_name', related.application_name,
+                            'description', related.description
+                        )
+                        ORDER BY LOWER(COALESCE(related.application_name, related.business_application_id))
+                    ) AS related_applications
+                FROM (
+                    SELECT DISTINCT
+                        rapp.business_application_id,
+                        COALESCE({app_name_expr}, rapp.application_name, rapp.business_application_id) AS application_name,
+                        {app_desc_expr} AS description
+                    FROM core.business_process_business_applications rapp
+                    {app_join}
+                    WHERE rapp.business_process_id = bp.business_process_id
+                      AND rapp.business_application_id IS NOT NULL
+                      AND rapp.business_application_id <> ''
+                      {proc_app_tenant_filter}
+                      {proc_app_company_filter}
+                ) related
+            ) app_rel ON TRUE
+        """
+    else:
+        app_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_applications
+            ) app_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(bp.process_name, bp.business_process_id))"
@@ -3247,6 +3426,7 @@ async def _fetch_processes(
             {proc_rel_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {app_rel_sql}
             {proc_company_risk_lateral_sql}
             {proc_company_risk_class_lateral_sql}
             {where_sql}
@@ -4305,6 +4485,92 @@ _INT_UPLOAD_TEXT_COLS: set[str] = {
 }
 
 
+@router.post("/applications/{application_id}/processes", tags=["Applications"], summary="Link Process to Application")
+async def link_process_to_application(
+    application_id: str,
+    body: LinkProcessToApplicationRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    app_id = (application_id or "").strip()
+    proc_id = (body.business_process_id or "").strip()
+    tenant_id = _tenant(request)
+    if not proc_id:
+        raise HTTPException(status_code=400, detail="business_process_id is required.")
+    try:
+        app_row = await db.execute(
+            text("SELECT business_application_id, application_name, company_id FROM core.business_applications WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid)) LIMIT 1"),
+            {"aid": app_id},
+        )
+        application = app_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+        proc_row = await db.execute(
+            text("SELECT business_process_id, process_name FROM core.business_processes WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid)) LIMIT 1"),
+            {"pid": proc_id},
+        )
+        process = proc_row.mappings().first()
+        if not process:
+            raise HTTPException(status_code=404, detail=f"Process '{proc_id}' not found.")
+
+        await db.execute(
+            text("""
+                INSERT INTO core.business_process_business_applications
+                    (tenant_id, company_id, business_process_id, process_name, business_application_id, application_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :cid, :pid, :pname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (business_process_id, business_application_id)
+                DO UPDATE SET
+                    process_name = EXCLUDED.process_name,
+                    application_name = EXCLUDED.application_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "cid": application.get("company_id"),
+                "pid": proc_id,
+                "pname": str(process.get("process_name") or proc_id),
+                "aid": app_id,
+                "aname": str(application.get("application_name") or app_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "business_application_id": app_id, "business_process_id": proc_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to link process to application: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to link process to application. Please try again.")
+
+
+@router.delete("/applications/{application_id}/processes/{process_id}", tags=["Applications"], summary="Unlink Process from Application")
+async def unlink_process_from_application(
+    application_id: str,
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app_id = (application_id or "").strip()
+    proc_id = (process_id or "").strip()
+    try:
+        result = await db.execute(
+            text("""
+                DELETE FROM core.business_process_business_applications
+                WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  AND LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid))
+            """),
+            {"aid": app_id, "pid": proc_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "business_application_id": app_id, "business_process_id": proc_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to unlink process from application: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unlink process from application. Please try again.")
+
+
 @router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")
 async def upload_applications_csv(
     request: Request,
@@ -4858,6 +5124,92 @@ async def delete_process(
             pass
 
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.post("/processes/{process_id}/applications", tags=["Processes"], summary="Link Application to Process")
+async def link_application_to_process(
+    process_id: str,
+    body: LinkApplicationToProcessRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    proc_id = (process_id or "").strip()
+    app_id = (body.business_application_id or "").strip()
+    tenant_id = _tenant(request)
+    if not app_id:
+        raise HTTPException(status_code=400, detail="business_application_id is required.")
+    try:
+        proc_row = await db.execute(
+            text("SELECT business_process_id, process_name, company_id FROM core.business_processes WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid)) LIMIT 1"),
+            {"pid": proc_id},
+        )
+        process = proc_row.mappings().first()
+        if not process:
+            raise HTTPException(status_code=404, detail=f"Process '{proc_id}' not found.")
+
+        app_row = await db.execute(
+            text("SELECT business_application_id, application_name FROM core.business_applications WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid)) LIMIT 1"),
+            {"aid": app_id},
+        )
+        application = app_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+        await db.execute(
+            text("""
+                INSERT INTO core.business_process_business_applications
+                    (tenant_id, company_id, business_process_id, process_name, business_application_id, application_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :cid, :pid, :pname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (business_process_id, business_application_id)
+                DO UPDATE SET
+                    process_name = EXCLUDED.process_name,
+                    application_name = EXCLUDED.application_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "cid": process.get("company_id"),
+                "pid": proc_id,
+                "pname": str(process.get("process_name") or proc_id),
+                "aid": app_id,
+                "aname": str(application.get("application_name") or app_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "business_process_id": proc_id, "business_application_id": app_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to link application to process: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to link application to process. Please try again.")
+
+
+@router.delete("/processes/{process_id}/applications/{application_id}", tags=["Processes"], summary="Unlink Application from Process")
+async def unlink_application_from_process(
+    process_id: str,
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    proc_id = (process_id or "").strip()
+    app_id = (application_id or "").strip()
+    try:
+        result = await db.execute(
+            text("""
+                DELETE FROM core.business_process_business_applications
+                WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+            """),
+            {"pid": proc_id, "aid": app_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "business_process_id": proc_id, "business_application_id": app_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to unlink application from process: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unlink application from process. Please try again.")
 
 
 @router.post("/processes/upload", status_code=200, tags=["Processes"], summary="Bulk Upload Processes CSV")

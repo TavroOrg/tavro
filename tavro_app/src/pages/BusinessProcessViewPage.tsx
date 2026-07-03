@@ -26,6 +26,7 @@ import { useCaseApi } from '../services/useCaseApi';
 import { fetchAllPages } from '../utils/fetchAllPages';
 import { aiModelApi } from '../services/aiModelApi';
 import type {
+  BusinessApplicationRecord,
   BusinessProcessRecord,
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
@@ -38,7 +39,7 @@ import { agentApi } from '../services/agentApi';
 import { blueprintApi } from '../services/blueprintApi';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models' | 'blueprint';
+type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models' | 'related_applications' | 'blueprint';
 type Option = { label: string; value: string };
 
 const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
@@ -362,6 +363,11 @@ const BusinessProcessViewPage: React.FC = () => {
   const [actingModel, setActingModel] = useState<string | null>(null);
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
+  const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
+  const [searchApplications, setSearchApplications] = useState('');
+  const [actingApplication, setActingApplication] = useState<string | null>(null);
+  const [applicationRelationError, setApplicationRelationError] = useState<string | null>(null);
+
   // Blueprint
   const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
   const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
@@ -376,6 +382,10 @@ const BusinessProcessViewPage: React.FC = () => {
 
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setAllApplications).catch(() => setAllApplications([]));
   }, [activeCompany?.id]);
 
   const linkedModels = process?.related_ai_models ?? [];
@@ -395,6 +405,24 @@ const BusinessProcessViewPage: React.FC = () => {
       );
     });
   }, [allModels, searchModels, linkedModelIds]);
+
+  const linkedApplications = process?.related_applications ?? [];
+  const linkedApplicationIds = useMemo(
+    () => new Set(linkedApplications.map(a => a.business_application_id).filter(Boolean)),
+    [linkedApplications],
+  );
+  const availableApplications = useMemo(() => {
+    const q = searchApplications.trim().toLowerCase();
+    return allApplications.filter(a => {
+      if (linkedApplicationIds.has(a.business_application_id)) return false;
+      if (!q) return true;
+      return (
+        a.business_application_id.toLowerCase().includes(q) ||
+        (a.application_name ?? '').toLowerCase().includes(q) ||
+        (a.application_description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allApplications, searchApplications, linkedApplicationIds]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -907,6 +935,34 @@ const BusinessProcessViewPage: React.FC = () => {
     }
   };
 
+  const addApplication = async (applicationId: string) => {
+    if (!process) return;
+    setActingApplication(applicationId);
+    setApplicationRelationError(null);
+    try {
+      await businessRelationsApi.linkApplicationToProcess(process.business_process_id, applicationId);
+      await load();
+    } catch (err: any) {
+      setApplicationRelationError(toUserMessage(err));
+    } finally {
+      setActingApplication(null);
+    }
+  };
+
+  const removeApplication = async (applicationId: string) => {
+    if (!process) return;
+    setActingApplication(applicationId);
+    setApplicationRelationError(null);
+    try {
+      await businessRelationsApi.unlinkApplicationFromProcess(process.business_process_id, applicationId);
+      await load();
+    } catch (err: any) {
+      setApplicationRelationError(toUserMessage(err));
+    } finally {
+      setActingApplication(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-slate-500">
@@ -943,6 +999,7 @@ const BusinessProcessViewPage: React.FC = () => {
   const relatedProcessCount = relatedProcessRows.length;
   const relatedUseCaseCount = relatedUseCases.length;
   const relatedAiModelCount = linkedModels.length;
+  const relatedApplicationCount = linkedApplications.length;
   const businessCriticalityMeta = getImpactMeta(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS);
   const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
   const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
@@ -1159,6 +1216,16 @@ const BusinessProcessViewPage: React.FC = () => {
               }`}
             >
               Related AI Models({relatedAiModelCount})
+            </button>
+            <button
+              onClick={() => setTab('related_applications')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_applications'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Applications({relatedApplicationCount})
             </button>
             <button
               onClick={() => setTab('blueprint')}
@@ -1954,6 +2021,88 @@ const BusinessProcessViewPage: React.FC = () => {
                     </div>
                     <button
                       onClick={() => addModel(model.ai_model_id)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                      Link
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+      {tab === 'related_applications' && process && (
+        <div className="flex flex-col gap-4">
+          {applicationRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {applicationRelationError}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Currently Related Applications ({relatedApplicationCount})</p>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {linkedApplications.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No applications linked.</div>
+              )}
+              {linkedApplications.map((application, idx) => {
+                const applicationId = application.business_application_id || `missing-${idx}`;
+                const busy = actingApplication === applicationId;
+                return (
+                  <div key={`${applicationId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/applications/${encodeURIComponent(applicationId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {application.application_name || applicationId}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
+                    </div>
+                    <button
+                      onClick={() => removeApplication(applicationId)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-bold text-slate-700">Add Application Relation</p>
+              <div className="relative w-full sm:w-[320px] max-w-full ml-auto">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={searchApplications}
+                  onChange={(e) => setSearchApplications(e.target.value)}
+                  placeholder="Filter applications..."
+                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+              {availableApplications.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No available applications to link.</div>
+              )}
+              {availableApplications.map(application => {
+                const busy = actingApplication === application.business_application_id;
+                return (
+                  <div key={application.business_application_id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{application.application_name || application.business_application_id}</p>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{application.business_application_id}</p>
+                    </div>
+                    <button
+                      onClick={() => addApplication(application.business_application_id)}
                       disabled={busy}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
