@@ -15,6 +15,16 @@ import { toUserMessage, notifyError } from '../utils/errorUtils';
 const hasNonBlankText = (value: unknown): boolean =>
     typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
 
+// Some connectors (e.g. Microsoft 365) store descriptions as raw HTML markup.
+// Strip tags and decode entities for clean plain-text display.
+const stripHtml = (html?: string | null): string => {
+    if (!html) return '';
+    const withoutTags = html.replace(/<[^>]*>/g, ' ');
+    const el = document.createElement('textarea');
+    el.innerHTML = withoutTags;
+    return el.value.replace(/\s+/g, ' ').trim();
+};
+
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
 const EMPTY_APPLICATION_CARD = {
@@ -627,7 +637,7 @@ const AgentViewPage: React.FC = () => {
     const handleStartEdit = () => {
         if (!agent) return;
         setEditName(agent.name ?? '');
-        setEditDescription(agent.description ?? '');
+        setEditDescription(stripHtml(agent.description) || agent.description || '');
         setEditInstruction(agent.identification?.instruction ?? '');
         setEditAgentType(agent.agent_type ?? 'Config-driven');
         setEditError(null);
@@ -680,7 +690,7 @@ const AgentViewPage: React.FC = () => {
             field === 'name'
                 ? agent.name ?? ''
                 : field === 'description'
-                    ? agent.description ?? ''
+                    ? (stripHtml(agent.description) || agent.description || '')
                     : agent.identification?.instruction ?? '';
         setEditError(null);
         setInlineEdit({ field, value });
