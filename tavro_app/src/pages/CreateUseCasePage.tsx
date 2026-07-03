@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import { useCaseApi } from '../services/useCaseApi';
+import { useLookupValues } from '../context/LookupContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { toUserMessage } from '../utils/errorUtils';
 
@@ -13,7 +14,6 @@ const PRIORITIES = [
     '4 - Low',
     '5 - Planning',
 ];
-const STATUSES = ['Proposed', 'In Review', 'Active', 'Deprecated'];
 
 const CreateUseCasePage: React.FC = () => {
     const navigate = useNavigate();
@@ -33,12 +33,21 @@ const CreateUseCasePage: React.FC = () => {
         problem_statement: '',
         expected_benefits: '',
         priority: '3 - Moderate',
-        status: 'Proposed',
+        status: '',
     });
     const [saving, setSaving] = useState(false);
     const [generatingDescription, setGeneratingDescription] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
+    const statuses = useLookupValues('ai_use_cases', 'status');
+
+    useEffect(() => {
+        const def = statuses.find(v => v.is_default);
+        if (def) set('status', def.value);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [statuses]);
+
+    const statusOptions = statuses.map(s => ({ value: s.value, label: s.label }));
 
     const set = (field: string, value: string) =>
         setForm(prev => ({ ...prev, [field]: value }));
@@ -73,6 +82,7 @@ const CreateUseCasePage: React.FC = () => {
                 business_problem_statement: form.problem_statement.trim(),
                 expected_benefits: form.expected_benefits.trim(),
                 priority: form.priority,
+                status: form.status,
                 ...(form.owner.trim() && { use_case_owner: form.owner.trim() }),
             }, activeCompany?.id, activeCompany?.name);
             if (linkAgentId && created?.use_case_id) {
@@ -259,21 +269,25 @@ const CreateUseCasePage: React.FC = () => {
                         {/* Status */}
                         <div>
                             <label className={labelCls}>Status</label>
-                            <div className="flex gap-3 flex-wrap">
-                                {STATUSES.map(s => (
-                                    <button
-                                        key={s}
-                                        type="button"
-                                        onClick={() => set('status', s)}
-                                        className={`px-5 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${form.status === s
-                                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
-                                            }`}
-                                    >
-                                        {s}
-                                    </button>
-                                ))}
-                            </div>
+                            {statusOptions.length ? (
+                                <div className="flex gap-3 flex-wrap">
+                                    {statusOptions.map(s => (
+                                        <button
+                                            key={s.value}
+                                            type="button"
+                                            onClick={() => set('status', s.value)}
+                                            className={`px-5 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${form.status === s.value
+                                                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                                }`}
+                                        >
+                                            {s.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-sm text-slate-400 italic px-1 py-2.5">No status options configured</div>
+                            )}
                         </div>
 
                         {/* Problem Statement */}

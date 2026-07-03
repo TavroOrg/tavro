@@ -3,6 +3,7 @@ import { readRoadmapConfig } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
+import { useLookupValues } from '../context/LookupContext';
 import {
     Building2,
     ShieldCheck,
@@ -305,6 +306,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
+    const statusOptions = useLookupValues('ai_use_cases', 'status');
 
     const handleGenerateReport = async () => {
         if (!uc.identifier) return;
@@ -606,7 +608,33 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 </h1>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                                <StatusBadge status={statusLabel} />
+                                {inlineEdit?.field === 'status' ? (
+                                    <div className="flex items-center gap-2">
+                                        <select
+                                            value={inlineEdit.value}
+                                            onChange={e => onInlineValueChange?.(e.target.value)}
+                                            autoFocus
+                                            className="text-xs font-bold rounded-lg border border-blue-300 px-2 py-1 outline-none focus:ring-2 focus:ring-blue-400/30 bg-white"
+                                        >
+                                            {inlineEdit.value && !statusOptions.some(o => o.value === inlineEdit.value) && (
+                                                <option value={inlineEdit.value}>{inlineEdit.value}</option>
+                                            )}
+                                            {statusOptions.map(o => (
+                                                <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                        </select>
+                                        {renderInlineActions('status')}
+                                    </div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => onStartInlineEdit?.('status', statusLabel)}
+                                        title="Click to change status"
+                                        className="bg-transparent border-none p-0 cursor-pointer"
+                                    >
+                                        <StatusBadge status={statusLabel} />
+                                    </button>
+                                )}
                                 {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
