@@ -8,6 +8,7 @@ import {
   Trash2, Download, Bot, User, Copy, Check, Info, FileText, Search, Code2,
 } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
+import { appLogger } from '../services/logger';
 import AgentClaudeSupportTab from '../components/AgentClaudeSupportTab';
 import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, inferDocType } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
@@ -18,8 +19,22 @@ import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSync } from '../hooks/useChatSync';
 import {
   INFRA_PROVIDERS, PROVIDER_MODELS, OBSERVATION_TYPES,
-  type InfraProvider, type PlaygroundAgentSkill, type PlaygroundObservation,
+  type InfraProvider, type PlaygroundObservation, type PlaygroundAgentSkill,
 } from '../types/playground';
+
+// Skills are handed off from AgentViewPage via sessionStorage (too large/structured
+// for a URL query param) — read them back by the same agentId key used to store them.
+const readStoredAgentSkills = (agentId: string): PlaygroundAgentSkill[] | undefined => {
+  if (!agentId) return undefined;
+  try {
+    const raw = sessionStorage.getItem(`tavro_playground_agent_skills:${agentId}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -82,17 +97,6 @@ const ObservationBadge: React.FC<{
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-const readStoredAgentSkills = (agentId: string | null): PlaygroundAgentSkill[] => {
-  if (!agentId) return [];
-  try {
-    const raw = sessionStorage.getItem(`tavro_playground_agent_skills:${agentId}`);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
 const PlaygroundPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -120,21 +124,20 @@ const PlaygroundPage: React.FC = () => {
     const agentType       = searchParams.get('agentType') || undefined;
     const agentInternalId = searchParams.get('agentInternalId') || undefined;
     const tenantId        = searchParams.get('tenantId') || undefined;
-    const storedSkills    = readStoredAgentSkills(id);
 
     if (sessionId) {
       // Reconnecting to an existing session: restore agent config, session data,
       // then switch to the requested tab (e.g. 'summary').
       if (id && title) loadFromAgent(
         id,
-        decodeURIComponent(title),
-        desc ? decodeURIComponent(desc) : undefined,
-        instruction ? decodeURIComponent(instruction) : undefined,
+        title,
+        desc ?? undefined,
+        instruction ?? undefined,
         agentType,
         agentInternalId,
         id,
         tenantId,
-        storedSkills,
+        readStoredAgentSkills(id),
       );
       reconnectSession(sessionId).then(() => {
         setActiveTab(tab ?? 'chat');
@@ -143,14 +146,14 @@ const PlaygroundPage: React.FC = () => {
       // Normal agent launch with no existing session.
       loadFromAgent(
         id,
-        decodeURIComponent(title),
-        desc ? decodeURIComponent(desc) : undefined,
-        instruction ? decodeURIComponent(instruction) : undefined,
+        title,
+        desc ?? undefined,
+        instruction ?? undefined,
         agentType,
         agentInternalId,
         id,
         tenantId,
-        storedSkills,
+        readStoredAgentSkills(id),
       );
       if (tab) setActiveTab(tab);
     }
@@ -247,7 +250,9 @@ const PlaygroundPage: React.FC = () => {
     const description = agent.description || agent.agent_description || '';
     const instruction = agent.identification?.instruction || agent.instruction || '';
     const agentType   = agent.agent_type || undefined;
-    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType, agentInternalId, agentId, tenantId, agent.skills ?? []);
+    const skills: PlaygroundAgentSkill[] | undefined =
+      Array.isArray(agent.skills) && agent.skills.length ? agent.skills : readStoredAgentSkills(agentId);
+    loadFromAgent(agentId, name, description || undefined, instruction || undefined, agentType, agentInternalId, agentId, tenantId, skills);
     setAgentDropdown(false);
     setAgentSearch('');
     setActiveTab('config');
@@ -475,7 +480,7 @@ const PlaygroundPage: React.FC = () => {
         <button className={navCls('config')} onClick={() => setActiveTab('config')}>
           <Settings2 size={13} /> Configure
         </button>
-        <button className={navCls('chat')} onClick={() => setActiveTab('chat')}>
+        <button className={navCls('chat')} onClick={() => { appLogger.info('Opened Playground tab: Interact'); setActiveTab('chat'); }}>
           <MessageSquare size={13} /> Interact
           {messages.filter(m => m.role !== 'system').length > 0 && (
             <span className="ml-1 text-[9px] font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-full">
@@ -483,7 +488,7 @@ const PlaygroundPage: React.FC = () => {
             </span>
           )}
         </button>
-        <button className={navCls('observations')} onClick={() => setActiveTab('observations')}>
+        <button className={navCls('observations')} onClick={() => { appLogger.info('Opened Playground tab: Observations'); setActiveTab('observations'); }}>
           <ClipboardList size={13} /> Observations
           {observations.length > 0 && (
             <span className="ml-1 text-[9px] font-bold bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 px-1.5 py-0.5 rounded-full">
@@ -491,7 +496,7 @@ const PlaygroundPage: React.FC = () => {
             </span>
           )}
         </button>
-        <button className={navCls('summary' as any)} onClick={() => { setActiveTab('summary' as any); if (!summary && sessionId) generateSummary(); }}>
+        <button className={navCls('summary' as any)} onClick={() => { appLogger.info('Opened Playground tab: Summary'); setActiveTab('summary' as any); if (!summary && sessionId) generateSummary(); }}>
           <Loader2 size={13} className={summaryLoading ? 'animate-spin' : ''} /> Summary
           {summary && <span className="ml-1 text-[9px] font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full">Ready</span>}
         </button>

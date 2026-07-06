@@ -79,6 +79,9 @@ ON core.ai_model_business_applications (ai_model_id, business_application_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_ai_model_business_processes
 ON core.ai_model_business_processes (ai_model_id, business_process_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_process_business_applications
+ON core.business_process_business_applications (business_process_id, business_application_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 

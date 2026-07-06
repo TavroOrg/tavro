@@ -3,6 +3,16 @@ import { AgentData } from '../types/agent';
 import { getAgentRiskLevel } from '../utils/agentRisk';
 import { Search, ChevronRight, ShieldAlert, CheckCircle2, LayoutGrid, List, Bot, Loader2 } from 'lucide-react';
 
+// Some connectors (e.g. Microsoft 365) store descriptions as raw HTML markup.
+// Strip tags and decode entities for clean plain-text display.
+const stripHtml = (html?: string | null): string => {
+    if (!html) return '';
+    const withoutTags = html.replace(/<[^>]*>/g, ' ');
+    const el = document.createElement('textarea');
+    el.innerHTML = withoutTags;
+    return el.value.replace(/\s+/g, ' ').trim();
+};
+
 interface AgentCatalogProps {
     agents: AgentData[];
     searchTerm: string;
@@ -95,7 +105,7 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                         {agent.name}
                                     </h3>
                                     <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed mb-4 flex-1">
-                                        {agent.description || 'No description provided for this agent.'}
+                                        {stripHtml(agent.description) || 'No description provided for this agent.'}
                                     </p>
 
                                     <div className="flex flex-wrap gap-1.5 mt-auto">
@@ -159,7 +169,7 @@ const AgentCatalog: React.FC<AgentCatalogProps> = ({ agents, searchTerm, onSearc
                                         </div>
                                     </div>
                                     <div className="text-sm text-slate-500 dark:text-slate-400 truncate pr-8">
-                                        {agent.description || 'No description provided.'}
+                                        {stripHtml(agent.description) || 'No description provided.'}
                                     </div>
                                     <div className="text-xs text-slate-400 dark:text-slate-500 font-medium">
                                         v{agent.version || '1.0'}

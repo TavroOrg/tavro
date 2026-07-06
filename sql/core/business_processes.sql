@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     company_id TEXT,
     company_name TEXT,
     tags JSONB DEFAULT '[]'::jsonb,
-    dim_node_id UUID,
     sensitive BOOLEAN DEFAULT FALSE,
     visibility TEXT DEFAULT 'internal',
     valid_from TIMESTAMP,
