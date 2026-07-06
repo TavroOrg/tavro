@@ -313,7 +313,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                     aria-expanded={openDropdown === 'tools'}
                                 >
                                     <PlusCircle size={13} className="text-blue-600" />
-                                    Add tool
+                                    Add Tool
                                     <ChevronDown size={13} className="text-slate-400" />
                                 </button>
                                 {openDropdown === 'tools' && (
@@ -517,7 +517,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                                         aria-expanded={openDropdown === 'tables'}
                                                     >
                                                         <PlusCircle size={13} className="text-blue-600" />
-                                                        Add table
+                                                        Add Table
                                                         <ChevronDown size={13} className="text-slate-400" />
                                                     </button>
                                                     {openDropdown === 'tables' && (
@@ -678,7 +678,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                                         aria-expanded={openDropdown === 'columns'}
                                                     >
                                                         <PlusCircle size={13} className="text-blue-600" />
-                                                        Add column
+                                                        Add Column
                                                         <ChevronDown size={13} className="text-slate-400" />
                                                     </button>
                                                     {openDropdown === 'columns' && (

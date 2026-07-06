@@ -1765,7 +1765,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   aria-expanded={openDropdown === 'agents'}
                 >
                   <PlusCircle size={13} className="text-blue-600" />
-                  Add agent
+                  Add Agent
                   <ChevronDown size={13} className="text-slate-400" />
                 </button>
                 {openDropdown === 'agents' && (
@@ -1822,7 +1822,7 @@ const BusinessProcessViewPage: React.FC = () => {
                         onClick={() => setOpenDropdown(null)}
                         className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                       >
-                        <Plus size={11} /> Add agent
+                        <Plus size={11} /> Add Agent
                       </Link>
                     </div>
                   </div>
@@ -1949,7 +1949,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   aria-expanded={openDropdown === 'useCases'}
                 >
                   <PlusCircle size={13} className="text-blue-600" />
-                  Add use case
+                  Add Use Case
                   <ChevronDown size={13} className="text-slate-400" />
                 </button>
                 {openDropdown === 'useCases' && (
@@ -2006,7 +2006,7 @@ const BusinessProcessViewPage: React.FC = () => {
                         onClick={() => setOpenDropdown(null)}
                         className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                       >
-                        <Plus size={11} /> Add use case
+                        <Plus size={11} /> Add Use Case
                       </Link>
                     </div>
                   </div>
@@ -2069,7 +2069,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   aria-expanded={openDropdown === 'models'}
                 >
                   <PlusCircle size={13} className="text-blue-600" />
-                  Add AI model
+                  Add AI Model
                   <ChevronDown size={13} className="text-slate-400" />
                 </button>
                 {openDropdown === 'models' && (
@@ -2125,7 +2125,7 @@ const BusinessProcessViewPage: React.FC = () => {
                         onClick={() => setOpenDropdown(null)}
                         className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                       >
-                        <Plus size={11} /> Add AI model
+                        <Plus size={11} /> Add AI Model
                       </Link>
                     </div>
                   </div>
@@ -2182,7 +2182,7 @@ const BusinessProcessViewPage: React.FC = () => {
                   aria-expanded={openDropdown === 'applications'}
                 >
                   <PlusCircle size={13} className="text-blue-600" />
-                  Add application
+                  Add Application
                   <ChevronDown size={13} className="text-slate-400" />
                 </button>
                 {openDropdown === 'applications' && (
@@ -2238,7 +2238,7 @@ const BusinessProcessViewPage: React.FC = () => {
                         onClick={() => setOpenDropdown(null)}
                         className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                       >
-                        <Plus size={11} /> Add application
+                        <Plus size={11} /> Add Application
                       </Link>
                     </div>
                   </div>

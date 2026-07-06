@@ -1434,7 +1434,7 @@ const IntegrationViewPage: React.FC = () => {
                   aria-expanded={openDropdown === 'agents'}
                 >
                   <PlusCircle size={13} className="text-blue-600" />
-                  Add agent
+                  Add Agent
                   <ChevronDown size={13} className="text-slate-400" />
                 </button>
                 {openDropdown === 'agents' && (
@@ -1491,7 +1491,7 @@ const IntegrationViewPage: React.FC = () => {
                         onClick={() => setOpenDropdown(null)}
                         className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                       >
-                        <Plus size={11} /> Add agent
+                        <Plus size={11} /> Add Agent
                       </Link>
                     </div>
                   </div>

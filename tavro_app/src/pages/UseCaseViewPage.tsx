@@ -517,7 +517,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
               aria-expanded={dropdownOpen}
             >
               <PlusCircle size={13} className="text-blue-600" />
-              Add agent
+              Add Agent
               <ChevronDown size={13} className="text-slate-400" />
             </button>
             {dropdownOpen && (
@@ -578,7 +578,7 @@ const AgentsSection: React.FC<AgentsSectionProps> = ({ useCase, agents, onSilent
                     onClick={() => setDropdownOpen(false)}
                     className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                   >
-                    <Plus size={11} /> Add agent
+                    <Plus size={11} /> Add Agent
                   </Link>
                 </div>
               </div>
@@ -813,7 +813,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
               aria-expanded={dropdownOpen}
             >
               <PlusCircle size={13} className="text-blue-600" />
-              Add application
+              Add Application
               <ChevronDown size={13} className="text-slate-400" />
             </button>
             {dropdownOpen && (
@@ -879,7 +879,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
                     onClick={() => setDropdownOpen(false)}
                     className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                   >
-                    <Plus size={11} /> Add application
+                    <Plus size={11} /> Add Application
                   </Link>
                 </div>
               </div>
@@ -1107,7 +1107,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
               aria-expanded={dropdownOpen}
             >
               <PlusCircle size={13} className="text-blue-600" />
-              Add process
+              Add Process
               <ChevronDown size={13} className="text-slate-400" />
             </button>
             {dropdownOpen && (
@@ -1173,7 +1173,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
                     onClick={() => setDropdownOpen(false)}
                     className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                   >
-                    <Plus size={11} /> Add process
+                    <Plus size={11} /> Add Process
                   </Link>
                 </div>
               </div>
@@ -1326,7 +1326,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
               aria-expanded={dropdownOpen}
             >
               <PlusCircle size={13} className="text-blue-600" />
-              Add AI model
+              Add AI Model
               <ChevronDown size={13} className="text-slate-400" />
             </button>
             {dropdownOpen && (
@@ -1392,7 +1392,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
                     onClick={() => setDropdownOpen(false)}
                     className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                   >
-                    <Plus size={11} /> Add AI model
+                    <Plus size={11} /> Add AI Model
                   </Link>
                 </div>
               </div>
