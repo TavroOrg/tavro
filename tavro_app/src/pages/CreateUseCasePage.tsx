@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Lightbulb, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles, ClipboardList } from 'lucide-react';
 import { useUseCases } from '../context/UseCaseContext';
 import { useCaseApi } from '../services/useCaseApi';
+import { aiModelApi } from '../services/aiModelApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { toUserMessage } from '../utils/errorUtils';
 
@@ -23,6 +24,7 @@ const CreateUseCasePage: React.FC = () => {
     const linkAgentId = searchParams.get('linkAgentId')?.trim() || '';
     const linkProcessId = searchParams.get('linkProcessId')?.trim() || '';
     const linkApplicationId = searchParams.get('linkApplicationId')?.trim() || '';
+    const linkModelId = searchParams.get('linkModelId')?.trim() || '';
 
     const [form, setForm] = useState({
         name: '',
@@ -84,24 +86,21 @@ const CreateUseCasePage: React.FC = () => {
             if (linkApplicationId && created?.use_case_id) {
                 await useCaseApi.linkApplication(created.use_case_id, linkApplicationId);
             }
+            if (linkModelId && created?.use_case_id) {
+                await aiModelApi.linkUseCase(linkModelId, created.use_case_id);
+            }
             setSuccess(true);
+            const linkedLabels = [
+                linkAgentId && 'agent',
+                linkProcessId && 'process',
+                linkApplicationId && 'application',
+                linkModelId && 'AI model',
+            ].filter(Boolean);
             sessionStorage.setItem(
                 'tavro_use_case_notice',
-                linkAgentId && linkProcessId && linkApplicationId
-                    ? 'AI Use Case created and linked to agent, process, and application successfully.'
-                    : linkAgentId && linkProcessId
-                    ? 'AI Use Case created and linked to agent and process successfully.'
-                    : linkAgentId && linkApplicationId
-                        ? 'AI Use Case created and linked to agent and application successfully.'
-                    : linkProcessId && linkApplicationId
-                        ? 'AI Use Case created and linked to process and application successfully.'
-                    : linkAgentId
-                        ? 'AI Use Case created and linked to agent successfully.'
-                        : linkProcessId
-                            ? 'AI Use Case created and linked to process successfully.'
-                            : linkApplicationId
-                                ? 'AI Use Case created and linked to application successfully.'
-                                : 'AI Use Case created successfully. It will appear in the catalog shortly.'
+                linkedLabels.length > 0
+                    ? `AI Use Case created and linked to ${linkedLabels.join(', ')} successfully.`
+                    : 'AI Use Case created successfully. It will appear in the catalog shortly.'
             );
             refresh();
             setTimeout(() => {
@@ -115,6 +114,10 @@ const CreateUseCasePage: React.FC = () => {
                 }
                 if (linkApplicationId) {
                     navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
+                    return;
+                }
+                if (linkModelId) {
+                    navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
                     return;
                 }
                 navigate('/use-cases');
@@ -149,11 +152,15 @@ const CreateUseCasePage: React.FC = () => {
                             navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
                             return;
                         }
+                        if (linkModelId) {
+                            navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+                            return;
+                        }
                         navigate('/use-cases');
                     }}
                     className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
                 >
-                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : linkProcessId ? 'Back to Process' : linkApplicationId ? 'Back to Application' : 'Back to Use Cases'}
+                    <ArrowLeft size={16} /> {linkAgentId ? 'Back to Agent' : linkProcessId ? 'Back to Process' : linkApplicationId ? 'Back to Application' : linkModelId ? 'Back to AI Model' : 'Back to Use Cases'}
                 </button>
             </div>
 
@@ -172,7 +179,9 @@ const CreateUseCasePage: React.FC = () => {
                                     ? 'Register a new AI use case and link it to this process'
                                     : linkApplicationId
                                         ? 'Register a new AI use case and link it to this application'
-                                        : 'Register a new AI use case in the Agent Biz Ops catalog'}
+                                        : linkModelId
+                                            ? 'Register a new AI use case and link it to this AI model'
+                                            : 'Register a new AI use case in the Agent Biz Ops catalog'}
                         </p>
                     </div>
                 </div>
@@ -322,6 +331,10 @@ const CreateUseCasePage: React.FC = () => {
                             }
                             if (linkApplicationId) {
                                 navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
+                                return;
+                            }
+                            if (linkModelId) {
+                                navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
                                 return;
                             }
                             navigate('/use-cases');
