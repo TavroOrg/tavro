@@ -8,6 +8,7 @@ SET search_path = twin, ag_catalog, public;
 
 CREATE TABLE IF NOT EXISTS twin.datahub_context (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    TEXT,
     company_id   UUID        REFERENCES twin.company (id) ON DELETE CASCADE,
     scope        TEXT        NOT NULL DEFAULT 'global_template',
     urn          TEXT        NOT NULL,
@@ -18,11 +19,12 @@ CREATE TABLE IF NOT EXISTS twin.datahub_context (
     embedding    VECTOR(384)  NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT datahub_context_scope_company_urn_uidx UNIQUE NULLS NOT DISTINCT (scope, company_id, urn)
+    CONSTRAINT datahub_context_scope_company_urn_uidx UNIQUE NULLS NOT DISTINCT (tenant_id, scope, company_id, urn)
 );
 
 CREATE INDEX IF NOT EXISTS datahub_context_embedding_idx ON twin.datahub_context
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+CREATE INDEX IF NOT EXISTS datahub_context_tenant_idx ON twin.datahub_context (tenant_id);
 CREATE INDEX IF NOT EXISTS datahub_context_company_idx ON twin.datahub_context (company_id);
 CREATE INDEX IF NOT EXISTS datahub_context_scope_idx ON twin.datahub_context (scope);
 
