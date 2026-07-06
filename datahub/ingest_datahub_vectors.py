@@ -137,10 +137,10 @@ def upsert_dataset(
     cur.execute(
         """
         INSERT INTO twin.datahub_context
-            (company_id, scope, urn, entity_type, label, chunk_text, metadata, embedding)
+            (tenant_id, company_id, scope, urn, entity_type, label, chunk_text, metadata, embedding)
         VALUES
-            (NULL, %s, %s, %s, %s, %s, %s::jsonb, %s::vector)
-        ON CONFLICT (scope, company_id, urn) DO UPDATE SET
+            (NULL, NULL, %s, %s, %s, %s, %s, %s::jsonb, %s::vector)
+        ON CONFLICT (tenant_id, scope, company_id, urn) DO UPDATE SET
             entity_type = EXCLUDED.entity_type,
             label       = EXCLUDED.label,
             chunk_text  = EXCLUDED.chunk_text,
