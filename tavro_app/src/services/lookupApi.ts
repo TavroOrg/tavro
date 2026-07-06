@@ -28,24 +28,14 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 class LookupApiService {
-    async listValues(tableName: string, columnName: string, companyId?: string): Promise<LookupValue[]> {
-        const params = new URLSearchParams({ table_name: tableName, column_name: columnName });
-        if (companyId) params.set('company_id', companyId);
-        const res = await fetch(`${V1}/lookup-values?${params}`, { headers: await authHeaders() });
-        if (!res.ok) {
-            const body = await res.text();
-            throw new Error(parseApiError(res.status, body));
-        }
-        return res.json();
-    }
-
-    // One call, every active option this tenant can see, for every field.
-    // Meant to be fetched once (e.g. on portal load) and cached client-side.
+    // One call, every active option this tenant/company can see, for every
+    // field. Meant to be fetched once (e.g. on portal load) and cached
+    // client-side rather than fetched per-field.
     async listAll(companyId?: string): Promise<LookupValueWithField[]> {
         const params = new URLSearchParams();
         if (companyId) params.set('company_id', companyId);
         const qs = params.toString() ? `?${params}` : '';
-        const res = await fetch(`${V1}/lookup-values/all${qs}`, { headers: await authHeaders() });
+        const res = await fetch(`${V1}/lookup-values${qs}`, { headers: await authHeaders() });
         if (!res.ok) {
             const body = await res.text();
             throw new Error(parseApiError(res.status, body));
