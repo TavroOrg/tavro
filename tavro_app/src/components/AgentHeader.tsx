@@ -1,7 +1,8 @@
 ﻿import React from 'react';
-import { AgentData, AGENT_TYPES } from '../types/agent';
+import { AgentData } from '../types/agent';
 import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
+import { useLookupValues } from '../context/LookupContext';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -47,6 +48,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
 }) => {
     const id = agent.identification;
     const caps = agent.capabilities;
+    const agentTypeOptions = useLookupValues('agents', 'agent_type');
 
     const capBadges: string[] = [];
     if (caps?.streaming === true) capBadges.push('Streaming');
@@ -150,7 +152,13 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                     onChange={e => onEditAgentTypeChange?.(e.target.value)}
                                     className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 cursor-pointer"
                                 >
-                                    {AGENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                    {(() => {
+                                        const current = editAgentType ?? agent.agent_type ?? 'Config-driven';
+                                        return current && !agentTypeOptions.some(t => t.value === current) && (
+                                            <option value={current}>{current}</option>
+                                        );
+                                    })()}
+                                    {agentTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                                 </select>
                             ) : (
                                 <Badge text={agent.agent_type || 'Config-driven'} color="slate" />

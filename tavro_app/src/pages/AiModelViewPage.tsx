@@ -34,16 +34,11 @@ import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useLookupValues } from '../context/LookupContext';
 import type { AiModelRecord, AiModelUpsertPayload, AiModelAttachmentRecord } from '../types/aiModel';
 import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/businessRelations';
 
 type Option = { label: string; value: string };
-
-const VENDOR_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
-  { label: 'Vendor', value: 'Vendor' },
-  { label: 'In-house', value: 'In-house' },
-];
 
 const STATUS_OPTIONS: Option[] = [
   { label: '-- None --', value: '' },
@@ -309,6 +304,18 @@ const AiModelViewPage: React.FC = () => {
   const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
   const { activeCompany } = useBlueprint();
+
+  const toOptions = (values: { label: string; value: string }[]): Option[] => [
+    { label: '-- None --', value: '' },
+    ...values.map(v => ({ label: v.label, value: v.value })),
+  ];
+  const vendorOptions = toOptions(useLookupValues('ai_models', 'vendor_or_inhouse'));
+  const providerOptions = toOptions(useLookupValues('ai_models', 'provider'));
+  const modelTypeOptions = toOptions(useLookupValues('ai_models', 'model_type'));
+  const techniqueClassOptions = toOptions(useLookupValues('ai_models', 'technique_class'));
+  const learningApproachOptions = toOptions(useLookupValues('ai_models', 'learning_approach'));
+  const automationLevelOptions = toOptions(useLookupValues('ai_models', 'automation_level'));
+  const updateFrequencyOptions = toOptions(useLookupValues('ai_models', 'update_frequency'));
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [model, setModel] = useState<AiModelRecord | null>(null);
@@ -828,7 +835,7 @@ const AiModelViewPage: React.FC = () => {
       );
     }
     const matched = options.find(o => o.value === form[k]);
-    const label = matched && matched.value ? matched.label : '';
+    const label = matched ? (matched.value ? matched.label : '') : (form[k] || '');
     return readOnly(k, label);
   };
 
@@ -1052,8 +1059,8 @@ const AiModelViewPage: React.FC = () => {
           </Field>
           <Field label="Department Executive">{text('department_executive')}</Field>
           <Field label="Business Functions">{text('business_functions')}</Field>
-          <Field label="Vendor or In-house">{select('vendor_or_inhouse', VENDOR_OPTIONS)}</Field>
-          <Field label="Provider">{text('provider')}</Field>
+          <Field label="Vendor or In-house">{select('vendor_or_inhouse', vendorOptions)}</Field>
+          <Field label="Provider">{select('provider', providerOptions)}</Field>
           <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
           <Field label="Parent Model">{parentField()}</Field>
           <Field label="Version Number">{text('version_number')}</Field>
@@ -1092,17 +1099,17 @@ const AiModelViewPage: React.FC = () => {
           <Field label="Use case and business value drivers for the model" full>{text('use_case_value_drivers')}</Field>
           <Field label="Types of users for the model">{text('user_types')}</Field>
           <Field label="Type of decision that the model supports (e.g., credit, fraud, liquidity)">{text('decision_type')}</Field>
-          <Field label="Level of automation of the decisions (e.g., advisory)">{text('automation_level')}</Field>
+          <Field label="Level of automation of the decisions (e.g., advisory)">{select('automation_level', automationLevelOptions)}</Field>
           <Field label="Mapping to regulatory (e.g., Fair Lending, HMDA, CECL)">{text('regulatory_mapping')}</Field>
           <Field label="Impact on consumer">{text('consumer_impact')}</Field>
           <Field label="Risk Tier / Materiality Classification">{text('risk_tier_materiality')}</Field>
         </Section>
 
         <Section title="Model Construct">
-          <Field label="Type of model (e.g., statistical, machine learning, rules, agentic system)">{text('model_type')}</Field>
-          <Field label="The class of techniques used by the model to learn patterns from data">{text('technique_class')}</Field>
-          <Field label="The learning approach used to train the model (labeled / unlabeled)">{text('learning_approach')}</Field>
-          <Field label="How often the model is updated or retrained">{text('update_frequency')}</Field>
+          <Field label="Type of model (e.g., statistical, machine learning, rules, agentic system)">{select('model_type', modelTypeOptions)}</Field>
+          <Field label="The class of techniques used by the model to learn patterns from data">{select('technique_class', techniqueClassOptions)}</Field>
+          <Field label="The learning approach used to train the model (labeled / unlabeled)">{select('learning_approach', learningApproachOptions)}</Field>
+          <Field label="How often the model is updated or retrained">{select('update_frequency', updateFrequencyOptions)}</Field>
           <Field label="Number of input variables / attributes">{text('input_variable_count')}</Field>
           <Field label="How is data joined (e.g., API, transfer methods)">{text('data_join_method')}</Field>
           <Field label="Reference to statistical assumptions the model relies on">{text('statistical_assumptions')}</Field>

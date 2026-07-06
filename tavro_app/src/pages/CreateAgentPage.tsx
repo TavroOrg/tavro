@@ -4,7 +4,8 @@ import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles
 import { mcpClient } from '../services/mcpClient';
 import { agentApi } from '../services/agentApi';
 import { useCatalog } from '../context/CatalogContext';
-import { AgentData, AGENT_TYPES } from '../types/agent';
+import { AgentData } from '../types/agent';
+import { useLookupValues } from '../context/LookupContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { toUserMessage } from '../utils/errorUtils';
 
@@ -22,16 +23,23 @@ const CreateAgentPage: React.FC = () => {
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
-    owner: '', role: '', environment: '', agentType: 'Config-driven',
+    owner: '', role: '', environment: '', agentType: '',
   });
   const [saving, setSaving] = useState(false);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const redirectTimerRef = useRef<number | null>(null);
+  const agentTypeOptions = useLookupValues('agents', 'agent_type');
 
   const set = (field: keyof AgentForm, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  useEffect(() => {
+    const def = agentTypeOptions.find(v => v.is_default);
+    if (def) set('agentType', def.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentTypeOptions]);
 
   const handleSuggestDescription = async () => {
     if (!form.name.trim()) {
@@ -299,15 +307,19 @@ const CreateAgentPage: React.FC = () => {
 
             <div>
               <label className={labelCls}>Agent Type</label>
-              <select
-                value={form.agentType}
-                onChange={e => set('agentType', e.target.value)}
-                className={inputCls}
-              >
-                {AGENT_TYPES.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+              {agentTypeOptions.length ? (
+                <select
+                  value={form.agentType}
+                  onChange={e => set('agentType', e.target.value)}
+                  className={inputCls}
+                >
+                  {agentTypeOptions.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-sm text-slate-400 italic px-1 py-2.5">No agent type options configured</div>
+              )}
             </div>
 
             {error && (

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import { X, Bot, Loader2, CheckCircle2 } from 'lucide-react';
-import { AgentData, AGENT_TYPES } from '../types/agent';
+import { AgentData } from '../types/agent';
 import { agentApi } from '../services/agentApi';
+import { useLookupValues } from '../context/LookupContext';
 
 interface EditAgentModalProps {
     agent: AgentData;
@@ -19,6 +20,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
+    const agentTypeOptions = useLookupValues('agents', 'agent_type');
 
     useEffect(() => {
         if (!open) return;
@@ -126,8 +128,11 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ agent, open, onClose, o
                             onChange={e => setAgentType(e.target.value)}
                             className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 transition-all bg-white"
                         >
-                            {AGENT_TYPES.map(t => (
-                                <option key={t} value={t}>{t}</option>
+                            {agentType && !agentTypeOptions.some(t => t.value === agentType) && (
+                                <option value={agentType}>{agentType}</option>
+                            )}
+                            {agentTypeOptions.map(t => (
+                                <option key={t.value} value={t.value}>{t.label}</option>
                             ))}
                         </select>
                     </div>
