@@ -64,7 +64,8 @@ async def list_dim_edges(
     count_row = await db.execute(
         text(f"""
             SELECT count(*) FROM twin.dim_edge e
-            JOIN twin.dim_node sn ON sn.id = e.source_id
+            JOIN twin.dim_node sn ON sn.id = e.source_id AND sn.valid_to IS NULL
+            JOIN twin.dim_node tn ON tn.id = e.target_id AND tn.valid_to IS NULL
             JOIN twin.company c ON c.id = sn.company_id
             WHERE {where}
         """),
@@ -78,8 +79,8 @@ async def list_dim_edges(
                    sn.label AS source_label,
                    tn.label AS target_label
             FROM twin.dim_edge e
-            JOIN twin.dim_node sn ON sn.id = e.source_id
-            JOIN twin.dim_node tn ON tn.id = e.target_id
+            JOIN twin.dim_node sn ON sn.id = e.source_id AND sn.valid_to IS NULL
+            JOIN twin.dim_node tn ON tn.id = e.target_id AND tn.valid_to IS NULL
             JOIN twin.company c ON c.id = sn.company_id
             WHERE {where}
             ORDER BY e.weight DESC

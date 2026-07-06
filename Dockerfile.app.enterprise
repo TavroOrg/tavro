@@ -1,17 +1,16 @@
 FROM node:20-alpine AS builder
 WORKDIR /build
 
-COPY tavro/tavro_app/package*.json ./
+COPY tavro_app/package*.json ./
 RUN npm ci
 
-COPY tavro/tavro_app/ .
+COPY tavro_app/ .
 
-# Overlay enterprise UI files on top of open-source stubs.
-# Requires the enterprise repo to be a sibling of tavro/:
-#   parent/
-#   ├── tavro/       ← this repo
-#   └── enterprise/  ← enterprise repo
-COPY enterprise/tavro_app/src/ ./src/
+# Overlay enterprise UI files on top of open-source stubs. Pulled in as a
+# named build context (see docker-compose.yml's
+# additional_contexts: enterprise=../enterprise) rather than widening this
+# build's own context, so each repo's .dockerignore keeps applying to itself.
+COPY --from=enterprise tavro_app/src/ ./src/
 
 ARG VITE_TWIN_API_URL=""
 ENV VITE_TWIN_API_URL=$VITE_TWIN_API_URL
@@ -30,6 +29,6 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /build/dist /usr/share/nginx/html
-COPY tavro/tavro_app/nginx.conf /etc/nginx/conf.d/default.conf
+COPY tavro_app/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
