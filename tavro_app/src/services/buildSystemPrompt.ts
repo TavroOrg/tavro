@@ -222,10 +222,10 @@ export function getSuggestedPrompts(viewType: ViewType, viewData: ViewData): str
 
     case 'use_case_catalog':
       return [
-        'Which use cases are highest priority?',
-        'What use cases are in progress?',
-        'Suggest use cases we are missing',
-        'Which use cases have no assigned agents?',
+        'Generate a business case including financial benefits and implementation time',
+        'What are the regulatory implications if we were to roll this out nationally',
+        'Are there any other similar AI use cases in the pipeline?',
+        'What opportunities exist to collaborate with other AI use cases and/or agents?',
       ];
 
     default:

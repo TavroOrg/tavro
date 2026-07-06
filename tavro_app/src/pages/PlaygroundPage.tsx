@@ -701,6 +701,7 @@ const PlaygroundPage: React.FC = () => {
                       <p className="font-medium">Send a message to start testing the agent</p>
                       <div className="mt-4 flex flex-col gap-2 max-w-sm mx-auto">
                         {[
+                          'Provide 5 cases of inputs and outputs from this agent using synthetic data',
                           'What can you help me with?',
                           'Walk me through how you would handle a typical request',
                           'What information do you need from me to work effectively?',
