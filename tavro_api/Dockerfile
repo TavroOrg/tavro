@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
+    apt-get install -y --no-install-recommends curl libpq-dev gcc tesseract-ocr && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/* && \
@@ -27,9 +27,11 @@ RUN pip install  \
 COPY tavro_api/ /app/
 
 # ── Copy Risk stack source (keeps original import paths intact) ───────────────
-COPY services     /app/services
-COPY tavro_library /app/tavro_library
-COPY utils        /app/utils
+COPY services          /app/services
+COPY tavro_library     /app/tavro_library
+COPY utils             /app/utils
+COPY catalog_connector /app/catalog_connector
+COPY catalog_connector /app/catalog_connector
 
 ENV PYTHONPATH=/app
 

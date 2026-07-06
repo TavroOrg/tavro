@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers, Building2 } from 'lucide-react';
+import { Plug, Settings, ChevronLeft, ChevronRight, LogOut, Terminal, Layers, Building2, Server, CircleHelp } from 'lucide-react';
 import travoLogo from '../assets/travo_logo.png';
 
 const TAVRO_VERSION = '3.1';
@@ -124,12 +124,33 @@ const AdminLayout: React.FC = () => {
                         }
                     >
                         <Settings size={18} className="shrink-0" />
-                        {!collapsed && <span>Settings</span>}
+                        {!collapsed && <span>LLM Settings</span>}
+                    </NavLink>
+                    <NavLink
+                        to="/infrastructure"
+                        className={({ isActive }) =>
+                            `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border ${isActive
+                                ? 'bg-blue-50 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/20'
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white border-transparent'
+                            }`
+                        }
+                    >
+                        <Server size={18} className="shrink-0" />
+                        {!collapsed && <span>Infrastructure Configuration</span>}
                     </NavLink>
                 </nav>
 
-                {/* Sign Out */}
+                {/* Bottom actions */}
                 <div className="p-3 border-t border-slate-200 dark:border-slate-800">
+                    <a
+                        href="/help/user-guide"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mb-1 flex w-full items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all border text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white border-transparent"
+                    >
+                        <CircleHelp size={18} className="shrink-0" />
+                        {!collapsed && <span>Help</span>}
+                    </a>
                     <button
                         onClick={handleLogout}
                         className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400 text-sm font-medium transition-all"
@@ -164,3 +185,9 @@ const AdminLayout: React.FC = () => {
 };
 
 export default AdminLayout;
+
+
+
+
+
+

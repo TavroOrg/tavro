@@ -22,9 +22,28 @@ const AdminCompanyPage: React.FC = () => {
     const [selected, setSelected]       = useState<Company | null>(null);
     const dropdownRef                   = useRef<HTMLDivElement>(null);
 
-    // Load companies
+    // Load companies (scoped to the caller's own tenant)
     useEffect(() => {
-        fetch('/api/v1/admin/companies')
+        const accessToken = localStorage.getItem('tavro_admin_access_token') ?? '';
+        const tenantId = (() => {
+            const stored = localStorage.getItem('tavro_admin_tenant_id');
+            if (stored) return stored;
+            try {
+                const idToken = localStorage.getItem('tavro_admin_id_token');
+                if (!idToken) return '';
+                const payload = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                const ro = payload['urn:zitadel:iam:user:resourceowner'];
+                if (ro && typeof ro === 'object' && ro.id) return String(ro.id);
+                return payload['urn:zitadel:iam:user:resourceowner:id'] || payload['urn:zitadel:iam:org:id'] || payload['org_id'] || '';
+            } catch { return ''; }
+        })();
+
+        fetch('/api/v1/admin/companies', {
+            headers: {
+                ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+                ...(tenantId    ? { 'x-tenant-id': tenantId }               : {}),
+            },
+        })
             .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
             .then((data: Company[]) => {
                 setCompanies(data);

@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS risk_management.agent_risk_assessment (
   tenant_id TEXT,
+  company_id TEXT,
   agent_name TEXT,
   agent_risk_assessment_name TEXT,
   analysis_requested_at timestamp,

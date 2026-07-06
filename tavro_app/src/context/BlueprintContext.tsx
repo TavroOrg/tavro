@@ -67,8 +67,8 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // ── Fetch companies list ─────────────────────────────────────────────────
   const fetchCompanies = useCallback(async () => {
     try {
-      const companiesPage = await blueprintApi.listCompanies();
-      setCompanies(companiesPage.items);
+      const companies = await blueprintApi.listAllCompanies();
+      setCompanies(companies);
       setError(null);
     } catch (err: any) {
       setError(toUserMessage(err));
@@ -79,16 +79,16 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     (async () => {
       try {
-        const [companiesPage, types] = await Promise.all([
-          blueprintApi.listCompanies(),
+        const [companies, types] = await Promise.all([
+          blueprintApi.listAllCompanies(),
           blueprintApi.listDimTypes(),
         ]);
-        setCompanies(companiesPage.items);
+        setCompanies(companies);
         setDimTypes(types);
 
         // Restore last-selected company from localStorage
         const savedId = localStorage.getItem(STORAGE_KEY);
-        const saved = companiesPage.items.find(c => c.id === savedId) ?? companiesPage.items[0] ?? null;
+        const saved = companies.find(c => c.id === savedId) ?? companies[0] ?? null;
         if (saved) setActiveCompany(saved);
       } catch (err: any) {
         setError(toUserMessage(err));
@@ -135,6 +135,17 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(STORAGE_NAME_KEY, activeCompany.name ?? '');
     fetchNodes(activeCompany);
     fetchGraph(activeCompany);
+  }, [activeCompany, fetchNodes, fetchGraph]);
+
+  // Auto-refresh blueprint when applications/processes/integrations are created or uploaded
+  useEffect(() => {
+    const handleCatalogChange = () => {
+      if (!activeCompany) return;
+      fetchNodes(activeCompany);
+      fetchGraph(activeCompany);
+    };
+    window.addEventListener('tavro:catalog-item-changed', handleCatalogChange);
+    return () => window.removeEventListener('tavro:catalog-item-changed', handleCatalogChange);
   }, [activeCompany, fetchNodes, fetchGraph]);
 
   const selectCompany = useCallback((company: Company) => {

@@ -828,20 +828,20 @@ const InsightsPage: React.FC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <LifecycleDistribution
-                    title="Agent Lifecycle Distribution"
-                    subtitle="Agent portfolio across all 5 lifecycle stages"
-                    totalClass="text-slate-700"
-                    accent="bg-slate-400"
-                    icon={<div className="p-2 bg-slate-100 rounded-lg border border-slate-200"><GitBranch size={16} className="text-slate-600" /></div>}
-                    data={agentDistribution}
-                />
-                <LifecycleDistribution
                     title="Use Case Lifecycle Distribution"
                     subtitle="AI use cases tracked from idea to live"
                     totalClass="text-sky-700"
                     accent="bg-sky-500"
                     icon={<div className="p-2 bg-sky-100 rounded-lg border border-sky-200"><Layers size={16} className="text-sky-600" /></div>}
                     data={useCaseDistribution}
+                />
+                <LifecycleDistribution
+                    title="Agent Lifecycle Distribution"
+                    subtitle="Agent portfolio across all 5 lifecycle stages"
+                    totalClass="text-slate-700"
+                    accent="bg-slate-400"
+                    icon={<div className="p-2 bg-slate-100 rounded-lg border border-slate-200"><GitBranch size={16} className="text-slate-600" /></div>}
+                    data={agentDistribution}
                 />
             </div>
 

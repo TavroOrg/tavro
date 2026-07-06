@@ -357,9 +357,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     .map(toPendingAgentFromWorkflow);
 
                 const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
-                // Don't stamp the cache timestamp yet — wait until all pages arrive so the
-                // 5-minute freshness window only starts once the data set is complete.
-                sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                const now = Date.now();
+                try {
+                    sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                    sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+                } catch {
+                    // Storage quota exceeded — data lives in React state, re-fetched next load
+                }
+                setLastFetched(new Date(now));
                 return next;
             });
             setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
@@ -591,8 +596,12 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             else next.unshift(agent);
 
             const now = Date.now();
-            sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
-            sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            try {
+                sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            } catch {
+                // Storage quota exceeded — data lives in React state, re-fetched next load
+            }
             setLastFetched(new Date(now));
             return next;
         });

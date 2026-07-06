@@ -15,7 +15,9 @@ services:
   tavro-postgres:
     build:
       context: .
-      dockerfile: tavro_Dockerfile
+      dockerfile: Dockerfile.postgres.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
       args:
         AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
@@ -76,8 +78,10 @@ services:
   # ── FastAPI — Unified API (Digital Twin + Risk Classification) ───────────────
   tavro-api:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.api.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.api.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -103,6 +107,11 @@ services:
       AZURE_AI_FOUNDRY_ENDPOINT: '${AZURE_AI_FOUNDRY_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_HOSTED_ENDPOINT: '${AZURE_AI_FOUNDRY_HOSTED_ENDPOINT:-}'
       AZURE_AI_FOUNDRY_KEY: '${AZURE_AI_FOUNDRY_KEY:-}'
+      AZURE_AI_FOUNDRY_HOSTED_KEY: '${AZURE_AI_FOUNDRY_HOSTED_KEY:-}'
+      # Agent 365 inbound connector
+      AGENT365_TENANT_ID:    '${AGENT365_TENANT_ID:-}'
+      AGENT365_CLIENT_ID:    '${AGENT365_CLIENT_ID:-}'
+      AGENT365_CLIENT_SECRET: '${AGENT365_CLIENT_SECRET:-}'
       # DefaultAzureCredential uses these for local Docker runs. Azure deployments
       # can use managed identity instead.
       AZURE_CLIENT_ID: '${AZURE_AI_FOUNDRY_CLIENT_ID:-}'
@@ -124,6 +133,9 @@ services:
       TEMPORAL_ADDRESS:     risk-temporal:7233
       LOCAL_AGENT_CARD_DIR: /app/agent_cards
       RISK_CLASSIFY_URL:    ${RISK_CLASSIFY_URL}
+      # AICT (ServiceNow AI Control Tower) — uses shared SERVICENOW_* credentials
+      AICT_ENABLED:         ${AICT_ENABLED:-false}
+      ENV_FILE_PATH:        /app/.env
       # Agent Playground — Publish to Git
       GIT_PUBLISH_REPO_URL: '${GIT_PUBLISH_REPO_URL:-}'
       GIT_PUBLISH_TOKEN:    '${GIT_PUBLISH_TOKEN:-}'
@@ -134,12 +146,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./tavro_api:/app                    # live reload — tavro_api code
-      - ./services:/app/services:ro         # live reload — risk services
-      - ./utils:/app/utils:ro               # live reload — risk utils
+      - ./tavro_api:/app                              # live reload — tavro_api code
+      - ./services:/app/services:ro                 # live reload — risk services
+      - ./utils:/app/utils:ro                       # live reload — risk utils
+      - ./catalog_connector:/app/catalog_connector:ro  # aict outbound connector
       - ./sql:/sql:ro                       # core DDL files for startup bootstrap
       - ./tavro_api/agent_cards:/app/agent_cards      # agent card output dir
+      - ./.env:/app/.env:rw                           # Agent 365 refresh token + connector credentials
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
       interval: 30s
@@ -190,11 +205,14 @@ services:
     depends_on:
       tavro-postgres:
         condition: service_healthy
+      tavro-api:
+        condition: service_healthy
     environment:
       DATABASE_URL:          postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       ADMIN_ENCRYPTION_KEY:  ${ADMIN_ENCRYPTION_KEY:-}
       AGENT_CARD_DIR:        /app/agent_cards
+      TAVRO_API_URL:         http://tavro-api:8000
       RISK_CLASSIFY_URL:     http://tavro-api:8000/api/v1/risk/classify-risk
       RISK_CONCURRENCY:      "2"
       RISK_TIMEOUT_S:        "600"
@@ -222,8 +240,10 @@ services:
   # ── React App — served by Nginx ──────────────────────────────────────────────
   tavro-app:
     build:
-      context: ..
-      dockerfile: tavro/Dockerfile.app.${BUILD_MODE:-oss}
+      context: .
+      dockerfile: Dockerfile.app.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
@@ -508,7 +528,9 @@ services:
   risk-mcp-server:
     build:
       context: .
-      dockerfile: Dockerfile.mcp
+      dockerfile: Dockerfile.mcp.${BUILD_MODE:-oss}
+      additional_contexts:
+        - enterprise=../enterprise
     container_name: risk-mcp-server
     restart: unless-stopped
     deploy:
@@ -518,6 +540,7 @@ services:
     ports:
       - "9001:9001"   # 9000 is taken by tavro-app; host port is 9001
     environment:
+      BUILD_MODE:           '${BUILD_MODE:-oss}'
       DATABASE_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
       CORE_DB_NAME:            core
       CURATED_DB_NAME:         curated
@@ -545,9 +568,16 @@ services:
       JWT_SIGNING_KEY:      ${JWT_SIGNING_KEY}
       OPENAI_API_KEY:       ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
+      AICT_ENABLED:              ${AICT_ENABLED:-false}
+      ENV_FILE_PATH:             /app/.env
+      SERVICENOW_INSTANCE_URL:   ${SERVICENOW_INSTANCE_URL:-}
+      SERVICENOW_USERNAME:       ${SERVICENOW_USERNAME:-}
+      SERVICENOW_PASSWORD:       ${SERVICENOW_PASSWORD:-}
     volumes:
       - ./tavro_api/agent_cards:/app/agent_cards
       - tavro_runtime_config:/app/runtime:ro
+      - ./.env:/app/.env:ro                           # runtime enable/disable flag
+      - ./catalog_connector:/app/catalog_connector:ro  # aict outbound connector
     depends_on:
       tavro-postgres:
         condition: service_healthy

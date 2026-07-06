@@ -1,16 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Network,
   AlertCircle,
   ArrowLeft,
+  Check,
+  CheckCircle2,
+  ChevronDown,
   Info,
   Loader2,
   Pencil,
+  Plus,
   PlusCircle,
   RefreshCw,
   Save,
   Search,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Unlink2,
@@ -25,9 +30,12 @@ import type {
   IntegrationRecord,
   IntegrationUpsertPayload,
 } from '../types/businessRelations';
+import type { DimEdge, SourceRef } from '../types/blueprint';
 import { toUserMessage } from '../utils/errorUtils';
+import { blueprintApi } from '../services/blueprintApi';
+import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related';
+type Tab = 'overview' | 'related' | 'blueprint';
 type Option = { label: string; value: string };
 
 const PROTOCOL_OPTIONS: Option[] = [
@@ -114,6 +122,35 @@ type IntegrationInlineField =
   | 'parent_application_id'
   | 'business_criticality'
   | 'emergency_tier';
+
+type MetricTone = 'high' | 'medium' | 'low' | 'neutral';
+const metricToneClass = (tone: MetricTone) => {
+  if (tone === 'high') return 'text-red-600';
+  if (tone === 'medium') return 'text-amber-600';
+  if (tone === 'low') return 'text-emerald-600';
+  return 'text-slate-600';
+};
+const getCriticalityTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low') return 'low';
+  return 'neutral';
+};
+const getEmergencyTierTone = (value: string): MetricTone => {
+  const v = value.toLowerCase();
+  if (v.includes('mission critical')) return 'high';
+  if (v.includes('business critical')) return 'medium';
+  if (v.includes('non-critical')) return 'low';
+  return 'neutral';
+};
+const getArtTone = (value: string | null | undefined): MetricTone => {
+  const v = (value ?? '').toLowerCase();
+  if (v === 'critical' || v === 'high') return 'high';
+  if (v === 'medium') return 'medium';
+  if (v === 'low' || v === 'none') return 'low';
+  return 'neutral';
+};
 
 const inputCls =
   'w-full text-sm border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500';
@@ -241,6 +278,8 @@ const IntegrationViewPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSaving, setTagSaving] = useState(false);
+  const [visibility, setVisibility] = useState<string>('internal');
+  const [sensitive, setSensitive] = useState<boolean>(false);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -257,6 +296,18 @@ const IntegrationViewPage: React.FC = () => {
   const [relationError, setRelationError] = useState<string | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
 
+  // Blueprint
+  const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
+  const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
+  const [showAddEdge, setShowAddEdge] = useState(false);
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName, setNewSysName] = useState('');
+  const [newExtId, setNewExtId] = useState('');
+  const [addingRef, setAddingRef] = useState(false);
+  const [deletingEdge, setDeletingEdge] = useState<string | null>(null);
+  const [deletingRef, setDeletingRef] = useState<string | null>(null);
+
   const load = async () => {
     if (!id || isCreateMode) return;
     setLoading(true);
@@ -266,6 +317,8 @@ const IntegrationViewPage: React.FC = () => {
       setIntegration(data);
       setForm(formFromIntegration(data));
       setTags(Array.isArray(data.tags) ? data.tags : []);
+      setVisibility(data.visibility ?? 'internal');
+      setSensitive(data.sensitive ?? false);
       setAttemptedSave(false);
     } catch (err: unknown) {
       setError(toUserMessage(err));
@@ -273,6 +326,45 @@ const IntegrationViewPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const reloadIntegration = async () => {
+    if (!id || isCreateMode) return;
+    try {
+      const data = await businessRelationsApi.getIntegration(id, activeCompany?.id);
+      setIntegration(data);
+    } catch {
+      /* ignore — relation list will just retry on next successful refetch */
+    }
+  };
+
+  const loadBlueprint = async (dimNodeId: string) => {
+    if (!dimNodeId || !activeCompany?.id) return;
+    setBlueprintLoading(true);
+    try {
+      const edgesPage = await blueprintApi.listEdges({ company_id: activeCompany.id, node_id: dimNodeId });
+      setBlueprintEdges(edgesPage.items);
+    } catch {
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const loadSourceRefs = async (dimNodeId: string) => {
+    try {
+      const refs = await blueprintApi.listSourceRefs(dimNodeId);
+      setBlueprintSourceRefs(refs);
+    } catch {
+    }
+  };
+
+  useEffect(() => {
+    if (integration?.dim_node_id) loadSourceRefs(integration.dim_node_id);
+  }, [integration?.dim_node_id]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint' || !integration?.dim_node_id) return;
+    loadBlueprint(integration.dim_node_id);
+  }, [tab, integration?.dim_node_id]);
 
   useEffect(() => {
     if (isCreateMode) {
@@ -288,7 +380,7 @@ const IntegrationViewPage: React.FC = () => {
     }
     setEditing(false);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   useEffect(() => {
     if (!id || isCreateMode || editing) return;
@@ -324,26 +416,42 @@ const IntegrationViewPage: React.FC = () => {
     return set;
   }, [integration]);
 
-  const availableAgents = useMemo(() => {
+  const filteredCatalogAgents = useMemo(() => {
     const q = searchAgents.trim().toLowerCase();
     return agents.filter(agent => {
       const agentId = agent.identification?.agent_id || '';
-      if (!agentId || linkedAgentIds.has(agentId)) return false;
+      if (!agentId) return false;
       if (!q) return true;
-      return (
-        agentId.toLowerCase().includes(q) ||
-        agent.name.toLowerCase().includes(q)
-      );
+      return agentId.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q);
     });
-  }, [agents, linkedAgentIds, searchAgents]);
+  }, [agents, searchAgents]);
+
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const key = openDropdown;
+    const idTimer = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      const el = dropdownRefs.current[key];
+      if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(idTimer);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [openDropdown]);
 
   const addAgent = async (agentId: string) => {
     if (!integration) return;
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id);
-      await load();
+      await businessRelationsApi.linkAgentToIntegration(agentId, integration.integration_id, activeCompany?.id);
+      await reloadIntegration();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -356,8 +464,8 @@ const IntegrationViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id);
-      await load();
+      await businessRelationsApi.unlinkAgentFromIntegration(agentId, integration.integration_id, activeCompany?.id);
+      await reloadIntegration();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -408,6 +516,8 @@ const IntegrationViewPage: React.FC = () => {
       setIntegration(updated);
       setForm(formFromIntegration(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: unknown) {
@@ -528,11 +638,13 @@ const IntegrationViewPage: React.FC = () => {
       const payload = buildIntegrationPayload(form);
       if (isCreateMode) {
         if (tags.length > 0) payload.tags = tags;
+        payload.visibility = visibility;
+        payload.sensitive = sensitive;
         const created = await businessRelationsApi.createIntegration(payload, activeCompany?.id);
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id);
+            await businessRelationsApi.linkAgentToIntegration(linkAgentId, created.integration_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Integration created but auto-link to agent failed.', linkErr);
           }
@@ -553,6 +665,8 @@ const IntegrationViewPage: React.FC = () => {
       setIntegration(updated);
       setForm(formFromIntegration(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setAttemptedSave(false);
       setEditing(false);
     } catch (err: unknown) {
@@ -713,6 +827,41 @@ const IntegrationViewPage: React.FC = () => {
                 <span className="text-xs font-bold text-slate-700">{form.availability_status}</span>
               </div>
             )}
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Emergency Tier</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getEmergencyTierTone(form.emergency_tier))}`}>
+                {getEmergencyTierTone(form.emergency_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.emergency_tier || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">Business Criticality</span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getCriticalityTone(form.business_criticality))}`}>
+                {getCriticalityTone(form.business_criticality) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {form.business_criticality || 'N/A'}
+              </span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ARE
+                <span title="ARE (Agent Risk Exposure) represents overall application risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
+              <span className="text-xs font-bold text-slate-700">{String(integration?.agent_risk_exposure ?? 'N/A')}</span>
+            </div>
+            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[130px]">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                ART
+                <span title="ART (Agent Risk Tier) indicates overall application risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                  <Info size={10} className="text-slate-400" />
+                </span>
+              </span>
+              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(getArtTone(integration?.agent_risk_tier))}`}>
+                {getArtTone(integration?.agent_risk_tier) === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                {integration?.agent_risk_tier ?? 'None'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -729,16 +878,28 @@ const IntegrationViewPage: React.FC = () => {
           Details
         </button>
         {!isCreateMode && !editing && (
-          <button
-            onClick={() => setTab('related')}
-            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
-              tab === 'related'
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Related Agents ({relatedAgentCount})
-          </button>
+          <>
+            <button
+              onClick={() => setTab('related')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Agents ({relatedAgentCount})
+            </button>
+            <button
+              onClick={() => setTab('blueprint')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'blueprint'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Blueprint Relationships
+            </button>
+          </>
         )}
       </div>
 
@@ -871,6 +1032,48 @@ const IntegrationViewPage: React.FC = () => {
                   />
                 </div>
               </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Visibility" />
+                <select
+                  value={visibility}
+                  onChange={async e => {
+                    const next = e.target.value;
+                    setVisibility(next);
+                    if (isCreateMode || !integration) return;
+                    try {
+                      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { visibility: next }, activeCompany?.id);
+                      setIntegration(updated);
+                      setVisibility(updated.visibility ?? next);
+                    } catch { setVisibility(integration.visibility ?? 'internal'); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 capitalize"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="confidential">Confidential</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Sensitive" />
+                <select
+                  value={sensitive ? 'true' : 'false'}
+                  onChange={async e => {
+                    const next = e.target.value === 'true';
+                    setSensitive(next);
+                    if (isCreateMode || !integration) return;
+                    try {
+                      const updated = await businessRelationsApi.updateIntegration(integration.integration_id, { sensitive: next }, activeCompany?.id);
+                      setIntegration(updated);
+                      setSensitive(updated.sensitive ?? next);
+                    } catch { setSensitive(integration.sensitive ?? false); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
             </div>
           </Section>
 
@@ -920,11 +1123,11 @@ const IntegrationViewPage: React.FC = () => {
                 )}
               </div>
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Agent Risk Exposure (ARE)" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
+                <HintLabel label="ARE" hint="ARE is the highest blended risk score among related agents multiplied by the average of Business Criticality and Emergency Tier scores." />
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{String(integration?.agent_risk_exposure ?? 0)}</p>
               </div>
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Agent Risk Tier (ART)" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
+                <HintLabel label="ART" hint="ART indicates overall integration risk from ARE score: Low &lt; 3, Medium 3-&lt;7, High 7-&lt;9, Critical &ge; 9." />
                 <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 min-h-[42px]">{integration?.agent_risk_tier ?? 'None'}</p>
               </div>
               <div className="flex flex-col gap-1.5">
@@ -1141,6 +1344,73 @@ const IntegrationViewPage: React.FC = () => {
               </div>
             </div>
           </Section>
+
+          {/* Source Systems */}
+          {integration?.dim_node_id && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Source Systems ({blueprintSourceRefs.length})</p>
+                <button
+                  onClick={() => setShowAddSourceRef(p => !p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {showAddSourceRef && (
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={newSysName} onChange={e => setNewSysName(e.target.value)} placeholder="System name (e.g. Salesforce)" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                    <input value={newExtId} onChange={e => setNewExtId(e.target.value)} placeholder="External ID" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!newSysName.trim() || !newExtId.trim() || !integration.dim_node_id) return;
+                        setAddingRef(true);
+                        try {
+                          const ref = await blueprintApi.createSourceRef(integration.dim_node_id, newSysName.trim(), newExtId.trim());
+                          setBlueprintSourceRefs(p => [...p, ref]);
+                          setNewSysName(''); setNewExtId(''); setShowAddSourceRef(false);
+                        } finally { setAddingRef(false); }
+                      }}
+                      disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addingRef ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save
+                    </button>
+                    <button onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }} className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {blueprintSourceRefs.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-slate-400 italic">No source systems linked.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintSourceRefs.map(ref => (
+                    <div key={ref.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-700">{ref.system_name}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{ref.external_id}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setDeletingRef(ref.id);
+                          try { await blueprintApi.deleteSourceRef(ref.id); setBlueprintSourceRefs(p => p.filter(r => r.id !== ref.id)); }
+                          finally { setDeletingRef(null); }
+                        }}
+                        disabled={deletingRef === ref.id}
+                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingRef === ref.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1153,9 +1423,80 @@ const IntegrationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.agents = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'agents' ? null : 'agents')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'agents'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Agent
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'agents' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.agents = el; }}
+                          value={searchAgents}
+                          onChange={(e) => setSearchAgents(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search agent..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogAgents.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No agents found</div>
+                      )}
+                      {filteredCatalogAgents.map((agent) => {
+                        const agentId = agent.identification?.agent_id || '';
+                        const isLinked = linkedAgentIds.has(agentId);
+                        const busy = actingAgent === agentId;
+                        return (
+                          <button
+                            key={agentId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!agentId || busy}
+                            onClick={() => (isLinked ? removeAgent(agentId) : addAgent(agentId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{agent.name}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{agentId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/agents/new?linkIntegrationId=${encodeURIComponent(integration.integration_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Agent
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {integration.related_agents.length === 0 && (
@@ -1193,46 +1534,85 @@ const IntegrationViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add Agent Relation</p>
-              <div className="relative w-full max-w-sm">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchAgents}
-                  onChange={(e) => setSearchAgents(e.target.value)}
-                  placeholder="Filter agents..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
+        </div>
+      )}
+      {tab === 'blueprint' && (
+        <div className="flex flex-col gap-4">
+          {integration?.dim_node_id ? (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Network size={14} className="text-slate-400" />
+                  Blueprint Relationships ({blueprintEdges.length})
+                </p>
+                <button onClick={() => setShowAddEdge(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Add Relationship
+                </button>
               </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableAgents.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available agents to link.</div>
+              {blueprintLoading ? (
+                <div className="px-5 py-4 text-sm text-slate-400 animate-pulse">Loading…</div>
+              ) : blueprintEdges.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-slate-400 italic">No blueprint relationships defined.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintEdges.map(edge => {
+                    const isSource = edge.source_id === integration.dim_node_id;
+                    const otherLabel = isSource ? edge.target_label : edge.source_label;
+                    return (
+                      <div key={edge.id} className="px-5 py-3 flex items-center gap-3">
+                        <span className="text-slate-300">{isSource ? '→' : '←'}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{otherLabel ?? '—'}</span>
+                        <span className="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{edge.rel_type.replace('_', ' ')}</span>
+                        <span className="text-[11px] text-slate-400">{Math.round(edge.weight * 100)}%</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingEdge(edge.id);
+                            try { await blueprintApi.deleteEdge(edge.id); setBlueprintEdges(p => p.filter(e => e.id !== edge.id)); }
+                            finally { setDeletingEdge(null); }
+                          }}
+                          disabled={deletingEdge === edge.id}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Delete relationship"
+                        >
+                          {deletingEdge === edge.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-              {availableAgents.map(agent => {
-                const agentId = agent.identification?.agent_id || '';
-                const busy = actingAgent === agentId;
-                return (
-                  <div key={agentId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{agent.name}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{agentId}</p>
-                    </div>
-                    <button
-                      onClick={() => addAgent(agentId)}
-                      disabled={!agentId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
             </div>
-          </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 px-5 py-6 text-center">
+              <Info size={18} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">This integration is not yet linked to a Blueprint dimension.</p>
+              <p className="text-xs text-slate-400 mt-1">Create an Integration dimension in the Blueprint to enable relationships.</p>
+            </div>
+          )}
+          {showAddEdge && integration?.dim_node_id && (
+            <AddDimEdgeModal
+              sourceNode={{
+                id: integration.dim_node_id,
+                company_id: activeCompany?.id ?? '',
+                dim_type_id: '',
+                label: integration.integration_name ?? '',
+                category: 'application',
+                dim_type_name: 'Integration',
+                summary: null,
+                tags: [],
+                visibility: 'internal',
+                sensitive: false,
+                valid_from: new Date().toISOString(),
+                valid_to: null,
+                updated_at: new Date().toISOString(),
+              }}
+              onClose={() => setShowAddEdge(false)}
+              onCreated={() => {
+                setShowAddEdge(false);
+                if (integration.dim_node_id) loadBlueprint(integration.dim_node_id);
+              }}
+            />
+          )}
         </div>
       )}
     </div>

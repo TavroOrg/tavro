@@ -218,7 +218,7 @@ async def _call_anthropic(
         "system":     system,
         "messages":   messages,
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.post(
             ANTHROPIC_API_URL,
             headers={
@@ -247,7 +247,7 @@ async def _stream_anthropic(
         "messages":   messages,
         "stream":     True,
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=180.0) as client:
         async with client.stream(
             "POST",
             ANTHROPIC_API_URL,
@@ -1603,18 +1603,29 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
     priority_map = {"Low": "4 - Low", "Medium": "3 - Moderate", "High": "2 - High"}
     priority = priority_map.get(request.estimated_impact or "Medium", "3 - Moderate")
 
+    # Baseline fields derived entirely from the idea — used when Claude is unavailable or fails
+    fallback_fields: dict[str, Any] = {
+        "title": request.title,
+        "description": request.description,
+        "business_problem_statement": request.rationale,
+        "expected_benefits": f"AI-driven improvements for: {request.title}",
+        "priority": priority,
+        "solution_approach": "",
+        "assumptions": "",
+        "quantified_financial_benefits": "",
+        "total_financial_impact_summary": "",
+        "implementation_cost_estimate": "",
+        "return_on_investment": "",
+        "risk_considerations": "",
+        "implementation_roadmap": "",
+        "recommendation": "",
+        "executive_summary": "",
+    }
+
     if not api_key:
-        no_llm_fields = {
-            "title": request.title,
-            "description": request.description,
-            "business_problem_statement": request.rationale,
-            "expected_benefits": f"AI-driven improvements for: {request.title}",
-            "priority": priority,
-            "solution_approach": "",
-        }
         return SparkConvertResponse(
-            use_case_fields=no_llm_fields,
-            agent_recommendation=_fallback_agent_recommendation(request, no_llm_fields),
+            use_case_fields=fallback_fields,
+            agent_recommendation=_fallback_agent_recommendation(request, fallback_fields),
         )
 
     blueprint_block = ""
@@ -1656,42 +1667,49 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         "- business_problem_statement: the specific business problem or gap being addressed\n"
         "- expected_benefits: plain text paragraph describing concrete outcomes (efficiency %, cost reduction, risk reduction, etc.). Must be a plain string — no JSON objects, no curly braces.\n"
         "- solution_approach: brief technical approach (model type, data sources, integration points)\n"
-        f"- priority: exactly one of '1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning' (suggest '{priority}' based on impact)\n\n"
+        f"- priority: exactly one of '1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning' (suggest '{priority}' based on impact)\n"
+        "- assumptions: key assumptions underpinning the financial and business projections (plain string)\n"
+        "- quantified_financial_benefits: specific measurable financial gains with concrete numbers where possible (e.g. cost savings $X, efficiency gain Y%, FTE reduction Z) — plain string\n"
+        "- total_financial_impact_summary: one concise paragraph summarising the overall net financial impact — plain string\n"
+        "- implementation_cost_estimate: estimated cost to implement covering technology, people, and time — plain string\n"
+        "- return_on_investment: ROI estimate or payback period based on costs vs benefits — plain string\n"
+        "- risk_considerations: key financial or operational risks that could affect the business case — plain string\n"
+        "- implementation_roadmap: phased timeline for delivery (e.g. Phase 1: …, Phase 2: …) — plain string\n"
+        "- recommendation: final recommendation on whether and how to proceed — plain string\n"
+        "- executive_summary: concise 3-6 sentence executive-level summary of the entire business case covering problem, solution, and expected value — plain string\n\n"
+        "All values must be plain strings — no JSON objects, no curly braces, no nested structures.\n"
         "Return ONLY the JSON object. No prose, no markdown fencing."
     )
 
+    safe_fields = dict(fallback_fields)  # start from fallback; overwrite if Claude succeeds
+
     try:
-        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=1000)
+        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=4096)
         raw_text = "".join(
             block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"
         )
         fields = json.loads(_extract_json_object(raw_text))
         if not isinstance(fields, dict):
             raise ValueError("Non-dict response")
+
+        fields.setdefault("priority", priority)
+
+        def _to_str(v: Any) -> str:
+            if isinstance(v, list):
+                return ", ".join(str(i) for i in v)
+            return str(v) if v is not None else ""
+
+        def _strip_curly_braces(s: str) -> str:
+            s = s.strip()
+            while s.startswith("{") and s.endswith("}"):
+                s = s[1:-1].strip()
+            return s
+
+        # Merge into fallback so all expected keys are always present
+        for k, v in fields.items():
+            safe_fields[k] = _strip_curly_braces(_to_str(v))
     except Exception as exc:
-        logger.warning("spark.convert_idea use-case expansion fallback: %s", exc)
-        fields = {
-            "title": request.title,
-            "description": request.description,
-            "business_problem_statement": request.rationale,
-            "expected_benefits": f"AI-driven improvements for: {request.title}",
-            "solution_approach": "",
-        }
-
-    fields.setdefault("priority", priority)
-
-    def _to_str(v: Any) -> str:
-        if isinstance(v, list):
-            return ", ".join(str(i) for i in v)
-        return str(v) if v is not None else ""
-
-    def _strip_curly_braces(s: str) -> str:
-        s = s.strip()
-        while s.startswith("{") and s.endswith("}"):
-            s = s[1:-1].strip()
-        return s
-
-    safe_fields = {k: _strip_curly_braces(_to_str(v)) for k, v in fields.items()}
+        logger.warning("spark.convert_idea enrichment failed — using fallback fields: %s", exc)
 
     # Second Claude call: design the agent that implements this use case
     agent_rec: dict[str, Any] | None = None
@@ -1703,8 +1721,8 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         agent_user = (
             f"Design an AI agent that implements this use case:\n"
             f"Title: {request.title}\n"
-            f"Description: {fields.get('description', request.description)}\n"
-            f"Solution approach: {fields.get('solution_approach', '')}\n"
+            f"Description: {safe_fields.get('description', request.description)}\n"
+            f"Solution approach: {safe_fields.get('solution_approach', '')}\n"
             f"Dimensions: {', '.join(request.target_dimensions)}\n"
             f"{blueprint_block}"
             "Return a JSON object with exactly these fields:\n"

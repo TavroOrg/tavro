@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS core.business_integrations (
     inherent_risk_classification_score NUMERIC,
     residual_risk_classification_score NUMERIC,
     num_of_associated_agents INTEGER,
+    sensitive BOOLEAN DEFAULT FALSE,
+    visibility TEXT DEFAULT 'internal',
+    valid_from TIMESTAMP,
+    valid_to TIMESTAMP,
     created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
 );
