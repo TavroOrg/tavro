@@ -190,10 +190,9 @@ const CreateAgentPage: React.FC = () => {
         : '/catalog';
 
       setSuccess(true);
-      sessionStorage.setItem(
-        'tavro_catalog_notice',
-        'Agent created successfully. Risk assessment is running in the background.'
-      );
+      window.dispatchEvent(new CustomEvent('tavro_notice', {
+        detail: { message: 'Agent created successfully. Risk assessment is running in the background.', variant: 'success' },
+      }));
       refresh();
       window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
       redirectTimerRef.current = window.setTimeout(() => navigate(redirectTarget), 1200);
