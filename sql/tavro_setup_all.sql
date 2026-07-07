@@ -127,7 +127,7 @@ CREATE INDEX IF NOT EXISTS dim_node_tags_gin_idx     ON twin.dim_node USING GIN 
 CREATE INDEX IF NOT EXISTS dim_node_embedding_idx    ON twin.dim_node
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 -- Partial unique indexes so each entity links to at most one active dim_node
-CREATE UNIQUE INDEX IF NOT EXISTS dim_node_application_id_uniq ON twin.dim_node (business_application_id) WHERE business_application_id IS NOT NULL AND valid_to IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS dim_node_application_id_company_uniq ON twin.dim_node (company_id, business_application_id) WHERE business_application_id IS NOT NULL AND valid_to IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS dim_node_process_id_uniq     ON twin.dim_node (business_process_id)     WHERE business_process_id     IS NOT NULL AND valid_to IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS dim_node_integration_id_uniq ON twin.dim_node (integration_id)          WHERE integration_id          IS NOT NULL AND valid_to IS NULL;
 
