@@ -26,6 +26,18 @@ export interface RelatedAiModelReference {
   status: string | null;
 }
 
+export interface RelatedApplicationReference {
+  business_application_id: string;
+  application_name: string | null;
+  description: string | null;
+}
+
+export interface RelatedBusinessProcessReference {
+  business_process_id: string;
+  process_name: string | null;
+  description: string | null;
+}
+
 export interface BusinessApplicationRecord {
   tenant_id: string | null;
   business_application_id: string;
@@ -58,12 +70,18 @@ export interface BusinessApplicationRecord {
   latest_release_date: string | null;
   latest_release_documentation_link: string | null;
   tags: string[];
+  dim_node_id: string | null;
+  sensitive: boolean | null;
+  visibility: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
   created_ts: string | null;
   updated_ts: string | null;
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
   related_use_cases: RelatedUseCaseReference[];
   related_ai_models: RelatedAiModelReference[];
+  related_processes: RelatedBusinessProcessReference[];
 }
 
 export interface BusinessProcessRecord {
@@ -93,6 +111,9 @@ export interface BusinessProcessRecord {
   inherent_risk_classification_score: number | null;
   sla: string | null;
   process_health_state: string | null;
+  dim_node_id: string | null;
+  sensitive: boolean | null;
+  visibility: string | null;
   tags: string[];
   created_ts: string | null;
   updated_ts: string | null;
@@ -101,6 +122,7 @@ export interface BusinessProcessRecord {
   related_processes: RelatedProcessReference[];
   related_use_cases: RelatedUseCaseReference[];
   related_ai_models: RelatedAiModelReference[];
+  related_applications: RelatedApplicationReference[];
 }
 
 export interface ChildAgentReference {
@@ -208,6 +230,10 @@ export interface BusinessApplicationUpsertPayload {
   latest_release_date?: string | null;
   latest_release_documentation_link?: string | null;
   tags?: string[] | null;
+  sensitive?: boolean | null;
+  visibility?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
 }
 
 export interface BusinessProcessUpsertPayload {
@@ -225,6 +251,8 @@ export interface BusinessProcessUpsertPayload {
   regulatory_impact?: string | null;
   sla?: string | null;
   process_health_state?: string | null;
+  sensitive?: boolean | null;
+  visibility?: string | null;
   tags?: string[] | null;
 }
 
@@ -246,6 +274,9 @@ export interface IntegrationRecord {
   version: string | null;
   parent_application_id: string | null;
   parent_application_name: string | null;
+  dim_node_id: string | null;
+  sensitive: boolean | null;
+  visibility: string | null;
   tags: string[];
   related_agents: RelatedAgentReference[];
   related_agent_count: number;
@@ -282,4 +313,16 @@ export interface IntegrationUpsertPayload {
   tags?: string[] | null;
   business_criticality?: string | null;
   emergency_tier?: string | null;
+  sensitive?: boolean | null;
+  visibility?: string | null;
+}
+
+export interface IntegrationAttachmentRecord {
+  id: string;
+  integration_id: string;
+  filename: string;
+  mime_type: string | null;
+  file_size_bytes: number;
+  created_at: string;
+  updated_at: string;
 }

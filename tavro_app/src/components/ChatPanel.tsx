@@ -2,7 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip } from 'lucide-react';
+import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip, AlertCircle } from 'lucide-react';
+import {
+    uploadChatAttachment, extractAttachmentText, formatAttachmentSize,
+    ACCEPTED_MIME_TYPES, MAX_ATTACHMENT_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE,
+} from '../services/chatAttachmentService';
+import type { AttachmentRef } from '../store/chatSessionStore';
 import { mcpClient } from '../services/mcpClient';
 import { LLMProvider, getProviderConfig, getActiveProvider, setActiveProvider, PROVIDER_LABELS } from '../services/llmService';
 import { ChatMessage } from '../services/llmService';
@@ -16,6 +21,8 @@ import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSessions } from '../context/ChatSessionContext';
 import type { StoredMessage } from '../store/chatSessionStore';
 import { useUseCases } from '../context/UseCaseContext';
+import { datahubContextApi } from '../services/datahubContextApi';
+import type { DataHubSearchOptions, DataHubSearchResponse } from '../types/datahubContext';
 
 interface Message {
     id: string;
@@ -26,6 +33,64 @@ interface Message {
     type?: 'status';
     statusPhase?: 'processing' | 'ready';
     agentName?: string;
+    attachments?: AttachmentRef[];
+}
+
+function buildDatahubSearchOptions(query: string, companyId?: string): DataHubSearchOptions | null {
+    const text = query.trim();
+    const lower = text.toLowerCase();
+    const mentionsDataAsset = /\b(datahub|dataset|datasets|table|tables|column|columns|schema|schemas|data source|lineage|policycenter|billingcenter|claimcenter|guidewire|underwriting|policy|billing|claims?)\b/i.test(text);
+    const isCreateDataGroundedResource = /\b(create|register|add|set up|update|modify)\b[\s\S]{0,120}\b(agent|ai use case|use case)\b/i.test(text);
+
+    if (!mentionsDataAsset && !isCreateDataGroundedResource) {
+        return null;
+    }
+
+    const options: DataHubSearchOptions = {
+        query: text,
+        companyId,
+        limit: 12,
+    };
+
+    const schemaMatch = lower.match(/\b(?:schema|schemas)\s+([a-z][a-z0-9_]*)\b/) || lower.match(/\b([a-z][a-z0-9_]*)\s+(?:schema|schemas)\b/);
+    if (schemaMatch?.[1]) {
+        options.schema = schemaMatch[1];
+        options.limit = 100;
+    }
+
+    if (/\bpolicy\s*center\b|\bpolicycenter\b/.test(lower)) {
+        options.application = 'PolicyCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (/\bbilling\s*center\b|\bbillingcenter\b/.test(lower)) {
+        options.application = 'BillingCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (/\bclaim\s*center\b|\bclaimcenter\b/.test(lower)) {
+        options.application = 'ClaimCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (lower.includes('guidewire')) {
+        options.vendor = 'Guidewire';
+        options.limit = 50;
+    }
+
+    if (/\btable|tables|dataset|datasets|schema|schemas\b/.test(lower)) {
+        options.entityType = 'DATASET';
+    }
+
+    if (options.application || options.schema || options.vendor) {
+        const terms = [
+            options.vendor,
+            options.application,
+            options.schema ? `${options.schema} schema` : undefined,
+            /\btable|tables\b/.test(lower) ? 'tables' : undefined,
+            /\bcolumn|columns\b/.test(lower) ? 'columns' : undefined,
+        ].filter(Boolean);
+        options.query = terms.length ? terms.join(' ') : text;
+    }
+
+    return options;
 }
 
 export interface ChatPanelProps {
@@ -368,6 +433,22 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
 
     return (
         <div className={`flex flex-col mb-4 ${isUser ? 'items-end' : 'items-start'}`}>
+            {/* Attachment chips above the bubble for user messages */}
+            {isUser && message.attachments && message.attachments.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-1 max-w-[85%] justify-end">
+                    {message.attachments.map((att, i) => (
+                        <span
+                            key={i}
+                            title={`${att.name} (${formatAttachmentSize(att.size)})`}
+                            className="flex items-center gap-1 text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full"
+                        >
+                            <Paperclip size={9} />
+                            <span className="truncate max-w-[120px]">{att.name}</span>
+                            <span className="opacity-60">{formatAttachmentSize(att.size)}</span>
+                        </span>
+                    ))}
+                </div>
+            )}
             <div className={`flex items-end gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center shadow-sm ${isUser ? 'bg-slate-700' : 'bg-blue-600'}`}>
                     {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-white" />}
@@ -478,7 +559,13 @@ async function* resumeFromServer(requestId: string): AsyncGenerator<string> {
 function toStoredMessages(msgs: Message[]): StoredMessage[] {
     return msgs
         .filter(m => m.id !== 'welcome' && !m.streaming && m.type !== 'status')
-        .map(m => ({ id: m.id, role: m.role, text: m.text, timestamp: m.timestamp.toISOString() }));
+        .map(m => ({
+            id: m.id,
+            role: m.role,
+            text: m.text,
+            timestamp: m.timestamp.toISOString(),
+            ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+        }));
 }
 
 function makeWelcome(model: string | null): Message {
@@ -489,7 +576,13 @@ function restoreMessages(stored: StoredMessage[], welcomeMsg: Message): Message[
     if (stored.length === 0) return [welcomeMsg];
     return [
         welcomeMsg,
-        ...stored.map(m => ({ id: m.id, role: m.role, text: m.text, timestamp: new Date(m.timestamp) })),
+        ...stored.map(m => ({
+            id: m.id,
+            role: m.role,
+            text: m.text,
+            timestamp: new Date(m.timestamp),
+            ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+        })),
     ];
 }
 
@@ -521,6 +614,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             }));
         })() : undefined,
     } : null;
+
+    // DataHub RAG search (per-turn, intent-scoped). Uses exact metadata
+    // filters for known schemas/apps/vendors and pgvector for fuzzy questions.
+    const fetchDatahubContext = useCallback(async (query: string): Promise<DataHubSearchResponse | null> => {
+        const options = buildDatahubSearchOptions(query, activeCompany?.id);
+        if (!options) return null;
+
+        try {
+            return await datahubContextApi.searchWithOptions(options);
+        } catch (err) {
+            console.warn('[DataHubContext] search failed:', err);
+            return null;
+        }
+    }, [activeCompany?.id]);
 
     // ── Provider state (per-session) ───────────────────────────────────────────
     const [activeProviderState, setActiveProviderState] = useState<LLMProvider | null>(
@@ -557,6 +664,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+    // ── Attachment state ───────────────────────────────────────────────────────
+    const [pendingAttachments, setPendingAttachments] = useState<AttachmentRef[]>([]);
+    const [attachmentUploading, setAttachmentUploading] = useState(false);
+    const [attachmentError, setAttachmentError] = useState<string | null>(null);
+    const attachInputRef = useRef<HTMLInputElement>(null);
+
     // Track latest messages synchronously (avoids stale closure in async sendMessage)
     const latestMessages = useRef<Message[]>(messages);
     latestMessages.current = messages;
@@ -571,6 +684,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         setMessages(restoreMessages(activeSession?.messages ?? [], sessionWelcome));
         setInput('');
         setLoading(false);
+        setPendingAttachments([]);
+        setAttachmentError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeSessionId]);
 
@@ -590,7 +705,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     // ── Agent creation / artifact status cards ────────────────────────────────
     useEffect(() => {
         const onAgentCreated = (event: Event) => {
-            const { result, args } = (event as CustomEvent).detail ?? {};
+            const { result, args, source } = (event as CustomEvent).detail ?? {};
+            if (source === 'spark') return;
             const agentId: string =
                 result?.agent_id ||
                 result?.identification?.agent_id ||
@@ -702,8 +818,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     // used a direct browser fetch that was cancelled on refresh).
                     // Re-run the request using the persisted conversation history.
                     const currentHistory = buildHistory(latestMessages.current);
+                    const datahubResults = await fetchDatahubContext(userMessage);
+                    const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx, datahubResults);
                     accumulated = await streamTokens(
-                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData })
+                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData, systemPrompt, blueprintData: blueprintCtx })
                     );
                 }
 
@@ -808,23 +926,70 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         generateMarkdownPdf(name, body, `tavro-assistant-response-${Date.now()}.pdf`, 'Summary');
     };
 
+    const handleAttachFiles = async (files: FileList) => {
+        setAttachmentError(null);
+        const remaining = MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.length;
+        if (remaining <= 0) {
+            setAttachmentError(`Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message`);
+            return;
+        }
+        const toAdd = Array.from(files).slice(0, remaining);
+        const oversized = toAdd.filter(f => f.size > MAX_ATTACHMENT_SIZE_MB * 1024 * 1024);
+        if (oversized.length) {
+            setAttachmentError(`Files must be under ${MAX_ATTACHMENT_SIZE_MB}MB: ${oversized.map(f => f.name).join(', ')}`);
+            return;
+        }
+        setAttachmentUploading(true);
+        try {
+            const refs = await Promise.all(toAdd.map(uploadChatAttachment));
+            setPendingAttachments(prev => [...prev, ...refs]);
+        } catch (err: any) {
+            setAttachmentError(toUserMessage(err));
+        } finally {
+            setAttachmentUploading(false);
+            if (attachInputRef.current) attachInputRef.current.value = '';
+        }
+    };
+
     const sendMessage = async () => {
         const text = input.trim();
-        if (!text || loading) return;
+        if ((!text && pendingAttachments.length === 0) || loading || attachmentUploading) return;
 
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
         }
 
-        const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text, timestamp: new Date() };
+        // Snapshot and clear pending attachments before going async
+        const attsSnapshot = [...pendingAttachments];
+        setPendingAttachments([]);
+        setAttachmentError(null);
+
+        // Show the user message and lock the input immediately — before any
+        // async work — so there is no window where the send button re-enables
+        // and the user can accidentally trigger a second send.
+        const userMsg: Message = {
+            id: `user-${Date.now()}`,
+            role: 'user',
+            text: text || `[${attsSnapshot.map(a => a.name).join(', ')}]`,
+            timestamp: new Date(),
+            ...(attsSnapshot.length ? { attachments: attsSnapshot } : {}),
+        };
         const withUser = [...latestMessages.current, userMsg];
         setMessages(withUser);
         setInput('');
         setLoading(true);
-
-        // Persist after adding user message so the session has the user turn
-        // even if the page refreshes before the AI response arrives.
         persist(withUser);
+
+        // Build the effective message text sent to the LLM.
+        // Attachment text is prepended as context; the user's typed text follows.
+        let effectiveText = text;
+        if (attsSnapshot.length > 0) {
+            const extracts = await Promise.all(attsSnapshot.map(extractAttachmentText));
+            const attachContext = attsSnapshot
+                .map((att, i) => `[Attached file: ${att.name}]\n${extracts[i]}`)
+                .join('\n\n---\n\n');
+            effectiveText = attachContext + (text ? `\n\n---\n\n${text}` : '');
+        }
 
         const requestId = generateRequestId();
         savePendingRequest({ requestId, sessionId: activeSessionId ?? '', userMessage: text, timestamp: Date.now() });
@@ -833,13 +998,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
         try {
             const exportFormat = detectExportFormat(text);
-            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
+            const datahubResults = await fetchDatahubContext(text);
+            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx, datahubResults);
             // Append a format instruction so the LLM generates content in the
             // requested output format (CSV, JSON, DOCX, PDF, etc.).
             const effectiveSystemPrompt = exportFormat
                 ? systemPrompt + EXPORT_INSTRUCTIONS[exportFormat]
                 : systemPrompt;
-            const stream = mcpClient.chat(text, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt, blueprintData: blueprintCtx }, requestId);
+            const stream = mcpClient.chat(effectiveText, buildHistory(latestMessages.current), { viewType, viewData, systemPrompt: effectiveSystemPrompt, blueprintData: blueprintCtx }, requestId);
             let firstToken = true;
             let accumulated = '';
 
@@ -925,7 +1091,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!attachmentUploading) sendMessage(); }
     };
 
     const sortedSessions = [...sessions].sort(
@@ -1088,33 +1254,95 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                 </div>
             )}
 
-            {/* Input Row */}
-            <div className="flex items-end gap-2 px-3 py-3 bg-white border-t border-slate-200 flex-shrink-0">
-                <textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                        viewType === 'blueprint' ? 'Ask about your company blueprint…' :
-                            viewType === 'agent_detail' ? 'Ask about this agent…' :
-                                viewType === 'use_case_detail' ? 'Ask about this use case…' :
-                                    viewType === 'agent_catalog' ? 'Ask about your agents…' :
-                                        viewType === 'use_case_catalog' ? 'Ask about your use cases…' :
-                                            'Ask Tavro AI anything…'
-                    }
-                    disabled={loading}
-                    className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder:text-slate-400 disabled:opacity-60 resize-none overflow-y-auto"
-                    style={{ minHeight: '60px', maxHeight: '240px' }}
-                />
-                <button
-                    onClick={sendMessage}
-                    disabled={!input.trim() || loading}
-                    className="flex-shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl flex items-center justify-center transition-colors shadow-sm disabled:shadow-none"
-                    title="Send message"
-                >
-                    {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={14} />}
-                </button>
+            {/* Input area with attachment support */}
+            <div className="flex-shrink-0 bg-white border-t border-slate-200">
+
+                {/* Pending attachment chips */}
+                {(pendingAttachments.length > 0 || attachmentError) && (
+                    <div className="px-3 pt-2 flex flex-col gap-1">
+                        {pendingAttachments.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                                {pendingAttachments.map((att, i) => (
+                                    <div
+                                        key={i}
+                                        className="flex items-center gap-1.5 text-[11px] font-medium bg-slate-100 border border-slate-200 text-slate-700 px-2 py-1 rounded-lg"
+                                    >
+                                        <Paperclip size={10} className="text-slate-400 flex-shrink-0" />
+                                        <span className="truncate max-w-[130px]">{att.name}</span>
+                                        <span className="text-[9px] text-slate-400">{formatAttachmentSize(att.size)}</span>
+                                        <button
+                                            onClick={() => setPendingAttachments(prev => prev.filter((_, idx) => idx !== i))}
+                                            className="ml-0.5 text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                                            title="Remove"
+                                        >
+                                            <X size={10} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {attachmentError && (
+                            <div className="flex items-center gap-1.5 text-[11px] text-rose-600">
+                                <AlertCircle size={11} /> {attachmentError}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Input Row */}
+                <div className="flex items-end gap-2 px-3 py-3">
+                    {/* Hidden file input */}
+                    <input
+                        ref={attachInputRef}
+                        type="file"
+                        multiple
+                        accept={ACCEPTED_MIME_TYPES}
+                        className="hidden"
+                        onChange={e => e.target.files && handleAttachFiles(e.target.files)}
+                        disabled={loading || attachmentUploading || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                    />
+                    {/* Paperclip button */}
+                    <button
+                        onClick={() => { setAttachmentError(null); attachInputRef.current?.click(); }}
+                        disabled={loading || attachmentUploading || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                        title={pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE ? `Max ${MAX_ATTACHMENTS_PER_MESSAGE} files` : 'Attach file (PDF, image, CSV, Excel)'}
+                        className={`flex-shrink-0 w-9 h-9 rounded-xl border flex items-center justify-center transition-all ${
+                            loading || attachmentUploading || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
+                                ? 'border-slate-100 text-slate-300 cursor-not-allowed'
+                                : 'border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50'
+                        }`}
+                    >
+                        {attachmentUploading
+                            ? <Loader2 size={14} className="animate-spin" />
+                            : <Paperclip size={14} />
+                        }
+                    </button>
+                    <textarea
+                        ref={textareaRef}
+                        value={input}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder={
+                            viewType === 'blueprint' ? 'Ask about your company blueprint…' :
+                                viewType === 'agent_detail' ? 'Ask about this agent…' :
+                                    viewType === 'use_case_detail' ? 'Ask about this use case…' :
+                                        viewType === 'agent_catalog' ? 'Ask about your agents…' :
+                                            viewType === 'use_case_catalog' ? 'Ask about your use cases…' :
+                                                'Ask Tavro AI anything…'
+                        }
+                        disabled={loading}
+                        className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all placeholder:text-slate-400 disabled:opacity-60 resize-none overflow-y-auto"
+                        style={{ minHeight: '60px', maxHeight: '240px' }}
+                    />
+                    <button
+                        onClick={sendMessage}
+                        disabled={(!input.trim() && pendingAttachments.length === 0) || loading || attachmentUploading}
+                        className="flex-shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl flex items-center justify-center transition-colors shadow-sm disabled:shadow-none"
+                        title={attachmentUploading ? 'Uploading attachment…' : 'Send message'}
+                    >
+                        {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={14} />}
+                    </button>
+                </div>
             </div>
         </div>
     );

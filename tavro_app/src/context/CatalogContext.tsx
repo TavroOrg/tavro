@@ -357,9 +357,14 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     .map(toPendingAgentFromWorkflow);
 
                 const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
-                // Don't stamp the cache timestamp yet — wait until all pages arrive so the
-                // 5-minute freshness window only starts once the data set is complete.
-                sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                const now = Date.now();
+                try {
+                    sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                    sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+                } catch {
+                    // Storage quota exceeded — data lives in React state, re-fetched next load
+                }
+                setLastFetched(new Date(now));
                 return next;
             });
             setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
@@ -545,14 +550,16 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     window.dispatchEvent(new CustomEvent('tavro_notice', {
                         detail: {
                             key: 'tavro_catalog_notice',
-                            message: `Workflow failed for ${wf.name || wf.agent_id}.${wf.error ? ` ${wf.error}` : ''}`,
+                            message: `Risk assessment failed for ${wf.name || wf.agent_id}.`,
+                            variant: 'error',
                         },
                     }));
                 } else if (wf.status === 'completed') {
                     window.dispatchEvent(new CustomEvent('tavro_notice', {
                         detail: {
                             key: 'tavro_catalog_notice',
-                            message: `Workflow completed for ${wf.name || wf.agent_id}.`,
+                            message: `Risk assessment completed for ${wf.name || wf.agent_id}.`,
+                            variant: 'success',
                         },
                     }));
                 }
@@ -591,8 +598,12 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             else next.unshift(agent);
 
             const now = Date.now();
-            sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
-            sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            try {
+                sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+            } catch {
+                // Storage quota exceeded — data lives in React state, re-fetched next load
+            }
             setLastFetched(new Date(now));
             return next;
         });
@@ -670,6 +681,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 detail: {
                     key: 'tavro_artifacts_notice',
                     message: `Artifacts generated for ${agentName}. Please refer to the Attachments tab.`,
+                    variant: 'success',
                 },
             }));
         };

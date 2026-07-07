@@ -60,6 +60,16 @@ class InvokeRequest(BaseModel):
 # ── Azure auth ────────────────────────────────────────────────────────────────
 
 async def _get_token() -> str:
+    client_id     = os.getenv("AZURE_AI_FOUNDRY_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID", "")
+    tenant_id     = os.getenv("AZURE_AI_FOUNDRY_TENANT_ID") or os.getenv("AZURE_TENANT_ID", "")
+    client_secret = os.getenv("AZURE_AI_FOUNDRY_CLIENT_SECRET") or os.getenv("AZURE_CLIENT_SECRET", "")
+
+    if client_id and tenant_id and client_secret:
+        from azure.identity.aio import ClientSecretCredential
+        async with ClientSecretCredential(tenant_id, client_id, client_secret) as cred:
+            tok = await cred.get_token("https://ai.azure.com/.default")
+            return tok.token
+
     from azure.identity.aio import DefaultAzureCredential
     async with DefaultAzureCredential() as cred:
         tok = await cred.get_token("https://ai.azure.com/.default")
@@ -237,7 +247,7 @@ async def _handle_deploy(req: DeployRequest) -> AsyncGenerator[str, None]:
 
         endpoint = _endpoint()
         if not endpoint:
-            yield _err("Azure endpoint not configured. Set AZURE_AI_FOUNDRY_ENDPOINT in .env")
+            yield _err("Azure endpoint not configured. Set AZURE_AI_FOUNDRY_HOSTED_ENDPOINTs in .env")
             yield _done()
             return
 

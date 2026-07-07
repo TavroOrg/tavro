@@ -65,11 +65,12 @@ const Settings: React.FC = () => {
     };
     const PROVIDER_MODEL_OPTIONS: Partial<Record<LLMProvider, string[]>> = {
         openai:    ['gpt-4o', 'gpt-5.5'],
-        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+        anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
     };
     const BYOK_MODEL_OPTIONS: Partial<Record<ByokType, string[]>> = {
         openai:    ['gpt-4o', 'gpt-5.5'],
-        anthropic: ['claude-sonnet-4-6', 'claude-sonnet-4-5'],
+        azure:     ['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini'],
+        anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
     };
     const getModelOptions = (p: LLMProvider, s: ProviderState): string[] | null => {
         if (p === 'copilot') return BYOK_MODEL_OPTIONS[s.byokType ?? 'github'] ?? null;

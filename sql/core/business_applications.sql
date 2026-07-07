@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     company_id TEXT,
     company_name TEXT,
     tags JSONB DEFAULT '[]'::jsonb,
+    sensitive BOOLEAN DEFAULT FALSE,
+    visibility TEXT DEFAULT 'internal',
+    valid_from TIMESTAMP,
+    valid_to TIMESTAMP,
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );

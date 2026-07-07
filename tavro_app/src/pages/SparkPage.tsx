@@ -627,6 +627,7 @@ const IdeaModal: React.FC<{
               skills: agentSkills.length > 0 ? agentSkills : undefined,
               knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
               original_prompt: `Create agent for AI use case: ${idea.title}`,
+              source: 'spark',
             });
 
             const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);

@@ -6,7 +6,6 @@ import { useCatalog } from '../context/CatalogContext';
 import { toUserMessage } from '../utils/errorUtils';
 import AgentCatalog from '../components/AgentCatalog';
 import LoadAgentsModal from '../components/LoadAgentsModal';
-import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
@@ -91,16 +90,52 @@ const Dashboard: React.FC = () => {
             locallyPendingIds = new Set();
         }
 
+        // Build a set of agent identifiers (id, internal_id, name) whose Temporal workflow
+        // is still running, so we don't prematurely clear badges for other sessions.
+        let runningWorkflowKeys: Set<string>;
+        try {
+            const raw = localStorage.getItem('tavro_temporal_workflows');
+            const records: any[] = raw ? JSON.parse(raw) : [];
+            runningWorkflowKeys = new Set(
+                (Array.isArray(records) ? records : [])
+                    .filter((w: any) => String(w?.status ?? '').toLowerCase() === 'running')
+                    .flatMap((w: any) => [
+                        String(w?.agent_id ?? '').toLowerCase().trim(),
+                        String(w?.agent_internal_id ?? '').toLowerCase().trim(),
+                        String(w?.name ?? '').toLowerCase().trim(),
+                    ])
+                    .filter(Boolean)
+            );
+        } catch {
+            runningWorkflowKeys = new Set();
+        }
+
         const applyPendingStatus = (agent: AgentData): AgentData => {
             const agentId = (agent.identification?.agent_id ?? '').toLowerCase().trim();
-            if (!agentId || !locallyPendingIds.has(agentId)) return agent;
-            return {
-                ...agent,
-                latest_risk_score: null,
-                latest_risk_class: null,
-                risk_assessment: null,
-                identification: { ...agent.identification, governance_status: 'Risk Assessment is running' },
-            };
+            if (agentId && locallyPendingIds.has(agentId)) {
+                return {
+                    ...agent,
+                    latest_risk_score: null,
+                    latest_risk_class: null,
+                    risk_assessment: null,
+                    identification: { ...agent.identification, governance_status: 'Risk Assessment is running' },
+                };
+            }
+            // Clear stale "Risk Assessment is running" returned by the API when neither a
+            // local pending marker nor a running Temporal workflow backs it up.
+            if (agent.identification?.governance_status === 'Risk Assessment is running') {
+                const agentName = (agent.name ?? '').toLowerCase().trim();
+                const isStillRunning =
+                    (agentId && runningWorkflowKeys.has(agentId)) ||
+                    (agentName && runningWorkflowKeys.has(agentName));
+                if (!isStillRunning) {
+                    return {
+                        ...agent,
+                        identification: { ...agent.identification, governance_status: null },
+                    };
+                }
+            }
+            return agent;
         };
 
         try {
@@ -233,9 +268,7 @@ const Dashboard: React.FC = () => {
     return (
         <>
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
-            <TimedInfoToast storageKey="tavro_catalog_notice" />
-
-            <div className="flex items-center justify-between">
+<div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-slate-800">Agent Catalog</h2>
                     <p className="text-sm text-slate-500">

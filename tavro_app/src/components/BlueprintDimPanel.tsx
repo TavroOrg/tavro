@@ -7,6 +7,7 @@ import {
   X, ExternalLink, RefreshCw, Shield, Eye, EyeOff,
   Tag, Link2, Database, Pencil, Check, AlertTriangle, Trash2, Plus, Paperclip, Download,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { blueprintApi } from '../services/blueprintApi';
 import type { DimNode, DimEdge, SourceRef, SourceRefDetail, DimNodeAttachment, DimCategory } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
@@ -22,12 +23,20 @@ interface BlueprintDimPanelProps {
 
 const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, onNodeUpdated, onEdgeCreated }) => {
   const { dimTypes } = useBlueprint();
+  const navigate = useNavigate();
+  const [navigatingToEntity, setNavigatingToEntity] = useState(false);
 
   const [edges,       setEdges]       = useState<DimEdge[]>([]);
   const [sourceRefs,  setSourceRefs]  = useState<SourceRef[]>([]);
   const [fetchDetail, setFetchDetail] = useState<Record<string, SourceRefDetail | null>>({});
   const [fetching,    setFetching]    = useState<Record<string, boolean>>({});
   const [loading,     setLoading]     = useState(true);
+
+  // Source ref add form state
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName,       setNewSysName]       = useState('');
+  const [newExtId,         setNewExtId]         = useState('');
+  const [addingRef,        setAddingRef]        = useState(false);
 
   // Inline edit state
   const [editing,      setEditing]      = useState(false);
@@ -40,6 +49,7 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
   const [showAddEdge,  setShowAddEdge]  = useState(false);
   const [attachments,  setAttachments]  = useState<DimNodeAttachment[]>([]);
   const [uploading,    setUploading]    = useState(false);
+  const [attachError,  setAttachError]  = useState<string | null>(null);
   const [downloading,  setDownloading]  = useState<string | null>(null);
   const attachFileRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +57,7 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
     const list = await blueprintApi.listAttachments(node.id);
     setAttachments(list);
   }, [node.id]);
+
 
   const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 
@@ -58,9 +69,19 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
     }
     if (!ok.length) return;
     setUploading(true);
+    setAttachError(null);
     try {
-      await Promise.all(ok.map(f => blueprintApi.uploadAttachment(node.id, f)));
+      // Upload to dim_node — backend also syncs to entity attachment table if linked
+      const results = await Promise.allSettled(ok.map(f => blueprintApi.uploadAttachment(node.id, f)));
+      const errors = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map(r => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+      if (errors.length) {
+        setAttachError(errors.join(' '));
+      }
       await loadAttachments();
+      // Notify the entity's AttachmentPanel to refresh and re-sync from blueprint
+      window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', { detail: {} }));
     } finally {
       setUploading(false);
     }
@@ -69,6 +90,8 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
   const handleDeleteAttachment = async (id: string) => {
     await blueprintApi.deleteAttachment(id);
     setAttachments((prev: DimNodeAttachment[]) => prev.filter((a: DimNodeAttachment) => a.id !== id));
+    // Notify entity AttachmentPanel to reload (deleted attachment will also be gone from entity table via backend sync)
+    window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', { detail: {} }));
   };
 
   const handleDownload = async (att: DimNodeAttachment) => {
@@ -157,6 +180,37 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
     setSourceRefs(p => p.filter(r => r.id !== ref.id));
   };
 
+  const handleAddSourceRef = async () => {
+    if (!newSysName.trim() || !newExtId.trim()) return;
+    setAddingRef(true);
+    try {
+      const ref = await blueprintApi.createSourceRef(node.id, newSysName.trim(), newExtId.trim());
+      setSourceRefs(p => [...p, ref]);
+      setNewSysName('');
+      setNewExtId('');
+      setShowAddSourceRef(false);
+    } finally {
+      setAddingRef(false);
+    }
+  };
+
+  const handleNavigateToEntity = async () => {
+    setNavigatingToEntity(true);
+    try {
+      const linked = await blueprintApi.getLinkedEntity(node.id);
+      if (!linked) return;
+      if (linked.entity_type === 'application') {
+        navigate(`/applications/${encodeURIComponent(linked.entity_id)}`);
+      } else if (linked.entity_type === 'process') {
+        navigate(`/processes/${encodeURIComponent(linked.entity_id)}`);
+      } else if (linked.entity_type === 'integration') {
+        navigate(`/integrations/${encodeURIComponent(linked.entity_id)}`);
+      }
+    } finally {
+      setNavigatingToEntity(false);
+    }
+  };
+
   return (
     <>
     <div className="h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 transition-colors">
@@ -195,6 +249,15 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
               className="font-bold text-slate-800 dark:text-slate-100 text-base bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-600 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 w-full"
               autoFocus
             />
+          ) : (node.category === 'application' || node.category === 'process' || node.category === 'integration') ? (
+            <button
+              onClick={handleNavigateToEntity}
+              disabled={navigatingToEntity}
+              className="font-bold text-slate-800 dark:text-slate-100 text-base leading-snug text-left hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline transition-colors disabled:opacity-60 truncate flex items-center gap-1.5"
+            >
+              {navigatingToEntity && <RefreshCw size={11} className="animate-spin flex-shrink-0" />}
+              {node.label}
+            </button>
           ) : (
             <p className="font-bold text-slate-800 dark:text-slate-100 text-base leading-snug truncate">
               {node.label}
@@ -227,10 +290,12 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
               </button>
             </>
           ) : (
-            <button onClick={() => setEditing(true)}
-              className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="Edit">
-              <Pencil size={14} />
-            </button>
+            <>
+              <button onClick={() => setEditing(true)}
+                className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="Edit">
+                <Pencil size={14} />
+              </button>
+            </>
           )}
           <button onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
@@ -346,10 +411,47 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
 
         {/* Source references */}
         <div>
-          <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Database size={11} /> Source Systems
-            <span className="font-normal normal-case tracking-normal text-slate-300 dark:text-slate-600">({sourceRefs.length})</span>
-          </p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <Database size={11} /> Source Systems
+              <span className="font-normal normal-case tracking-normal text-slate-300 dark:text-slate-600">({sourceRefs.length})</span>
+            </p>
+            <button
+              onClick={() => setShowAddSourceRef(p => !p)}
+              className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 px-2 py-1 rounded-lg transition-colors">
+              <Plus size={10} /> Add
+            </button>
+          </div>
+          {showAddSourceRef && (
+            <div className="mb-2 flex flex-col gap-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2.5 border border-slate-200 dark:border-slate-700">
+              <input
+                value={newSysName}
+                onChange={e => setNewSysName(e.target.value)}
+                placeholder="System name (e.g. Salesforce)"
+                className="text-xs border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800"
+              />
+              <input
+                value={newExtId}
+                onChange={e => setNewExtId(e.target.value)}
+                placeholder="External ID"
+                className="text-xs border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800"
+              />
+              <div className="flex gap-1.5">
+                <button
+                  onClick={handleAddSourceRef}
+                  disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                  className="flex-1 flex items-center justify-center gap-1 text-[10px] font-bold bg-indigo-600 text-white rounded-lg py-1.5 hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                  {addingRef ? <RefreshCw size={9} className="animate-spin" /> : <Check size={9} />}
+                  Save
+                </button>
+                <button
+                  onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }}
+                  className="px-3 text-[10px] text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-600 rounded-lg transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {sourceRefs.length === 0 ? (
             <p className="text-xs text-slate-400 dark:text-slate-500 italic">No source references</p>
           ) : (
@@ -441,6 +543,9 @@ const BlueprintDimPanel: React.FC<BlueprintDimPanelProps> = ({ node, onClose, on
               e.target.value = '';
             }}
           />
+          {attachError && (
+            <p className="text-[10px] text-red-500 mt-1 mb-1 break-words">{attachError}</p>
+          )}
           {attachments.length === 0 ? (
             <div
               className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 flex flex-col items-center gap-1.5 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-all"

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 from temporalio.worker import Worker
 from temporalio.client import Client
 
-from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph
+from api.routers import companies, dim_types, dim_nodes, dim_edges, source_refs, graph, datahub_context
 from api.routers.dim_types import seed_system_dim_types
 from api.routers.spark import ensure_spark_table
 from api.routers import blueprint
@@ -34,6 +34,7 @@ from api.routers import docker_logs
 from api.routers.docker_logs import start_log_collector
 from api.routers import claude_run
 from api.routers import azure_deploy
+from api.routers import chat_attachments
 from api.migrations.init_tables import initialize_tables
 from api.database import get_db
 
@@ -50,6 +51,7 @@ from services.activity.activities import (
     update_data_sources,
     refresh_curated_agent_360_activity,
     create_local_agent_card_activity,
+    create_aict_ai_system_activity,
 )
 
 TASK_QUEUE        = "risk-classification-queue"
@@ -77,6 +79,7 @@ async def _run_temporal_worker():
             update_data_sources,
             refresh_curated_agent_360_activity,
             create_local_agent_card_activity,
+            create_aict_ai_system_activity,
         ],
     )
     print(f"Temporal worker listening on queue: {TASK_QUEUE}")
@@ -177,6 +180,7 @@ app.include_router(dim_nodes.router,   prefix="/api/v1/dim-nodes",   tags=["Dime
 app.include_router(dim_edges.router,   prefix="/api/v1/dim-edges",   tags=["Dimension Edges"])
 app.include_router(source_refs.router, prefix="/api/v1/source-refs", tags=["Source References"])
 app.include_router(graph.router,       prefix="/api/v1/graph",       tags=["Graph"])
+app.include_router(datahub_context.router, prefix="/api/v1/datahub-context", tags=["DataHub Context"])
 app.include_router(blueprint.router,   prefix="/api/v1/blueprint",   tags=["Blueprint"])
 app.include_router(playground.router,  prefix="/api/v1/playground",  tags=["Playground"])
 # ── Govern module (enterprise-only) ──────────────────────────────────────────
@@ -203,6 +207,7 @@ app.include_router(spark.router,            prefix="/api/v1/spark",      tags=["
 app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 app.include_router(claude_run.router)
 app.include_router(azure_deploy.router)
+app.include_router(chat_attachments.router, prefix="/api/v1")
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])

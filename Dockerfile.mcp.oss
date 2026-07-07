@@ -21,6 +21,7 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
+COPY catalog_connector ./catalog_connector
 COPY mcp_server ./mcp_server
 COPY tavro_library ./tavro_library
 COPY tavro_app/copilot-server/templates ./templates

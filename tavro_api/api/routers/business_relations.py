@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
-from api.routers.blueprint import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.llm_utils import _call_anthropic, _call_openai, _collect_text, _extract_json
 
 router = APIRouter()
 RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
@@ -28,6 +28,7 @@ _TABLE_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _AGENT_ATTACHMENTS_READY = False
 _APPLICATION_ATTACHMENTS_READY = False
 _PROCESS_ATTACHMENTS_READY = False
+_INTEGRATION_ATTACHMENTS_READY = False
 _INTEGRATION_AGENT_READY = False
 _APPLICATIONS_READY = False
 _PROCESSES_READY = False
@@ -67,6 +68,10 @@ _APPLICATION_EDITABLE_COLUMNS: set[str] = {
     "latest_released_version",
     "latest_release_date",
     "latest_release_documentation_link",
+    "visibility",
+    "valid_from",
+    "valid_to",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _APPLICATION_READONLY_DEFAULTS: dict[str, Any] = {
@@ -99,6 +104,8 @@ _PROCESS_EDITABLE_COLUMNS: set[str] = {
     "regulatory_impact",
     "sla",
     "process_health_state",
+    "visibility",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _PROCESS_READONLY_DEFAULTS: dict[str, Any] = {
@@ -133,6 +140,8 @@ _INTEGRATION_EDITABLE_COLUMNS: set[str] = {
     "parent_application_id",
     "business_criticality",
     "emergency_tier",
+    "visibility",
+    # "sensitive" is boolean — handled separately outside _pick_text_columns
 }
 
 _INTEGRATION_READONLY_DEFAULTS: dict[str, Any] = {}
@@ -187,6 +196,10 @@ class Application(BaseModel):
     latest_release_date: Optional[str] = None
     latest_release_documentation_link: Optional[str] = None
     tags: Optional[list] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
     # Backward-compatible aliases accepted by canonical mapping:
     are: Optional[str] = None
     associated_agents: Optional[str] = None
@@ -220,6 +233,8 @@ class Process(BaseModel):
     sla: Optional[str] = None
     process_health_state: Optional[str] = None
     tags: Optional[list] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
     # Backward-compatible aliases accepted by canonical mapping:
     number: Optional[str] = None
     name: Optional[str] = None
@@ -254,6 +269,8 @@ class Integration(BaseModel):
     tags: Optional[list] = None
     business_criticality: Optional[str] = None
     emergency_tier: Optional[str] = None
+    sensitive: Optional[bool] = None
+    visibility: Optional[str] = None
 
 
 class IntegrationCreate(Integration):
@@ -292,6 +309,14 @@ class SuggestProcessDescriptionResponse(BaseModel):
 
 class SuggestIntegrationDescriptionRequest(BaseModel):
     integration_name: str
+
+
+class LinkApplicationToProcessRequest(BaseModel):
+    business_application_id: str
+
+
+class LinkProcessToApplicationRequest(BaseModel):
+    business_process_id: str
 
 
 class SuggestIntegrationDescriptionResponse(BaseModel):
@@ -372,6 +397,14 @@ async def _get_company_name(db: AsyncSession, company_id: str) -> Optional[str]:
         return None
 
 
+# Maps dim_type category → the column name on twin.dim_node that holds the entity PK
+_ENTITY_COL_MAP: dict[str, str] = {
+    "application": "business_application_id",
+    "process":     "business_process_id",
+    "integration": "integration_id",
+}
+
+
 async def _upsert_dim_node_for_entity(
     db: AsyncSession,
     company_id: str,
@@ -379,46 +412,104 @@ async def _upsert_dim_node_for_entity(
     label: str,
     summary: Optional[str],
     tags: Optional[list] = None,
-) -> None:
-    """Find the system dim_type for the given category and upsert a dim_node."""
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
+    entity_id: Optional[str] = None,
+) -> Optional[str]:
+    """Upsert a dim_node for the given entity. The dim_node carries the entity PK, not the other way. Returns the node id."""
     result = await db.execute(
         text("SELECT id FROM twin.dim_type WHERE category = :category LIMIT 1"),
         {"category": category},
     )
     row = result.mappings().first()
     if not row:
-        return
+        return None
     dim_type_id = str(row["id"])
+    entity_col = _ENTITY_COL_MAP.get(category)
 
-    existing = await db.execute(
-        text("""
-            SELECT id FROM twin.dim_node
-            WHERE company_id = :company_id AND dim_type_id = :dim_type_id
-              AND LOWER(label) = LOWER(:label) AND valid_to IS NULL
-            LIMIT 1
-        """),
-        {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
-    )
-    existing_row = existing.mappings().first()
-    if existing_row:
-        if tags is not None:
-            await db.execute(
-                text("UPDATE twin.dim_node SET summary = :summary, tags = cast(:tags as jsonb), updated_at = NOW() WHERE id = :id"),
-                {"summary": summary, "tags": json.dumps(tags), "id": str(existing_row["id"])},
+    existing_row = None
+
+    # Primary lookup: by entity_id column on dim_node (accurate, avoids label collisions)
+    if entity_id and entity_col:
+        try:
+            ex = await db.execute(
+                text(f"""
+                    SELECT id FROM twin.dim_node
+                    WHERE company_id = :company_id AND dim_type_id = :dim_type_id
+                      AND {entity_col} = :entity_id AND valid_to IS NULL
+                    LIMIT 1
+                """),
+                {"company_id": company_id, "dim_type_id": dim_type_id, "entity_id": entity_id},
             )
-        else:
-            await db.execute(
-                text("UPDATE twin.dim_node SET summary = :summary, updated_at = NOW() WHERE id = :id"),
-                {"summary": summary, "id": str(existing_row["id"])},
-            )
-    else:
-        await db.execute(
+            existing_row = ex.mappings().first()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    # Fallback: by label (for nodes created before this migration)
+    if not existing_row:
+        ex2 = await db.execute(
             text("""
-                INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, tags)
-                VALUES (:company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb))
+                SELECT id FROM twin.dim_node
+                WHERE company_id = :company_id AND dim_type_id = :dim_type_id
+                  AND LOWER(label) = LOWER(:label) AND valid_to IS NULL
+                LIMIT 1
             """),
-            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label, "summary": summary, "tags": json.dumps(tags or [])},
+            {"company_id": company_id, "dim_type_id": dim_type_id, "label": label},
         )
+        existing_row = ex2.mappings().first()
+
+    if existing_row:
+        node_id = str(existing_row["id"])
+        set_parts = ["label = :label", "summary = :summary", "updated_at = NOW()"]
+        params: dict = {"label": label, "summary": summary, "id": node_id}
+        if tags is not None:
+            set_parts.append("tags = cast(:tags as jsonb)")
+            params["tags"] = json.dumps(tags)
+        if visibility:
+            set_parts.append("visibility = :visibility")
+            params["visibility"] = visibility
+        if sensitive is not None:
+            set_parts.append("sensitive = :sensitive")
+            params["sensitive"] = sensitive
+        # Stamp the entity_id onto the node if not already set (e.g. matched via label fallback)
+        if entity_id and entity_col:
+            set_parts.append(f"{entity_col} = coalesce({entity_col}, :{entity_col})")
+            params[entity_col] = entity_id
+        await db.execute(
+            text(f"UPDATE twin.dim_node SET {', '.join(set_parts)} WHERE id = :id"),
+            params,
+        )
+        return node_id
+    else:
+        # Build INSERT; include entity_id column when provided
+        ins_cols = "company_id, dim_type_id, label, summary, tags, visibility, sensitive"
+        ins_vals = ":company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive"
+        ins_params: dict = {
+            "company_id": company_id,
+            "dim_type_id": dim_type_id,
+            "label": label,
+            "summary": summary,
+            "tags": json.dumps(tags or []),
+            "visibility": visibility or "internal",
+            "sensitive": sensitive if sensitive is not None else False,
+        }
+        if entity_id and entity_col:
+            ins_cols += f", {entity_col}"
+            ins_vals += f", :{entity_col}"
+            ins_params[entity_col] = entity_id
+        ins = await db.execute(
+            text(f"""
+                INSERT INTO twin.dim_node ({ins_cols})
+                VALUES ({ins_vals})
+                RETURNING id
+            """),
+            ins_params,
+        )
+        ins_row = ins.mappings().first()
+        return str(ins_row["id"]) if ins_row else None
 
 
 async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integration: dict) -> None:
@@ -429,8 +520,12 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
             return
         desc = integration.get("integration_description") or ""
         caps = integration.get("capabilities") or ""
-        summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc)[:800] or None
+        summary = (f"{desc}\nCapabilities: {caps}".strip() if caps else desc) or None
         tags = _json_list(integration.get("tags")) or None
+        visibility = integration.get("visibility") or None
+        sensitive = integration.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
 
         company_name = await _get_company_name(db, company_id)
 
@@ -447,20 +542,28 @@ async def _sync_integration_to_dim_node(db: AsyncSession, company_id: str, integ
                     {"company_id": company_id, "company_name": company_name, "integration_id": integration_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "integration", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "integration", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=integration_id,
+        )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal — don't break the integration save
 
 
 async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, application: dict) -> None:
-    """Sync a saved application into twin.dim_node and populate company fields on the record."""
+    """Sync a saved application into twin.dim_node and stamp business_application_id on the node."""
     try:
         name = (application.get("application_name") or "").strip()
         if not name:
             return
-        summary = (application.get("application_description") or "")[:800] or None
+        summary = (application.get("application_description") or "") or None
         tags = _json_list(application.get("tags")) or None
+        visibility = application.get("visibility") or None
+        sensitive = application.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
         company_name = await _get_company_name(db, company_id)
 
         application_id = application.get("business_application_id")
@@ -476,20 +579,28 @@ async def _sync_application_to_dim_node(db: AsyncSession, company_id: str, appli
                     {"company_id": company_id, "company_name": company_name, "application_id": application_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "application", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "application", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=application_id,
+        )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal
 
 
 async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_record: dict) -> None:
-    """Sync a saved process into twin.dim_node and populate company fields on the record."""
+    """Sync a saved process into twin.dim_node and stamp business_process_id on the node."""
     try:
         name = (process_record.get("process_name") or "").strip()
         if not name:
             return
-        summary = (process_record.get("process_description") or "")[:800] or None
+        summary = (process_record.get("process_description") or "") or None
         tags = _json_list(process_record.get("tags")) or None
+        visibility = process_record.get("visibility") or None
+        sensitive = process_record.get("sensitive")
+        if not isinstance(sensitive, bool):
+            sensitive = None
         company_name = await _get_company_name(db, company_id)
 
         process_id = process_record.get("business_process_id")
@@ -505,7 +616,11 @@ async def _sync_process_to_dim_node(db: AsyncSession, company_id: str, process_r
                     {"company_id": company_id, "company_name": company_name, "process_id": process_id},
                 )
 
-        await _upsert_dim_node_for_entity(db, company_id, "process", name, summary, tags)
+        node_id = await _upsert_dim_node_for_entity(
+            db, company_id, "process", name, summary, tags,
+            visibility=visibility, sensitive=sensitive, entity_id=process_id,
+        )
+
         await db.commit()
     except Exception:
         pass  # Non-fatal
@@ -520,17 +635,24 @@ async def sync_dim_node_to_business_entity(
     summary: Optional[str],
     tags: Optional[list] = None,
     tenant_id: Optional[str] = None,
+    node_id: Optional[str] = None,
+    sensitive: Optional[bool] = None,
+    visibility: Optional[str] = None,
 ) -> None:
     """
-    Called from dim_nodes.py when a dim_node is created under application/process/integration.
+    Called when a dim_node is created/updated under application/process/integration.
     Creates the corresponding business entity record if it doesn't already exist for this company,
-    or updates its tags if it does.
+    or updates its fields if it does.
+    After resolving the entity, the dim_node is stamped with the entity PK — the entity tables
+    no longer hold dim_node_id as the authoritative reference.
     """
     try:
         label = (label or "").strip()
         if not label:
             return
 
+        entity_col = _ENTITY_COL_MAP.get(category)
+        resolved_entity_id: Optional[str] = None
 
         if category == "application":
             app_cols = await _table_columns(db, "core", "business_applications")
@@ -545,58 +667,74 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    resolved_entity_id = existing_row["business_application_id"]
+                    set_parts: list[str] = []
+                    params_upd: dict[str, Any] = {"app_id": resolved_entity_id}
                     if tags and "tags" in app_cols:
+                        set_parts.append("tags = cast(:tags as jsonb)")
+                        params_upd["tags"] = json.dumps(tags)
+                    if sensitive is not None and "sensitive" in app_cols:
+                        set_parts.append("sensitive = :sensitive")
+                        params_upd["sensitive"] = sensitive
+                    if visibility and "visibility" in app_cols:
+                        set_parts.append("visibility = :visibility")
+                        params_upd["visibility"] = visibility
+                    if set_parts:
                         await db.execute(
-                            text("""
-                                UPDATE core.business_applications
-                                SET tags = cast(:tags as jsonb)
-                                WHERE business_application_id = :app_id
-                            """),
-                            {"tags": json.dumps(tags), "app_id": existing_row["business_application_id"]},
+                            text(f"UPDATE core.business_applications SET {', '.join(set_parts)} WHERE business_application_id = :app_id"),
+                            params_upd,
                         )
                         await db.commit()
-                    return
+                else:
+                    app_id = uuid4().hex
+                    resolved_entity_id = app_id
+                    insert_cols: list[str] = ["business_application_id", "application_name"]
+                    params: dict[str, Any] = {"app_id": app_id, "app_name": label}
+                    placeholders: list[str] = [":app_id", ":app_name"]
 
-            app_id = uuid4().hex
-            insert_cols: list[str] = ["business_application_id", "application_name"]
-            params: dict[str, Any] = {"app_id": app_id, "app_name": label}
-            placeholders: list[str] = [":app_id", ":app_name"]
+                    if "application_description" in app_cols:
+                        insert_cols.append("application_description")
+                        placeholders.append(":app_desc")
+                        params["app_desc"] = summary
+                    if "tenant_id" in app_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in app_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in app_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in app_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in app_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in app_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in app_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
+                    for num_col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
+                        if num_col in app_cols:
+                            insert_cols.append(num_col)
+                            placeholders.append(f":def_{num_col}")
+                            params[f"def_{num_col}"] = default_val
 
-            if "application_description" in app_cols:
-                insert_cols.append("application_description")
-                placeholders.append(":app_desc")
-                params["app_desc"] = summary
-            if "tenant_id" in app_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in app_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in app_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in app_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in app_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
-            for num_col, default_val in _APPLICATION_READONLY_DEFAULTS.items():
-                if num_col in app_cols:
-                    insert_cols.append(num_col)
-                    placeholders.append(f":def_{num_col}")
-                    params[f"def_{num_col}"] = default_val
-
-            await db.execute(
-                text(f"INSERT INTO core.business_applications ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+                    await db.execute(
+                        text(f"INSERT INTO core.business_applications ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
         elif category == "process":
             proc_cols = await _table_columns(db, "core", "business_processes")
@@ -611,58 +749,74 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    resolved_entity_id = existing_row["business_process_id"]
+                    update_set: list[str] = []
+                    update_params: dict = {"proc_id": resolved_entity_id}
                     if tags and "tags" in proc_cols:
+                        update_set.append("tags = cast(:tags as jsonb)")
+                        update_params["tags"] = json.dumps(tags)
+                    if sensitive is not None and "sensitive" in proc_cols:
+                        update_set.append("sensitive = coalesce(:sensitive, sensitive)")
+                        update_params["sensitive"] = sensitive
+                    if visibility and "visibility" in proc_cols:
+                        update_set.append("visibility = coalesce(:visibility, visibility)")
+                        update_params["visibility"] = visibility
+                    if update_set:
                         await db.execute(
-                            text("""
-                                UPDATE core.business_processes
-                                SET tags = cast(:tags as jsonb)
-                                WHERE business_process_id = :proc_id
-                            """),
-                            {"tags": json.dumps(tags), "proc_id": existing_row["business_process_id"]},
+                            text(f"UPDATE core.business_processes SET {', '.join(update_set)} WHERE business_process_id = :proc_id"),
+                            update_params,
                         )
                         await db.commit()
-                    return
+                else:
+                    proc_id = uuid4().hex
+                    resolved_entity_id = proc_id
+                    insert_cols = ["business_process_id", "process_name"]
+                    params = {"proc_id": proc_id, "proc_name": label}
+                    placeholders = [":proc_id", ":proc_name"]
 
-            proc_id = uuid4().hex
-            insert_cols = ["business_process_id", "process_name"]
-            params = {"proc_id": proc_id, "proc_name": label}
-            placeholders = [":proc_id", ":proc_name"]
+                    if "process_description" in proc_cols:
+                        insert_cols.append("process_description")
+                        placeholders.append(":proc_desc")
+                        params["proc_desc"] = summary
+                    if "tenant_id" in proc_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in proc_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in proc_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in proc_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in proc_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in proc_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in proc_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
+                    for num_col, default_val in _PROCESS_READONLY_DEFAULTS.items():
+                        if num_col in proc_cols:
+                            insert_cols.append(num_col)
+                            placeholders.append(f":def_{num_col}")
+                            params[f"def_{num_col}"] = default_val
 
-            if "process_description" in proc_cols:
-                insert_cols.append("process_description")
-                placeholders.append(":proc_desc")
-                params["proc_desc"] = summary
-            if "tenant_id" in proc_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in proc_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in proc_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in proc_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in proc_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
-            for num_col, default_val in _PROCESS_READONLY_DEFAULTS.items():
-                if num_col in proc_cols:
-                    insert_cols.append(num_col)
-                    placeholders.append(f":def_{num_col}")
-                    params[f"def_{num_col}"] = default_val
-
-            await db.execute(
-                text(f"INSERT INTO core.business_processes ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+                    await db.execute(
+                        text(f"INSERT INTO core.business_processes ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
         elif category == "integration":
             await _ensure_integrations_table(db)
@@ -678,53 +832,80 @@ async def sync_dim_node_to_business_entity(
                 )
                 existing_row = existing.mappings().first()
                 if existing_row:
+                    resolved_entity_id = existing_row["integration_id"]
+                    int_update_set: list[str] = []
+                    int_update_params: dict = {"int_id": resolved_entity_id}
                     if tags and "tags" in int_cols:
+                        int_update_set.append("tags = cast(:tags as jsonb)")
+                        int_update_params["tags"] = json.dumps(tags)
+                    if sensitive is not None and "sensitive" in int_cols:
+                        int_update_set.append("sensitive = coalesce(:sensitive, sensitive)")
+                        int_update_params["sensitive"] = sensitive
+                    if visibility and "visibility" in int_cols:
+                        int_update_set.append("visibility = coalesce(:visibility, visibility)")
+                        int_update_params["visibility"] = visibility
+                    if int_update_set:
                         await db.execute(
-                            text("""
-                                UPDATE core.business_integrations
-                                SET tags = cast(:tags as jsonb)
-                                WHERE integration_id = :int_id
-                            """),
-                            {"tags": json.dumps(tags), "int_id": existing_row["integration_id"]},
+                            text(f"UPDATE core.business_integrations SET {', '.join(int_update_set)} WHERE integration_id = :int_id"),
+                            int_update_params,
                         )
                         await db.commit()
-                    return
+                else:
+                    int_id = uuid4().hex
+                    resolved_entity_id = int_id
+                    insert_cols = ["integration_id", "integration_name"]
+                    params = {"int_id": int_id, "int_name": label}
+                    placeholders = [":int_id", ":int_name"]
 
-            int_id = uuid4().hex
-            insert_cols = ["integration_id", "integration_name"]
-            params = {"int_id": int_id, "int_name": label}
-            placeholders = [":int_id", ":int_name"]
+                    if "integration_description" in int_cols:
+                        insert_cols.append("integration_description")
+                        placeholders.append(":int_desc")
+                        params["int_desc"] = summary
+                    if "tenant_id" in int_cols:
+                        insert_cols.append("tenant_id")
+                        placeholders.append(":tenant_id")
+                        params["tenant_id"] = tenant_id
+                    if "company_id" in int_cols:
+                        insert_cols.append("company_id")
+                        placeholders.append(":cid")
+                        params["cid"] = company_id
+                    if "company_name" in int_cols:
+                        insert_cols.append("company_name")
+                        placeholders.append(":cname")
+                        params["cname"] = company_name
+                    if "tags" in int_cols:
+                        insert_cols.append("tags")
+                        placeholders.append("cast(:tags as jsonb)")
+                        params["tags"] = json.dumps(tags if tags is not None else [])
+                    if sensitive is not None and "sensitive" in int_cols:
+                        insert_cols.append("sensitive")
+                        placeholders.append(":sensitive")
+                        params["sensitive"] = sensitive
+                    if visibility and "visibility" in int_cols:
+                        insert_cols.append("visibility")
+                        placeholders.append(":visibility")
+                        params["visibility"] = visibility
+                    for ts_col in ("created_ts", "updated_ts"):
+                        if ts_col in int_cols:
+                            insert_cols.append(ts_col)
+                            placeholders.append("CURRENT_TIMESTAMP")
 
-            if "integration_description" in int_cols:
-                insert_cols.append("integration_description")
-                placeholders.append(":int_desc")
-                params["int_desc"] = summary
-            if "tenant_id" in int_cols:
-                insert_cols.append("tenant_id")
-                placeholders.append(":tenant_id")
-                params["tenant_id"] = tenant_id
-            if "company_id" in int_cols:
-                insert_cols.append("company_id")
-                placeholders.append(":cid")
-                params["cid"] = company_id
-            if "company_name" in int_cols:
-                insert_cols.append("company_name")
-                placeholders.append(":cname")
-                params["cname"] = company_name
-            if "tags" in int_cols:
-                insert_cols.append("tags")
-                placeholders.append("cast(:tags as jsonb)")
-                params["tags"] = json.dumps(tags if tags is not None else [])
-            for ts_col in ("created_ts", "updated_ts"):
-                if ts_col in int_cols:
-                    insert_cols.append(ts_col)
-                    placeholders.append("CURRENT_TIMESTAMP")
+                    await db.execute(
+                        text(f"INSERT INTO core.business_integrations ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
+                        params,
+                    )
+                    await db.commit()
 
-            await db.execute(
-                text(f"INSERT INTO core.business_integrations ({', '.join(insert_cols)}) VALUES ({', '.join(placeholders)})"),
-                params,
-            )
-            await db.commit()
+        # Stamp the entity PK onto the dim_node (the authoritative reference direction)
+        if node_id and resolved_entity_id and entity_col:
+            try:
+                await db.execute(
+                    text(f"UPDATE twin.dim_node SET {entity_col} = coalesce({entity_col}, :{entity_col}) WHERE id = :node_id"),
+                    {entity_col: resolved_entity_id, "node_id": node_id},
+                )
+                await db.commit()
+            except Exception:
+                pass
 
     except Exception:
         pass  # Non-fatal — don't break dim_node creation
@@ -760,6 +941,8 @@ async def _ensure_integrations_table(db: AsyncSession) -> None:
                 company_id TEXT,
                 company_name TEXT,
                 tags JSONB DEFAULT '[]'::jsonb,
+                sensitive BOOLEAN DEFAULT FALSE,
+                visibility TEXT DEFAULT 'internal',
                 created_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_ts TIMESTAMPTZ NOT NULL DEFAULT now()
             )
@@ -909,6 +1092,39 @@ async def _ensure_process_attachments_table(db: AsyncSession) -> None:
     _PROCESS_ATTACHMENTS_READY = True
 
 
+async def _ensure_integration_attachments_table(db: AsyncSession) -> None:
+    global _INTEGRATION_ATTACHMENTS_READY
+    if _INTEGRATION_ATTACHMENTS_READY:
+        return
+
+    await db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.integration_attachment (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                integration_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                file_size_bytes INT NOT NULL,
+                file_data BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS integration_attachment_integration_idx
+            ON public.integration_attachment (integration_id, created_at DESC)
+            """
+        )
+    )
+    await db.commit()
+    _INTEGRATION_ATTACHMENTS_READY = True
+
+
 def _clean(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -964,6 +1180,48 @@ def _normalize_related_ai_models(row: dict[str, Any]) -> None:
     row["related_ai_models"] = normalized
 
 
+def _normalize_related_applications(row: dict[str, Any]) -> None:
+    raw = _json_list(row.get("related_applications"))
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rel in raw:
+        if not isinstance(rel, dict):
+            continue
+        app_id = _text_or_none(rel.get("business_application_id"))
+        if not app_id or app_id in seen:
+            continue
+        seen.add(app_id)
+        normalized.append(
+            {
+                "business_application_id": app_id,
+                "application_name": _text_or_none(rel.get("application_name")),
+                "description": _text_or_none(rel.get("description")),
+            }
+        )
+    row["related_applications"] = normalized
+
+
+def _normalize_related_business_processes(row: dict[str, Any]) -> None:
+    raw = _json_list(row.get("related_processes"))
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rel in raw:
+        if not isinstance(rel, dict):
+            continue
+        process_id = _text_or_none(rel.get("business_process_id"))
+        if not process_id or process_id in seen:
+            continue
+        seen.add(process_id)
+        normalized.append(
+            {
+                "business_process_id": process_id,
+                "process_name": _text_or_none(rel.get("process_name")),
+                "description": _text_or_none(rel.get("description")),
+            }
+        )
+    row["related_processes"] = normalized
+
+
 def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
     row["related_agents"] = _json_list(row.get("related_agents"))
     row["tags"] = _json_list(row.get("tags"))
@@ -989,6 +1247,7 @@ def _normalize_application_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     _normalize_related_ai_models(row)
+    _normalize_related_business_processes(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
@@ -1050,6 +1309,7 @@ def _normalize_process_row(row: dict[str, Any]) -> dict[str, Any]:
         )
     row["related_use_cases"] = normalized_related_use_cases
     _normalize_related_ai_models(row)
+    _normalize_related_applications(row)
     row["related_agent_count"] = int(row.get("related_agent_count") or 0)
     for field in _COMPANY_HIDDEN_FIELDS:
         row.pop(field, None)
@@ -1112,6 +1372,19 @@ def _text_or_none(value: Any) -> Optional[str]:
     if isinstance(value, str):
         return _clean(value)
     return _clean(str(value))
+
+
+def _is_global_company_value(value: Any) -> bool:
+    text_value = _text_or_none(value)
+    return text_value is None or text_value == "" or text_value.lower() == "none"
+
+
+def _replace_select_col(cols: list, col_name: str, new_expr: str) -> None:
+    """Replace the first entry in cols whose alias matches col_name."""
+    for i, c in enumerate(cols):
+        if c.endswith(f" AS {col_name}"):
+            cols[i] = new_expr
+            return
 
 
 def _canonical_payload(raw_payload: Optional[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
@@ -1268,7 +1541,10 @@ async def _refresh_application_rollup(db: AsyncSession, business_application_id:
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = aba.agent_id
+                WHERE (ara.agent_id = aba.agent_id
+                       OR (ara.agent_internal_id = aba.agent_internal_id
+                           AND aba.agent_internal_id IS NOT NULL
+                           AND aba.agent_internal_id <> ''))
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1409,12 +1685,12 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
         "tier 2 (core)": 0.7,
         "tier 3 (operational)": 0.4,
         "tier 4 (experimental)": 0.1,
-        "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
+        "1": 1.0, "1.0": 1.0, "0.7": 0.7, "0.4": 0.4, "0.1": 0.1,
     }.get(bc, 0.0)
 
     fi = (proc.get("financial_impact") or "").strip().lower()
     fi_score = {
-        "systemic": 1.0, "1": 1.0,
+        "systemic": 1.0, "1": 1.0, "1.0": 1.0,
         "material": 0.7, "0.7": 0.7,
         "absorbable": 0.4, "0.4": 0.4,
         "immaterial": 0.1, "0.1": 0.1,
@@ -1422,7 +1698,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     ri = (proc.get("reputational_impact") or "").strip().lower()
     ri_score = {
-        "toxic": 1.0, "1": 1.0,
+        "toxic": 1.0, "1": 1.0, "1.0": 1.0,
         "adverse": 0.7, "0.7": 0.7,
         "private": 0.4, "0.4": 0.4,
         "contained": 0.1, "0.1": 0.1,
@@ -1430,7 +1706,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
 
     rgi = (proc.get("regulatory_impact") or "").strip().lower()
     rgi_score = {
-        "restricted": 1.0, "1": 1.0,
+        "restricted": 1.0, "1": 1.0, "1.0": 1.0,
         "statutory": 0.7, "0.7": 0.7,
         "governed": 0.4, "0.4": 0.4,
         "unregulated": 0.1, "0.1": 0.1,
@@ -1444,7 +1720,7 @@ async def _refresh_process_rollup(db: AsyncSession, business_process_id: str) ->
             JOIN LATERAL (
                 SELECT ara.agent_internal_id, ara.blended_risk_score
                 FROM core.agent_risk_assessments ara
-                WHERE ara.agent_id = abp.agent_id
+                WHERE (ara.agent_id = abp.agent_id OR ara.agent_internal_id = abp.agent_internal_id)
                   AND ara.blended_risk_score IS NOT NULL
                 ORDER BY
                     CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1599,7 +1875,7 @@ async def _refresh_integration_rollup(db: AsyncSession, integration_id: str) -> 
                 JOIN LATERAL (
                     SELECT ara.agent_internal_id, ara.blended_risk_score
                     FROM core.agent_risk_assessments ara
-                    WHERE ara.agent_id = abi.agent_id
+                    WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
                       AND ara.blended_risk_score IS NOT NULL
                     ORDER BY
                         CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END,
@@ -1746,7 +2022,21 @@ async def _fetch_integrations(
         _col_expr("bi", int_cols, "inherent_risk_classification_score"),
         _col_expr("bi", int_cols, "residual_risk_classification_score"),
         _col_expr("bi", int_cols, "num_of_associated_agents"),
+        _col_expr("bi", int_cols, "sensitive"),
+        _col_expr("bi", int_cols, "visibility"),
+        _col_expr("bi", int_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_int_cols = await _table_columns(db, "twin", "dim_node")
+        if "integration_id" in dn_int_cols:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.integration_id = bi.integration_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
 
     where_parts: list[str] = []
     query_params: dict[str, Any] = {}
@@ -1788,6 +2078,10 @@ async def _fetch_integrations(
         else "LOWER(bi.integration_id)"
     )
 
+    has_ara_int = False
+    int_company_risk_lateral_sql = ""
+    int_company_risk_class_lateral_sql = ""
+
     has_ba = await _table_exists(db, "core", "business_applications")
     ba_join_sql = (
         "LEFT JOIN core.business_applications pa ON pa.business_application_id = bi.parent_application_id"
@@ -1809,6 +2103,16 @@ async def _fetch_integrations(
         )
         if tenant_id and "tenant_id" in abi_cols:
             abi_filter += " AND abi.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abi_cols:
+            abi_filter += (
+                " AND (abi.company_id = :related_company_id"
+                " OR abi.company_id IS NULL"
+                " OR TRIM(CAST(abi.company_id AS text)) = ''"
+                " OR abi.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         int_agent_company_join = ""
         int_agent_company_filter = ""
@@ -1816,7 +2120,14 @@ async def _fetch_integrations(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                int_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abi.agent_internal_id"
+                int_agent_join_type = "LEFT JOIN"
+                int_agent_company_join = (
+                    f"{int_agent_join_type} core.agents ag ON ("
+                    "(abi.agent_id IS NOT NULL AND abi.agent_id <> '' AND ag.agent_id = abi.agent_id)"
+                    " OR (abi.agent_internal_id IS NOT NULL AND abi.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abi.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     int_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -1852,12 +2163,112 @@ async def _fetch_integrations(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_int = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_int:
+            ara_cols_int = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_int: list[str] = []
+            if "is_current" in ara_cols_int:
+                ara_order_parts_int.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_int:
+                ara_order_parts_int.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_int.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_int = ", ".join(ara_order_parts_int)
+
+            int_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bi.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bi.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abi.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_integrations abi
+                            {int_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE (ara.agent_id = abi.agent_id OR ara.agent_internal_id = abi.agent_internal_id)
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_int}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {abi_filter}
+                              {int_agent_company_filter}
+                              {int_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_int = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_int:
+                int_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                int_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_int:
+        _replace_select_col(select_cols, "blended_risk_score",
+                         "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                         "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                         "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                         "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                         "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                         "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                         "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     rows = await db.execute(
         text(
@@ -1867,6 +2278,8 @@ async def _fetch_integrations(
             FROM core.business_integrations bi
             {ba_join_sql}
             {rel_join_sql}
+            {int_company_risk_lateral_sql}
+            {int_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -1906,7 +2319,7 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "it_application_owner"),
         _col_expr("ba", app_cols, "application_description"),
         _col_expr("ba", app_cols, "agent_risk_exposure"),
-        _col_expr("ba", app_cols, "num_of_associated_agents"),
+        _col_expr("ba", app_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("ba", app_cols, "inherent_risk_classification"),
         _col_expr("ba", app_cols, "residual_risk_classification"),
         _col_expr("ba", app_cols, "agent_risk_tier"),
@@ -1924,13 +2337,33 @@ async def _fetch_applications(
         _col_expr("ba", app_cols, "latest_release_date"),
         _col_expr("ba", app_cols, "latest_release_documentation_link"),
         _col_expr("ba", app_cols, "tags"),
+        _col_expr("ba", app_cols, "sensitive"),
+        _col_expr("ba", app_cols, "visibility"),
+        _col_expr("ba", app_cols, "valid_from"),
+        _col_expr("ba", app_cols, "valid_to"),
         _col_expr("ba", app_cols, "created_ts"),
         _col_expr("ba", app_cols, "updated_ts"),
         "rel.related_agents",
         "COALESCE(rel.related_agent_count, 0) AS related_agent_count",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
+        "proc_rel.related_processes",
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_cols_check = await _table_columns(db, "twin", "dim_node")
+        if "business_application_id" in dn_cols_check:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.business_application_id = ba.business_application_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
+
+    has_ara = False
+    company_risk_lateral_sql = ""
+    company_risk_class_lateral_sql = ""
 
     has_aba = await _table_exists(db, "core", "agent_business_applications")
     if has_aba:
@@ -1946,6 +2379,16 @@ async def _fetch_applications(
         )
         if tenant_id and "tenant_id" in aba_cols:
             aba_filter += " AND aba.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in aba_cols:
+            aba_filter += (
+                " AND (aba.company_id = :related_company_id"
+                " OR aba.company_id IS NULL"
+                " OR TRIM(CAST(aba.company_id AS text)) = ''"
+                " OR aba.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         app_agent_company_join = ""
         app_agent_company_filter = ""
@@ -1953,7 +2396,14 @@ async def _fetch_applications(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                app_agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = aba.agent_internal_id"
+                app_agent_join_type = "LEFT JOIN"
+                app_agent_company_join = (
+                    f"{app_agent_join_type} core.agents ag ON ("
+                    "(aba.agent_id IS NOT NULL AND aba.agent_id <> '' AND ag.agent_id = aba.agent_id)"
+                    " OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = aba.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     app_agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -1989,12 +2439,116 @@ async def _fetch_applications(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara:
+            ara_cols = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts: list[str] = []
+            if "is_current" in ara_cols:
+                ara_order_parts.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols:
+                ara_order_parts.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts.append("ara.updated_ts DESC NULLS LAST")
+            ara_order = ", ".join(ara_order_parts)
+
+            company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(ba.business_criticality))
+                                    WHEN 'high' THEN 1.0 WHEN 'medium' THEN 0.4 WHEN 'low' THEN 0.1 ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(ba.emergency_tier))
+                                    WHEN 'mission critical' THEN 1.0 WHEN 'business critical' THEN 0.4
+                                    WHEN 'non-critical' THEN 0.1 WHEN 'non critical' THEN 0.1 ELSE 0.0
+                                END) / 2.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(aba.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_applications aba
+                            {app_agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE ara.blended_risk_score IS NOT NULL
+                                  AND (
+                                    ara.agent_id = aba.agent_id
+                                    OR (aba.agent_internal_id IS NOT NULL AND aba.agent_internal_id <> ''
+                                        AND ara.agent_internal_id = aba.agent_internal_id)
+                                  )
+                                ORDER BY {ara_order}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {aba_filter}
+                              {app_agent_company_filter}
+                              {app_agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table:
+                company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara:
+        _replace_select_col(select_cols, "blended_risk_score",
+                     "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                     "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                     "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                     "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                     "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                     "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                     "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     has_uc_app_rel = await _table_exists(db, "core", "ai_use_case_business_applications")
     has_auc = await _table_exists(db, "core", "ai_use_cases")
@@ -2172,6 +2726,68 @@ async def _fetch_applications(
             ) mdl_rel ON TRUE
         """
 
+    has_app_proc_rel = await _table_exists(db, "core", "business_process_business_applications")
+    has_business_processes = await _table_exists(db, "core", "business_processes")
+    app_proc_tenant_filter = ""
+    if tenant_id and has_app_proc_rel:
+        app_proc_cols = await _table_columns(db, "core", "business_process_business_applications")
+        if "tenant_id" in app_proc_cols:
+            app_proc_tenant_filter = "AND rproc.tenant_id = :tenant_id"
+    if has_app_proc_rel:
+        proc_name_expr = "bp.process_name" if has_business_processes else "NULL::text"
+        proc_desc_expr = "bp.process_description" if has_business_processes else "NULL::text"
+        _app_proc_tenant = "AND bp.tenant_id = :tenant_id" if tenant_id and has_business_processes else ""
+        proc_join = (
+            f"LEFT JOIN core.business_processes bp ON LOWER(TRIM(bp.business_process_id)) = LOWER(TRIM(rproc.business_process_id)) {_app_proc_tenant}"
+            if has_business_processes else ""
+        )
+        app_proc_company_filter = ""
+        if filter_related_by_company_id and has_business_processes:
+            proc_catalog_cols = await _table_columns(db, "core", "business_processes")
+            if "company_id" in proc_catalog_cols:
+                app_proc_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.business_processes bp_cf"
+                    " WHERE bp_cf.business_process_id = rproc.business_process_id"
+                    " AND (bp_cf.company_id = :related_company_id"
+                    "  OR bp_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(bp_cf.company_id AS text)) = ''"
+                    "  OR bp_cf.company_id = 'None')"
+                    ")"
+                )
+        proc_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'business_process_id', related.business_process_id,
+                            'process_name', related.process_name,
+                            'description', related.description
+                        )
+                        ORDER BY LOWER(COALESCE(related.process_name, related.business_process_id))
+                    ) AS related_processes
+                FROM (
+                    SELECT DISTINCT
+                        rproc.business_process_id,
+                        COALESCE({proc_name_expr}, rproc.process_name, rproc.business_process_id) AS process_name,
+                        {proc_desc_expr} AS description
+                    FROM core.business_process_business_applications rproc
+                    {proc_join}
+                    WHERE rproc.business_application_id = ba.business_application_id
+                      AND rproc.business_process_id IS NOT NULL
+                      AND rproc.business_process_id <> ''
+                      {app_proc_tenant_filter}
+                      {app_proc_company_filter}
+                ) related
+            ) proc_rel ON TRUE
+        """
+    else:
+        proc_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_processes
+            ) proc_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(ba.application_name, ba.business_application_id))"
@@ -2218,6 +2834,9 @@ async def _fetch_applications(
             {rel_join_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {proc_rel_sql}
+            {company_risk_lateral_sql}
+            {company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -2258,7 +2877,7 @@ async def _fetch_processes(
         _col_expr("bp", process_cols, "operators"),
         _col_expr("bp", process_cols, "business_criticality"),
         _col_expr("bp", process_cols, "reputational_impact"),
-        _col_expr("bp", process_cols, "num_of_associated_agents"),
+        _col_expr("bp", process_cols, "num_of_associated_agents") if not filter_related_by_company_id else "COALESCE(rel.related_agent_count, 0) AS num_of_associated_agents",
         _col_expr("bp", process_cols, "agent_risk_tier"),
         _col_expr("bp", process_cols, "residual_risk_classification"),
         _col_expr("bp", process_cols, "inherent_risk_classification"),
@@ -2278,7 +2897,26 @@ async def _fetch_processes(
         "proc_rel.related_processes",
         "uc_rel.related_use_cases",
         "mdl_rel.related_ai_models",
+        "app_rel.related_applications",
+        _col_expr("bp", process_cols, "dim_node_id"),
+        _col_expr("bp", process_cols, "sensitive"),
+        _col_expr("bp", process_cols, "visibility"),
     ]
+
+    if await _table_exists(db, "twin", "dim_node"):
+        dn_proc_cols = await _table_columns(db, "twin", "dim_node")
+        if "business_process_id" in dn_proc_cols:
+            select_cols.append(
+                "(SELECT dn.id::text FROM twin.dim_node dn WHERE dn.business_process_id = bp.business_process_id AND dn.valid_to IS NULL LIMIT 1) AS dim_node_id"
+            )
+        else:
+            select_cols.append("NULL AS dim_node_id")
+    else:
+        select_cols.append("NULL AS dim_node_id")
+
+    has_ara_proc = False
+    proc_company_risk_lateral_sql = ""
+    proc_company_risk_class_lateral_sql = ""
 
     has_abp = await _table_exists(db, "core", "agent_business_processes")
     if has_abp:
@@ -2294,6 +2932,16 @@ async def _fetch_processes(
         )
         if tenant_id and "tenant_id" in abp_cols:
             abp_filter += " AND abp.tenant_id = :tenant_id"
+        if filter_related_by_company_id and "company_id" in abp_cols:
+            abp_filter += (
+                " AND (abp.company_id = :related_company_id"
+                " OR abp.company_id IS NULL"
+                " OR TRIM(CAST(abp.company_id AS text)) = ''"
+                " OR abp.company_id = 'None'"
+                " OR ag.company_id IS NULL"
+                " OR TRIM(CAST(ag.company_id AS text)) = ''"
+                " OR ag.company_id = 'None')"
+            )
 
         agent_company_join = ""
         agent_company_filter = ""
@@ -2301,7 +2949,14 @@ async def _fetch_processes(
         if filter_related_by_company_id or tenant_id:
             agent_cols_check = await _table_columns(db, "core", "agents")
             if "agent_internal_id" in agent_cols_check:
-                agent_company_join = "LEFT JOIN core.agents ag ON ag.agent_internal_id = abp.agent_internal_id"
+                agent_join_type = "LEFT JOIN"
+                agent_company_join = (
+                    f"{agent_join_type} core.agents ag ON ("
+                    "(abp.agent_id IS NOT NULL AND abp.agent_id <> '' AND ag.agent_id = abp.agent_id)"
+                    " OR (abp.agent_internal_id IS NOT NULL AND abp.agent_internal_id <> '' "
+                    "AND ag.agent_internal_id = abp.agent_internal_id)"
+                    ") AND COALESCE(ag.is_current, true) = true"
+                )
                 if filter_related_by_company_id and "company_id" in agent_cols_check:
                     agent_company_filter = (
                         "AND (ag.company_id = :related_company_id"
@@ -2337,12 +2992,135 @@ async def _fetch_processes(
                 ) refs
             ) rel ON TRUE
         """
+
+        has_ara_proc = await _table_exists(db, "core", "agent_risk_assessments")
+        if filter_related_by_company_id and has_ara_proc:
+            ara_cols_proc = await _table_columns(db, "core", "agent_risk_assessments")
+            ara_order_parts_proc: list[str] = []
+            if "is_current" in ara_cols_proc:
+                ara_order_parts_proc.append("CASE WHEN ara.is_current = TRUE THEN 0 ELSE 1 END")
+            if "assessment_ts" in ara_cols_proc:
+                ara_order_parts_proc.append("ara.assessment_ts DESC NULLS LAST")
+            ara_order_parts_proc.append("ara.updated_ts DESC NULLS LAST")
+            ara_order_proc = ", ".join(ara_order_parts_proc)
+
+            proc_company_risk_lateral_sql = f"""
+                LEFT JOIN LATERAL (
+                    SELECT
+                        base.company_blended_risk_score,
+                        base.worst_agent_internal_id,
+                        base.company_are,
+                        CASE
+                            WHEN base.company_are >= 9.0 THEN 'Critical'
+                            WHEN base.company_are >= 7.0 THEN 'High'
+                            WHEN base.company_are >= 3.0 THEN 'Medium'
+                            ELSE 'Low'
+                        END AS company_art
+                    FROM (
+                        SELECT
+                            agg.max_brs::double precision AS company_blended_risk_score,
+                            agg.worst_agent_internal_id,
+                            ROUND((agg.max_brs * (
+                                (CASE LOWER(TRIM(bp.business_criticality))
+                                    WHEN 'tier 1 (systemic)' THEN 1.0 WHEN 'tier 2 (core)' THEN 0.7
+                                    WHEN 'tier 3 (operational)' THEN 0.4 WHEN 'tier 4 (experimental)' THEN 0.1
+                                    WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0 WHEN '0.7' THEN 0.7 WHEN '0.4' THEN 0.4 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.financial_impact))
+                                    WHEN 'systemic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'material' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'absorbable' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'immaterial' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.reputational_impact))
+                                    WHEN 'toxic' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'adverse' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'private' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'contained' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END +
+                                CASE LOWER(TRIM(bp.regulatory_impact))
+                                    WHEN 'restricted' THEN 1.0 WHEN '1' THEN 1.0 WHEN '1.0' THEN 1.0
+                                    WHEN 'statutory' THEN 0.7 WHEN '0.7' THEN 0.7
+                                    WHEN 'governed' THEN 0.4 WHEN '0.4' THEN 0.4
+                                    WHEN 'unregulated' THEN 0.1 WHEN '0.1' THEN 0.1
+                                    ELSE 0.0
+                                END) / 4.0))::numeric, 2)::double precision AS company_are
+                        FROM (
+                            SELECT
+                                COALESCE(MAX(brs.blended_risk_score), 0.0) AS max_brs,
+                                (array_agg(abp.agent_internal_id ORDER BY brs.blended_risk_score DESC NULLS LAST))[1] AS worst_agent_internal_id
+                            FROM core.agent_business_processes abp
+                            {agent_company_join}
+                            JOIN LATERAL (
+                                SELECT ara.blended_risk_score
+                                FROM core.agent_risk_assessments ara
+                                WHERE (ara.agent_id = abp.agent_id
+                                       OR (ara.agent_internal_id = abp.agent_internal_id
+                                           AND abp.agent_internal_id IS NOT NULL
+                                           AND abp.agent_internal_id <> ''))
+                                  AND ara.blended_risk_score IS NOT NULL
+                                ORDER BY {ara_order_proc}
+                                LIMIT 1
+                            ) brs ON TRUE
+                            WHERE {abp_filter}
+                              {agent_company_filter}
+                              {agent_tenant_filter}
+                        ) agg
+                    ) base
+                ) company_risk ON TRUE
+            """
+
+            has_rm_table_proc = await _table_exists(db, RISK_MANAGEMENT, "agent_risk_assessment")
+            if has_rm_table_proc:
+                proc_company_risk_class_lateral_sql = f"""
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification END) AS company_inherent_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Inherent Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_inherent_score,
+                            MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification END) AS company_residual_class,
+                            COALESCE(MAX(CASE WHEN ara.type_of_risk = 'Residual Risk' THEN ara.risk_classification_score::double precision END), 0.0) AS company_residual_score
+                        FROM {RISK_MANAGEMENT}.agent_risk_assessment ara
+                        WHERE ara.agent_internal_id = company_risk.worst_agent_internal_id
+                          AND company_risk.worst_agent_internal_id IS NOT NULL
+                          AND ara.type_of_risk IN ('Inherent Risk', 'Residual Risk')
+                    ) company_risk_class ON TRUE
+                """
+            else:
+                proc_company_risk_class_lateral_sql = """
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            NULL::text AS company_inherent_class,
+                            0.0::double precision AS company_inherent_score,
+                            NULL::text AS company_residual_class,
+                            0.0::double precision AS company_residual_score
+                    ) company_risk_class ON TRUE
+                """
+
     else:
         rel_join_sql = """
             LEFT JOIN LATERAL (
                 SELECT NULL::json AS related_agents, 0::int AS related_agent_count
             ) rel ON TRUE
         """
+
+    if filter_related_by_company_id and has_ara_proc:
+        _replace_select_col(select_cols, "blended_risk_score",
+                          "COALESCE(company_risk.company_blended_risk_score, 0.0) AS blended_risk_score")
+        _replace_select_col(select_cols, "agent_risk_exposure",
+                          "COALESCE(company_risk.company_are, 0.0) AS agent_risk_exposure")
+        _replace_select_col(select_cols, "agent_risk_tier",
+                          "COALESCE(company_risk.company_art, 'Low') AS agent_risk_tier")
+        _replace_select_col(select_cols, "inherent_risk_classification",
+                          "company_risk_class.company_inherent_class AS inherent_risk_classification")
+        _replace_select_col(select_cols, "inherent_risk_classification_score",
+                          "COALESCE(company_risk_class.company_inherent_score, 0.0) AS inherent_risk_classification_score")
+        _replace_select_col(select_cols, "residual_risk_classification",
+                          "company_risk_class.company_residual_class AS residual_risk_classification")
+        _replace_select_col(select_cols, "residual_risk_classification_score",
+                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     process_tree_tenant_filter = (
         "AND child.tenant_id = bp.tenant_id"
@@ -2568,6 +3346,68 @@ async def _fetch_processes(
             ) mdl_rel ON TRUE
         """
 
+    has_proc_app_rel = await _table_exists(db, "core", "business_process_business_applications")
+    has_business_applications = await _table_exists(db, "core", "business_applications")
+    proc_app_tenant_filter = ""
+    if tenant_id and has_proc_app_rel:
+        proc_app_cols = await _table_columns(db, "core", "business_process_business_applications")
+        if "tenant_id" in proc_app_cols:
+            proc_app_tenant_filter = "AND rapp.tenant_id = :tenant_id"
+    if has_proc_app_rel:
+        app_name_expr = "ba.application_name" if has_business_applications else "NULL::text"
+        app_desc_expr = "ba.application_description" if has_business_applications else "NULL::text"
+        _proc_app_tenant = "AND ba.tenant_id = :tenant_id" if tenant_id and has_business_applications else ""
+        app_join = (
+            f"LEFT JOIN core.business_applications ba ON LOWER(TRIM(ba.business_application_id)) = LOWER(TRIM(rapp.business_application_id)) {_proc_app_tenant}"
+            if has_business_applications else ""
+        )
+        proc_app_company_filter = ""
+        if filter_related_by_company_id and has_business_applications:
+            app_catalog_cols = await _table_columns(db, "core", "business_applications")
+            if "company_id" in app_catalog_cols:
+                proc_app_company_filter = (
+                    "AND EXISTS ("
+                    "SELECT 1 FROM core.business_applications ba_cf"
+                    " WHERE ba_cf.business_application_id = rapp.business_application_id"
+                    " AND (ba_cf.company_id = :related_company_id"
+                    "  OR ba_cf.company_id IS NULL"
+                    "  OR TRIM(CAST(ba_cf.company_id AS text)) = ''"
+                    "  OR ba_cf.company_id = 'None')"
+                    ")"
+                )
+        app_rel_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    json_agg(
+                        json_build_object(
+                            'business_application_id', related.business_application_id,
+                            'application_name', related.application_name,
+                            'description', related.description
+                        )
+                        ORDER BY LOWER(COALESCE(related.application_name, related.business_application_id))
+                    ) AS related_applications
+                FROM (
+                    SELECT DISTINCT
+                        rapp.business_application_id,
+                        COALESCE({app_name_expr}, rapp.application_name, rapp.business_application_id) AS application_name,
+                        {app_desc_expr} AS description
+                    FROM core.business_process_business_applications rapp
+                    {app_join}
+                    WHERE rapp.business_process_id = bp.business_process_id
+                      AND rapp.business_application_id IS NOT NULL
+                      AND rapp.business_application_id <> ''
+                      {proc_app_tenant_filter}
+                      {proc_app_company_filter}
+                ) related
+            ) app_rel ON TRUE
+        """
+    else:
+        app_rel_sql = """
+            LEFT JOIN LATERAL (
+                SELECT NULL::json AS related_applications
+            ) app_rel ON TRUE
+        """
+
     search_clean = _clean(search)
     order_sql = (
         "LOWER(COALESCE(bp.process_name, bp.business_process_id))"
@@ -2619,6 +3459,9 @@ async def _fetch_processes(
             {proc_rel_sql}
             {uc_rel_sql}
             {mdl_rel_sql}
+            {app_rel_sql}
+            {proc_company_risk_lateral_sql}
+            {proc_company_risk_class_lateral_sql}
             {where_sql}
             ORDER BY {order_sql}
             """
@@ -2663,7 +3506,7 @@ async def get_integration(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_integrations(db, integration_id=integration_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -2725,6 +3568,13 @@ async def create_integration(
     if raw_tags is not None and "tags" in int_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in int_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     if "created_ts" in int_cols:
         insert_values["created_ts"] = None
     if "updated_ts" in int_cols:
@@ -2738,6 +3588,7 @@ async def create_integration(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -2782,12 +3633,20 @@ async def update_integration(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in int_cols:
         updates["tags"] = json.dumps(raw_tags)
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in int_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["integration_id"] = integration_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "integration_id"
     )
     if "updated_ts" in int_cols:
@@ -2812,6 +3671,48 @@ async def update_integration(
     rows = await _fetch_integrations(db, integration_id=integration_id)
     if company_id and rows:
         await _sync_integration_to_dim_node(db, company_id, rows[0])
+    else:
+        # Sync fields directly to dim_node when company_id is absent (non-fatal)
+        try:
+            raw_row = await db.execute(
+                text(
+                    "SELECT integration_name, integration_description, tags, visibility, sensitive"
+                    " FROM core.business_integrations WHERE integration_id = :id"
+                ),
+                {"id": integration_id},
+            )
+            raw = raw_row.mappings().first()
+            if raw:
+                i_name = (raw.get("integration_name") or "").strip() or None
+                i_summary = str(raw.get("integration_description") or "") or None
+                i_tags = raw.get("tags") or []
+                i_visibility = raw.get("visibility") or "internal"
+                i_sensitive_raw = raw.get("sensitive")
+                i_sensitive = i_sensitive_raw if isinstance(i_sensitive_raw, bool) else False
+                dim_params = {
+                    "label": i_name,
+                    "summary": i_summary,
+                    "tags": json.dumps(i_tags if isinstance(i_tags, list) else []),
+                    "visibility": i_visibility,
+                    "sensitive": i_sensitive,
+                    "eid": integration_id,
+                }
+                await db.execute(
+                    text("""
+                        UPDATE twin.dim_node
+                        SET label      = coalesce(:label, label),
+                            summary    = :summary,
+                            tags       = cast(:tags as jsonb),
+                            visibility = :visibility,
+                            sensitive  = :sensitive,
+                            updated_at = NOW()
+                        WHERE integration_id = :eid AND valid_to IS NULL
+                    """),
+                    dim_params,
+                )
+                await db.commit()
+        except Exception:
+            pass
     return rows[0]
 
 
@@ -2821,6 +3722,32 @@ async def delete_integration(
     db: AsyncSession = Depends(get_db),
 ):
     await _ensure_integrations_table(db)
+
+    # Capture the linked dim_node before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE integration_id = :id AND valid_to IS NULL LIMIT 1"),
+            {"id": integration_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+    # Delete integration attachments
+    try:
+        await db.execute(
+            text("DELETE FROM public.integration_attachment WHERE integration_id = :integration_id"),
+            {"integration_id": integration_id},
+        )
+    except Exception:
+        pass
+
     result = await db.execute(
         text(
             """
@@ -2836,6 +3763,18 @@ async def delete_integration(
             detail=f"Integration '{integration_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "integration_id": integration_id}
 
 
@@ -3017,25 +3956,62 @@ async def upload_integrations_csv(
 async def add_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    int_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT integration_id, integration_name
-            FROM core.business_integrations
-            WHERE integration_id = :integration_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"integration_id": integration_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    int_row = await db.execute(
+        text(
+            f"""
+            SELECT integration_id, integration_name, tenant_id, company_id
+            FROM core.business_integrations
+            WHERE integration_id = :integration_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"integration_id": integration_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     integration = int_row.mappings().first()
     if not integration:
         raise HTTPException(status_code=404, detail=f"Integration '{integration_id}' not found")
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(integration.get("company_id"))
+    ) else (
+        company_id or integration.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -3053,12 +4029,14 @@ async def add_agent_integration_relation(
                 agent_id = EXCLUDED.agent_id,
                 agent_name = EXCLUDED.agent_name,
                 integration_name = EXCLUDED.integration_name,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or integration.get("tenant_id"),
+            "company_id": relation_company_id,
             "integration_id": integration_id,
             "agent_id": agent.get("agent_id"),
             "agent_internal_id": agent.get("agent_internal_id"),
@@ -3085,26 +4063,39 @@ async def add_agent_integration_relation(
 async def remove_agent_integration_relation(
     agent_id: str,
     integration_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_integration_agent_relation_table()
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_integrations
             WHERE integration_id = :integration_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "integration_id": integration_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
     await db.commit()
@@ -3154,7 +4145,7 @@ async def get_application(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_applications(db, application_id=application_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -3212,6 +4203,17 @@ async def create_application(
     )
     if "latest_release_date" in insert_values:
         insert_values["latest_release_date"] = _coerce_dt(insert_values["latest_release_date"])
+    if "valid_from" in insert_values:
+        insert_values["valid_from"] = _coerce_dt(insert_values["valid_from"])
+    if "valid_to" in insert_values:
+        insert_values["valid_to"] = _coerce_dt(insert_values["valid_to"])
+
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in app_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
 
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in app_cols:
@@ -3239,6 +4241,7 @@ async def create_application(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -3283,12 +4286,24 @@ async def update_application(
         updates["tags"] = json.dumps(raw_tags)
     if "latest_release_date" in updates:
         updates["latest_release_date"] = _coerce_dt(updates["latest_release_date"])
+    if "valid_from" in updates:
+        updates["valid_from"] = _coerce_dt(updates["valid_from"])
+    if "valid_to" in updates:
+        updates["valid_to"] = _coerce_dt(updates["valid_to"])
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in app_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
     updates["business_application_id"] = application_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "business_application_id"
     )
     if "updated_ts" in app_cols:
@@ -3310,6 +4325,49 @@ async def update_application(
         await _refresh_application_rollup(db, application_id)
         await db.commit()
     rows = await _fetch_applications(db, application_id=application_id)
+
+    # Sync updated fields back to linked dim_node (non-fatal)
+    try:
+        raw_row = await db.execute(
+            text(
+                "SELECT application_name, application_description, tags, visibility, sensitive"
+                " FROM core.business_applications WHERE business_application_id = :id"
+            ),
+            {"id": application_id},
+        )
+        raw = raw_row.mappings().first()
+        if raw:
+            name = (raw.get("application_name") or "").strip() or None
+            summary = str(raw.get("application_description") or "") or None
+            tags_raw = raw.get("tags") or []
+            visibility = raw.get("visibility") or "internal"
+            sensitive_raw = raw.get("sensitive")
+            sensitive = sensitive_raw if isinstance(sensitive_raw, bool) else False
+            dim_params = {
+                "label": name,
+                "summary": summary,
+                "tags": json.dumps(tags_raw if isinstance(tags_raw, list) else []),
+                "visibility": visibility,
+                "sensitive": sensitive,
+                "eid": application_id,
+            }
+            await db.execute(
+                text("""
+                    UPDATE twin.dim_node
+                    SET label      = coalesce(:label, label),
+                        summary    = :summary,
+                        tags       = cast(:tags as jsonb),
+                        visibility = :visibility,
+                        sensitive  = :sensitive,
+                        updated_at = NOW()
+                    WHERE business_application_id = :eid AND valid_to IS NULL
+                """),
+                dim_params,
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return rows[0]
 
 
@@ -3318,6 +4376,22 @@ async def delete_application(
     application_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Capture the linked dim_node before deleting so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :id AND valid_to IS NULL LIMIT 1"),
+            {"id": application_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
     if await _table_exists(db, "core", "agent_business_applications"):
         aba_cols = await _table_columns(db, "core", "agent_business_applications")
         if "business_application_id" in aba_cols:
@@ -3376,6 +4450,18 @@ async def delete_application(
             detail=f"Application '{application_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "application_id": application_id}
 
 
@@ -3438,6 +4524,92 @@ _INT_UPLOAD_TEXT_COLS: set[str] = {
     "data_sensitivity", "rate_limit", "availability_status", "sla", "version",
     "parent_application_id", "business_criticality", "emergency_tier",
 }
+
+
+@router.post("/applications/{application_id}/processes", tags=["Applications"], summary="Link Process to Application")
+async def link_process_to_application(
+    application_id: str,
+    body: LinkProcessToApplicationRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    app_id = (application_id or "").strip()
+    proc_id = (body.business_process_id or "").strip()
+    tenant_id = _tenant(request)
+    if not proc_id:
+        raise HTTPException(status_code=400, detail="business_process_id is required.")
+    try:
+        app_row = await db.execute(
+            text("SELECT business_application_id, application_name, company_id FROM core.business_applications WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid)) LIMIT 1"),
+            {"aid": app_id},
+        )
+        application = app_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+        proc_row = await db.execute(
+            text("SELECT business_process_id, process_name FROM core.business_processes WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid)) LIMIT 1"),
+            {"pid": proc_id},
+        )
+        process = proc_row.mappings().first()
+        if not process:
+            raise HTTPException(status_code=404, detail=f"Process '{proc_id}' not found.")
+
+        await db.execute(
+            text("""
+                INSERT INTO core.business_process_business_applications
+                    (tenant_id, company_id, business_process_id, process_name, business_application_id, application_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :cid, :pid, :pname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (business_process_id, business_application_id)
+                DO UPDATE SET
+                    process_name = EXCLUDED.process_name,
+                    application_name = EXCLUDED.application_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "cid": application.get("company_id"),
+                "pid": proc_id,
+                "pname": str(process.get("process_name") or proc_id),
+                "aid": app_id,
+                "aname": str(application.get("application_name") or app_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "business_application_id": app_id, "business_process_id": proc_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to link process to application: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to link process to application. Please try again.")
+
+
+@router.delete("/applications/{application_id}/processes/{process_id}", tags=["Applications"], summary="Unlink Process from Application")
+async def unlink_process_from_application(
+    application_id: str,
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    app_id = (application_id or "").strip()
+    proc_id = (process_id or "").strip()
+    try:
+        result = await db.execute(
+            text("""
+                DELETE FROM core.business_process_business_applications
+                WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+                  AND LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid))
+            """),
+            {"aid": app_id, "pid": proc_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "business_application_id": app_id, "business_process_id": proc_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to unlink process from application: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unlink process from application. Please try again.")
 
 
 @router.post("/applications/upload", status_code=200, tags=["Applications"], summary="Bulk Upload Applications CSV")
@@ -3651,7 +4823,7 @@ async def get_process(
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request), filter_related_by_company_id=company_id)
+    rows = await _fetch_processes(db, process_id=process_id, tenant_id=(tenant_id or "").strip() or _tenant(request), company_id=company_id, filter_related_by_company_id=company_id)
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -3725,6 +4897,13 @@ async def create_process(
     if raw_tags is not None and "tags" in process_cols:
         insert_values["tags"] = json.dumps(raw_tags)
 
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in process_cols:
+        if isinstance(raw_sensitive, bool):
+            insert_values["sensitive"] = raw_sensitive
+        else:
+            insert_values["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
+
     for col, default_value in _PROCESS_READONLY_DEFAULTS.items():
         if col in process_cols:
             insert_values[col] = default_value
@@ -3747,6 +4926,7 @@ async def create_process(
     values_sql = ", ".join(
         "CURRENT_TIMESTAMP" if col in {"created_ts", "updated_ts"}
         else "cast(:tags as jsonb)" if col == "tags"
+        else "cast(:sensitive as boolean)" if col == "sensitive"
         else f":{col}"
         for col in insert_columns
     )
@@ -3791,6 +4971,12 @@ async def update_process(
     raw_tags = canonical.get("tags")
     if raw_tags is not None and "tags" in process_cols:
         updates["tags"] = json.dumps(raw_tags)
+    raw_sensitive = canonical.get("sensitive")
+    if raw_sensitive is not None and "sensitive" in process_cols:
+        if isinstance(raw_sensitive, bool):
+            updates["sensitive"] = raw_sensitive
+        else:
+            updates["sensitive"] = str(raw_sensitive).lower() in ("true", "yes", "1")
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided for update")
 
@@ -3808,7 +4994,9 @@ async def update_process(
 
     updates["business_process_id"] = process_id
     set_clause = ", ".join(
-        f"{col} = cast(:{col} as jsonb)" if col == "tags" else f"{col} = :{col}"
+        f"{col} = cast(:{col} as jsonb)" if col == "tags"
+        else f"{col} = cast(:{col} as boolean)" if col == "sensitive"
+        else f"{col} = :{col}"
         for col in updates.keys() if col != "business_process_id"
     )
     if "updated_ts" in process_cols:
@@ -3830,6 +5018,49 @@ async def update_process(
         await _refresh_process_rollup(db, process_id)
         await db.commit()
     rows = await _fetch_processes(db, process_id=process_id)
+
+    # Sync updated fields back to linked dim_node (non-fatal)
+    try:
+        raw_row = await db.execute(
+            text(
+                "SELECT process_name, process_description, tags, visibility, sensitive"
+                " FROM core.business_processes WHERE business_process_id = :id"
+            ),
+            {"id": process_id},
+        )
+        raw = raw_row.mappings().first()
+        if raw:
+            p_name = (raw.get("process_name") or "").strip() or None
+            p_summary = str(raw.get("process_description") or "") or None
+            p_tags = raw.get("tags") or []
+            p_visibility = raw.get("visibility") or "internal"
+            p_sensitive_raw = raw.get("sensitive")
+            p_sensitive = p_sensitive_raw if isinstance(p_sensitive_raw, bool) else False
+            dim_params = {
+                "label": p_name,
+                "summary": p_summary,
+                "tags": json.dumps(p_tags if isinstance(p_tags, list) else []),
+                "visibility": p_visibility,
+                "sensitive": p_sensitive,
+                "eid": process_id,
+            }
+            await db.execute(
+                text("""
+                    UPDATE twin.dim_node
+                    SET label      = coalesce(:label, label),
+                        summary    = :summary,
+                        tags       = cast(:tags as jsonb),
+                        visibility = :visibility,
+                        sensitive  = :sensitive,
+                        updated_at = NOW()
+                    WHERE business_process_id = :eid AND valid_to IS NULL
+                """),
+                dim_params,
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return rows[0]
 
 
@@ -3838,6 +5069,22 @@ async def delete_process(
     process_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Capture the linked dim_node before deletion so we can soft-delete it afterwards
+    dim_node_to_delete: str | None = None
+    try:
+        dn_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE business_process_id = :id AND valid_to IS NULL LIMIT 1"),
+            {"id": process_id},
+        )
+        dn_result = dn_row.mappings().first()
+        if dn_result:
+            dim_node_to_delete = str(dn_result["id"])
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
     if await _table_exists(db, "core", "agent_business_processes"):
         abp_cols = await _table_columns(db, "core", "agent_business_processes")
         if "business_process_id" in abp_cols:
@@ -3909,7 +5156,105 @@ async def delete_process(
             detail=f"Process '{process_id}' not found",
         )
     await db.commit()
+
+    # Soft-delete the linked dim_node (non-fatal)
+    if dim_node_to_delete:
+        try:
+            await db.execute(
+                text("UPDATE twin.dim_node SET valid_to = NOW() WHERE id = :id AND valid_to IS NULL"),
+                {"id": dim_node_to_delete},
+            )
+            await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "process_id": process_id}
+
+
+@router.post("/processes/{process_id}/applications", tags=["Processes"], summary="Link Application to Process")
+async def link_application_to_process(
+    process_id: str,
+    body: LinkApplicationToProcessRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    proc_id = (process_id or "").strip()
+    app_id = (body.business_application_id or "").strip()
+    tenant_id = _tenant(request)
+    if not app_id:
+        raise HTTPException(status_code=400, detail="business_application_id is required.")
+    try:
+        proc_row = await db.execute(
+            text("SELECT business_process_id, process_name, company_id FROM core.business_processes WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid)) LIMIT 1"),
+            {"pid": proc_id},
+        )
+        process = proc_row.mappings().first()
+        if not process:
+            raise HTTPException(status_code=404, detail=f"Process '{proc_id}' not found.")
+
+        app_row = await db.execute(
+            text("SELECT business_application_id, application_name FROM core.business_applications WHERE LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid)) LIMIT 1"),
+            {"aid": app_id},
+        )
+        application = app_row.mappings().first()
+        if not application:
+            raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+        await db.execute(
+            text("""
+                INSERT INTO core.business_process_business_applications
+                    (tenant_id, company_id, business_process_id, process_name, business_application_id, application_name, created_ts, updated_ts)
+                VALUES
+                    (:tid, :cid, :pid, :pname, :aid, :aname, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (business_process_id, business_application_id)
+                DO UPDATE SET
+                    process_name = EXCLUDED.process_name,
+                    application_name = EXCLUDED.application_name,
+                    tenant_id = EXCLUDED.tenant_id,
+                    updated_ts = EXCLUDED.updated_ts
+            """),
+            {
+                "tid": tenant_id,
+                "cid": process.get("company_id"),
+                "pid": proc_id,
+                "pname": str(process.get("process_name") or proc_id),
+                "aid": app_id,
+                "aname": str(application.get("application_name") or app_id),
+            },
+        )
+        await db.commit()
+        return {"status": "linked", "business_process_id": proc_id, "business_application_id": app_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to link application to process: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to link application to process. Please try again.")
+
+
+@router.delete("/processes/{process_id}/applications/{application_id}", tags=["Processes"], summary="Unlink Application from Process")
+async def unlink_application_from_process(
+    process_id: str,
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    proc_id = (process_id or "").strip()
+    app_id = (application_id or "").strip()
+    try:
+        result = await db.execute(
+            text("""
+                DELETE FROM core.business_process_business_applications
+                WHERE LOWER(TRIM(business_process_id)) = LOWER(TRIM(:pid))
+                  AND LOWER(TRIM(business_application_id)) = LOWER(TRIM(:aid))
+            """),
+            {"pid": proc_id, "aid": app_id},
+        )
+        await db.commit()
+        return {"status": "unlinked", "business_process_id": proc_id, "business_application_id": app_id, "rows_deleted": result.rowcount or 0}
+    except Exception as e:
+        await db.rollback()
+        _logger.error("Failed to unlink application from process: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unlink application from process. Please try again.")
 
 
 @router.post("/processes/upload", status_code=200, tags=["Processes"], summary="Bulk Upload Processes CSV")
@@ -4328,6 +5673,13 @@ async def create_application_attachment(
     if len(file_data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
+    dup = await db.execute(
+        text("SELECT 1 FROM public.application_attachment WHERE application_id = :aid AND filename = :fn LIMIT 1"),
+        {"aid": application_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this application.")
+
     row = await db.execute(
         text(
             """
@@ -4347,7 +5699,40 @@ async def create_application_attachment(
         },
     )
     await db.commit()
-    return dict(row.mappings().first())
+    record = dict(row.mappings().first())
+
+    # Sync to twin.dim_node_attachment if this application is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
+            {"app_id": application_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim:
+            node_id = str(dim["id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {
+                        "node_id": node_id,
+                        "filename": filename,
+                        "content_type": mime_type,
+                        "size_bytes": len(file_data),
+                        "data": file_data,
+                    },
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return record
 
 
 @router.get(
@@ -4399,6 +5784,16 @@ async def delete_application_attachment(
 ):
     await _ensure_application_attachments_table(db)
 
+    # Fetch filename before deleting so we can mirror the delete to dim_node_attachment
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.application_attachment WHERE id = :aid AND application_id = :app_id LIMIT 1"),
+        {"aid": attachment_id, "app_id": application_id},
+    )
+    fname_rec = fname_row.mappings().first()
+    if not fname_rec:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    filename = fname_rec["filename"]
+
     result = await db.execute(
         text(
             """
@@ -4412,7 +5807,81 @@ async def delete_application_attachment(
     if (result.rowcount or 0) == 0:
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.commit()
+
+    # Mirror delete to twin.dim_node_attachment by filename (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
+            {"app_id": application_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim:
+            await db.execute(
+                text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                {"nid": str(dim["id"]), "fn": filename},
+            )
+            await db.commit()
+    except Exception:
+        pass
+
     return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/applications/{application_id}/sync-blueprint-attachments",
+    tags=["Applications"],
+    summary="Sync Blueprint Attachments to Application",
+)
+async def sync_blueprint_attachments_to_application(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the application's attachment table."""
+    await _ensure_application_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT id FROM twin.dim_node WHERE business_application_id = :app_id AND valid_to IS NULL LIMIT 1"),
+        {"app_id": application_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim:
+        return {"synced": 0}
+
+    node_id = str(dim["id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data, uploaded_at FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.application_attachment WHERE application_id = :app_id AND filename = :fn LIMIT 1"),
+            {"app_id": application_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.application_attachment
+                        (application_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:application_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "application_id": application_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
 
 
 @router.get(
@@ -4468,6 +5937,13 @@ async def create_process_attachment(
     if len(file_data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
 
+    dup = await db.execute(
+        text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+        {"pid": process_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this process.")
+
     row = await db.execute(
         text(
             """
@@ -4487,7 +5963,34 @@ async def create_process_attachment(
         },
     )
     await db.commit()
-    return dict(row.mappings().first())
+    result = dict(row.mappings().first())
+
+    # Sync to dim_node_attachment if this process is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
+            {"pid": process_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim:
+            node_id = str(dim["id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return result
 
 
 @router.get(
@@ -4539,6 +6042,13 @@ async def delete_process_attachment(
 ):
     await _ensure_process_attachments_table(db)
 
+    # Fetch filename before deleting so we can sync the deletion to dim_node_attachment
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.process_attachment WHERE id = :aid AND process_id = :pid LIMIT 1"),
+        {"aid": attachment_id, "pid": process_id},
+    )
+    fname_rec = fname_row.mappings().first()
+
     result = await db.execute(
         text(
             """
@@ -4552,7 +6062,340 @@ async def delete_process_attachment(
     if (result.rowcount or 0) == 0:
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.commit()
+
+    # Also remove the matching dim_node_attachment by filename (non-fatal)
+    if fname_rec:
+        try:
+            dim_row = await db.execute(
+                text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
+                {"pid": process_id},
+            )
+            dim = dim_row.mappings().first()
+            if dim:
+                await db.execute(
+                    text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                    {"nid": str(dim["id"]), "fn": fname_rec["filename"]},
+                )
+                await db.commit()
+        except Exception:
+            pass
+
     return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/processes/{process_id}/sync-blueprint-attachments",
+    tags=["Processes"],
+    summary="Sync Blueprint Attachments to Process",
+)
+async def sync_blueprint_attachments_to_process(
+    process_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the process's attachment table."""
+    await _ensure_process_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT id FROM twin.dim_node WHERE business_process_id = :pid AND valid_to IS NULL LIMIT 1"),
+        {"pid": process_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim:
+        return {"synced": 0}
+
+    node_id = str(dim["id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.process_attachment WHERE process_id = :pid AND filename = :fn LIMIT 1"),
+            {"pid": process_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.process_attachment
+                        (process_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:process_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "process_id": process_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
+
+
+# ── Integration Attachments ───────────────────────────────────────────────────
+
+@router.get(
+    "/integrations/{integration_id}/attachments",
+    tags=["Integrations"],
+    summary="List Integration Attachments",
+)
+async def list_integration_attachments(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            FROM public.integration_attachment
+            WHERE integration_id = :integration_id
+            ORDER BY created_at DESC
+            """
+        ),
+        {"integration_id": integration_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
+
+@router.post(
+    "/integrations/{integration_id}/attachments",
+    tags=["Integrations"],
+    summary="Upload Integration Attachment",
+    status_code=201,
+)
+async def create_integration_attachment(
+    integration_id: str,
+    body: EntityAttachmentCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    filename = _clean(body.filename)
+    mime_type = _clean(body.mime_type) or "application/octet-stream"
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    try:
+        file_data = base64.b64decode(body.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid content_base64 payload") from exc
+
+    if not file_data:
+        raise HTTPException(status_code=400, detail="Attachment file is empty")
+    if len(file_data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 10 MB limit")
+
+    dup = await db.execute(
+        text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+        {"iid": integration_id, "fn": filename},
+    )
+    if dup.scalar():
+        raise HTTPException(status_code=409, detail=f"A file named '{filename}' already exists for this integration.")
+
+    row = await db.execute(
+        text(
+            """
+            INSERT INTO public.integration_attachment
+                (integration_id, filename, mime_type, file_size_bytes, file_data)
+            VALUES
+                (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+            RETURNING id, integration_id, filename, mime_type, file_size_bytes, created_at, updated_at
+            """
+        ),
+        {
+            "integration_id": integration_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size_bytes": len(file_data),
+            "file_data": file_data,
+        },
+    )
+    await db.commit()
+    result = dict(row.mappings().first())
+
+    # Sync to dim_node_attachment if this integration is linked to a dim_node (non-fatal)
+    try:
+        dim_row = await db.execute(
+            text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
+            {"iid": integration_id},
+        )
+        dim = dim_row.mappings().first()
+        if dim:
+            node_id = str(dim["id"])
+            dup = await db.execute(
+                text("SELECT 1 FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn LIMIT 1"),
+                {"nid": node_id, "fn": filename},
+            )
+            if not dup.scalar():
+                await db.execute(
+                    text("""
+                        INSERT INTO twin.dim_node_attachment (node_id, filename, content_type, size_bytes, data)
+                        VALUES (:node_id, :filename, :content_type, :size_bytes, :data)
+                    """),
+                    {"node_id": node_id, "filename": filename, "content_type": mime_type, "size_bytes": len(file_data), "data": file_data},
+                )
+                await db.commit()
+    except Exception:
+        pass
+
+    return result
+
+
+@router.get(
+    "/integrations/{integration_id}/attachments/{attachment_id}/download",
+    tags=["Integrations"],
+    summary="Download Integration Attachment",
+)
+async def download_integration_attachment(
+    integration_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    row = await db.execute(
+        text(
+            """
+            SELECT filename, mime_type, file_data
+            FROM public.integration_attachment
+            WHERE id = :attachment_id
+              AND integration_id = :integration_id
+            LIMIT 1
+            """
+        ),
+        {"attachment_id": attachment_id, "integration_id": integration_id},
+    )
+    attachment = row.mappings().first()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    filename = attachment["filename"] or "attachment.bin"
+    mime_type = attachment["mime_type"] or "application/octet-stream"
+    return Response(
+        content=bytes(attachment["file_data"]),
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete(
+    "/integrations/{integration_id}/attachments/{attachment_id}",
+    tags=["Integrations"],
+    summary="Delete Integration Attachment",
+)
+async def delete_integration_attachment(
+    integration_id: str,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_integration_attachments_table(db)
+
+    # Fetch filename before deleting for dim_node sync
+    fname_row = await db.execute(
+        text("SELECT filename FROM public.integration_attachment WHERE id = :aid AND integration_id = :iid LIMIT 1"),
+        {"aid": attachment_id, "iid": integration_id},
+    )
+    fname_rec = fname_row.mappings().first()
+
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM public.integration_attachment
+            WHERE id = :attachment_id
+              AND integration_id = :integration_id
+            """
+        ),
+        {"attachment_id": attachment_id, "integration_id": integration_id},
+    )
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    await db.commit()
+
+    # Also remove the matching dim_node_attachment by filename (non-fatal)
+    if fname_rec:
+        try:
+            dim_row = await db.execute(
+                text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
+                {"iid": integration_id},
+            )
+            dim = dim_row.mappings().first()
+            if dim:
+                await db.execute(
+                    text("DELETE FROM twin.dim_node_attachment WHERE node_id = :nid AND filename = :fn"),
+                    {"nid": str(dim["id"]), "fn": fname_rec["filename"]},
+                )
+                await db.commit()
+        except Exception:
+            pass
+
+    return {"status": "deleted", "attachment_id": attachment_id}
+
+
+@router.post(
+    "/integrations/{integration_id}/sync-blueprint-attachments",
+    tags=["Integrations"],
+    summary="Sync Blueprint Attachments to Integration",
+)
+async def sync_blueprint_attachments_to_integration(
+    integration_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill any dim_node attachments that are missing from the integration's attachment table."""
+    await _ensure_integration_attachments_table(db)
+
+    dim_row = await db.execute(
+        text("SELECT id FROM twin.dim_node WHERE integration_id = :iid AND valid_to IS NULL LIMIT 1"),
+        {"iid": integration_id},
+    )
+    dim = dim_row.mappings().first()
+    if not dim:
+        return {"synced": 0}
+
+    node_id = str(dim["id"])
+    node_attachments = await db.execute(
+        text("SELECT filename, content_type, size_bytes, data FROM twin.dim_node_attachment WHERE node_id = :nid"),
+        {"nid": node_id},
+    )
+    rows = node_attachments.mappings().all()
+
+    synced = 0
+    for row in rows:
+        dup = await db.execute(
+            text("SELECT 1 FROM public.integration_attachment WHERE integration_id = :iid AND filename = :fn LIMIT 1"),
+            {"iid": integration_id, "fn": row["filename"]},
+        )
+        if not dup.scalar():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.integration_attachment
+                        (integration_id, filename, mime_type, file_size_bytes, file_data)
+                    VALUES (:integration_id, :filename, :mime_type, :file_size_bytes, :file_data)
+                    """
+                ),
+                {
+                    "integration_id": integration_id,
+                    "filename": row["filename"],
+                    "mime_type": row["content_type"] or "application/octet-stream",
+                    "file_size_bytes": row["size_bytes"] or 0,
+                    "file_data": row["data"],
+                },
+            )
+            synced += 1
+
+    if synced:
+        await db.commit()
+    return {"synced": synced}
 
 
 @router.get(
@@ -5076,25 +6919,58 @@ async def get_agent_relations(
 async def add_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
+
+    agent_row = await db.execute(
+        text(
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
+            LIMIT 1
+            """
+        ),
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
 
     app_row = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 business_application_id,
                 application_name,
                 business_criticality,
                 emergency_tier,
-                application_description
+                application_description,
+                tenant_id,
+                company_id
             FROM core.business_applications
             WHERE business_application_id = :business_application_id
+              {tenant_filter}
+              {company_filter}
             LIMIT 1
             """
         ),
-        {"business_application_id": application_id},
+        {"business_application_id": application_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     app = app_row.mappings().first()
 
@@ -5123,7 +6999,15 @@ async def add_agent_application_relation(
         app = {
             "application_name": application_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(app.get("company_id"))
+    ) else (
+        company_id or app.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5141,12 +7025,14 @@ async def add_agent_application_relation(
                 agent_id = EXCLUDED.agent_id,
                 application_name = EXCLUDED.application_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or app.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_application_id": application_id,
             "agent_id": agent.get("agent_id"),
             "application_name": app.get("application_name") or application_id,
@@ -5173,25 +7059,38 @@ async def add_agent_application_relation(
 async def remove_agent_application_relation(
     agent_id: str,
     application_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_applications
             WHERE business_application_id = :business_application_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_application_id": application_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 
@@ -5214,23 +7113,56 @@ async def remove_agent_application_relation(
 async def add_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
-    process_row = await db.execute(
+    agent_row = await db.execute(
         text(
-            """
-            SELECT
-                business_process_id,
-                process_name,
-                business_criticality
-            FROM core.business_processes
-            WHERE business_process_id = :business_process_id
+            f"""
+            SELECT agent_id, agent_internal_id, agent_name, tenant_id, company_id
+            FROM core.agents
+            WHERE agent_id = :agent_id
+              {tenant_filter}
+              {company_filter}
+            ORDER BY
+                CASE WHEN COALESCE(is_current, FALSE) THEN 0 ELSE 1 END,
+                updated_ts DESC NULLS LAST
             LIMIT 1
             """
         ),
-        {"business_process_id": process_id},
+        {"agent_id": agent_id, "tenant_id": tenant_id, "company_id": company_id},
+    )
+    agent = agent_row.mappings().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found for the selected company.")
+    agent = dict(agent)
+
+    process_row = await db.execute(
+        text(
+            f"""
+            SELECT
+                business_process_id,
+                process_name,
+                business_criticality,
+                tenant_id,
+                company_id
+            FROM core.business_processes
+            WHERE business_process_id = :business_process_id
+              {tenant_filter}
+              {company_filter}
+            LIMIT 1
+            """
+        ),
+        {"business_process_id": process_id, "tenant_id": tenant_id, "company_id": company_id},
     )
     process = process_row.mappings().first()
 
@@ -5260,7 +7192,15 @@ async def add_agent_process_relation(
         process = {
             "process_name": process_id,
             "business_criticality": None,
+            "company_id": company_id or agent.get("company_id"),
         }
+
+    relation_company_id = None if (
+        _is_global_company_value(agent.get("company_id")) or
+        _is_global_company_value(process.get("company_id"))
+    ) else (
+        company_id or process.get("company_id") or agent.get("company_id")
+    )
 
     await db.execute(
         text(
@@ -5278,12 +7218,14 @@ async def add_agent_process_relation(
                 agent_id = EXCLUDED.agent_id,
                 process_name = EXCLUDED.process_name,
                 criticality = EXCLUDED.criticality,
+                company_id = EXCLUDED.company_id,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_ts = EXCLUDED.updated_ts
             """
         ),
         {
-            "tenant_id": agent.get("tenant_id"),
-            "company_id": agent.get("company_id"),
+            "tenant_id": tenant_id or agent.get("tenant_id") or process.get("tenant_id"),
+            "company_id": relation_company_id,
             "business_process_id": process_id,
             "agent_id": agent.get("agent_id"),
             "process_name": process.get("process_name") or process_id,
@@ -5310,25 +7252,38 @@ async def add_agent_process_relation(
 async def remove_agent_process_relation(
     agent_id: str,
     process_id: str,
+    request: Request,
+    company_id: Optional[str] = Query(default=None, description="Current company UUID"),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await _resolve_agent(db, agent_id)
+    tenant_id = _tenant(request)
+    tenant_filter = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_filter = (
+        "AND (company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+        if company_id
+        else ""
+    )
 
     result = await db.execute(
         text(
-            """
+            f"""
             DELETE FROM core.agent_business_processes
             WHERE business_process_id = :business_process_id
               AND (
                     agent_internal_id = :agent_internal_id
                     OR agent_id = :agent_id
                   )
+              {tenant_filter}
+              {company_filter}
             """
         ),
         {
             "business_process_id": process_id,
             "agent_internal_id": agent.get("agent_internal_id"),
             "agent_id": agent.get("agent_id"),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
         },
     )
 

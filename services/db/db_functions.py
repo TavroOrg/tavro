@@ -187,6 +187,7 @@ def _execute_insert(
     response_data:  dict,
     aars:           dict,        # output of _extract_aars_data()
     tenant_id:      str = None,
+    company_id:     str = None,
 ) -> None:
     """
     Fire a new-record INSERT into risk_management.agent_risk_assessment.
@@ -203,6 +204,7 @@ def _execute_insert(
             agent_internal_id,
             agent_id,
             tenant_id,
+            company_id,
             agent_name,
             agent_risk_assessment_name,
             risk_classification,
@@ -240,7 +242,7 @@ def _execute_insert(
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s
+            %s, %s
         )
         """
     ).format(risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment"))
@@ -252,6 +254,7 @@ def _execute_insert(
             response_data["agent_internal_id"],
             response_data["agent_id"],
             tenant_id,
+            company_id,
             agent_name,
             f"{agent_name}_Assessment_{created_ts:%Y-%m-%d}",
             response_data["risk_classification"],
@@ -288,6 +291,7 @@ def _execute_insert(
         response_data["agent_internal_id"],
         response_data["agent_id"],
         tenant_id,
+        company_id,
         agent_name,
         f"{agent_name}_Assessment_{created_ts:%Y-%m-%d}",
         response_data["risk_classification"],
@@ -355,6 +359,23 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
     agent_id          = response_data["agent_id"]
 
     aars = _extract_aars_data(response_data)
+
+    # Look up company_id from core.agents for this agent
+    company_id = None
+    try:
+        with _db_connection() as _conn:
+            with _conn.cursor() as _cur:
+                _cur.execute(
+                    sql.SQL("SELECT company_id FROM {agents} WHERE agent_internal_id = %s AND is_current = TRUE LIMIT 1").format(
+                        agents=_table(CORE_SCHEMA, "agents")
+                    ),
+                    (agent_internal_id,),
+                )
+                _row = _cur.fetchone()
+                if _row:
+                    company_id = _row[0] or None
+    except Exception:
+        raise
 
     # CVSS params forwarded to scenario rows
     cvss_params = {col: response_data[col] for col in CVSS_PARAM_COLS}
@@ -517,6 +538,7 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
                     response_data,
                     aars,
                     tenant_id=tenant_id,
+                    company_id=company_id,
                 )
 
                 _insert_risk_scenarios_cursor(
@@ -526,6 +548,7 @@ def insert_or_update_into_postgres(response_data: dict, tenant_id: str = None) -
                     now_ts,
                     now_ts,
                     tenant_id=tenant_id,
+                    company_id=company_id,
                     **cvss_params,
                 )
                 return assessment_id
@@ -552,7 +575,8 @@ def _insert_risk_scenarios_cursor(
     subsequent_system_confidentiality_sc: str,
     subsequent_system_integrity_si:       str,
     subsequent_system_availability_sa:    str,
-    tenant_id: str = None,
+    tenant_id:  str = None,
+    company_id: str = None,
 ) -> None:
     """
     Bulk-insert 10 standard risk scenarios into agent_risk_scenarios.
@@ -582,6 +606,7 @@ def _insert_risk_scenarios_cursor(
             risk_scenario_id,
             assessment_id,
             tenant_id,
+            company_id,
             agentic_ai_core_security_risks,
             attack_vector_av,
             attack_complexity_ac,
@@ -608,7 +633,7 @@ def _insert_risk_scenarios_cursor(
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s
+            %s, %s, %s, %s
         )
         """
     ).format(scenarios_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_scenarios"))
@@ -618,6 +643,7 @@ def _insert_risk_scenarios_cursor(
             str(uuid.uuid4()),
             assessment_id,
             tenant_id,
+            company_id,
             risk_name,
             attack_vector_av,
             attack_complexity_ac,
@@ -664,7 +690,8 @@ def insert_risk_scenarios(
     subsequent_system_confidentiality_sc: str,
     subsequent_system_integrity_si:       str,
     subsequent_system_availability_sa:    str,
-    tenant_id: str = None,
+    tenant_id:  str = None,
+    company_id: str = None,
 ) -> None:
     """Public wrapper: bulk-insert 10 standard risk scenarios (opens its own connection)."""
     with _db_connection() as connection:
@@ -687,6 +714,7 @@ def insert_risk_scenarios(
                 subsequent_system_integrity_si=subsequent_system_integrity_si,
                 subsequent_system_availability_sa=subsequent_system_availability_sa,
                 tenant_id=tenant_id,
+                company_id=company_id,
             )
 
 
@@ -1663,11 +1691,23 @@ def insert_core_risk_assessment(
     with _db_connection() as connection:
         with connection.cursor() as cursor:
             _lock_agent_assessment(cursor, agent_internal_id, tenant_id)
+
+            # Fetch company_id from risk_management.agent_risk_assessment
+            cursor.execute(
+                sql.SQL("SELECT company_id FROM {risk_table} WHERE assessment_id = %s LIMIT 1").format(
+                    risk_table=_table(RISK_MANAGEMENT_SCHEMA, "agent_risk_assessment")
+                ),
+                (risk_assessment_id,),
+            )
+            _row = cursor.fetchone()
+            company_id = _row[0] if _row else None
+
             values = (
                 risk_assessment_id,
                 agent_internal_id,
                 agent_id,
                 tenant_id,
+                company_id,
                 assessment_name,
                 "Admin",
                 created_at,
@@ -1690,6 +1730,7 @@ def insert_core_risk_assessment(
                     agent_internal_id = %s,
                     agent_id = %s,
                     tenant_id = %s,
+                    company_id = %s,
                     assessment_name = %s,
                     assessor_name = %s,
                     assessment_ts = %s,
@@ -1711,6 +1752,7 @@ def insert_core_risk_assessment(
                 agent_internal_id,
                 agent_id,
                 tenant_id,
+                company_id,
                 assessment_name,
                 "Admin",
                 created_at,
@@ -1741,6 +1783,7 @@ def insert_core_risk_assessment(
                         agent_internal_id,
                         agent_id,
                         tenant_id,
+                        company_id,
                         assessment_name,
                         assessor_name,
                         assessment_ts,
@@ -1755,7 +1798,7 @@ def insert_core_risk_assessment(
                         created_ts,
                         updated_ts
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                 ).format(core_table=_table(CORE_SCHEMA, "agent_risk_assessments"))
 

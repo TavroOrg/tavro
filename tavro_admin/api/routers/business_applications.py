@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -37,6 +37,19 @@ def _str(val) -> str:
     return str(val)
 
 
+def _date(val) -> date | None:
+    """Return a date object or None — never an empty string."""
+    raw = _str(val).strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 
 def _fetch_sn_table(instance_url: str, username: str, password: str, table: str, display_value: bool = False) -> list[dict]:
     url = f"{instance_url.rstrip('/')}/api/now/table/{table}"
@@ -46,6 +59,54 @@ def _fetch_sn_table(instance_url: str, username: str, password: str, table: str,
     if resp.status_code != 200:
         raise ValueError(f"ServiceNow returned HTTP {resp.status_code}: {resp.text[:500]}")
     return resp.json().get("result", [])
+
+
+async def _upsert_dim_node_for_entity(
+    db, company_id: str, dim_type_name: str, entity_column: str,
+    entity_id: str, label: str, summary: str | None,
+) -> str | None:
+    """Create/update the twin.dim_node row mirroring an imported business entity, and return its id."""
+    if not entity_id or not label:
+        return None
+
+    type_row = await db.execute(
+        text("SELECT id FROM twin.dim_type WHERE name = :name LIMIT 1"),
+        {"name": dim_type_name},
+    )
+    dim_type_id = type_row.scalar()
+    if not dim_type_id:
+        return None
+
+    existing = await db.execute(
+        text(f"""
+            SELECT id FROM twin.dim_node
+            WHERE company_id = :cid AND {entity_column} = :eid
+            LIMIT 1
+        """),
+        {"cid": company_id, "eid": entity_id},
+    )
+    node_id = existing.scalar()
+
+    if node_id:
+        await db.execute(
+            text("""
+                UPDATE twin.dim_node
+                SET label = :label, summary = :summary, updated_at = now()
+                WHERE id = :id
+            """),
+            {"label": label, "summary": summary, "id": node_id},
+        )
+        return str(node_id)
+
+    inserted = await db.execute(
+        text(f"""
+            INSERT INTO twin.dim_node (company_id, dim_type_id, label, summary, {entity_column})
+            VALUES (:cid, :dtid, :label, :summary, :eid)
+            RETURNING id
+        """),
+        {"cid": company_id, "dtid": dim_type_id, "label": label, "summary": summary, "eid": entity_id},
+    )
+    return str(inserted.scalar())
 
 
 def _sn_credentials() -> tuple[str, str, str]:
@@ -170,7 +231,7 @@ def _fetch_and_map_ba(
             "current_installed_version":          _str(record.get("u_current_installed_version")),
             "is_current_version_supported":       _str(record.get("u_is_current_installed_version_supported")),
             "latest_released_version":            _str(record.get("u_latest_released_version")),
-            "latest_release_date":                _str(record.get("u_latest_release_date")),
+            "latest_release_date":                _date(record.get("u_latest_release_date")),
             "latest_release_documentation_link":  _str(record.get("u_latest_release_documentation_link")),
             "company_id":                         company_id,
             "company_name":                       company_name,
@@ -220,6 +281,24 @@ async def run_business_applications(
             await db.execute(text(_BA_INSERT_SQL), row)
         await db.commit()
 
+        for row in rows:
+            node_id = await _upsert_dim_node_for_entity(
+                db, company_id, "Application", "business_application_id",
+                row["business_application_id"],
+                row["application_name"] or row["business_application_id"],
+                row["application_description"] or None,
+            )
+            if node_id:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_applications
+                        SET dim_node_id = :nid
+                        WHERE company_id = :cid AND business_application_id = :baid
+                    """),
+                    {"nid": node_id, "cid": company_id, "baid": row["business_application_id"]},
+                )
+        await db.commit()
+
     print(f"[business-apps] stored {len(rows)} application(s) for tenant_id={tenant_id!r} company_id={company_id!r}", flush=True)
 
     return {
@@ -235,6 +314,20 @@ async def run_business_applications(
 # ── Business Processes ────────────────────────────────────────────────────────
 
 _BP_TABLE = "cmdb_ci_business_process"
+
+# ServiceNow's business_crit_declared choice list mapped rank-for-rank onto
+# our own Tier 1 (Systemic) .. Tier 4 (Experimental) scale (see BUSINESS_CRITICALITY_OPTIONS
+# in tavro_app/src/pages/BusinessProcessViewPage.tsx, which stores these numeric strings).
+_PROCESS_CRITICALITY_MAP = {
+    "1 - most critical":     "1.0",
+    "2 - somewhat critical": "0.7",
+    "3 - less critical":     "0.4",
+    "4 - not critical":      "0.1",
+}
+
+
+def _map_process_criticality(raw: str) -> str:
+    return _PROCESS_CRITICALITY_MAP.get(raw.strip().lower(), "")
 
 _BP_INSERT_SQL = """
 INSERT INTO core.business_processes (
@@ -308,7 +401,7 @@ def _fetch_and_map_bp(
             "owner":                              _str(record.get("owned_by")),
             "stakeholders":                       "",
             "operators":                          "",
-            "business_criticality":               _str(record.get("business_crit_declared")),
+            "business_criticality":               _map_process_criticality(_str(record.get("business_crit_declared"))),
             "reputational_impact":                "",
             "num_of_associated_agents":           None,
             "agent_risk_tier":                    "",
@@ -368,6 +461,24 @@ async def run_business_processes(
     async with AsyncSessionLocal() as db:
         for row in rows:
             await db.execute(text(_BP_INSERT_SQL), row)
+        await db.commit()
+
+        for row in rows:
+            node_id = await _upsert_dim_node_for_entity(
+                db, company_id, "Process", "business_process_id",
+                row["business_process_id"],
+                row["process_name"] or row["business_process_id"],
+                row["process_description"] or None,
+            )
+            if node_id:
+                await db.execute(
+                    text("""
+                        UPDATE core.business_processes
+                        SET dim_node_id = :nid
+                        WHERE company_id = :cid AND business_process_id = :bpid
+                    """),
+                    {"nid": node_id, "cid": company_id, "bpid": row["business_process_id"]},
+                )
         await db.commit()
 
     print(f"[business-procs] stored {len(rows)} process(es) for tenant_id={tenant_id!r} company_id={company_id!r}", flush=True)

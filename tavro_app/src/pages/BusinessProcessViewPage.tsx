@@ -1,14 +1,18 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toUserMessage } from '../utils/errorUtils';
 import {
   AlertCircle,
   ArrowLeft,
   Workflow,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Info,
   Loader2,
+  Network,
   Pencil,
+  Plus,
   PlusCircle,
   RefreshCw,
   Save,
@@ -24,16 +28,20 @@ import { useCaseApi } from '../services/useCaseApi';
 import { fetchAllPages } from '../utils/fetchAllPages';
 import { aiModelApi } from '../services/aiModelApi';
 import type {
+  BusinessApplicationRecord,
   BusinessProcessRecord,
   BusinessProcessUpsertPayload,
 } from '../types/businessRelations';
 import type { AiModelRecord } from '../types/aiModel';
+import type { DimEdge, SourceRef } from '../types/blueprint';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
+import { blueprintApi } from '../services/blueprintApi';
+import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
-type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models';
+type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models' | 'related_applications' | 'blueprint';
 type Option = { label: string; value: string };
 
 const BUSINESS_CRITICALITY_OPTIONS: Option[] = [
@@ -121,7 +129,7 @@ const HINTS: Record<string, string> = {
   associated_agents:
     'Indicates the total number of agents associated with the process.',
   agent_risk_exposure:
-    'ARE represents process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
+    'ARE represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.',
 };
 
 const inputCls =
@@ -256,6 +264,15 @@ const metricToneClass = (tone: HeaderMetricMeta['tone']) => {
   return 'text-slate-600';
 };
 
+const getArtMeta = (value: string): HeaderMetricMeta => {
+  const label = value || 'N/A';
+  const normalized = label.toLowerCase();
+  if (normalized === 'critical' || normalized === 'high') return { label, tone: 'high' };
+  if (normalized === 'medium') return { label, tone: 'medium' };
+  if (normalized === 'low' || normalized === 'none') return { label, tone: 'low' };
+  return { label, tone: 'neutral' };
+};
+
 const HintLabel: React.FC<{ label: string; hint?: string; required?: boolean }> = ({ label, hint, required }) => (
   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
     {label}
@@ -292,6 +309,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
+  const linkModelId = (searchParams.get('linkModelId') || '').trim();
+  const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
 
   const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
   const [companyUseCases, setCompanyUseCases] = useState<typeof allUseCases>([]);
@@ -322,6 +341,8 @@ const BusinessProcessViewPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSaving, setTagSaving] = useState(false);
+  const [visibility, setVisibility] = useState<string>('internal');
+  const [sensitive, setSensitive] = useState<boolean>(false);
   const [allProcesses, setAllProcesses] = useState<BusinessProcessRecord[]>([]);
   const [loading, setLoading] = useState(!isCreateMode);
   const [error, setError] = useState<string | null>(null);
@@ -346,8 +367,29 @@ const BusinessProcessViewPage: React.FC = () => {
   const [actingModel, setActingModel] = useState<string | null>(null);
   const [modelRelationError, setModelRelationError] = useState<string | null>(null);
 
+  const [allApplications, setAllApplications] = useState<BusinessApplicationRecord[]>([]);
+  const [searchApplications, setSearchApplications] = useState('');
+  const [actingApplication, setActingApplication] = useState<string | null>(null);
+  const [applicationRelationError, setApplicationRelationError] = useState<string | null>(null);
+
+  // Blueprint
+  const [blueprintEdges, setBlueprintEdges] = useState<DimEdge[]>([]);
+  const [blueprintSourceRefs, setBlueprintSourceRefs] = useState<SourceRef[]>([]);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
+  const [showAddEdge, setShowAddEdge] = useState(false);
+  const [showAddSourceRef, setShowAddSourceRef] = useState(false);
+  const [newSysName, setNewSysName] = useState('');
+  const [newExtId, setNewExtId] = useState('');
+  const [addingRef, setAddingRef] = useState(false);
+  const [deletingEdge, setDeletingEdge] = useState<string | null>(null);
+  const [deletingRef, setDeletingRef] = useState<string | null>(null);
+
   useEffect(() => {
     aiModelApi.listModels(undefined, activeCompany?.id).then(setAllModels).catch(() => setAllModels([]));
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setAllApplications).catch(() => setAllApplications([]));
   }, [activeCompany?.id]);
 
   const linkedModels = process?.related_ai_models ?? [];
@@ -355,18 +397,47 @@ const BusinessProcessViewPage: React.FC = () => {
     () => new Set(linkedModels.map(m => m.ai_model_id).filter(Boolean)),
     [linkedModels],
   );
-  const availableModels = useMemo(() => {
+  const filteredCatalogModels = useMemo(() => {
     const q = searchModels.trim().toLowerCase();
-    return allModels.filter(m => {
-      if (linkedModelIds.has(m.ai_model_id)) return false;
-      if (!q) return true;
-      return (
-        m.ai_model_id.toLowerCase().includes(q) ||
-        (m.model_name ?? '').toLowerCase().includes(q) ||
-        (m.description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allModels, searchModels, linkedModelIds]);
+    if (!q) return allModels;
+    return allModels.filter(m =>
+      m.ai_model_id.toLowerCase().includes(q) ||
+      (m.model_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allModels, searchModels]);
+
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const key = openDropdown;
+    const idTimer = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      const el = dropdownRefs.current[key];
+      if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(idTimer);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [openDropdown]);
+
+  const linkedApplications = process?.related_applications ?? [];
+  const linkedApplicationIds = useMemo(
+    () => new Set(linkedApplications.map(a => a.business_application_id).filter(Boolean)),
+    [linkedApplications],
+  );
+  const filteredCatalogApplications = useMemo(() => {
+    const q = searchApplications.trim().toLowerCase();
+    if (!q) return allApplications;
+    return allApplications.filter(a =>
+      a.business_application_id.toLowerCase().includes(q) ||
+      (a.application_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allApplications, searchApplications]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -416,6 +487,8 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(proc);
       setForm(formFromProcess(proc));
       setTags(Array.isArray(proc.tags) ? proc.tags : []);
+      setVisibility(proc.visibility ?? 'internal');
+      setSensitive(proc.sensitive ?? false);
       setAllProcesses(processes);
       setAttemptedSave(false);
     } catch (err: any) {
@@ -424,6 +497,45 @@ const BusinessProcessViewPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const reloadProcess = async () => {
+    if (!id || isCreateMode) return;
+    try {
+      const proc = await businessRelationsApi.getProcess(id, activeCompany?.id);
+      setProcess(proc);
+    } catch {
+      /* ignore — relation lists will just retry on next successful refetch */
+    }
+  };
+
+  const loadBlueprint = async (dimNodeId: string) => {
+    if (!dimNodeId || !activeCompany?.id) return;
+    setBlueprintLoading(true);
+    try {
+      const edgesPage = await blueprintApi.listEdges({ company_id: activeCompany.id, node_id: dimNodeId });
+      setBlueprintEdges(edgesPage.items);
+    } catch {
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const loadSourceRefs = async (dimNodeId: string) => {
+    try {
+      const refs = await blueprintApi.listSourceRefs(dimNodeId);
+      setBlueprintSourceRefs(refs);
+    } catch {
+    }
+  };
+
+  useEffect(() => {
+    if (process?.dim_node_id) loadSourceRefs(process.dim_node_id);
+  }, [process?.dim_node_id]);
+
+  useEffect(() => {
+    if (tab !== 'blueprint' || !process?.dim_node_id) return;
+    loadBlueprint(process.dim_node_id);
+  }, [tab, process?.dim_node_id]);
 
   useEffect(() => {
     if (isCreateMode) {
@@ -442,7 +554,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setEditing(false);
     setInlineEdit(null);
     load();
-  }, [id, isCreateMode]);
+  }, [id, isCreateMode, activeCompany?.id]);
 
   const linkedAgentIds = useMemo(() => {
     const set = new Set<string>();
@@ -452,19 +564,15 @@ const BusinessProcessViewPage: React.FC = () => {
     return set;
   }, [process]);
 
-  const availableAgents = useMemo(() => {
+  const filteredCatalogAgents = useMemo(() => {
     const q = searchAgents.trim().toLowerCase();
     return agents.filter(agent => {
       const agentId = agent.identification?.agent_id || '';
-      if (!agentId || linkedAgentIds.has(agentId)) return false;
+      if (!agentId) return false;
       if (!q) return true;
-      return (
-        agentId.toLowerCase().includes(q) ||
-        agent.name.toLowerCase().includes(q) ||
-        (agent.identification?.environment ?? '').toLowerCase().includes(q)
-      );
+      return agentId.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q);
     });
-  }, [agents, linkedAgentIds, searchAgents]);
+  }, [agents, searchAgents]);
 
   const relatedUseCases = useMemo(() => {
     return process?.related_use_cases ?? [];
@@ -478,19 +586,15 @@ const BusinessProcessViewPage: React.FC = () => {
     return ids;
   }, [relatedUseCases]);
 
-  const availableUseCases = useMemo(() => {
+  const filteredCatalogUseCases = useMemo(() => {
     const q = searchUseCases.trim().toLowerCase();
     return useCasesForLinking.filter((useCase) => {
       const useCaseId = useCase.identifier || '';
-      if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
+      if (!useCaseId) return false;
       if (!q) return true;
-      return (
-        useCaseId.toLowerCase().includes(q) ||
-        (useCase.name ?? '').toLowerCase().includes(q) ||
-        (useCase.description ?? '').toLowerCase().includes(q)
-      );
+      return useCaseId.toLowerCase().includes(q) || (useCase.name ?? '').toLowerCase().includes(q);
     });
-  }, [useCasesForLinking, linkedUseCaseIds, searchUseCases]);
+  }, [useCasesForLinking, searchUseCases]);
 
   const relatedProcessRows = useMemo(() => {
     if (!process) return [];
@@ -555,6 +659,8 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(updated);
       setForm(formFromProcess(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setInlineEdit(null);
       setAttemptedSave(false);
     } catch (err: any) {
@@ -680,10 +786,12 @@ const BusinessProcessViewPage: React.FC = () => {
       const payload = buildProcessPayload(form);
       if (isCreateMode) {
         if (tags.length > 0) payload.tags = tags;
+        payload.visibility = visibility;
+        payload.sensitive = sensitive;
         const created = await businessRelationsApi.createProcess(payload, activeCompany?.id);
         if (linkAgentId) {
           try {
-            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id);
+            await businessRelationsApi.linkAgentToProcess(linkAgentId, created.business_process_id, activeCompany?.id);
           } catch (linkErr) {
             console.warn('Process created but auto-link to agent failed.', linkErr);
           }
@@ -696,6 +804,26 @@ const BusinessProcessViewPage: React.FC = () => {
           }
           window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
           navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
+          return;
+        }
+        if (linkModelId) {
+          try {
+            await aiModelApi.linkProcess(linkModelId, created.business_process_id);
+          } catch (linkErr) {
+            console.warn('Process created but auto-link to AI model failed.', linkErr);
+          }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+          navigate(`/ai-models/${encodeURIComponent(linkModelId)}`, { replace: true });
+          return;
+        }
+        if (linkApplicationId) {
+          try {
+            await businessRelationsApi.linkApplicationToProcess(created.business_process_id, linkApplicationId);
+          } catch (linkErr) {
+            console.warn('Process created but auto-link to application failed.', linkErr);
+          }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+          navigate(`/applications/${encodeURIComponent(linkApplicationId)}`, { replace: true });
           return;
         }
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
@@ -714,6 +842,8 @@ const BusinessProcessViewPage: React.FC = () => {
       setProcess(updated);
       setForm(formFromProcess(updated));
       setTags(Array.isArray(updated.tags) ? updated.tags : []);
+      setVisibility(updated.visibility ?? 'internal');
+      setSensitive(updated.sensitive ?? false);
       setAttemptedSave(false);
       setInlineEdit(null);
       setEditing(false);
@@ -731,6 +861,14 @@ const BusinessProcessViewPage: React.FC = () => {
     if (isCreateMode) {
       if (linkUseCaseId) {
         navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
+        return;
+      }
+      if (linkModelId) {
+        navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+        return;
+      }
+      if (linkApplicationId) {
+        navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
         return;
       }
       navigate('/processes');
@@ -761,8 +899,8 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id);
-      await load();
+      await businessRelationsApi.linkAgentToProcess(agentId, process.business_process_id, activeCompany?.id);
+      await reloadProcess();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -775,8 +913,8 @@ const BusinessProcessViewPage: React.FC = () => {
     setActingAgent(agentId);
     setRelationError(null);
     try {
-      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id);
-      await load();
+      await businessRelationsApi.unlinkAgentFromProcess(agentId, process.business_process_id, activeCompany?.id);
+      await reloadProcess();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -790,7 +928,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       await useCaseApi.linkProcess(useCaseId, process.business_process_id);
-      await load();
+      await reloadProcess();
       refreshUseCases();
     } catch (err: any) {
       setUseCaseRelationError(toUserMessage(err));
@@ -805,7 +943,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       await useCaseApi.unlinkProcess(useCaseId, process.business_process_id);
-      await load();
+      await reloadProcess();
       refreshUseCases();
     } catch (err: any) {
       setUseCaseRelationError(toUserMessage(err));
@@ -820,7 +958,7 @@ const BusinessProcessViewPage: React.FC = () => {
     setModelRelationError(null);
     try {
       await aiModelApi.linkProcess(modelId, process.business_process_id);
-      await load();
+      await reloadProcess();
     } catch (err: any) {
       setModelRelationError(toUserMessage(err));
     } finally {
@@ -834,11 +972,39 @@ const BusinessProcessViewPage: React.FC = () => {
     setModelRelationError(null);
     try {
       await aiModelApi.unlinkProcess(modelId, process.business_process_id);
-      await load();
+      await reloadProcess();
     } catch (err: any) {
       setModelRelationError(toUserMessage(err));
     } finally {
       setActingModel(null);
+    }
+  };
+
+  const addApplication = async (applicationId: string) => {
+    if (!process) return;
+    setActingApplication(applicationId);
+    setApplicationRelationError(null);
+    try {
+      await businessRelationsApi.linkApplicationToProcess(process.business_process_id, applicationId);
+      await reloadProcess();
+    } catch (err: any) {
+      setApplicationRelationError(toUserMessage(err));
+    } finally {
+      setActingApplication(null);
+    }
+  };
+
+  const removeApplication = async (applicationId: string) => {
+    if (!process) return;
+    setActingApplication(applicationId);
+    setApplicationRelationError(null);
+    try {
+      await businessRelationsApi.unlinkApplicationFromProcess(process.business_process_id, applicationId);
+      await reloadProcess();
+    } catch (err: any) {
+      setApplicationRelationError(toUserMessage(err));
+    } finally {
+      setActingApplication(null);
     }
   };
 
@@ -878,10 +1044,12 @@ const BusinessProcessViewPage: React.FC = () => {
   const relatedProcessCount = relatedProcessRows.length;
   const relatedUseCaseCount = relatedUseCases.length;
   const relatedAiModelCount = linkedModels.length;
+  const relatedApplicationCount = linkedApplications.length;
   const businessCriticalityMeta = getImpactMeta(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS);
   const financialImpactMeta = getImpactMeta(form.financial_impact, FINANCIAL_IMPACT_OPTIONS);
   const reputationalImpactMeta = getImpactMeta(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS);
   const regulatoryImpactMeta = getImpactMeta(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS);
+  const artMeta = getArtMeta(form.agent_risk_tier);
 
   const selectableParents = allProcesses.filter(
     p => p.business_process_id !== currentProcessId,
@@ -896,11 +1064,19 @@ const BusinessProcessViewPage: React.FC = () => {
               navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
               return;
             }
+            if (isCreateMode && linkModelId) {
+              navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+              return;
+            }
+            if (isCreateMode && linkApplicationId) {
+              navigate(`/applications/${encodeURIComponent(linkApplicationId)}`);
+              return;
+            }
             navigate('/processes');
           }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Processes'}
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : isCreateMode && linkModelId ? 'Back to AI Model' : isCreateMode && linkApplicationId ? 'Back to Application' : 'Back to Processes'}
         </button>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -965,53 +1141,78 @@ const BusinessProcessViewPage: React.FC = () => {
             <div className="flex flex-col gap-1.5 min-w-0">
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Process</span>
               <h2 className="text-2xl font-bold text-slate-800 tracking-tight truncate">{processTitle}</h2>
-              <p className="text-xs font-mono text-slate-400 mt-1">{processId}</p>
+              <p className="text-xs font-mono text-slate-400 mt-1 truncate" title={processId}>{processId}</p>
               <p className="text-sm text-slate-600 line-clamp-2">
                 {form.process_description || 'No description available.'}
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Business Criticality
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
-                {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {businessCriticalityMeta.label}
-              </span>
-            </div>
+          <div className="grid grid-cols-3 gap-3 shrink-0 w-full md:w-auto mt-2 md:mt-0">
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Business Criticality
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(businessCriticalityMeta.tone)}`}>
+                  {businessCriticalityMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {businessCriticalityMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Financial Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
-                {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {financialImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Financial Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(financialImpactMeta.tone)}`}>
+                  {financialImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {financialImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Reputational Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
-                {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {reputationalImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Reputational Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(reputationalImpactMeta.tone)}`}>
+                  {reputationalImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {reputationalImpactMeta.label}
+                </span>
+              </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[170px]">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
-                Regulatory Impact
-              </span>
-              <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
-                {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                {regulatoryImpactMeta.label}
-              </span>
-            </div>
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5">
+                  Regulatory Impact
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(regulatoryImpactMeta.tone)}`}>
+                  {regulatoryImpactMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {regulatoryImpactMeta.label}
+                </span>
+              </div>
+
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ARE
+                  <span title="ARE (Agent Risk Exposure) represents overall process risk. It is calculated as the highest blended risk score among related agents multiplied by the average of Business Criticality, Financial Impact, Reputational Impact, and Regulatory Impact scores.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className="text-xs font-bold text-slate-700">
+                  {form.agent_risk_exposure || 'N/A'}
+                </span>
+              </div>
+
+              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-h-[56px] justify-center">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                  ART
+                  <span title="ART (Agent Risk Tier) indicates overall process risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                    <Info size={10} className="text-slate-400" />
+                  </span>
+                </span>
+                <span className={`inline-flex items-center gap-1 text-xs font-bold ${metricToneClass(artMeta.tone)}`}>
+                  {artMeta.tone === 'low' ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                  {artMeta.label}
+                </span>
+              </div>
           </div>
         </div>
       </div>
@@ -1068,6 +1269,26 @@ const BusinessProcessViewPage: React.FC = () => {
               }`}
             >
               Related AI Models({relatedAiModelCount})
+            </button>
+            <button
+              onClick={() => setTab('related_applications')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'related_applications'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Related Applications({relatedApplicationCount})
+            </button>
+            <button
+              onClick={() => setTab('blueprint')}
+              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+                tab === 'blueprint'
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Blueprint Relationships
             </button>
           </>
         )}
@@ -1202,6 +1423,48 @@ const BusinessProcessViewPage: React.FC = () => {
                   />
                 </div>
               </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Visibility" />
+                <select
+                  value={visibility}
+                  onChange={async e => {
+                    const next = e.target.value;
+                    setVisibility(next);
+                    if (isCreateMode || !process) return;
+                    try {
+                      const updated = await businessRelationsApi.updateProcess(process.business_process_id, { visibility: next });
+                      setProcess(updated);
+                      setVisibility(updated.visibility ?? next);
+                    } catch { setVisibility(process.visibility ?? 'internal'); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 capitalize"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                  <option value="restricted">Restricted</option>
+                  <option value="confidential">Confidential</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Sensitive" />
+                <select
+                  value={sensitive ? 'true' : 'false'}
+                  onChange={async e => {
+                    const next = e.target.value === 'true';
+                    setSensitive(next);
+                    if (isCreateMode || !process) return;
+                    try {
+                      const updated = await businessRelationsApi.updateProcess(process.business_process_id, { sensitive: next });
+                      setProcess(updated);
+                      setSensitive(updated.sensitive ?? next);
+                    } catch { setSensitive(process.sensitive ?? false); }
+                  }}
+                  className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
             </div>
           </Section>
 
@@ -1271,6 +1534,7 @@ const BusinessProcessViewPage: React.FC = () => {
 
           <Section title="Business Criticality and Impact">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Row 1: Business Criticality | Financial Impact */}
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
                 {editing ? (
@@ -1293,32 +1557,6 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
-                {editing ? (
-                  <select
-                    value={form.reputational_impact}
-                    onChange={(e) => setField('reputational_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
-                    kind: 'select',
-                    options: REPUTATIONAL_IMPACT_OPTIONS,
-                  })
-                )}
-              </div>
-
-              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
-              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
-              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'N/A'} />
-              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'N/A'} />
-
-              <div className="flex flex-col gap-1.5">
                 <HintLabel label="Financial Impact" hint={HINTS.financial_impact} />
                 {editing ? (
                   <select
@@ -1335,6 +1573,28 @@ const BusinessProcessViewPage: React.FC = () => {
                   renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS), {
                     kind: 'select',
                     options: FINANCIAL_IMPACT_OPTIONS,
+                  })
+                )}
+              </div>
+
+              {/* Row 2: Reputational Impact | Regulatory Impact */}
+              <div className="flex flex-col gap-1.5">
+                <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
+                {editing ? (
+                  <select
+                    value={form.reputational_impact}
+                    onChange={(e) => setField('reputational_impact', e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select...</option>
+                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
+                    kind: 'select',
+                    options: REPUTATIONAL_IMPACT_OPTIONS,
                   })
                 )}
               </div>
@@ -1360,9 +1620,20 @@ const BusinessProcessViewPage: React.FC = () => {
                 )}
               </div>
 
+              {/* Row 3: # Of Associated Agents | ARE */}
+              <ReadValue label="# Of Associated Agents" value={form.num_of_associated_agents} hint={HINTS.associated_agents} />
               <ReadValue label="Agent Risk Exposure (ARE)" value={form.agent_risk_exposure} hint={HINTS.agent_risk_exposure} />
+
+              {/* Row 4: ART | Blended Risk Score */}
+              <ReadValue label="Agent Risk Tier (ART)" value={form.agent_risk_tier || 'N/A'} />
               <ReadValue label="Blended Risk Score" value={form.blended_risk_score} />
+
+              {/* Row 5: Residual Risk Classification | Residual Risk Classification Score */}
+              <ReadValue label="Residual Risk Classification" value={form.residual_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Residual Risk Classification Score" value={form.residual_risk_classification_score} />
+
+              {/* Row 6: Inherent Risk Classification | Inherent Risk Classification Score */}
+              <ReadValue label="Inherent Risk Classification" value={form.inherent_risk_classification || 'Yet to be assessed'} />
               <ReadValue label="Inherent Risk Classification Score" value={form.inherent_risk_classification_score} />
             </div>
           </Section>
@@ -1404,6 +1675,73 @@ const BusinessProcessViewPage: React.FC = () => {
               </div>
             </div>
           </Section>
+
+          {/* Source Systems */}
+          {process?.dim_node_id && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">Source Systems ({blueprintSourceRefs.length})</p>
+                <button
+                  onClick={() => setShowAddSourceRef(p => !p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {showAddSourceRef && (
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={newSysName} onChange={e => setNewSysName(e.target.value)} placeholder="System name (e.g. Salesforce)" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                    <input value={newExtId} onChange={e => setNewExtId(e.target.value)} placeholder="External ID" className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!newSysName.trim() || !newExtId.trim() || !process.dim_node_id) return;
+                        setAddingRef(true);
+                        try {
+                          const ref = await blueprintApi.createSourceRef(process.dim_node_id, newSysName.trim(), newExtId.trim());
+                          setBlueprintSourceRefs(p => [...p, ref]);
+                          setNewSysName(''); setNewExtId(''); setShowAddSourceRef(false);
+                        } finally { setAddingRef(false); }
+                      }}
+                      disabled={addingRef || !newSysName.trim() || !newExtId.trim()}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addingRef ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save
+                    </button>
+                    <button onClick={() => { setShowAddSourceRef(false); setNewSysName(''); setNewExtId(''); }} className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {blueprintSourceRefs.length === 0 ? (
+                <div className="px-5 py-4 text-sm text-slate-400 italic">No source systems linked.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintSourceRefs.map(ref => (
+                    <div key={ref.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-700">{ref.system_name}</p>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{ref.external_id}</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setDeletingRef(ref.id);
+                          try { await blueprintApi.deleteSourceRef(ref.id); setBlueprintSourceRefs(p => p.filter(r => r.id !== ref.id)); }
+                          finally { setDeletingRef(null); }
+                        }}
+                        disabled={deletingRef === ref.id}
+                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingRef === ref.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1416,9 +1754,80 @@ const BusinessProcessViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.agents = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'agents' ? null : 'agents')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'agents'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Agent
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'agents' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.agents = el; }}
+                          value={searchAgents}
+                          onChange={(e) => setSearchAgents(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search agent..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogAgents.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No agents found</div>
+                      )}
+                      {filteredCatalogAgents.map((agent) => {
+                        const agentId = agent.identification?.agent_id || '';
+                        const isLinked = linkedAgentIds.has(agentId);
+                        const busy = actingAgent === agentId;
+                        return (
+                          <button
+                            key={agentId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!agentId || busy}
+                            onClick={() => (isLinked ? removeAgent(agentId) : addAgent(agentId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{agent.name}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{agentId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/agents/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Agent
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {process.related_agents.length === 0 && (
@@ -1453,46 +1862,6 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add Agent Relation</p>
-              <div className="relative w-full max-w-sm">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchAgents}
-                  onChange={(e) => setSearchAgents(e.target.value)}
-                  placeholder="Filter agents..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableAgents.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available agents to link.</div>
-              )}
-              {availableAgents.map(agent => {
-                const agentId = agent.identification?.agent_id || '';
-                const busy = actingAgent === agentId;
-                return (
-                  <div key={agentId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{agent.name}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{agentId}</p>
-                    </div>
-                    <button
-                      onClick={() => addAgent(agentId)}
-                      disabled={!agentId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1511,8 +1880,8 @@ const BusinessProcessViewPage: React.FC = () => {
                     <div>Business Criticality</div>
                     <div>Process Health State</div>
                     <div># Of Associated Agents</div>
-                    <div>Agent Risk Exposure (ARE)</div>
-                    <div>Agent Risk Tier (ART)</div>
+                    <div>ARE</div>
+                    <div>ART</div>
                   </div>
                   <div className="divide-y divide-slate-100">
                     {relatedProcessRows.map((row) => {
@@ -1569,9 +1938,80 @@ const BusinessProcessViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related AI Use Cases ({relatedUseCaseCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.useCases = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'useCases' ? null : 'useCases')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'useCases'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Use Case
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'useCases' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.useCases = el; }}
+                          value={searchUseCases}
+                          onChange={(e) => setSearchUseCases(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search use case..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogUseCases.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No use cases found</div>
+                      )}
+                      {filteredCatalogUseCases.map((useCase) => {
+                        const useCaseId = useCase.identifier || '';
+                        const isLinked = linkedUseCaseIds.has(useCaseId);
+                        const busy = actingUseCase === useCaseId;
+                        return (
+                          <button
+                            key={useCaseId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!useCaseId || busy}
+                            onClick={() => (isLinked ? removeUseCase(useCaseId) : addUseCase(useCaseId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{useCase.name || useCaseId}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{useCaseId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/use-cases/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Use Case
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {relatedUseCases.length === 0 && (
@@ -1606,55 +2046,6 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add AI Use Case Relation</p>
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
-                <Link
-                  to={`/use-cases/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
-                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  <PlusCircle size={12} />
-                  Create AI Use Case
-                </Link>
-                <div className="relative w-full sm:w-[320px] max-w-full">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={searchUseCases}
-                    onChange={(e) => setSearchUseCases(e.target.value)}
-                    placeholder="Filter AI use cases..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableUseCases.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available AI use cases to link.</div>
-              )}
-              {availableUseCases.map((useCase) => {
-                const useCaseId = useCase.identifier || '';
-                const busy = actingUseCase === useCaseId;
-                return (
-                  <div key={useCaseId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{useCase.name || useCaseId}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
-                    </div>
-                    <button
-                      onClick={() => addUseCase(useCaseId)}
-                      disabled={!useCaseId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1667,9 +2058,79 @@ const BusinessProcessViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({relatedAiModelCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.models = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'models' ? null : 'models')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'models'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add AI Model
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'models' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.models = el; }}
+                          value={searchModels}
+                          onChange={(e) => setSearchModels(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search AI model..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogModels.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No AI models found</div>
+                      )}
+                      {filteredCatalogModels.map((model) => {
+                        const isLinked = linkedModelIds.has(model.ai_model_id);
+                        const busy = actingModel === model.ai_model_id;
+                        return (
+                          <button
+                            key={model.ai_model_id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={busy}
+                            onClick={() => (isLinked ? removeModel(model.ai_model_id) : addModel(model.ai_model_id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{model.model_name || model.ai_model_id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{model.ai_model_id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/ai-models/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add AI Model
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {linkedModels.length === 0 && (
@@ -1699,54 +2160,198 @@ const BusinessProcessViewPage: React.FC = () => {
               })}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'related_applications' && process && (
+        <div className="flex flex-col gap-4">
+          {applicationRelationError && (
+            <div className="flex items-start gap-2 text-red-600 text-xs bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {applicationRelationError}
+            </div>
+          )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200">
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
-                <Link
-                  to={`/ai-models/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
-                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
+              <p className="text-sm font-bold text-slate-700">Currently Related Applications ({relatedApplicationCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.applications = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'applications' ? null : 'applications')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'applications'}
                 >
-                  <PlusCircle size={12} />
-                  Create Model
-                </Link>
-                <div className="relative w-full sm:w-[320px] max-w-full">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={searchModels}
-                    onChange={(e) => setSearchModels(e.target.value)}
-                    placeholder="Filter AI models..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Application
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'applications' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.applications = el; }}
+                          value={searchApplications}
+                          onChange={(e) => setSearchApplications(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search application..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogApplications.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No applications found</div>
+                      )}
+                      {filteredCatalogApplications.map((application) => {
+                        const isLinked = linkedApplicationIds.has(application.business_application_id);
+                        const busy = actingApplication === application.business_application_id;
+                        return (
+                          <button
+                            key={application.business_application_id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={busy}
+                            onClick={() => (isLinked ? removeApplication(application.business_application_id) : addApplication(application.business_application_id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{application.application_name || application.business_application_id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{application.business_application_id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/applications/new?linkProcessId=${encodeURIComponent(process.business_process_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Application
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableModels.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available AI models to link.</div>
+            <div className="divide-y divide-slate-100">
+              {linkedApplications.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No applications linked.</div>
               )}
-              {availableModels.map(model => {
-                const busy = actingModel === model.ai_model_id;
+              {linkedApplications.map((application, idx) => {
+                const applicationId = application.business_application_id || `missing-${idx}`;
+                const busy = actingApplication === applicationId;
                 return (
-                  <div key={model.ai_model_id} className="px-5 py-3 flex items-center justify-between gap-3">
+                  <div key={`${applicationId}-${idx}`} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{model.model_name || model.ai_model_id}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{model.ai_model_id}</p>
+                      <Link to={`/applications/${encodeURIComponent(applicationId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                        {application.application_name || applicationId}
+                      </Link>
+                      <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
                     </div>
                     <button
-                      onClick={() => addModel(model.ai_model_id)}
+                      onClick={() => removeApplication(applicationId)}
                       disabled={busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                      Remove
                     </button>
                   </div>
                 );
               })}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'blueprint' && (
+        <div className="flex flex-col gap-4">
+          {process?.dim_node_id ? (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Network size={14} className="text-slate-400" />
+                  Blueprint Relationships ({blueprintEdges.length})
+                </p>
+                <button onClick={() => setShowAddEdge(true)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700">
+                  <Plus size={12} /> Add Relationship
+                </button>
+              </div>
+              {blueprintLoading ? (
+                <div className="px-5 py-4 text-sm text-slate-400 animate-pulse">Loading…</div>
+              ) : blueprintEdges.length === 0 ? (
+                <div className="px-5 py-5 text-sm text-slate-400 italic">No blueprint relationships defined.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {blueprintEdges.map(edge => {
+                    const isSource = edge.source_id === process.dim_node_id;
+                    const otherLabel = isSource ? edge.target_label : edge.source_label;
+                    return (
+                      <div key={edge.id} className="px-5 py-3 flex items-center gap-3">
+                        <span className="text-slate-300">{isSource ? '→' : '←'}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1 truncate">{otherLabel ?? '—'}</span>
+                        <span className="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{edge.rel_type.replace('_', ' ')}</span>
+                        <span className="text-[11px] text-slate-400">{Math.round(edge.weight * 100)}%</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingEdge(edge.id);
+                            try { await blueprintApi.deleteEdge(edge.id); setBlueprintEdges(p => p.filter(e => e.id !== edge.id)); }
+                            finally { setDeletingEdge(null); }
+                          }}
+                          disabled={deletingEdge === edge.id}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Delete relationship"
+                        >
+                          {deletingEdge === edge.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 px-5 py-6 text-center">
+              <Info size={18} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">This process is not yet linked to a Blueprint dimension.</p>
+              <p className="text-xs text-slate-400 mt-1">Create a Process dimension in the Blueprint to enable relationships.</p>
+            </div>
+          )}
+          {showAddEdge && process?.dim_node_id && (
+            <AddDimEdgeModal
+              sourceNode={{
+                id: process.dim_node_id,
+                company_id: activeCompany?.id ?? '',
+                dim_type_id: '',
+                label: process.process_name ?? '',
+                category: 'process',
+                dim_type_name: 'Process',
+                summary: null,
+                tags: [],
+                visibility: 'internal',
+                sensitive: false,
+                valid_from: new Date().toISOString(),
+                valid_to: null,
+                updated_at: new Date().toISOString(),
+              }}
+              onClose={() => setShowAddEdge(false)}
+              onCreated={() => {
+                setShowAddEdge(false);
+                if (process.dim_node_id) loadBlueprint(process.dim_node_id);
+              }}
+            />
+          )}
         </div>
       )}
     </div>

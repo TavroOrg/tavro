@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import os
 import json
 from .base_connector import BaseConnector
@@ -9,7 +9,7 @@ from ..transformers.agent_transformer import transform_to_agent_cards
 from pathlib import Path
 # import psycopg2
 # from worker import init_pool, process_card
-from save import save_agent_cards
+import worker
 
 class CopilotConnector(BaseConnector):
 
@@ -151,6 +151,7 @@ class CopilotConnector(BaseConnector):
         # init_pool()
         # for agent in agent_cards:
         #     process_card(agent["data"])
-        save_agent_cards("copilot", agent_cards)
+        for agent in agent_cards:
+            worker.process_card(agent["data"])
 
         print("Copilot execution completed successfully")

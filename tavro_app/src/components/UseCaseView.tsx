@@ -43,7 +43,7 @@ import {
 
 const ARE_HINTS: Record<string, string> = {
     agent_risk_exposure:
-        'ARE represents use case risk. It is calculated as the highest blended risk score among related agents.',
+        'ARE represents overall use case risk. It is calculated as the highest blended risk score among related agents.',
     agent_risk_tier:
         'ART indicates overall use case risk from ARE score: Low < 3, Medium 3-<7, High 7-<9, Critical >= 9. It is None when no agents are associated.',
     associated_agents:
@@ -393,7 +393,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
             const result = await useCaseApi.generateUseCaseReport(uc.identifier);
             const ucTitle: string = (uc as any).name ?? (uc as any).title ?? 'Use Case';
             window.dispatchEvent(new CustomEvent('tavro_notice', {
-                detail: { message: `Report generated for "${ucTitle}"` },
+                detail: { message: `Report generated for "${ucTitle}"`, variant: 'success' },
             }));
             window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', {
                 detail: { entityType: 'use_case', entityId: uc.identifier },
@@ -401,7 +401,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         } catch (err) {
             console.error('[UseCaseView] Generate report failed', err);
             window.dispatchEvent(new CustomEvent('tavro_notice', {
-                detail: { message: 'Failed to generate report. Please try again.' },
+                detail: { message: 'Failed to generate report. Please try again.', variant: 'error' },
             }));
         } finally {
             setGeneratingReport(false);
@@ -703,9 +703,49 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 )}
                             </div>
                         </div>
+                        <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">
+                            <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 flex flex-col items-center min-w-[150px]">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                                    ARE
+                                    <span title="ARE (Agent Risk Exposure) represents overall use case risk. It is calculated as the highest blended risk score among related agents.">
+                                        <Info size={10} className="text-slate-400" />
+                                    </span>
+                                </span>
+                                <span className="text-xs font-bold text-slate-700">{riskExposure}</span>
+                            </div>
+                            <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 flex flex-col items-center min-w-[150px]">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1.5 inline-flex items-center gap-1">
+                                    ART
+                                    <span title="ART (Agent Risk Tier) indicates overall use case risk from ARE score: Low &lt; 3, Medium 3–&lt;7, High 7–&lt;9, Critical ≥ 9.">
+                                        <Info size={10} className="text-slate-400" />
+                                    </span>
+                                </span>
+                                <span className={`text-xs font-bold ${
+                                    agentRiskTier === 'Critical' || agentRiskTier === 'High' ? 'text-red-600' :
+                                    agentRiskTier === 'Medium' ? 'text-amber-600' :
+                                    agentRiskTier === 'Low' ? 'text-emerald-600' :
+                                    'text-slate-600'
+                                }`}>{agentRiskTier}</span>
+                            </div>
+                            {priorityScore !== null ? (() => {
+                                const s = priorityScore;
+                                const bg = s >= 3.5 ? 'bg-emerald-50 border-emerald-200'
+                                    : s >= 2.5 ? 'bg-amber-50 border-amber-200'
+                                    : 'bg-red-50 border-red-200';
+                                const vc = s >= 3.5 ? 'text-emerald-700' : s >= 2.5 ? 'text-amber-700' : 'text-red-700';
+                                return (
+                                    <div className={`hidden flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${bg}`}>
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
+                                        <span className={`text-lg font-black leading-none tracking-tight ${vc}`}>{s.toFixed(1)}</span>
+                                    </div>
+                                );
+                            })() : (
+                                <div className="hidden flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Priority Score</span>
+                                    <span className="text-slate-400 text-sm">—</span>
+                                </div>
+                            )}
 
-                        {/* Right: Quadrant badge + headerActions */}
-                        <div className="flex items-center gap-2.5 shrink-0">
                             {/* Quadrant — light fill when value exists, plain dash when not */}
                             {(() => {
                                 const qMap: Record<string, { bg: string; border: string; value: string }> = {
@@ -717,12 +757,12 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 const q = quadrant ? (qMap[quadrant.label] ?? { bg: 'bg-slate-50', border: 'border-slate-200', value: 'text-slate-700' }) : null;
                                 return q ? (
                                     <div className={`flex flex-col items-center justify-center w-[100px] h-[60px] rounded-2xl border gap-0.5 ${q.bg} ${q.border}`}>
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                        <span className="hidden"></span>
                                         <span className={`text-sm font-black leading-tight text-center ${q.value}`}>{quadrant!.label}</span>
                                     </div>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Quadrant</span>
+                                    <div className="hidden flex-col items-center justify-center w-[100px] h-[60px] gap-0.5">
+                                        <span className="hidden"></span>
                                         <span className="text-slate-400 text-sm">—</span>
                                     </div>
                                 );
