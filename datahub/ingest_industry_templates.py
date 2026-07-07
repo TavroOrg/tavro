@@ -188,17 +188,14 @@ def ingest():
     success = 0
     failed = 0
 
-    for (_, _, _, _, schema_name, table_name), meta in tables.items():
+    for key, meta in tables.items():
+        industry, vendor, app_name, coverage_area, schema_name, table_name = key
         if not table_name:
             continue
 
         dataset_name = f"{schema_name}.{table_name}" if schema_name else table_name
         dataset_urn = make_dataset_urn(platform=PLATFORM, name=dataset_name, env=ENV)
 
-        industry = meta["industry"]
-        vendor = meta["vendor"]
-        app_name = meta["app_name"]
-        coverage_area = meta["coverage_area"]
         category = meta["category"]
 
         description = (
@@ -221,7 +218,7 @@ def ingest():
         }.items() if v}
 
         # Build schema fields
-        columns = table_columns[(schema_name, table_name)]
+        columns = table_columns[key]
         fields = []
         for col in columns:
             col_name = col["name"]
