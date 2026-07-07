@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toUserMessage } from '../utils/errorUtils';
 import {
   AppWindow,
   AlertCircle,
   ArrowLeft,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Info,
   Loader2,
   Network,
@@ -362,6 +364,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
+  const linkModelId = (searchParams.get('linkModelId') || '').trim();
+  const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
 
   const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
   const [companyUseCases, setCompanyUseCases] = useState<typeof allUseCases>([]);
@@ -447,36 +451,47 @@ const BusinessApplicationViewPage: React.FC = () => {
     () => new Set(linkedModels.map(m => m.ai_model_id).filter(Boolean)),
     [linkedModels],
   );
-  const availableModels = useMemo(() => {
+  const filteredCatalogModels = useMemo(() => {
     const q = searchModels.trim().toLowerCase();
-    return allModels.filter(m => {
-      if (linkedModelIds.has(m.ai_model_id)) return false;
-      if (!q) return true;
-      return (
-        m.ai_model_id.toLowerCase().includes(q) ||
-        (m.model_name ?? '').toLowerCase().includes(q) ||
-        (m.description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allModels, searchModels, linkedModelIds]);
+    if (!q) return allModels;
+    return allModels.filter(m =>
+      m.ai_model_id.toLowerCase().includes(q) ||
+      (m.model_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allModels, searchModels]);
+
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (openDropdown === null) return;
+    const key = openDropdown;
+    const idTimer = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+    const handlePointerDown = (event: MouseEvent) => {
+      const el = dropdownRefs.current[key];
+      if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.clearTimeout(idTimer);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [openDropdown]);
 
   const linkedProcesses = application?.related_processes ?? [];
   const linkedProcessIds = useMemo(
     () => new Set(linkedProcesses.map(p => p.business_process_id).filter(Boolean)),
     [linkedProcesses],
   );
-  const availableProcesses = useMemo(() => {
+  const filteredCatalogProcesses = useMemo(() => {
     const q = searchProcesses.trim().toLowerCase();
-    return allProcesses.filter(p => {
-      if (linkedProcessIds.has(p.business_process_id)) return false;
-      if (!q) return true;
-      return (
-        p.business_process_id.toLowerCase().includes(q) ||
-        (p.process_name ?? '').toLowerCase().includes(q) ||
-        (p.process_description ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [allProcesses, searchProcesses, linkedProcessIds]);
+    if (!q) return allProcesses;
+    return allProcesses.filter(p =>
+      p.business_process_id.toLowerCase().includes(q) ||
+      (p.process_name ?? '').toLowerCase().includes(q)
+    );
+  }, [allProcesses, searchProcesses]);
 
   const agentNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -505,6 +520,16 @@ const BusinessApplicationViewPage: React.FC = () => {
       setError(toUserMessage(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const reloadApplication = async () => {
+    if (!id || isCreateMode) return;
+    try {
+      const data = await businessRelationsApi.getApplication(id, activeCompany?.id);
+      setApplication(data);
+    } catch {
+      /* ignore — relation lists will just retry on next successful refetch */
     }
   };
 
@@ -563,19 +588,15 @@ const BusinessApplicationViewPage: React.FC = () => {
     return set;
   }, [application]);
 
-  const availableAgents = useMemo(() => {
+  const filteredCatalogAgents = useMemo(() => {
     const q = searchAgents.trim().toLowerCase();
     return agents.filter(agent => {
       const agentId = agent.identification?.agent_id || '';
-      if (!agentId || linkedAgentIds.has(agentId)) return false;
+      if (!agentId) return false;
       if (!q) return true;
-      return (
-        agentId.toLowerCase().includes(q) ||
-        agent.name.toLowerCase().includes(q) ||
-        (agent.identification?.environment ?? '').toLowerCase().includes(q)
-      );
+      return agentId.toLowerCase().includes(q) || agent.name.toLowerCase().includes(q);
     });
-  }, [agents, linkedAgentIds, searchAgents]);
+  }, [agents, searchAgents]);
 
   const relatedUseCases = useMemo(() => {
     return application?.related_use_cases ?? [];
@@ -589,19 +610,15 @@ const BusinessApplicationViewPage: React.FC = () => {
     return ids;
   }, [relatedUseCases]);
 
-  const availableUseCases = useMemo(() => {
+  const filteredCatalogUseCases = useMemo(() => {
     const q = searchUseCases.trim().toLowerCase();
     return useCasesForLinking.filter((useCase) => {
       const useCaseId = useCase.identifier || '';
-      if (!useCaseId || linkedUseCaseIds.has(useCaseId)) return false;
+      if (!useCaseId) return false;
       if (!q) return true;
-      return (
-        useCaseId.toLowerCase().includes(q) ||
-        (useCase.name ?? '').toLowerCase().includes(q) ||
-        (useCase.description ?? '').toLowerCase().includes(q)
-      );
+      return useCaseId.toLowerCase().includes(q) || (useCase.name ?? '').toLowerCase().includes(q);
     });
-  }, [useCasesForLinking, linkedUseCaseIds, searchUseCases]);
+  }, [useCasesForLinking, searchUseCases]);
 
   const setField = (key: keyof ApplicationFormState, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -797,6 +814,26 @@ const BusinessApplicationViewPage: React.FC = () => {
           navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`, { replace: true });
           return;
         }
+        if (linkModelId) {
+          try {
+            await aiModelApi.linkApplication(linkModelId, created.business_application_id);
+          } catch (linkErr) {
+            console.warn('Application created but auto-link to AI model failed.', linkErr);
+          }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+          navigate(`/ai-models/${encodeURIComponent(linkModelId)}`, { replace: true });
+          return;
+        }
+        if (linkProcessId) {
+          try {
+            await businessRelationsApi.linkProcessToApplication(created.business_application_id, linkProcessId);
+          } catch (linkErr) {
+            console.warn('Application created but auto-link to process failed.', linkErr);
+          }
+          window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+          navigate(`/processes/${encodeURIComponent(linkProcessId)}`, { replace: true });
+          return;
+        }
         window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
         navigate(`/applications/${encodeURIComponent(created.business_application_id)}`, { replace: true });
         return;
@@ -834,6 +871,14 @@ const BusinessApplicationViewPage: React.FC = () => {
         navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
         return;
       }
+      if (linkModelId) {
+        navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+        return;
+      }
+      if (linkProcessId) {
+        navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+        return;
+      }
       navigate('/applications');
       return;
     }
@@ -863,7 +908,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setRelationError(null);
     try {
       await businessRelationsApi.linkAgentToApplication(agentId, application.business_application_id, activeCompany?.id);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -877,7 +922,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setRelationError(null);
     try {
       await businessRelationsApi.unlinkAgentFromApplication(agentId, application.business_application_id, activeCompany?.id);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setRelationError(toUserMessage(err));
     } finally {
@@ -891,7 +936,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setModelRelationError(null);
     try {
       await aiModelApi.linkApplication(modelId, application.business_application_id);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setModelRelationError(toUserMessage(err));
     } finally {
@@ -905,7 +950,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setModelRelationError(null);
     try {
       await aiModelApi.unlinkApplication(modelId, application.business_application_id);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setModelRelationError(toUserMessage(err));
     } finally {
@@ -919,7 +964,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setProcessRelationError(null);
     try {
       await businessRelationsApi.linkProcessToApplication(application.business_application_id, processId);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setProcessRelationError(toUserMessage(err));
     } finally {
@@ -933,7 +978,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setProcessRelationError(null);
     try {
       await businessRelationsApi.unlinkProcessFromApplication(application.business_application_id, processId);
-      await load();
+      await reloadApplication();
     } catch (err: any) {
       setProcessRelationError(toUserMessage(err));
     } finally {
@@ -947,7 +992,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       await useCaseApi.linkApplication(useCaseId, application.business_application_id);
-      await load();
+      await reloadApplication();
       refreshUseCases();
     } catch (err: any) {
       setUseCaseRelationError(toUserMessage(err));
@@ -962,7 +1007,7 @@ const BusinessApplicationViewPage: React.FC = () => {
     setUseCaseRelationError(null);
     try {
       await useCaseApi.unlinkApplication(useCaseId, application.business_application_id);
-      await load();
+      await reloadApplication();
       refreshUseCases();
     } catch (err: any) {
       setUseCaseRelationError(toUserMessage(err));
@@ -989,11 +1034,19 @@ const BusinessApplicationViewPage: React.FC = () => {
               navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
               return;
             }
+            if (isCreateMode && linkModelId) {
+              navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+              return;
+            }
+            if (isCreateMode && linkProcessId) {
+              navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+              return;
+            }
             navigate('/applications');
           }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Applications'}
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : isCreateMode && linkModelId ? 'Back to AI Model' : isCreateMode && linkProcessId ? 'Back to Process' : 'Back to Applications'}
         </button>
         <div className="flex items-start gap-3 text-red-500 bg-red-50 border border-red-200 rounded-xl px-6 py-4">
           <AlertCircle size={20} className="mt-0.5 shrink-0" />
@@ -1023,11 +1076,19 @@ const BusinessApplicationViewPage: React.FC = () => {
               navigate(`/use-case/${encodeURIComponent(linkUseCaseId)}`);
               return;
             }
+            if (isCreateMode && linkModelId) {
+              navigate(`/ai-models/${encodeURIComponent(linkModelId)}`);
+              return;
+            }
+            if (isCreateMode && linkProcessId) {
+              navigate(`/processes/${encodeURIComponent(linkProcessId)}`);
+              return;
+            }
             navigate('/applications');
           }}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : 'Back to Applications'}
+          <ArrowLeft size={16} /> {isCreateMode && linkUseCaseId ? 'Back to AI Use Case' : isCreateMode && linkModelId ? 'Back to AI Model' : isCreateMode && linkProcessId ? 'Back to Process' : 'Back to Applications'}
         </button>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -1673,9 +1734,80 @@ const BusinessApplicationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related AI Use Cases ({relatedUseCaseCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.useCases = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'useCases' ? null : 'useCases')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'useCases'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Use Case
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'useCases' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.useCases = el; }}
+                          value={searchUseCases}
+                          onChange={(e) => setSearchUseCases(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search use case..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogUseCases.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No use cases found</div>
+                      )}
+                      {filteredCatalogUseCases.map((useCase) => {
+                        const useCaseId = useCase.identifier || '';
+                        const isLinked = linkedUseCaseIds.has(useCaseId);
+                        const busy = actingUseCase === useCaseId;
+                        return (
+                          <button
+                            key={useCaseId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!useCaseId || busy}
+                            onClick={() => (isLinked ? removeUseCase(useCaseId) : addUseCase(useCaseId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{useCase.name || useCaseId}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{useCaseId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/use-cases/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Use Case
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {relatedUseCases.length === 0 && (
@@ -1710,55 +1842,6 @@ const BusinessApplicationViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add AI Use Case Relation</p>
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
-                <Link
-                  to={`/use-cases/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
-                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  <PlusCircle size={12} />
-                  Create AI Use Case
-                </Link>
-                <div className="relative w-full sm:w-[320px] max-w-full">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={searchUseCases}
-                    onChange={(e) => setSearchUseCases(e.target.value)}
-                    placeholder="Filter AI use cases..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableUseCases.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available AI use cases to link.</div>
-              )}
-              {availableUseCases.map((useCase) => {
-                const useCaseId = useCase.identifier || '';
-                const busy = actingUseCase === useCaseId;
-                return (
-                  <div key={useCaseId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{useCase.name || useCaseId}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
-                    </div>
-                    <button
-                      onClick={() => addUseCase(useCaseId)}
-                      disabled={!useCaseId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1771,9 +1854,80 @@ const BusinessApplicationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related Agents ({relatedAgentCount})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.agents = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'agents' ? null : 'agents')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'agents'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Agent
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'agents' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.agents = el; }}
+                          value={searchAgents}
+                          onChange={(e) => setSearchAgents(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search agent..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogAgents.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No agents found</div>
+                      )}
+                      {filteredCatalogAgents.map((agent) => {
+                        const agentId = agent.identification?.agent_id || '';
+                        const isLinked = linkedAgentIds.has(agentId);
+                        const busy = actingAgent === agentId;
+                        return (
+                          <button
+                            key={agentId}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={!agentId || busy}
+                            onClick={() => (isLinked ? removeAgent(agentId) : addAgent(agentId))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{agent.name}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{agentId}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/agents/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Agent
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {application.related_agents.length === 0 && (
@@ -1808,46 +1962,6 @@ const BusinessApplicationViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add Agent Relation</p>
-              <div className="relative w-full max-w-sm">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchAgents}
-                  onChange={(e) => setSearchAgents(e.target.value)}
-                  placeholder="Filter agents..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableAgents.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available agents to link.</div>
-              )}
-              {availableAgents.map(agent => {
-                const agentId = agent.identification?.agent_id || '';
-                const busy = actingAgent === agentId;
-                return (
-                  <div key={agentId} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{agent.name}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{agentId}</p>
-                    </div>
-                    <button
-                      onClick={() => addAgent(agentId)}
-                      disabled={!agentId || busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1860,9 +1974,79 @@ const BusinessApplicationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({linkedModels.length})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.models = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'models' ? null : 'models')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'models'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add AI Model
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'models' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.models = el; }}
+                          value={searchModels}
+                          onChange={(e) => setSearchModels(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search AI model..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogModels.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No AI models found</div>
+                      )}
+                      {filteredCatalogModels.map((model) => {
+                        const isLinked = linkedModelIds.has(model.ai_model_id);
+                        const busy = actingModel === model.ai_model_id;
+                        return (
+                          <button
+                            key={model.ai_model_id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={busy}
+                            onClick={() => (isLinked ? removeModel(model.ai_model_id) : addModel(model.ai_model_id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{model.model_name || model.ai_model_id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{model.ai_model_id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/ai-models/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add AI Model
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {linkedModels.length === 0 && (
@@ -1892,54 +2076,6 @@ const BusinessApplicationViewPage: React.FC = () => {
               })}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add AI Model Relation</p>
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full max-w-[520px] ml-auto justify-end">
-                <Link
-                  to={`/ai-models/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
-                  className="inline-flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  <PlusCircle size={12} />
-                  Create Model
-                </Link>
-                <div className="relative w-full sm:w-[320px] max-w-full">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={searchModels}
-                    onChange={(e) => setSearchModels(e.target.value)}
-                    placeholder="Filter AI models..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableModels.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available AI models to link.</div>
-              )}
-              {availableModels.map(model => {
-                const busy = actingModel === model.ai_model_id;
-                return (
-                  <div key={model.ai_model_id} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{model.model_name || model.ai_model_id}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{model.ai_model_id}</p>
-                    </div>
-                    <button
-                      onClick={() => addModel(model.ai_model_id)}
-                      disabled={busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       )}
       {tab === 'related_processes' && application && (
@@ -1951,9 +2087,79 @@ const BusinessApplicationViewPage: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm font-bold text-slate-700">Currently Related Processes ({linkedProcesses.length})</p>
+              <div className="relative" ref={(el) => { dropdownRefs.current.processes = el; }}>
+                <button
+                  onClick={() => setOpenDropdown(openDropdown === 'processes' ? null : 'processes')}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                  aria-haspopup="listbox"
+                  aria-expanded={openDropdown === 'processes'}
+                >
+                  <PlusCircle size={13} className="text-blue-600" />
+                  Add Process
+                  <ChevronDown size={13} className="text-slate-400" />
+                </button>
+                {openDropdown === 'processes' && (
+                  <div className="absolute top-full right-0 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-slate-100">
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          ref={(el) => { searchInputRefs.current.processes = el; }}
+                          value={searchProcesses}
+                          onChange={(e) => setSearchProcesses(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                          placeholder="Search process..."
+                          className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                      {filteredCatalogProcesses.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">No processes found</div>
+                      )}
+                      {filteredCatalogProcesses.map((process) => {
+                        const isLinked = linkedProcessIds.has(process.business_process_id);
+                        const busy = actingProcess === process.business_process_id;
+                        return (
+                          <button
+                            key={process.business_process_id}
+                            type="button"
+                            role="option"
+                            aria-selected={isLinked}
+                            disabled={busy}
+                            onClick={() => (isLinked ? removeProcess(process.business_process_id) : addProcess(process.business_process_id))}
+                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isLinked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-semibold truncate">{process.process_name || process.business_process_id}</span>
+                              <span className="block text-[11px] font-mono text-slate-400 truncate">{process.business_process_id}</span>
+                            </span>
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                            ) : isLinked ? (
+                              <Check size={15} className="shrink-0 text-blue-600" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-slate-100 mt-1 pt-1 px-2 pb-2">
+                      <Link
+                        to={`/processes/new?linkApplicationId=${encodeURIComponent(application.business_application_id)}`}
+                        onClick={() => setOpenDropdown(null)}
+                        className="flex items-center gap-2 w-full text-left px-2 py-2 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Plus size={11} /> Add Process
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-slate-100">
               {linkedProcesses.length === 0 && (
@@ -1977,45 +2183,6 @@ const BusinessApplicationViewPage: React.FC = () => {
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                       Remove
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-bold text-slate-700">Add Process Relation</p>
-              <div className="relative w-full sm:w-[320px] max-w-full ml-auto">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchProcesses}
-                  onChange={(e) => setSearchProcesses(e.target.value)}
-                  placeholder="Filter processes..."
-                  className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-              {availableProcesses.length === 0 && (
-                <div className="p-5 text-sm text-slate-500">No available processes to link.</div>
-              )}
-              {availableProcesses.map(process => {
-                const busy = actingProcess === process.business_process_id;
-                return (
-                  <div key={process.business_process_id} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-700 truncate">{process.process_name || process.business_process_id}</p>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">{process.business_process_id}</p>
-                    </div>
-                    <button
-                      onClick={() => addProcess(process.business_process_id)}
-                      disabled={busy}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                      Link
                     </button>
                   </div>
                 );

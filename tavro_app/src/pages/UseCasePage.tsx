@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Plus, FolderUp } from 'lucide-react';
 import UseCaseCatalog from '../components/UseCaseCatalog';
 import LoadAIUseCaseModal from '../components/LoadAIUseCaseModal';
-import TimedInfoToast from '../components/TimedInfoToast';
 import { useChatSync } from '../hooks/useChatSync';
 import { useBlueprint } from '../context/BlueprintContext';
 import { useCaseApi } from '../services/useCaseApi';
@@ -108,7 +107,6 @@ const UseCasePage: React.FC = () => {
     return (
         <>
         <div className="flex flex-col gap-6 w-full animate-fade-in max-w-[1600px] mx-auto">
-            <TimedInfoToast storageKey="tavro_use_case_notice" />
 
             <div className="flex items-center justify-between">
                 <div>

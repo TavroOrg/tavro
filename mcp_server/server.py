@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import time
 import hashlib
@@ -3443,6 +3443,20 @@ async def delete_integration(original_prompt: str, *, integration_id: str) -> Di
         return {"error": "VALIDATION_ERROR", "details": str(ve)}
     except Exception as e:
         return {"error": "INTERNAL_ERROR", "details": str(e)}
+
+
+# ── Enterprise tools (BUILD_MODE=enterprise only) ────────────────────────────
+# Mirrors tavro_api/main.py's enterprise gating. Enterprise tool modules are
+# baked into /enterprise at build time (see Dockerfile.mcp.enterprise) and
+# register themselves onto `core`.
+if os.getenv("BUILD_MODE", "").strip().lower() == "enterprise":
+    from mcp_server.enterprise_compliance_tools import register_compliance_tools
+    register_compliance_tools(
+        core,
+        tavro_api_url=TAVRO_API_URL,
+        log_tool_call=log_tool_call,
+        get_access_token=get_access_token,
+    )
 
 
 # ---------------------------

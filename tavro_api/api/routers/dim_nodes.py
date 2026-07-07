@@ -18,6 +18,7 @@ from api.routers.business_relations import (
     _ensure_application_attachments_table,
     _ensure_process_attachments_table,
     _ensure_integration_attachments_table,
+    _ENTITY_COL_MAP,
 )
 
 router = APIRouter()
@@ -195,6 +196,19 @@ async def update_dim_node(
 ):
     await _assert_node_owned(db, str(node_id), tenant_id)
 
+    # Capture the pre-update category and entity FK columns so we can detect a category change.
+    prev_row = await db.execute(
+        text("""
+            SELECT t.category, n.company_id, n.business_application_id, n.business_process_id, n.integration_id
+            FROM twin.dim_type t
+            JOIN twin.dim_node n ON n.dim_type_id = t.id
+            WHERE n.id = :id
+        """),
+        {"id": str(node_id)},
+    )
+    prev = prev_row.mappings().first()
+    old_category = prev["category"] if prev else None
+
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -224,7 +238,7 @@ async def update_dim_node(
     try:
         cat_r = await db.execute(
             text("""
-                SELECT t.category, n.business_application_id, n.business_process_id, n.integration_id
+                SELECT t.category
                 FROM twin.dim_type t
                 JOIN twin.dim_node n ON n.dim_type_id = t.id
                 WHERE n.id = :id
@@ -233,6 +247,7 @@ async def update_dim_node(
         )
         cat_row = cat_r.mappings().first()
         if cat_row:
+            new_category = cat_row["category"]
             node_data = dict(result)
             new_label = node_data.get("label")
             new_summary = str(node_data.get("summary") or "") or None
@@ -241,8 +256,54 @@ async def update_dim_node(
             raw_visibility = node_data.get("visibility")
             tags_json = json.dumps(raw_tags if isinstance(raw_tags, list) else [])
 
-            if cat_row["category"] == "application":
-                entity_id = cat_row.get("business_application_id")
+            if prev and old_category != new_category:
+                # Category changed: detach from the old category's entity table so the
+                # node stops appearing (and can no longer be deleted) via the stale catalog.
+                old_entity_col = _ENTITY_COL_MAP.get(old_category)
+                if old_entity_col:
+                    old_entity_id = prev.get(old_entity_col)
+                    if old_entity_id:
+                        await db.execute(
+                            text(f"UPDATE twin.dim_node SET {old_entity_col} = NULL WHERE id = :id"),
+                            {"id": str(node_id)},
+                        )
+                        old_table = {
+                            "business_application_id": ("core.business_applications", "business_application_id"),
+                            "business_process_id":     ("core.business_processes", "business_process_id"),
+                            "integration_id":           ("core.business_integrations", "integration_id"),
+                        }[old_entity_col]
+                        await db.execute(
+                            text(f"DELETE FROM {old_table[0]} WHERE {old_table[1]} = :eid"),
+                            {"eid": old_entity_id},
+                        )
+                        await db.commit()
+
+                # Link/create the entity record for the new category, if applicable.
+                if new_category in ("application", "process", "integration"):
+                    company_id = node_data.get("company_id") or (prev.get("company_id") if prev else None)
+                    company_name = None
+                    if company_id:
+                        company_row = await db.execute(
+                            text("SELECT name FROM twin.company WHERE id = :id LIMIT 1"),
+                            {"id": str(company_id)},
+                        )
+                        company = company_row.mappings().first()
+                        company_name = company["name"] if company else None
+                    await sync_dim_node_to_business_entity(
+                        db,
+                        str(company_id),
+                        company_name,
+                        new_category,
+                        new_label,
+                        new_summary,
+                        raw_tags if isinstance(raw_tags, list) else [],
+                        tenant_id,
+                        node_id=str(node_id),
+                        sensitive=raw_sensitive,
+                        visibility=raw_visibility,
+                    )
+            elif new_category == "application":
+                entity_id = prev.get("business_application_id") if prev else None
                 if entity_id:
                     await db.execute(
                         text("""
@@ -258,8 +319,8 @@ async def update_dim_node(
                         {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "eid": entity_id},
                     )
                 await db.commit()
-            elif cat_row["category"] == "process":
-                entity_id = cat_row.get("business_process_id")
+            elif new_category == "process":
+                entity_id = prev.get("business_process_id") if prev else None
                 if entity_id:
                     await db.execute(
                         text("""
@@ -275,8 +336,8 @@ async def update_dim_node(
                         {"name": new_label, "desc": new_summary, "tags": tags_json, "sensitive": raw_sensitive, "visibility": raw_visibility, "eid": entity_id},
                     )
                 await db.commit()
-            elif cat_row["category"] == "integration":
-                entity_id = cat_row.get("integration_id")
+            elif new_category == "integration":
+                entity_id = prev.get("integration_id") if prev else None
                 if entity_id:
                     await db.execute(
                         text("""
