@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
-import { useLookupValues } from '../context/LookupContext';
 import type { CompanyCreate } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
 
@@ -108,9 +107,6 @@ const BlueprintSetupPage: React.FC = () => {
     is_public:    false as boolean | null,   // null = not selected yet
     ticker:       '',
   });
-
-  const industryOptions = useLookupValues('company', 'industry');
-  const [customIndustry, setCustomIndustry] = useState(false);
 
   // ── Research state ─────────────────────────────────────────────────────────
   const [researching,     setResearching]     = useState(false);
@@ -296,41 +292,8 @@ const BlueprintSetupPage: React.FC = () => {
               </Field>
 
               <Field label="Industry" required>
-                {industryOptions.length === 0 ? (
-                  <div className="text-sm text-slate-400 dark:text-slate-500 italic px-1 py-2.5">No industry options configured</div>
-                ) : customIndustry ? (
-                  <div className="flex flex-col gap-1.5">
-                    <input value={form.industry} onChange={e => update('industry', e.target.value)}
-                      placeholder="e.g. Commercial Banking" className={inputCls} />
-                    <button type="button" onClick={() => setCustomIndustry(false)}
-                      className="self-start text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline">
-                      ← Choose from list instead
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      {industryOptions.map(o => (
-                        <button
-                          key={o.value}
-                          type="button"
-                          onClick={() => update('industry', o.value)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition-all ${
-                            form.industry === o.value
-                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
-                          }`}
-                        >
-                          {o.label}
-                        </button>
-                      ))}
-                    </div>
-                    <button type="button" onClick={() => { setCustomIndustry(true); update('industry', ''); }}
-                      className="self-start text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline">
-                      Other (type manually)…
-                    </button>
-                  </div>
-                )}
+                <input value={form.industry} onChange={e => update('industry', e.target.value)}
+                  placeholder="e.g. Commercial Banking" className={inputCls} />
               </Field>
 
               <Field label="Legal entity name">
