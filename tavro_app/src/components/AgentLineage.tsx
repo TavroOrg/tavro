@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import { AgentData, AgentDataSource, AgentSkill, AgentTool } from '../types/agent';
-import { ArrowRight, Shield, CheckCircle, AlertTriangle, Search, Loader2, Unlink2, PlusCircle, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Share2, ArrowRight, Shield, CheckCircle, AlertTriangle, Search, Loader2, Unlink2, PlusCircle, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { businessRelationsApi, AgentToolRecord, AgentTableRecord, AgentColumnRecord } from '../services/businessRelationsApi';
 
 interface AgentLineageProps {
@@ -287,15 +287,27 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     };
 
     return (
-        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px] flex flex-col gap-6">
-
-                {hasPiiConcerns && (
-                    <div className="flex justify-end">
+        <div className="flex flex-col gap-4">
+            <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
+                <div className="p-5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                            <Share2 size={20} />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-slate-800 tracking-tight">Lineage Map</h2>
+                            <p className="text-xs text-slate-500 font-medium">Tools, skills, data sources & relationships</p>
+                        </div>
+                    </div>
+                    {hasPiiConcerns && (
                         <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-full">
                             <Shield size={11} /> PII / sensitive data
                         </span>
-                    </div>
-                )}
+                    )}
+                </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px] flex flex-col gap-6">
 
                 {/* ── Currently Linked Tools ─────────────────────────────── */}
                 <div className="bg-white rounded-2xl border border-slate-200">
@@ -856,6 +868,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                     );
                 })()}
 
+            </div>
         </div>
     );
 };
