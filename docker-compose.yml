@@ -1,7 +1,7 @@
 ﻿name: tavro
 
-include:
-  - datahub/docker-compose.datahub.yml
+# include:
+#   - datahub/docker-compose.datahub.yml
 
 x-risk-worker-base: &risk_worker_base
   image: tavro-risk-worker:local
@@ -45,19 +45,19 @@ services:
       start_period: 30s
 
   #embed datahub/datahub.json into twin.datahub_context (global) ──
-  datahub-vector-ingest:
-    build:
-      context: .
-      dockerfile: datahub/Dockerfile.ingest_vectors
-    container_name: tavro-datahub-vector-ingest
-    restart: "no"
-    depends_on:
-      tavro-postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
-    labels:
-      datahub_setup_job: true
+  # datahub-vector-ingest:
+  #   build:
+  #     context: .
+  #     dockerfile: datahub/Dockerfile.ingest_vectors
+  #   container_name: tavro-datahub-vector-ingest
+  #   restart: "no"
+  #   depends_on:
+  #     tavro-postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@tavro-postgres:5432/tavro
+  #   labels:
+  #     datahub_setup_job: true
 
   # ── Temporal — Workflow Engine ───────────────────────────────────────────────
   risk-temporal:

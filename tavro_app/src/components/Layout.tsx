@@ -12,6 +12,7 @@ import ChatPanel from './ChatPanel';
 import DevLogPanel from './DevLogPanel';
 import AttachmentPanel from './AttachmentPanel';
 import GlobalNotificationBanner from './GlobalNotificationBanner';
+import CompanyPickerModal from './CompanyPickerModal';
 import { useShowLogs } from '../hooks/useShowLogs';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
@@ -118,7 +119,7 @@ const Layout: React.FC = () => {
     const [showLogs] = useShowLogs();
     const { agents } = useCatalog();
     const { useCases } = useUseCases();
-    const { activeCompany } = useBlueprint();
+    const { activeCompany, needsCompanyPick } = useBlueprint();
     const { enterpriseEnabled } = useEnterprise();
     const [appCount, setAppCount] = useState(0);
     const [processCount, setProcessCount] = useState(0);
@@ -790,6 +791,7 @@ const Layout: React.FC = () => {
                     </div>
                 )}
             </div>
+            {needsCompanyPick && <CompanyPickerModal />}
         </div>
     );
 };

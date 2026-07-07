@@ -18,6 +18,7 @@ import {
     getProviderConfig, saveProviderConfig, clearProviderConfig,
     getActiveProvider, setActiveProvider,
 } from '../services/llmService';
+import { userContextApi } from '../services/userContextApi';
 
 import { useTheme } from '../context/ThemeContext';
 
@@ -96,6 +97,24 @@ const Settings: React.FC = () => {
     const updateProvider = (p: LLMProvider, patch: Partial<ProviderState>) =>
         setProviderStates((s: Record<LLMProvider, ProviderState>) => ({ ...s, [p]: { ...s[p], ...patch } }));
 
+    // Cross-device fallback: if this device has no active provider configured locally,
+    // pull the last-saved provider/model/BYOK settings from the server (never the API key).
+    useEffect(() => {
+        if (getActiveProvider()) return;
+        userContextApi.getUserContext().then(ctx => {
+            if (!ctx.llm_provider) return;
+            const p = ctx.llm_provider as LLMProvider;
+            const byok = ctx.llm_byok_type && ctx.llm_byok_type !== 'github'
+                ? { type: ctx.llm_byok_type as 'openai' | 'azure' | 'anthropic', baseUrl: ctx.llm_byok_base_url || undefined }
+                : undefined;
+            saveProviderConfig({ provider: p, model: ctx.llm_model || DEFAULT_MODELS[p], apiKey: '', byok });
+            setActiveProvider(p);
+            setActiveProviderState(p);
+            updateProvider(p, initProviderState(p));
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const handleSaveProvider = (p: LLMProvider) => {
         const s = providerStates[p];
         const byok = (p === 'copilot' && s.byokType && s.byokType !== 'github')
@@ -104,6 +123,14 @@ const Settings: React.FC = () => {
         saveProviderConfig({ provider: p, model: s.model || DEFAULT_MODELS[p], apiKey: '', byok });
         updateProvider(p, { configured: true, saved: true });
         setTimeout(() => updateProvider(p, { saved: false }), 2500);
+        if (activeProvider === p) {
+            userContextApi.patchUserContext({
+                llm_provider: p,
+                llm_model: s.model || DEFAULT_MODELS[p],
+                llm_byok_type: byok?.type ?? null,
+                llm_byok_base_url: byok?.baseUrl ?? null,
+            }).catch(() => {});
+        }
     };
 
     const handleClearProvider = (p: LLMProvider) => {
@@ -115,6 +142,13 @@ const Settings: React.FC = () => {
     const handleSetActive = (p: LLMProvider) => {
         setActiveProvider(p);
         setActiveProviderState(p);
+        const cfg = getProviderConfig(p);
+        userContextApi.patchUserContext({
+            llm_provider: p,
+            llm_model: cfg?.model || DEFAULT_MODELS[p],
+            llm_byok_type: cfg?.byok?.type ?? null,
+            llm_byok_base_url: cfg?.byok?.baseUrl ?? null,
+        }).catch(() => {});
     };
 
     const ThemeOption = ({ mode, label, icon }: { mode: 'light' | 'dark' | 'system'; label: string; icon: React.ReactNode }) => (

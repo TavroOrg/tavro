@@ -213,6 +213,37 @@ def log_tool_call(
         print(f"[LOG ERROR] Failed to write log for {tool_name}: {e}")
 
 
+async def resolve_company_context(
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    explicit_company_id: Optional[str],
+) -> Optional[str]:
+    """Resolve the active company for a tool call.
+
+    Order: explicit company_id param -> server-side user preference -> None
+    (global-scoped, an acceptable degraded state for callers with no context).
+    """
+    if explicit_company_id and explicit_company_id.strip():
+        print(f"[resolve_company_context] explicit company_id={explicit_company_id!r}")
+        return explicit_company_id.strip()
+    if not user_id:
+        print("[resolve_company_context] no user_id (sub claim) on token — skipping lookup")
+        return None
+    headers = {"x-user-id": user_id}
+    if tenant_id:
+        headers["x-tenant-id"] = str(tenant_id)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{TAVRO_API_URL}/api/v1/user/context", headers=headers)
+            resp.raise_for_status()
+            resolved = resp.json().get("default_company_id")
+            print(f"[resolve_company_context] user_id={user_id!r} tenant_id={tenant_id!r} -> resolved company_id={resolved!r}")
+            return resolved
+    except Exception as e:
+        print(f"[resolve_company_context] lookup FAILED user_id={user_id!r} tenant_id={tenant_id!r}: {e!r}")
+        return None
+
+
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = None, agent_id: Optional[str] = None, company_id: Optional[str]) -> Dict[str, Any]:
     """
@@ -247,6 +278,8 @@ async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = No
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_agent_card",
             original_prompt,
@@ -312,6 +345,8 @@ async def get_agent_catalog(original_prompt: str, *, start_record: int = 1, reco
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_agent_catalog",
             original_prompt,
@@ -746,6 +781,8 @@ async def get_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = 
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "get_ai_use_case",
             original_prompt,
@@ -2501,6 +2538,8 @@ async def get_application_catalog(original_prompt: str, *, start_record: int = 1
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
 
         log_tool_call(
             "get_application_catalog",
@@ -2547,6 +2586,8 @@ async def get_application(original_prompt: str, *, application_id: str, company_
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_application", original_prompt, {"application_id": application_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -2838,6 +2879,8 @@ async def get_process_catalog(original_prompt: str, *, start_record: int = 1, re
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
 
         log_tool_call(
             "get_process_catalog",
@@ -2884,6 +2927,8 @@ async def get_process(original_prompt: str, *, process_id: str, company_id: Opti
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_process", original_prompt, {"process_id": process_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -3198,6 +3243,8 @@ async def get_integration(original_prompt: str, *, integration_id: str, company_
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("get_integration", original_prompt, {"integration_id": integration_id, "company_id": company_id}, tenant_id)
 
         headers = {"x-tenant-id": str(tenant_id)} if tenant_id else {}
@@ -3449,14 +3496,14 @@ async def delete_integration(original_prompt: str, *, integration_id: str) -> Di
 # Mirrors tavro_api/main.py's enterprise gating. Enterprise tool modules are
 # baked into /enterprise at build time (see Dockerfile.mcp.enterprise) and
 # register themselves onto `core`.
-if os.getenv("BUILD_MODE", "").strip().lower() == "enterprise":
-    from mcp_server.enterprise_compliance_tools import register_compliance_tools
-    register_compliance_tools(
-        core,
-        tavro_api_url=TAVRO_API_URL,
-        log_tool_call=log_tool_call,
-        get_access_token=get_access_token,
-    )
+# if os.getenv("BUILD_MODE", "").strip().lower() == "enterprise":
+#     from mcp_server.enterprise_compliance_tools import register_compliance_tools
+#     register_compliance_tools(
+#         core,
+#         tavro_api_url=TAVRO_API_URL,
+#         log_tool_call=log_tool_call,
+#         get_access_token=get_access_token,
+#     )
 
 
 # ---------------------------

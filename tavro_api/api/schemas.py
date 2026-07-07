@@ -44,6 +44,28 @@ class Company(CompanyBase):
         from_attributes = True
 
 
+# ── User Context / Preferences ───────────────────────────────
+
+class UserContextUpdate(BaseModel):
+    default_company_id: Optional[UUID] = None
+    theme:              Optional[str] = None
+    llm_provider:       Optional[str] = None
+    llm_model:          Optional[str] = None
+    llm_byok_type:      Optional[str] = None
+    llm_byok_base_url:  Optional[str] = None
+
+class UserContext(BaseModel):
+    default_company_id: Optional[UUID] = None
+    theme:              str = "system"
+    llm_provider:       Optional[str] = None
+    llm_model:          Optional[str] = None
+    llm_byok_type:      Optional[str] = None
+    llm_byok_base_url:  Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Dimension Type ────────────────────────────────────────────
 
 class DimTypeBase(BaseModel):
