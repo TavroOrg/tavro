@@ -4,7 +4,7 @@ import { toUserMessage } from '../utils/errorUtils';
 import { UseCaseDetail } from '../types/useCase';
 import { AgentData } from '../types/agent';
 import UseCaseView from '../components/UseCaseView';
-import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X, CheckCircle2, ChevronDown, Plus } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, Search, Loader2, Unlink2, PlusCircle, ShieldCheck, Pencil, Trash2, Code2, Copy, Check, X, CheckCircle2, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -634,6 +634,7 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
   const [pendingLinkIds, setPendingLinkIds] = useState<Set<string>>(new Set());
   const [pendingUnlinkIds, setPendingUnlinkIds] = useState<Set<string>>(new Set());
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -804,7 +805,15 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
 
       <div className="bg-white rounded-2xl border border-slate-200">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-sm font-bold text-slate-700">Currently Related Applications ({linkedApplications.length})</p>
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronDown size={18} className="text-slate-400" /> : <ChevronUp size={18} className="text-slate-400" />}
+            Currently Related Applications ({linkedApplications.length})
+          </button>
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen((open) => !open)}
@@ -886,34 +895,36 @@ const ApplicationRelationsSection: React.FC<ApplicationRelationsSectionProps> = 
             )}
           </div>
         </div>
-        <div className="divide-y divide-slate-100">
-          {linkedApplications.length === 0 && (
-            <div className="p-5 text-sm text-slate-500">No business applications linked.</div>
-          )}
-          {linkedApplications.map((app) => {
-            const applicationId = app.identifier;
-            const removeKey = `remove:${applicationId}`;
-            const isPendingUnlink = pendingUnlinkIds.has(applicationId);
-            return (
-              <div key={applicationId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
-                <div className="min-w-0">
-                  <Link to={`/applications/${encodeURIComponent(applicationId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                    {app.name}
-                  </Link>
-                  <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
+        {!collapsed && (
+          <div className="divide-y divide-slate-100">
+            {linkedApplications.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No business applications linked.</div>
+            )}
+            {linkedApplications.map((app) => {
+              const applicationId = app.identifier;
+              const removeKey = `remove:${applicationId}`;
+              const isPendingUnlink = pendingUnlinkIds.has(applicationId);
+              return (
+                <div key={applicationId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
+                  <div className="min-w-0">
+                    <Link to={`/applications/${encodeURIComponent(applicationId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                      {app.name}
+                    </Link>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{applicationId}</p>
+                  </div>
+                  <button
+                    onClick={() => handleUnlinkApplication(applicationId)}
+                    disabled={acting === removeKey}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleUnlinkApplication(applicationId)}
-                  disabled={acting === removeKey}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
-                  Remove
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -930,6 +941,7 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
   const [pendingLinkIds, setPendingLinkIds] = useState<Set<string>>(new Set());
   const [pendingUnlinkIds, setPendingUnlinkIds] = useState<Set<string>>(new Set());
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1098,7 +1110,15 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
 
       <div className="bg-white rounded-2xl border border-slate-200">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-sm font-bold text-slate-700">Currently Related Processes ({linkedProcesses.length})</p>
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronDown size={18} className="text-slate-400" /> : <ChevronUp size={18} className="text-slate-400" />}
+            Currently Related Processes ({linkedProcesses.length})
+          </button>
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen((open) => !open)}
@@ -1180,34 +1200,36 @@ const ProcessRelationsSection: React.FC<ProcessRelationsSectionProps> = ({ useCa
             )}
           </div>
         </div>
-        <div className="divide-y divide-slate-100">
-          {linkedProcesses.length === 0 && (
-            <div className="p-5 text-sm text-slate-500">No business processes linked.</div>
-          )}
-          {linkedProcesses.map((proc) => {
-            const processId = proc.identifier;
-            const removeKey = `remove:${processId}`;
-            const isPendingUnlink = pendingUnlinkIds.has(processId);
-            return (
-              <div key={processId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
-                <div className="min-w-0">
-                  <Link to={`/processes/${encodeURIComponent(processId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                    {proc.name}
-                  </Link>
-                  <p className="text-[11px] font-mono text-slate-400 truncate">{processId}</p>
+        {!collapsed && (
+          <div className="divide-y divide-slate-100">
+            {linkedProcesses.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No business processes linked.</div>
+            )}
+            {linkedProcesses.map((proc) => {
+              const processId = proc.identifier;
+              const removeKey = `remove:${processId}`;
+              const isPendingUnlink = pendingUnlinkIds.has(processId);
+              return (
+                <div key={processId} className={`px-5 py-3 flex items-center justify-between gap-3 transition-opacity ${isPendingUnlink ? 'opacity-40' : ''}`}>
+                  <div className="min-w-0">
+                    <Link to={`/processes/${encodeURIComponent(processId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                      {proc.name}
+                    </Link>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{processId}</p>
+                  </div>
+                  <button
+                    onClick={() => handleUnlinkProcess(processId)}
+                    disabled={acting === removeKey}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleUnlinkProcess(processId)}
-                  disabled={acting === removeKey}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
-                  Remove
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1222,6 +1244,7 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
   const [acting, setActing] = useState<string | null>(null);
   const [relationError, setRelationError] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1317,7 +1340,15 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
 
       <div className="bg-white rounded-2xl border border-slate-200">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-sm font-bold text-slate-700">Currently Related AI Models ({linkedModels.length})</p>
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronDown size={18} className="text-slate-400" /> : <ChevronUp size={18} className="text-slate-400" />}
+            Currently Related AI Models ({linkedModels.length})
+          </button>
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen((open) => !open)}
@@ -1399,33 +1430,35 @@ const AiModelRelationsSection: React.FC<AiModelRelationsSectionProps> = ({ useCa
             )}
           </div>
         </div>
-        <div className="divide-y divide-slate-100">
-          {linkedModels.length === 0 && (
-            <div className="p-5 text-sm text-slate-500">No AI models linked.</div>
-          )}
-          {linkedModels.map((model) => {
-            const modelId = model.identifier;
-            const removeKey = `remove:${modelId}`;
-            return (
-              <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <Link to={`/ai-models/${encodeURIComponent(modelId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
-                    {model.name}
-                  </Link>
-                  <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+        {!collapsed && (
+          <div className="divide-y divide-slate-100">
+            {linkedModels.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No AI models linked.</div>
+            )}
+            {linkedModels.map((model) => {
+              const modelId = model.identifier;
+              const removeKey = `remove:${modelId}`;
+              return (
+                <div key={modelId} className="px-5 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link to={`/ai-models/${encodeURIComponent(modelId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
+                      {model.name}
+                    </Link>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
+                  </div>
+                  <button
+                    onClick={() => handleUnlinkModel(modelId)}
+                    disabled={acting === removeKey}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleUnlinkModel(modelId)}
-                  disabled={acting === removeKey}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {acting === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
-                  Remove
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

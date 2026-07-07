@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import { AgentData, AgentDataSource, AgentSkill, AgentTool } from '../types/agent';
-import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle, Zap, Search, Loader2, Unlink2, PlusCircle, Check, ChevronDown } from 'lucide-react';
+import { ArrowRight, Shield, CheckCircle, AlertTriangle, Search, Loader2, Unlink2, PlusCircle, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { businessRelationsApi, AgentToolRecord, AgentTableRecord, AgentColumnRecord } from '../services/businessRelationsApi';
 
 interface AgentLineageProps {
@@ -231,6 +231,15 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     });
 
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+    const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+    const toggleSection = (key: string) => {
+        setCollapsedSections((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
     const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -278,32 +287,28 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     };
 
     return (
-        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col h-full">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                        <Share2 size={20} />
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-bold text-slate-800 tracking-tight">Lineage Map</h2>
-                        <p className="text-xs text-slate-500 font-medium">Tools, skills, data sources & relationships</p>
-                    </div>
-                </div>
-                {hasPiiConcerns && (
-                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-full">
-                        <Shield size={11} /> PII / sensitive data
-                    </span>
-                )}
-            </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px] flex flex-col gap-6">
 
-            <div className="flex-1 p-5 flex flex-col gap-6 overflow-y-auto">
+                {hasPiiConcerns && (
+                    <div className="flex justify-end">
+                        <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-full">
+                            <Shield size={11} /> PII / sensitive data
+                        </span>
+                    </div>
+                )}
 
                 {/* ── Currently Linked Tools ─────────────────────────────── */}
-                <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                            <Wrench size={13} /> Currently Linked Tools ({linkedTools.length})
-                        </h3>
+                <div className="bg-white rounded-2xl border border-slate-200">
+                    <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                        <button
+                            type="button"
+                            onClick={() => toggleSection('tools')}
+                            className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                            aria-expanded={!collapsedSections.has('tools')}
+                        >
+                            {collapsedSections.has('tools') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                            Currently Linked Tools ({linkedTools.length})
+                        </button>
                         {resolvedAgentId && (
                             <div className="relative" ref={(el) => { dropdownRefs.current.tools = el; }}>
                                 <button
@@ -373,27 +378,28 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                         )}
                     </div>
 
+                    {!collapsedSections.has('tools') && (
+                    <div className="divide-y divide-slate-100">
                     {toolsError && (
-                        <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2.5 text-xs">
+                        <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 px-5 py-3 text-xs">
                             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                             {toolsError}
                         </div>
                     )}
 
                     {toolsLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-slate-400 py-4">
+                        <div className="flex items-center gap-2 text-sm text-slate-400 p-5">
                             <Loader2 size={14} className="animate-spin" /> Loading tools…
                         </div>
                     ) : linkedTools.length === 0 ? (
-                        <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        <div className="p-5 text-sm text-slate-500">
                             No tools linked yet.
                         </div>
                     ) : (
-                        <div className="flex flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
-                            {linkedTools.map(tool => {
+                            linkedTools.map(tool => {
                                 const isActioning = !!actioningTool && actioningTool === tool.effective_tool_id;
                                 return (
-                                    <div key={tool.effective_tool_id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-slate-50 gap-3">
+                                    <div key={tool.effective_tool_id} className="flex items-center justify-between px-5 py-3 gap-3">
                                         <div className="min-w-0">
                                             <p className="text-sm font-semibold text-slate-800 truncate">{tool.tool_name}</p>
                                             {tool.tool_description && (
@@ -403,31 +409,40 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                         <button
                                             onClick={() => handleUnlink(tool.effective_tool_id)}
                                             disabled={!!actioningTool}
-                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             {isActioning
-                                                ? <Loader2 size={11} className="animate-spin" />
-                                                : <Unlink2 size={11} />}
+                                                ? <Loader2 size={12} className="animate-spin" />
+                                                : <Unlink2 size={12} />}
                                             Remove
                                         </button>
                                     </div>
                                 );
-                            })}
-                        </div>
+                            })
+                    )}
+                    </div>
                     )}
                 </div>
 
                 {/* ── Skills ────────────────────────────────────────────── */}
-                <div className="flex flex-col gap-3">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <Zap size={13} /> Skills ({skills.length})
-                    </h3>
-                    {skills.length === 0 ? (
-                        <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                <div className="bg-white rounded-2xl border border-slate-200">
+                    <div className="px-5 py-3 border-b border-slate-100">
+                        <button
+                            type="button"
+                            onClick={() => toggleSection('skills')}
+                            className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                            aria-expanded={!collapsedSections.has('skills')}
+                        >
+                            {collapsedSections.has('skills') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                            Currently Configured Skills ({skills.length})
+                        </button>
+                    </div>
+                    {!collapsedSections.has('skills') && (skills.length === 0 ? (
+                        <div className="p-5 text-sm text-slate-500">
                             No skills configured.
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-2 p-5">
                             {skills.map((skill, idx) => {
                                 const label = displayText(
                                     skill.name ?? skill.skill_name ?? skill.identifier ?? skill.id ?? skill.skill_id,
@@ -437,7 +452,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                 const outputModes = stringArray(skill.outputModes ?? skill.output_modes);
 
                                 return (
-                                    <div key={skill.identifier ?? skill.id ?? skill.skill_id ?? idx} className="bg-slate-50 border border-slate-200 p-4 rounded-xl hover:border-indigo-200 transition-all">
+                                    <div key={skill.identifier ?? skill.id ?? skill.skill_id ?? idx} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
                                         <span className="font-bold text-sm text-slate-800 break-words">{label}</span>
                                         {skill.description && (
                                             <span className="text-xs text-slate-500 leading-relaxed block mt-1">{displayText(skill.description, '')}</span>
@@ -460,7 +475,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                 );
                             })}
                         </div>
-                    )}
+                    ))}
                 </div>
 
                 {/* ── Relationships (tables, columns, other) ────────────── */}
@@ -486,11 +501,20 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                     const hasTableSection = visibleTableDataSources.length > 0 || extraLinkedTables.length > 0;
 
                     return (
-                        <div className="flex flex-col gap-3">
-                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                <Database size={13} /> Relationships ({totalRelCount})
-                            </h3>
+                        <div className="bg-white rounded-2xl border border-slate-200">
+                            <div className="px-5 py-3 border-b border-slate-100">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleSection('relationships')}
+                                    className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                                    aria-expanded={!collapsedSections.has('relationships')}
+                                >
+                                    {collapsedSections.has('relationships') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                                    Currently Configured Relationships ({totalRelCount})
+                                </button>
+                            </div>
 
+                            {!collapsedSections.has('relationships') && (<div className="p-5 flex flex-col gap-4">
                             {tablesError && (
                                 <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2.5 text-xs">
                                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
@@ -507,7 +531,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                     {/* 1. TABLE group */}
                                     <div>
                                         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">TABLE</p>
+                                            <p className="text-sm font-bold text-slate-900 uppercase tracking-wider">TABLE</p>
                                             {resolvedAgentId && (
                                                 <div className="relative" ref={(el) => { dropdownRefs.current.tables = el; }}>
                                                     <button
@@ -668,7 +692,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                     {/* 3. COLUMN — dynamic with Remove button */}
                                     <div>
                                         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">COLUMN</p>
+                                            <p className="text-sm font-bold text-slate-900 uppercase tracking-wider">COLUMN</p>
                                             {resolvedAgentId && (
                                                 <div className="relative" ref={(el) => { dropdownRefs.current.columns = el; }}>
                                                     <button
@@ -827,11 +851,11 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                     )}
                                 </div>
                             )}
+                            </div>)}
                         </div>
                     );
                 })()}
 
-            </div>
         </div>
     );
 };
