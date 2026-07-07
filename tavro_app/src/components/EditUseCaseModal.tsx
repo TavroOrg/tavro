@@ -5,8 +5,6 @@ import { UseCaseDetail } from '../types/useCase';
 import { useCaseApi } from '../services/useCaseApi';
 import { useLookupValues } from '../context/LookupContext';
 
-const PRIORITY_OPTIONS = ['1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning'];
-
 interface EditUseCaseModalProps {
     useCase: UseCaseDetail;
     open: boolean;
@@ -29,7 +27,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
     const [description, setDescription] = useState(uc.description ?? '');
     const [problemStatement, setProblemStatement] = useState(uc.problem_statement ?? uc.business_problem_statement ?? '');
     const [expectedBenefits, setExpectedBenefits] = useState(uc.expected_benefits ?? '');
-    const [priority, setPriority] = useState(uc.priority ?? '3 - Moderate');
+    const [priority, setPriority] = useState(uc.priority ?? '');
     const [status, setStatus] = useState(uc.status ?? '');
     const [solutionApproach, setSolutionApproach] = useState(uc.solution_approach ?? '');
     const [owner, setOwner] = useState(uc.owner ?? uc.use_case_owner ?? '');
@@ -37,8 +35,10 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
     const statusValues = useLookupValues('ai_use_cases', 'status');
+    const priorityValues = useLookupValues('ai_use_cases', 'priority');
 
     const statusOptions = statusValues.map(s => ({ value: s.value, label: s.label }));
+    const priorityOptions = priorityValues.map(p => ({ value: p.value, label: p.label }));
 
     useEffect(() => {
         if (!open) return;
@@ -46,7 +46,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
         setDescription(uc.description ?? '');
         setProblemStatement(uc.problem_statement ?? uc.business_problem_statement ?? '');
         setExpectedBenefits(uc.expected_benefits ?? '');
-        setPriority(uc.priority ?? '3 - Moderate');
+        setPriority(uc.priority ?? '');
         setStatus(uc.status ?? '');
         setSolutionApproach(uc.solution_approach ?? '');
         setOwner(uc.owner ?? uc.use_case_owner ?? '');
@@ -69,7 +69,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
             const currentDescription = String(uc.description ?? '').trim();
             const currentProblemStatement = String(uc.problem_statement ?? uc.business_problem_statement ?? '').trim();
             const currentExpectedBenefits = String(uc.expected_benefits ?? '').trim();
-            const currentPriority = String(uc.priority ?? '3 - Moderate');
+            const currentPriority = String(uc.priority ?? '');
             const currentStatus = String(uc.status ?? '');
             const currentSolutionApproach = String(uc.solution_approach ?? '').trim();
             const currentOwner = String(uc.owner ?? uc.use_case_owner ?? '').trim();
@@ -163,30 +163,41 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                     <div className="grid grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1.5">
                             <label className="text-xs font-bold text-slate-600 uppercase tracking-widest">Priority</label>
-                            <select
-                                value={priority}
-                                onChange={e => setPriority(e.target.value)}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
-                            >
-                                {PRIORITY_OPTIONS.map(p => (
-                                    <option key={p} value={p}>{p}</option>
-                                ))}
-                            </select>
+                            {priorityOptions.length === 0 && !priority ? (
+                                <div className="text-sm text-slate-400 italic px-1 py-2.5">No priority options configured</div>
+                            ) : (
+                                <select
+                                    value={priority}
+                                    onChange={e => setPriority(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
+                                >
+                                    {priority && !priorityOptions.some(p => p.value === priority) && (
+                                        <option value={priority}>{priority}</option>
+                                    )}
+                                    {priorityOptions.map(p => (
+                                        <option key={p.value} value={p.value}>{p.label}</option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
                         <div className="flex flex-col gap-1.5">
                             <label className="text-xs font-bold text-slate-600 uppercase tracking-widest">Status</label>
-                            <select
-                                value={status}
-                                onChange={e => setStatus(e.target.value)}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
-                            >
-                                {status && !statusOptions.some(s => s.value === status) && (
-                                    <option value={status}>{status}</option>
-                                )}
-                                {statusOptions.map(s => (
-                                    <option key={s.value} value={s.value}>{s.label}</option>
-                                ))}
-                            </select>
+                            {statusOptions.length === 0 && !status ? (
+                                <div className="text-sm text-slate-400 italic px-1 py-2.5">No status options configured</div>
+                            ) : (
+                                <select
+                                    value={status}
+                                    onChange={e => setStatus(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
+                                >
+                                    {status && !statusOptions.some(s => s.value === status) && (
+                                        <option value={status}>{status}</option>
+                                    )}
+                                    {statusOptions.map(s => (
+                                        <option key={s.value} value={s.value}>{s.label}</option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
                     </div>
 

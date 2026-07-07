@@ -33,58 +33,11 @@ import type {
 import type { DimEdge, SourceRef } from '../types/blueprint';
 import { toUserMessage } from '../utils/errorUtils';
 import { blueprintApi } from '../services/blueprintApi';
+import { useLookupValues } from '../context/LookupContext';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
 type Tab = 'overview' | 'related' | 'blueprint';
 type Option = { label: string; value: string };
-
-const PROTOCOL_OPTIONS: Option[] = [
-  { label: 'REST', value: 'REST' },
-  { label: 'GraphQL', value: 'GraphQL' },
-  { label: 'Webhook', value: 'Webhook' },
-  { label: 'gRPC', value: 'gRPC' },
-  { label: 'SOAP', value: 'SOAP' },
-  { label: 'MCP', value: 'MCP' },
-  { label: 'Event Stream', value: 'Event Stream' },
-  { label: 'EDI', value: 'EDI' },
-];
-
-const AUTH_METHOD_OPTIONS: Option[] = [
-  { label: 'OAuth2', value: 'OAuth2' },
-  { label: 'API Key', value: 'API Key' },
-  { label: 'mTLS', value: 'mTLS' },
-  { label: 'Basic', value: 'Basic' },
-  { label: 'None', value: 'None' },
-];
-
-const DATA_SENSITIVITY_OPTIONS: Option[] = [
-  { label: 'None', value: 'None' },
-  { label: 'PII', value: 'PII' },
-  { label: 'PCI', value: 'PCI' },
-  { label: 'PHI', value: 'PHI' },
-  { label: 'Confidential', value: 'Confidential' },
-];
-
-const AVAILABILITY_STATUS_OPTIONS: Option[] = [
-  { label: 'Active', value: 'Active' },
-  { label: 'Deprecated', value: 'Deprecated' },
-  { label: 'Planned', value: 'Planned' },
-  { label: 'Unknown', value: 'Unknown' },
-];
-
-const INT_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
-  { label: 'High', value: 'High' },
-  { label: 'Medium', value: 'Medium' },
-  { label: 'Low', value: 'Low' },
-];
-
-const INT_EMERGENCY_TIER_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
-  { label: 'Mission Critical', value: 'Mission Critical' },
-  { label: 'Business Critical', value: 'Business Critical' },
-  { label: 'Non-Critical', value: 'Non-Critical' },
-];
 
 interface IntegrationFormState {
   integration_name: string;
@@ -265,6 +218,12 @@ const IntegrationViewPage: React.FC = () => {
   const { activeCompany } = useBlueprint();
   const { agents: catalogAgents } = useCatalog();
   const [companyAgents, setCompanyAgents] = useState<typeof catalogAgents>([]);
+  const businessCriticalityOptions = useLookupValues('business_integrations', 'business_criticality');
+  const emergencyTierOptions = useLookupValues('business_integrations', 'emergency_tier');
+  const protocolOptions = useLookupValues('business_integrations', 'protocol');
+  const authMethodOptions = useLookupValues('business_integrations', 'authentication_method');
+  const dataSensitivityOptions = useLookupValues('business_integrations', 'data_sensitivity');
+  const availabilityStatusOptions = useLookupValues('business_integrations', 'availability_status');
 
   useEffect(() => {
     agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => {});
@@ -1105,21 +1064,31 @@ const IntegrationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint="Business Criticality defines how vital the integration is to core operations." />
                 {editing ? (
-                  <select value={form.business_criticality} onChange={(e) => setField('business_criticality', e.target.value)} className={inputCls}>
-                    {INT_BUSINESS_CRITICALITY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                  </select>
+                  businessCriticalityOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No business criticality options configured</div>
+                  ) : (
+                    <select value={form.business_criticality} onChange={(e) => setField('business_criticality', e.target.value)} className={inputCls}>
+                      <option value="">-- None --</option>
+                      {businessCriticalityOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('business_criticality', form.business_criticality || 'N/A', { kind: 'select', options: INT_BUSINESS_CRITICALITY_OPTIONS })
+                  renderInlineEditable('business_criticality', form.business_criticality || 'N/A', { kind: 'select', options: businessCriticalityOptions })
                 )}
               </div>
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Emergency Tier" hint="The Emergency Tier categorizes an integration's crisis criticality to prioritize recovery execution order." />
                 {editing ? (
-                  <select value={form.emergency_tier} onChange={(e) => setField('emergency_tier', e.target.value)} className={inputCls}>
-                    {INT_EMERGENCY_TIER_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                  </select>
+                  emergencyTierOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No emergency tier options configured</div>
+                  ) : (
+                    <select value={form.emergency_tier} onChange={(e) => setField('emergency_tier', e.target.value)} className={inputCls}>
+                      <option value="">-- None --</option>
+                      {emergencyTierOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('emergency_tier', form.emergency_tier || 'N/A', { kind: 'select', options: INT_EMERGENCY_TIER_OPTIONS })
+                  renderInlineEditable('emergency_tier', form.emergency_tier || 'N/A', { kind: 'select', options: emergencyTierOptions })
                 )}
               </div>
               <div className="flex flex-col gap-1.5">
@@ -1162,20 +1131,24 @@ const IntegrationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Protocol" />
                 {editing ? (
-                  <select
-                    value={form.protocol}
-                    onChange={(e) => setField('protocol', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {PROTOCOL_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  protocolOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No protocol options configured</div>
+                  ) : (
+                    <select
+                      value={form.protocol}
+                      onChange={(e) => setField('protocol', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select...</option>
+                      {protocolOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
                   renderInlineEditable('protocol', form.protocol || 'N/A', {
                     kind: 'select',
-                    options: PROTOCOL_OPTIONS,
+                    options: protocolOptions,
                   })
                 )}
               </div>
@@ -1183,20 +1156,24 @@ const IntegrationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Authentication Method" />
                 {editing ? (
-                  <select
-                    value={form.authentication_method}
-                    onChange={(e) => setField('authentication_method', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {AUTH_METHOD_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  authMethodOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No authentication method options configured</div>
+                  ) : (
+                    <select
+                      value={form.authentication_method}
+                      onChange={(e) => setField('authentication_method', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select...</option>
+                      {authMethodOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
                   renderInlineEditable('authentication_method', form.authentication_method || 'N/A', {
                     kind: 'select',
-                    options: AUTH_METHOD_OPTIONS,
+                    options: authMethodOptions,
                   })
                 )}
               </div>
@@ -1268,20 +1245,24 @@ const IntegrationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Data Sensitivity" />
                 {editing ? (
-                  <select
-                    value={form.data_sensitivity}
-                    onChange={(e) => setField('data_sensitivity', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {DATA_SENSITIVITY_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  dataSensitivityOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No data sensitivity options configured</div>
+                  ) : (
+                    <select
+                      value={form.data_sensitivity}
+                      onChange={(e) => setField('data_sensitivity', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select...</option>
+                      {dataSensitivityOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
                   renderInlineEditable('data_sensitivity', form.data_sensitivity || 'N/A', {
                     kind: 'select',
-                    options: DATA_SENSITIVITY_OPTIONS,
+                    options: dataSensitivityOptions,
                   })
                 )}
               </div>
@@ -1289,20 +1270,24 @@ const IntegrationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Availability Status" />
                 {editing ? (
-                  <select
-                    value={form.availability_status}
-                    onChange={(e) => setField('availability_status', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {AVAILABILITY_STATUS_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  availabilityStatusOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No availability status options configured</div>
+                  ) : (
+                    <select
+                      value={form.availability_status}
+                      onChange={(e) => setField('availability_status', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select...</option>
+                      {availabilityStatusOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
                   renderInlineEditable('availability_status', form.availability_status || 'N/A', {
                     kind: 'select',
-                    options: AVAILABILITY_STATUS_OPTIONS,
+                    options: availabilityStatusOptions,
                   })
                 )}
               </div>

@@ -42,14 +42,6 @@ import type { BusinessApplicationRecord, BusinessProcessRecord } from '../types/
 
 type Option = { label: string; value: string };
 
-const STATUS_OPTIONS: Option[] = [
-  { label: '-- None --', value: '' },
-  { label: 'Ideation', value: 'Ideation' },
-  { label: 'Development', value: 'Development' },
-  { label: 'Production', value: 'Production' },
-  { label: 'Retired', value: 'Retired' },
-];
-
 const YES_NO_OPTIONS: Option[] = [
   { label: '-- None --', value: '' },
   { label: 'Yes', value: 'Yes' },
@@ -72,20 +64,6 @@ const FIELD_KEYS: string[] = [
   'recert_processing_same', 'recert_processing_changed', 'recert_training_completed',
   'recert_risk_assessment_done',
   'business_criticality', 'emergency_tier',
-];
-
-const MODEL_BUSINESS_CRITICALITY_OPTIONS: Option[] = [
-  { label: 'Select...', value: '' },
-  { label: 'High', value: 'High' },
-  { label: 'Medium', value: 'Medium' },
-  { label: 'Low', value: 'Low' },
-];
-
-const MODEL_EMERGENCY_TIER_OPTIONS: Option[] = [
-  { label: 'Select...', value: '' },
-  { label: 'Mission Critical', value: 'Mission Critical' },
-  { label: 'Business Critical', value: 'Business Critical' },
-  { label: 'Non-Critical', value: 'Non-Critical' },
 ];
 
 const MODEL_ARE_HINTS: Record<string, string> = {
@@ -318,6 +296,9 @@ const AiModelViewPage: React.FC = () => {
   const learningApproachOptions = toOptions(useLookupValues('ai_models', 'learning_approach'));
   const automationLevelOptions = toOptions(useLookupValues('ai_models', 'automation_level'));
   const updateFrequencyOptions = toOptions(useLookupValues('ai_models', 'update_frequency'));
+  const statusOptions = toOptions(useLookupValues('ai_models', 'status'));
+  const businessCriticalityOptions = toOptions(useLookupValues('ai_models', 'business_criticality'));
+  const emergencyTierOptions = toOptions(useLookupValues('ai_models', 'emergency_tier'));
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [model, setModel] = useState<AiModelRecord | null>(null);
@@ -1064,14 +1045,14 @@ const AiModelViewPage: React.FC = () => {
           <Field label="Business Functions">{text('business_functions')}</Field>
           <Field label="Vendor or In-house">{select('vendor_or_inhouse', vendorOptions)}</Field>
           <Field label="Provider">{select('provider', providerOptions)}</Field>
-          <Field label="Status">{select('status', STATUS_OPTIONS)}</Field>
+          <Field label="Status">{select('status', statusOptions)}</Field>
           <Field label="Parent Model">{parentField()}</Field>
           <Field label="Version Number">{text('version_number')}</Field>
         </Section>
 
         <Section title="Agent Risk Exposure">
-          <Field label="Business Criticality">{select('business_criticality', MODEL_BUSINESS_CRITICALITY_OPTIONS)}</Field>
-          <Field label="Emergency Tier">{select('emergency_tier', MODEL_EMERGENCY_TIER_OPTIONS)}</Field>
+          <Field label="Business Criticality">{select('business_criticality', businessCriticalityOptions)}</Field>
+          <Field label="Emergency Tier">{select('emergency_tier', emergencyTierOptions)}</Field>
           <Field label="ARE" hint={MODEL_ARE_HINTS.agent_risk_exposure}>
             <p className={`${valueBoxCls}`}>{String(model?.agent_risk_exposure ?? 0)}</p>
           </Field>

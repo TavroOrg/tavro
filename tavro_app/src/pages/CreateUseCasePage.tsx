@@ -8,14 +8,6 @@ import { aiModelApi } from '../services/aiModelApi';
 import { useBlueprint } from '../context/BlueprintContext';
 import { toUserMessage } from '../utils/errorUtils';
 
-const PRIORITIES = [
-    '1 - Critical',
-    '2 - High',
-    '3 - Moderate',
-    '4 - Low',
-    '5 - Planning',
-];
-
 const CreateUseCasePage: React.FC = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -34,7 +26,7 @@ const CreateUseCasePage: React.FC = () => {
         function: '',
         problem_statement: '',
         expected_benefits: '',
-        priority: '3 - Moderate',
+        priority: '',
         status: '',
     });
     const [saving, setSaving] = useState(false);
@@ -42,6 +34,7 @@ const CreateUseCasePage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
     const statuses = useLookupValues('ai_use_cases', 'status');
+    const priorities = useLookupValues('ai_use_cases', 'priority');
 
     useEffect(() => {
         const def = statuses.find(v => v.is_default);
@@ -49,7 +42,14 @@ const CreateUseCasePage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [statuses]);
 
+    useEffect(() => {
+        const def = priorities.find(v => v.is_default);
+        if (def) set('priority', def.value);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [priorities]);
+
     const statusOptions = statuses.map(s => ({ value: s.value, label: s.label }));
+    const priorityOptions = priorities.map(p => ({ value: p.value, label: p.label }));
 
     const set = (field: string, value: string) =>
         setForm(prev => ({ ...prev, [field]: value }));
@@ -269,9 +269,13 @@ const CreateUseCasePage: React.FC = () => {
                             </div>
                             <div>
                                 <label className={labelCls}>Priority</label>
-                                <select value={form.priority} onChange={e => set('priority', e.target.value)} className={selectCls}>
-                                    {PRIORITIES.map(p => <option key={p}>{p}</option>)}
-                                </select>
+                                {priorityOptions.length ? (
+                                    <select value={form.priority} onChange={e => set('priority', e.target.value)} className={selectCls}>
+                                        {priorityOptions.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                                    </select>
+                                ) : (
+                                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No priority options configured</div>
+                                )}
                             </div>
                         </div>
 
