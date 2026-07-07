@@ -46,6 +46,59 @@ def _extract_json(raw: str) -> str:
     return raw.strip()
 
 
+def _sanitize_json_control_chars(text: str) -> str:
+    """
+    Make LLM-generated text safe for json.loads() by escaping bare control
+    characters (newlines, tabs, etc.) that appear *inside* JSON string
+    literals. Models frequently emit literal newlines/tabs within long
+    "summary" values, which is invalid per the JSON spec unless escaped —
+    this is the most common cause of json.JSONDecodeError on research output.
+
+    Control characters outside of strings (formatting whitespace between
+    tokens) are left untouched, and existing backslash escapes are preserved,
+    since a blind regex strip/replace over the whole text can't distinguish
+    "control char inside a string" from "formatting whitespace."
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                out.append(ch)
+                escaped = False
+                continue
+            if ch == "\\":
+                out.append(ch)
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = False
+                out.append(ch)
+                continue
+            code = ord(ch)
+            if code < 0x20:
+                if ch == "\n":
+                    out.append("\\n")
+                elif ch == "\r":
+                    out.append("\\r")
+                elif ch == "\t":
+                    out.append("\\t")
+                elif code == 0x08:
+                    out.append("\\b")
+                elif code == 0x0c:
+                    out.append("\\f")
+                else:
+                    out.append(f"\\u{code:04x}")
+                continue
+            out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return "".join(out)
+
+
 async def _call_anthropic(
     api_key:    str,
     messages:   list[dict],

@@ -19,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.routers.agents import _resolve_agent_llm
-from api.llm_utils import _call_anthropic, _call_openai, _collect_text, _extract_json
+from api.llm_utils import (
+    _call_anthropic, _call_openai, _collect_text, _extract_json,
+    _sanitize_json_control_chars,
+)
 
 router = APIRouter()
 RISK_MANAGEMENT = os.getenv("RISK_MANAGEMENT_DB_NAME", "risk_management")
@@ -1022,7 +1025,7 @@ Return ONLY the JSON object with the "description" field."""
         )
 
     raw = _collect_text(data).strip()
-    parsed = json.loads(_extract_json(raw))
+    parsed = json.loads(_sanitize_json_control_chars(_extract_json(raw)))
     return str(parsed.get("description", "")).strip()
 
 

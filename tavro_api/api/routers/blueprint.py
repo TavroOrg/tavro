@@ -24,6 +24,7 @@ from api.templates import INDUSTRY_TEMPLATES
 from api.llm_utils import (
     ANTHROPIC_MODEL, OPENAI_MODEL, RESEARCH_MAX_OUTPUT_TOKENS,
     _call_anthropic, _call_openai, _collect_text, _extract_json,
+    _sanitize_json_control_chars,
 )
 
 router = APIRouter()
@@ -158,11 +159,68 @@ def _collect_tool_results(data: dict) -> list[dict]:
     ]
 
 
+def _find_latest_filing(recent: dict, forms: tuple[str, ...], cik_int: int) -> dict | None:
+    """
+    Scan a submissions 'filings.recent' block for the first (most recent) filing
+    whose form matches one of `forms` (e.g. ("10-K", "20-F") or ("10-Q",)).
+    Returns {form, doc_url, filed_date, period} or None if not found.
+    """
+    for form, acc, doc, filed, period in zip(
+        recent.get("form",            []),
+        recent.get("accessionNumber", []),
+        recent.get("primaryDocument", []),
+        recent.get("filingDate",      []),
+        recent.get("reportDate",      []),
+    ):
+        if form in forms and doc:
+            acc_clean = acc.replace("-", "")
+            return {
+                "form":       form,
+                "doc_url":    (
+                    f"https://www.sec.gov/Archives/edgar/data/"
+                    f"{cik_int}/{acc_clean}/{doc}"
+                ),
+                "filed_date": filed,
+                "period":     period,
+            }
+    return None
+
+
+def _apply_submissions_metadata(result: dict, subs: dict, cik_int: int) -> None:
+    """
+    Shared parsing of the SEC submissions JSON: entity metadata plus the latest
+    annual report (10-K, or 20-F for foreign private issuers) and the latest
+    10-Q quarterly report.
+    """
+    result["sic_description"]        = subs.get("sicDescription", "")
+    result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
+    result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
+    biz = subs.get("addresses", {}).get("business", {})
+    result["hq"] = f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
+
+    recent = subs.get("filings", {}).get("recent", {})
+
+    annual = _find_latest_filing(recent, ("10-K", "20-F"), cik_int)
+    if annual:
+        result["annual_report_form"] = annual["form"]  # "10-K" or "20-F" (foreign private issuer)
+        result["doc_url"]            = annual["doc_url"]
+        result["latest_10k_date"]    = result.get("latest_10k_date") or annual["filed_date"]
+        result["latest_10k_period"]  = result.get("latest_10k_period") or annual["period"]
+
+    quarterly = _find_latest_filing(recent, ("10-Q",), cik_int)
+    if quarterly:
+        result["quarterly_report_form"] = quarterly["form"]
+        result["quarterly_doc_url"]     = quarterly["doc_url"]
+        result["quarterly_filed_date"]  = quarterly["filed_date"]
+        result["quarterly_period"]      = quarterly["period"]
+
+
 async def _fetch_sec_filing_info(ticker: str) -> dict:
     """
     Look up a public company on SEC EDGAR by ticker symbol.
-    Returns structured metadata + the direct URL of the latest 10-K document
-    so the AI can fetch it during web-search turns.
+    Returns structured metadata + the direct URLs of the latest annual report
+    (10-K, or 20-F for a foreign private issuer) and the latest 10-Q quarterly
+    report so the AI can fetch them during web-search turns.
 
     SEC EDGAR requires a User-Agent header identifying the caller.
     Docs: https://www.sec.gov/developer
@@ -173,9 +231,9 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
         async with httpx.AsyncClient(
             timeout=25.0, headers=headers, follow_redirects=True
         ) as client:
-            # ── Step 1: Search EDGAR for the ticker's 10-K filings ───────────
+            # ── Step 1: Search EDGAR for the ticker's annual-report filings ──
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{ticker}"', "forms": "10-K", "dateRange": "custom", "startdt": "2021-01-01"}
+            params1 = {"q": f'"{ticker}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": "2021-01-01"}
             _logger.debug("[SEC/ticker] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/ticker] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -211,37 +269,19 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
                 ),
             }
 
-            # ── Step 2: Company submissions → richer metadata + doc URL ──────
+            # ── Step 2: Company submissions → richer metadata + doc URLs ────
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
             _logger.debug("[SEC/ticker] GET %s", url2)
             subs_resp = await client.get(url2)
             _logger.debug("[SEC/ticker] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
-                result["sic_description"]        = subs.get("sicDescription", "")
-                result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
-                result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
-                biz = subs.get("addresses", {}).get("business", {})
-                result["hq"] = (
-                    f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
+                _apply_submissions_metadata(result, subs, cik_int)
+                _logger.debug(
+                    "[SEC/ticker] step2 parsed: sic=%r hq=%r fy_end=%r annual_form=%r 10-Q=%r",
+                    result.get('sic_description'), result.get('hq'), result.get('fiscal_year_end'),
+                    result.get('annual_report_form'), result.get('quarterly_doc_url'),
                 )
-                _logger.debug("[SEC/ticker] step2 parsed: sic=%r hq=%r fy_end=%r",
-                              result['sic_description'], result['hq'], result['fiscal_year_end'])
-
-                recent = subs.get("filings", {}).get("recent", {})
-                for form, acc, doc in zip(
-                    recent.get("form",            []),
-                    recent.get("accessionNumber", []),
-                    recent.get("primaryDocument", []),
-                ):
-                    if form == "10-K" and doc:
-                        acc_clean = acc.replace("-", "")
-                        result["doc_url"] = (
-                            f"https://www.sec.gov/Archives/edgar/data/"
-                            f"{cik_int}/{acc_clean}/{doc}"
-                        )
-                        _logger.debug("[SEC/ticker] 10-K doc_url=%s", result['doc_url'])
-                        break
 
     except Exception as exc:
         _logger.error("[SEC/ticker] ERROR — %s: %s", type(exc).__name__, exc)
@@ -262,9 +302,9 @@ async def _search_sec_by_name(company_name: str) -> dict:
         async with httpx.AsyncClient(
             timeout=20.0, headers=headers, follow_redirects=True
         ) as client:
-            # ── Step 1: Full-text search for recent 10-K filings ─────────────
+            # ── Step 1: Full-text search for recent annual-report filings ────
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{company_name}"', "forms": "10-K", "dateRange": "custom", "startdt": "2022-01-01"}
+            params1 = {"q": f'"{company_name}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": "2022-01-01"}
             _logger.debug("[SEC/name] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/name] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -300,40 +340,22 @@ async def _search_sec_by_name(company_name: str) -> dict:
                 ),
             }
 
-            # ── Step 2: Submissions API → richer metadata + ticker + doc URL ─
+            # ── Step 2: Submissions API → richer metadata + ticker + doc URLs ─
             url2 = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
             _logger.debug("[SEC/name] GET %s", url2)
             subs_resp = await client.get(url2)
             _logger.debug("[SEC/name] step2 status=%s body_len=%d", subs_resp.status_code, len(subs_resp.text))
             if subs_resp.status_code == 200:
                 subs = subs_resp.json()
-                result["sic_description"]        = subs.get("sicDescription", "")
-                result["state_of_incorporation"] = subs.get("stateOfIncorporationDescription", "")
-                result["fiscal_year_end"]        = subs.get("fiscalYearEnd", "")
-                biz = subs.get("addresses", {}).get("business", {})
-                result["hq"] = (
-                    f"{biz.get('city','')}, {biz.get('stateOrCountry','')}".strip(", ")
-                )
+                _apply_submissions_metadata(result, subs, cik_int)
                 tickers = subs.get("tickers", [])
                 if tickers:
                     result["ticker"] = tickers[0]
-                _logger.debug("[SEC/name] step2 parsed: sic=%r hq=%r tickers=%s",
-                              result['sic_description'], result['hq'], tickers)
-
-                recent = subs.get("filings", {}).get("recent", {})
-                for form, acc, doc in zip(
-                    recent.get("form",            []),
-                    recent.get("accessionNumber", []),
-                    recent.get("primaryDocument", []),
-                ):
-                    if form == "10-K" and doc:
-                        acc_clean = acc.replace("-", "")
-                        result["doc_url"] = (
-                            f"https://www.sec.gov/Archives/edgar/data/"
-                            f"{cik_int}/{acc_clean}/{doc}"
-                        )
-                        _logger.debug("[SEC/name] 10-K doc_url=%s", result['doc_url'])
-                        break
+                _logger.debug(
+                    "[SEC/name] step2 parsed: sic=%r hq=%r tickers=%s annual_form=%r 10-Q=%r",
+                    result.get('sic_description'), result.get('hq'), tickers,
+                    result.get('annual_report_form'), result.get('quarterly_doc_url'),
+                )
 
     except Exception as exc:
         _logger.error("[SEC/name] ERROR — %s: %s", type(exc).__name__, exc)
@@ -518,6 +540,11 @@ Rules:
 - Use qualitative descriptions and industry-typical ranges where appropriate
 - Summaries: 2-3 sentences maximum, plain text, no bullet points, no line breaks inside a summary
 - Tags: lowercase, hyphen-separated, max 5 per node
+- If this is a private bank or depository institution, add a "finance" node noting that
+  regulatory financial filings — the Call Report (Consolidated Reports of Condition and
+  Income), filed quarterly with the FFIEC — may be publicly available via the FFIEC Central
+  Data Repository (https://cdr.ffiec.gov/public/ManageFacsimiles.aspx), and should be treated
+  as the primary regulatory financial source in place of SEC filings.
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
 Start your response with { and end with }."""
 
@@ -525,9 +552,16 @@ Start your response with { and end with }."""
 PUBLIC_RESEARCH_SYSTEM = """You are a business analyst AI helping populate a Company Blueprint
 for an enterprise AI governance platform called Tavro.
 
-This is a PUBLICLY LISTED company. You MUST base your research on official SEC filings,
-specifically the company's most recent 10-K annual report on SEC EDGAR. Do not rely on
-general knowledge — retrieve the actual filing from the URL(s) provided in the prompt.
+This is a PUBLICLY LISTED company. You MUST base your research on official filings and investor
+communications — do not rely on general knowledge. Retrieve the actual documents from the
+URL(s) provided in the prompt, or search the web for them, covering:
+
+1. Most recently completed fiscal year — the Annual Report and Form 10-K (U.S. issuers) or
+   Form 20-F (foreign private issuers) on SEC EDGAR.
+2. Most recently completed fiscal quarter — the Form 10-Q, the quarterly earnings press
+   release, and the earnings call transcript.
+3. Investor presentations — the most recent investor presentation deck and any Capital
+   Markets Day / Investor Day presentation and related materials.
 
 Return ONLY a JSON object (no prose, no markdown fences, no explanation):
 
@@ -542,24 +576,42 @@ Return ONLY a JSON object (no prose, no markdown fences, no explanation):
       "sensitive": false
     }
   ],
-  "sources": ["10-K FY2024 (SEC EDGAR)", "DEF 14A 2024"],
-  "notice": "One sentence noting this is sourced from SEC EDGAR filings."
+  "sources": ["10-K FY2024 (SEC EDGAR)", "10-Q Q3 FY2024", "Q3 FY2024 Earnings Call Transcript", "Investor Presentation Sept 2024", "DEF 14A 2024"],
+  "notice": "One sentence noting this is sourced from SEC EDGAR filings and investor communications."
 }
 
-Categories to include (draw directly from the 10-K):
-- "profile": exactly 1 node — legal name, state of incorporation, HQ, employee count,
-  fiscal year-end, principal markets (from Item 1 Business section)
-- "strategy": 3-5 nodes — each node is one major strategic priority stated in the
-  10-K (Item 1 Business, Item 7 MD&A, or earnings communications)
+Categories to include (draw from the sources listed above):
+- "profile": exactly 1 node — legal name, state/country of incorporation, HQ, employee count,
+  fiscal year-end, principal markets (from the Annual Report/10-K/20-F Item 1 Business section)
+- "strategy": 3-5 nodes — each node is one major strategic priority stated in the Annual
+  Report/10-K/20-F (Item 1 Business, Item 7 MD&A), the most recent earnings call transcript,
+  or an investor/Capital Markets Day presentation
 - "organisation": 3-6 nodes — each node is one reportable business segment or major
-  division as disclosed in the 10-K segment footnotes
-- "finance": 3-5 nodes — draw from Item 8 Financial Statements and Item 7 MD&A:
-  annual revenue, net income / EPS, key balance sheet metrics (total assets, long-term
-  debt), capital allocation (dividends, buybacks), and any significant financial trends
+  division as disclosed in the Annual Report/10-K/20-F segment footnotes
+- "finance": 4-7 nodes — MUST include at least one node from each of the two mandatory
+  groups below, plus optional supporting nodes:
+    1. MANDATORY — previous fiscal year (the most recently completed fiscal year, whatever
+       that year actually is for this company): at least 1 node from the Annual Report/10-K/20-F
+       (Item 8 Financial Statements, Item 7 MD&A) covering annual revenue, net income/EPS, key
+       balance sheet metrics (total assets, long-term debt), capital allocation (dividends,
+       buybacks), and significant financial trends for that fiscal year.
+    2. MANDATORY — latest quarter (the most recently completed fiscal quarter, whatever quarter
+       that actually is — it may already fall within the new fiscal year): at least 1 node from
+       the Form 10-Q, quarterly earnings report, and earnings call transcript covering quarterly
+       revenue/EPS, sequential and year-over-year performance, management commentary, and any
+       updated guidance.
+    3. Optional — forward-looking or segment detail from investor presentations / Capital
+       Markets Day materials not already captured above.
+  Never invent or assume which year/quarter is "current" — always derive the actual fiscal
+  year-end and quarter-end dates from the source documents provided or retrieved.
+  If the company is a bank/financial institution, note any regulatory financial filings
+  referenced (e.g. FR Y-9C, Call Report) in addition to SEC filings.
 
 Rules:
-- Base summaries on the actual 10-K text; cite the filing year in each summary
-- Use specific numbers (e.g. "$5.2B revenue FY2023") where disclosed
+- Base summaries on the actual filing/transcript/presentation text; cite the fiscal period
+  (year and quarter) in each summary
+- Treat "Form 20-F" as the foreign-private-issuer equivalent of the 10-K annual report
+- Use specific numbers (e.g. "$5.2B revenue FY2023", "$1.3B revenue Q3 FY2024") where disclosed
 - Summaries: 2-5 sentences, plain text, no bullet points
 - Tags: lowercase, hyphen-separated, max 8 per node
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
@@ -612,6 +664,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 return
 
             is_public = body.is_public or bool(body.ticker)
+            is_bank   = "bank" in body.industry.lower()
 
             # ── Request banner ───────────────────────────────────────────────
             log("=" * 60)
@@ -620,6 +673,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             log(f"  industry     : {body.industry!r}")
             log(f"  ticker       : {body.ticker!r}")
             log(f"  is_public    : {is_public}  (body.is_public={body.is_public}, ticker={'yes' if body.ticker else 'no'})")
+            log(f"  is_bank      : {is_bank}")
             log(f"  provider     : {provider}")
             log(f"  max_tokens   : {RESEARCH_MAX_OUTPUT_TOKENS}")
             log(f"  max_turns    : {RESEARCH_MAX_SEARCH_TURNS}")
@@ -656,36 +710,53 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
 
             # ── Build prompts ────────────────────────────────────────────────
             if is_public:
+                annual_form = sec_ctx.get("annual_report_form", "10-K")
                 sec_block = ""
                 if sec_ctx:
                     sec_block = (
                         f"\nSEC EDGAR Data (use these official sources — do NOT skip them):\n"
-                        f"  Registered name : {sec_ctx.get('entity_name', body.company_name)}\n"
-                        f"  CIK             : {sec_ctx.get('cik', 'unknown')}\n"
-                        f"  HQ              : {sec_ctx.get('hq', '')}\n"
-                        f"  SIC description : {sec_ctx.get('sic_description', '')}\n"
-                        f"  State of incorp : {sec_ctx.get('state_of_incorporation', '')}\n"
-                        f"  Fiscal year end : {sec_ctx.get('fiscal_year_end', '')}\n"
-                        f"  Latest 10-K     : filed {sec_ctx.get('latest_10k_date', '')} "
+                        f"  Registered name  : {sec_ctx.get('entity_name', body.company_name)}\n"
+                        f"  CIK              : {sec_ctx.get('cik', 'unknown')}\n"
+                        f"  HQ               : {sec_ctx.get('hq', '')}\n"
+                        f"  SIC description  : {sec_ctx.get('sic_description', '')}\n"
+                        f"  State of incorp  : {sec_ctx.get('state_of_incorporation', '')}\n"
+                        f"  Fiscal year end  : {sec_ctx.get('fiscal_year_end', '')}\n"
+                        f"  Annual report    : {annual_form} filed {sec_ctx.get('latest_10k_date', '')} "
                         f"(period ending {sec_ctx.get('latest_10k_period', '')})\n"
-                        f"  10-K document   : {sec_ctx.get('doc_url', '')}\n"
-                        f"  EDGAR filings   : {sec_ctx.get('filing_browser_url', '')}\n"
+                        f"  Annual doc URL   : {sec_ctx.get('doc_url', '')}\n"
+                        f"  Latest 10-Q      : filed {sec_ctx.get('quarterly_filed_date', 'unknown')} "
+                        f"(period ending {sec_ctx.get('quarterly_period', 'unknown')})\n"
+                        f"  10-Q document URL: {sec_ctx.get('quarterly_doc_url', 'not found — search the web for the most recent 10-Q')}\n"
+                        f"  EDGAR filings    : {sec_ctx.get('filing_browser_url', '')}\n"
                     )
                     instruction = (
-                        "Fetch the 10-K document URL above and read Item 1 (Business), "
-                        "Item 7 (MD&A), and Item 8 (Financial Statements). "
-                        "Base your nodes on facts from that document."
+                        f"Fetch the {annual_form} document URL above and read the Business, "
+                        "MD&A, and Financial Statements sections for the most recently completed "
+                        "fiscal year. Then fetch the 10-Q document URL above (if present) for the "
+                        "most recently completed fiscal quarter. Also search the web for the most "
+                        "recent quarterly earnings press release, earnings call transcript, and any "
+                        "investor presentation deck or Capital Markets Day / Investor Day materials. "
+                        "Base your nodes on facts from these documents."
                     )
                 else:
                     instruction = (
                         f"Search SEC EDGAR (https://www.sec.gov/cgi-bin/browse-edgar?"
                         f"action=getcompany&company=&CIK={body.ticker}&type=10-K&dateb="
-                        f"&owner=include&count=5) for the latest 10-K filing. "
-                        "Base your nodes on the actual 10-K content."
+                        f"&owner=include&count=5) for the latest annual report (10-K or 20-F) and "
+                        "the latest 10-Q. Also search the web for the most recent quarterly earnings "
+                        "report, earnings call transcript, and any investor presentation deck or "
+                        "Capital Markets Day materials. Base your nodes on the actual filing content."
+                    )
+                if is_bank:
+                    instruction += (
+                        " This is a bank/financial institution — also search for any regulatory "
+                        "financial filings referenced (e.g. FR Y-9C, FFIEC Call Report) alongside "
+                        "the SEC filings."
                     )
                 user_prompt = (
-                    f"Research this PUBLIC company using its SEC EDGAR 10-K filing "
-                    f"and return the Blueprint JSON:\n\n"
+                    f"Research this PUBLIC company using its SEC EDGAR {annual_form} filing, "
+                    f"most recent 10-Q, and investor communications, then return the Blueprint "
+                    f"JSON:\n\n"
                     f"Company : {body.company_name}\n"
                     f"Ticker  : {body.ticker}\n"
                     f"Industry: {body.industry}\n"
@@ -695,10 +766,21 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 )
                 system_prompt = PUBLIC_RESEARCH_SYSTEM
             else:
+                bank_note = ""
+                if is_bank:
+                    bank_note = (
+                        "\nThis is a PRIVATE bank/depository institution. It likely does not file "
+                        "with the SEC, but as an FDIC/Federal Reserve-regulated institution it may "
+                        "file a Call Report (Consolidated Reports of Condition and Income) with the "
+                        "FFIEC. Reference the FFIEC Central Data Repository "
+                        "(https://cdr.ffiec.gov/public/ManageFacsimiles.aspx) as the source for this "
+                        "regulatory financial filing in the finance dimension, where applicable.\n"
+                    )
                 user_prompt = (
                     f"Generate baseline Blueprint dimensions for this PRIVATE company:\n\n"
                     f"Company : {body.company_name}\n"
-                    f"Industry: {body.industry}\n\n"
+                    f"Industry: {body.industry}\n"
+                    f"{bank_note}\n"
                     f"Do NOT use web search. Use your knowledge of this industry to generate "
                     f"plausible Profile, Strategy, Organisation, and Finance dimensions. "
                     f"Return ONLY the JSON object — no other text."
@@ -856,9 +938,9 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     merged = raw_text.rstrip() + continuation
                     extracted = _extract_json(merged)
 
-            # Strip invalid control characters (raw newlines/tabs inside string values)
-            # that Claude occasionally emits in long summaries, causing JSONDecodeError.
-            sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', extracted)
+            # Escape raw control characters (newlines/tabs) inside string values —
+            # models occasionally emit these in long summaries, causing JSONDecodeError.
+            sanitized = _sanitize_json_control_chars(extracted)
 
             try:
                 parsed = json.loads(sanitized)
@@ -1237,7 +1319,7 @@ Return ONLY the JSON object with "summary" and "tags" fields."""
         raw = re.sub(r"\s*```$", "", raw).strip()
 
     try:
-        parsed = json.loads(_extract_json(raw))
+        parsed = json.loads(_sanitize_json_control_chars(_extract_json(raw)))
     except json.JSONDecodeError as e:
         _logger.error("AI response could not be parsed: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail="The AI service returned an unexpected response. Please try again.")
