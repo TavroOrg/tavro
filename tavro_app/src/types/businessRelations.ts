@@ -26,6 +26,18 @@ export interface RelatedAiModelReference {
   status: string | null;
 }
 
+export interface RelatedApplicationReference {
+  business_application_id: string;
+  application_name: string | null;
+  description: string | null;
+}
+
+export interface RelatedBusinessProcessReference {
+  business_process_id: string;
+  process_name: string | null;
+  description: string | null;
+}
+
 export interface BusinessApplicationRecord {
   tenant_id: string | null;
   business_application_id: string;
@@ -69,6 +81,7 @@ export interface BusinessApplicationRecord {
   related_agent_count: number;
   related_use_cases: RelatedUseCaseReference[];
   related_ai_models: RelatedAiModelReference[];
+  related_processes: RelatedBusinessProcessReference[];
 }
 
 export interface BusinessProcessRecord {
@@ -109,6 +122,7 @@ export interface BusinessProcessRecord {
   related_processes: RelatedProcessReference[];
   related_use_cases: RelatedUseCaseReference[];
   related_ai_models: RelatedAiModelReference[];
+  related_applications: RelatedApplicationReference[];
 }
 
 export interface ChildAgentReference {

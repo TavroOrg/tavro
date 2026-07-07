@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, MessageCircle, Settings2, Copy, Download, Check, FileText, Plus, X, Paperclip, AlertCircle } from 'lucide-react';
 import {
-    uploadChatAttachment, extractAttachmentText, formatAttachmentSize, attachmentDownloadUrl,
+    uploadChatAttachment, extractAttachmentText, formatAttachmentSize,
     ACCEPTED_MIME_TYPES, MAX_ATTACHMENT_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE,
 } from '../services/chatAttachmentService';
 import type { AttachmentRef } from '../store/chatSessionStore';
@@ -21,6 +21,8 @@ import { useBlueprint } from '../context/BlueprintContext';
 import { useChatSessions } from '../context/ChatSessionContext';
 import type { StoredMessage } from '../store/chatSessionStore';
 import { useUseCases } from '../context/UseCaseContext';
+import { datahubContextApi } from '../services/datahubContextApi';
+import type { DataHubSearchOptions, DataHubSearchResponse } from '../types/datahubContext';
 
 interface Message {
     id: string;
@@ -32,6 +34,63 @@ interface Message {
     statusPhase?: 'processing' | 'ready';
     agentName?: string;
     attachments?: AttachmentRef[];
+}
+
+function buildDatahubSearchOptions(query: string, companyId?: string): DataHubSearchOptions | null {
+    const text = query.trim();
+    const lower = text.toLowerCase();
+    const mentionsDataAsset = /\b(datahub|dataset|datasets|table|tables|column|columns|schema|schemas|data source|lineage|policycenter|billingcenter|claimcenter|guidewire|underwriting|policy|billing|claims?)\b/i.test(text);
+    const isCreateDataGroundedResource = /\b(create|register|add|set up|update|modify)\b[\s\S]{0,120}\b(agent|ai use case|use case)\b/i.test(text);
+
+    if (!mentionsDataAsset && !isCreateDataGroundedResource) {
+        return null;
+    }
+
+    const options: DataHubSearchOptions = {
+        query: text,
+        companyId,
+        limit: 12,
+    };
+
+    const schemaMatch = lower.match(/\b(?:schema|schemas)\s+([a-z][a-z0-9_]*)\b/) || lower.match(/\b([a-z][a-z0-9_]*)\s+(?:schema|schemas)\b/);
+    if (schemaMatch?.[1]) {
+        options.schema = schemaMatch[1];
+        options.limit = 100;
+    }
+
+    if (/\bpolicy\s*center\b|\bpolicycenter\b/.test(lower)) {
+        options.application = 'PolicyCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (/\bbilling\s*center\b|\bbillingcenter\b/.test(lower)) {
+        options.application = 'BillingCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (/\bclaim\s*center\b|\bclaimcenter\b/.test(lower)) {
+        options.application = 'ClaimCenter';
+        options.vendor = lower.includes('guidewire') ? 'Guidewire' : options.vendor;
+        options.limit = 100;
+    } else if (lower.includes('guidewire')) {
+        options.vendor = 'Guidewire';
+        options.limit = 50;
+    }
+
+    if (/\btable|tables|dataset|datasets|schema|schemas\b/.test(lower)) {
+        options.entityType = 'DATASET';
+    }
+
+    if (options.application || options.schema || options.vendor) {
+        const terms = [
+            options.vendor,
+            options.application,
+            options.schema ? `${options.schema} schema` : undefined,
+            /\btable|tables\b/.test(lower) ? 'tables' : undefined,
+            /\bcolumn|columns\b/.test(lower) ? 'columns' : undefined,
+        ].filter(Boolean);
+        options.query = terms.length ? terms.join(' ') : text;
+    }
+
+    return options;
 }
 
 export interface ChatPanelProps {
@@ -378,18 +437,15 @@ const ChatBubble: React.FC<{ message: Message; onDownloadPDF: (msg: Message) => 
             {isUser && message.attachments && message.attachments.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1 max-w-[85%] justify-end">
                     {message.attachments.map((att, i) => (
-                        <a
+                        <span
                             key={i}
-                            href={attachmentDownloadUrl(att)}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             title={`${att.name} (${formatAttachmentSize(att.size)})`}
-                            className="flex items-center gap-1 text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full hover:bg-blue-200 transition-colors"
+                            className="flex items-center gap-1 text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full"
                         >
                             <Paperclip size={9} />
                             <span className="truncate max-w-[120px]">{att.name}</span>
                             <span className="opacity-60">{formatAttachmentSize(att.size)}</span>
-                        </a>
+                        </span>
                     ))}
                 </div>
             )}
@@ -558,6 +614,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
             }));
         })() : undefined,
     } : null;
+
+    // DataHub RAG search (per-turn, intent-scoped). Uses exact metadata
+    // filters for known schemas/apps/vendors and pgvector for fuzzy questions.
+    const fetchDatahubContext = useCallback(async (query: string): Promise<DataHubSearchResponse | null> => {
+        const options = buildDatahubSearchOptions(query, activeCompany?.id);
+        if (!options) return null;
+
+        try {
+            return await datahubContextApi.searchWithOptions(options);
+        } catch (err) {
+            console.warn('[DataHubContext] search failed:', err);
+            return null;
+        }
+    }, [activeCompany?.id]);
 
     // ── Provider state (per-session) ───────────────────────────────────────────
     const [activeProviderState, setActiveProviderState] = useState<LLMProvider | null>(
@@ -748,8 +818,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
                     // used a direct browser fetch that was cancelled on refresh).
                     // Re-run the request using the persisted conversation history.
                     const currentHistory = buildHistory(latestMessages.current);
+                    const datahubResults = await fetchDatahubContext(userMessage);
+                    const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx, datahubResults);
                     accumulated = await streamTokens(
-                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData })
+                        mcpClient.chat(userMessage, currentHistory, { viewType, viewData, systemPrompt, blueprintData: blueprintCtx })
                     );
                 }
 
@@ -926,7 +998,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
 
         try {
             const exportFormat = detectExportFormat(text);
-            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx);
+            const datahubResults = await fetchDatahubContext(text);
+            const systemPrompt = buildSystemPrompt(viewType, viewData, blueprintCtx, datahubResults);
             // Append a format instruction so the LLM generates content in the
             // requested output format (CSV, JSON, DOCX, PDF, etc.).
             const effectiveSystemPrompt = exportFormat

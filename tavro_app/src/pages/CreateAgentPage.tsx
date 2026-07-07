@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Bot, Loader2, CheckCircle2, AlertCircle, ArrowLeft, RefreshCw, Sparkles} from 'lucide-react';
 import { mcpClient } from '../services/mcpClient';
 import { agentApi } from '../services/agentApi';
+import { businessRelationsApi } from '../services/businessRelationsApi';
+import { useCaseApi } from '../services/useCaseApi';
+import { aiModelApi } from '../services/aiModelApi';
 import { useCatalog } from '../context/CatalogContext';
 import { AgentData, AGENT_TYPES } from '../types/agent';
 import { useBlueprint } from '../context/BlueprintContext';
@@ -17,8 +20,15 @@ type AgentForm = {
 
 const CreateAgentPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { refresh, upsertAgent } = useCatalog();
   const { activeCompany } = useBlueprint();
+
+  const linkApplicationId = (searchParams.get('linkApplicationId') || '').trim();
+  const linkProcessId = (searchParams.get('linkProcessId') || '').trim();
+  const linkIntegrationId = (searchParams.get('linkIntegrationId') || '').trim();
+  const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
+  const linkModelId = (searchParams.get('linkModelId') || '').trim();
 
   const [form, setForm] = useState<AgentForm>({
     name: '', description: '', instruction: '',
@@ -135,12 +145,57 @@ const CreateAgentPage: React.FC = () => {
       });
       localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(withoutCurrent));
 
+      if (linkApplicationId) {
+        try {
+          await businessRelationsApi.linkAgentToApplication(createdAgentId, linkApplicationId, activeCompany?.id);
+        } catch (linkErr) {
+          console.warn('Agent created but auto-link to application failed.', linkErr);
+        }
+      } else if (linkProcessId) {
+        try {
+          await businessRelationsApi.linkAgentToProcess(createdAgentId, linkProcessId, activeCompany?.id);
+        } catch (linkErr) {
+          console.warn('Agent created but auto-link to process failed.', linkErr);
+        }
+      } else if (linkIntegrationId) {
+        try {
+          await businessRelationsApi.linkAgentToIntegration(createdAgentId, linkIntegrationId, activeCompany?.id);
+        } catch (linkErr) {
+          console.warn('Agent created but auto-link to integration failed.', linkErr);
+        }
+      } else if (linkUseCaseId) {
+        try {
+          await useCaseApi.linkAgent(linkUseCaseId, createdAgentId);
+        } catch (linkErr) {
+          console.warn('Agent created but auto-link to AI use case failed.', linkErr);
+        }
+      } else if (linkModelId) {
+        try {
+          await aiModelApi.linkAgent(linkModelId, createdAgentId, activeCompany?.id);
+        } catch (linkErr) {
+          console.warn('Agent created but auto-link to AI model failed.', linkErr);
+        }
+      }
+
+      const redirectTarget = linkApplicationId
+        ? `/applications/${encodeURIComponent(linkApplicationId)}`
+        : linkProcessId
+        ? `/processes/${encodeURIComponent(linkProcessId)}`
+        : linkIntegrationId
+        ? `/integrations/${encodeURIComponent(linkIntegrationId)}`
+        : linkUseCaseId
+        ? `/use-case/${encodeURIComponent(linkUseCaseId)}`
+        : linkModelId
+        ? `/ai-models/${encodeURIComponent(linkModelId)}`
+        : '/catalog';
+
       setSuccess(true);
       window.dispatchEvent(new CustomEvent('tavro_notice', {
         detail: { message: 'Agent created successfully. Risk assessment is running in the background.', variant: 'success' },
       }));
       refresh();
-      redirectTimerRef.current = window.setTimeout(() => navigate('/catalog'), 1200);
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+      redirectTimerRef.current = window.setTimeout(() => navigate(redirectTarget), 1200);
     } catch (err: any) {
       setError(toUserMessage(err));
     } finally {
@@ -154,6 +209,18 @@ const CreateAgentPage: React.FC = () => {
     };
   }, []);
 
+  const cancelTarget = linkApplicationId
+    ? `/applications/${encodeURIComponent(linkApplicationId)}`
+    : linkProcessId
+    ? `/processes/${encodeURIComponent(linkProcessId)}`
+    : linkIntegrationId
+    ? `/integrations/${encodeURIComponent(linkIntegrationId)}`
+    : linkUseCaseId
+    ? `/use-case/${encodeURIComponent(linkUseCaseId)}`
+    : linkModelId
+    ? `/ai-models/${encodeURIComponent(linkModelId)}`
+    : '/catalog';
+
   const inputCls =
     'w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-400/30 dark:focus:ring-blue-700/40 focus:border-blue-400 dark:focus:border-blue-500 transition-all bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500';
   const labelCls =
@@ -163,7 +230,7 @@ const CreateAgentPage: React.FC = () => {
     <div className="flex flex-col gap-6 w-full animate-fade-in max-w-3xl mx-auto pb-12">
       <div className="flex items-center justify-between">
         <button
-          onClick={() => navigate('/catalog')}
+          onClick={() => navigate(cancelTarget)}
           className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-all bg-transparent border-none cursor-pointer"
         >
           <ArrowLeft size={16} /> Back to Agents
@@ -320,7 +387,7 @@ const CreateAgentPage: React.FC = () => {
           <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
             <button
               type="button"
-              onClick={() => navigate('/catalog')}
+              onClick={() => navigate(cancelTarget)}
               className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
             >
               Cancel

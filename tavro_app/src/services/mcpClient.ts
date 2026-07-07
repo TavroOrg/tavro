@@ -1316,6 +1316,15 @@ Every generated value must be coherent with the blueprint. Do not fabricate data
         return await this.callTool('create_risk_assessment', { agent_id });
     }
 
+    // Escape hatch for enterprise-only/optional MCP tools outside the OSS core
+    // tool set (registered by mcp_server only when BUILD_MODE=enterprise).
+    // Enterprise code should wrap this in its own typed, named function
+    // (e.g. enterprise/tavro_app/src/services/complianceMcp.ts) rather than
+    // calling arbitrary tool names inline elsewhere.
+    async callOptionalTool(name: string, args: Record<string, any> = {}): Promise<any> {
+        return await this.callTool(name, args);
+    }
+
     async getExecutiveRiskSummary(): Promise<any[]> {
         const allAgents = await this.getAllAgents();
         const envMap = new Map<string, AgentData[]>();

@@ -1,27 +1,28 @@
-// ── src/services/buildSystemPrompt.ts ────────────────────────────────────────
+﻿// Ã¢â€â‚¬Ã¢â€â‚¬ src/services/buildSystemPrompt.ts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 // Assembles a context-aware system prompt for the chat LLM.
 // Called by mcpClient.chat() before each API call.
 // The prompt changes based on what the user is currently viewing.
 
 import type { ViewType, ViewData, BlueprintContext, AgentDetailContext, UseCaseDetailContext } from '../context/ChatContext';
+import type { DataHubSearchResponse } from '../types/datahubContext';
 
-// ── Shared base instructions ──────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Shared base instructions Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-const BASE = `You are Tavro AI Assistant — an intelligent assistant embedded in Tavro,
+const BASE = `You are Tavro AI Assistant - an intelligent assistant embedded in Tavro,
 an enterprise AI governance and operations platform.
 You are concise, specific, and grounded in the context provided.
 Never make up data. If you don't know something, say so and suggest where to find it.
 Format responses clearly using bullet points and bold text where helpful.`;
 
-// ── Context-specific instructions ─────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Context-specific instructions Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function blueprintSection(data: BlueprintContext): string {
   const dimList = data.dimensions
-    .map(d => `  • [${d.category}] ${d.label}${d.summary ? ': ' + d.summary : ''}`)
+    .map(d => `  - [${d.category}] ${d.label}${d.summary ? ': ' + d.summary : ''}`)
     .join('\n');
 
   const edgeList = data.edges?.length
-    ? data.edges.map(e => `  • ${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`).join('\n')
+    ? data.edges.map(e => `  - ${e.sourceLabel} -[${e.relType}]-> ${e.targetLabel}`).join('\n')
     : '  No relationships defined yet.';
 
   const activeSection = data.activeDimension
@@ -108,7 +109,7 @@ function catalogSection(viewType: 'agent_catalog' | 'use_case_catalog'): string 
 - Answer questions about use case status and progress`;
 }
 
-// ── Blueprint context block (appended to non-blueprint views) ─────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Blueprint context block (appended to non-blueprint views) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 // When a user is NOT in blueprint mode, we still want to inject a summary
 // of the company context if it's available in the session.
 
@@ -117,7 +118,7 @@ function compactBlueprintBlock(data: BlueprintContext): string {
     .map(d => `${d.category}: ${d.label}`)
     .join(', ');
   const topEdges = data.edges?.slice(0, 8)
-    .map(e => `${e.sourceLabel} —[${e.relType}]→ ${e.targetLabel}`)
+    .map(e => `${e.sourceLabel} -[${e.relType}]-> ${e.targetLabel}`)
     .join(', ');
   return `
 ## Company Blueprint (background context)
@@ -125,15 +126,37 @@ Company: ${data.companyName} | Industry: ${data.industry} | Region: ${data.regio
 Key dimensions: ${topDims || 'none defined yet'}${topEdges ? `\nKey relationships: ${topEdges}` : ''}`;
 }
 
-// ── Main export ───────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ DataHub PGVector search results (per-turn, query-scoped) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// Built from a direct semantic search against twin.datahub_context run for
+// THIS turn's user message - never the full catalog, never a capped snapshot.
+// Omitted entirely when the search found nothing relevant to the query.
+
+function relevantDataHubBlock(data: DataHubSearchResponse): string {
+  if (!data.results.length) return '';
+  const entryList = data.results
+    .map(r => `  - [${r.entity_type ?? 'dataset'}] ${r.label}${r.schema ? ` (schema: ${r.schema})` : ''}${r.vendor ? ` - vendor: ${r.vendor}` : ''}${r.application ? ` - application: ${r.application}` : ''}\n    ${r.chunk_text.replace(/\n/g, '\n    ')}`)
+    .join('\n');
+  const mode = data.mode === 'exact' ? 'exact metadata filter' : 'semantic search';
+  const total = data.total && data.total !== data.count ? ` Showing ${data.count} of ${data.total} matching assets.` : '';
+
+  return `
+## DataHub Metadata - relevant to this message (${mode}, query: "${data.query}")
+The following DataHub assets were retrieved live from twin.datahub_context for this message.${total} If the user asks to show or list these assets, answer from the rows below directly. Do not say PolicyCenter/DataHub metadata is unavailable when rows are listed here. Ground any statement about tables, columns, schemas, vendors, or applications strictly in these entries. Never invent asset names beyond what is listed here. If what the user needs is not here, say the current DataHub context does not show it.
+${entryList}`;
+}
+
+// Ã¢â€â‚¬Ã¢â€â‚¬ Main export Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 export function buildSystemPrompt(
   viewType: ViewType,
   viewData: ViewData,
   /** Pass the blueprint context from BlueprintContext if available */
   blueprintCtx?: BlueprintContext | null,
+  /** Results of a per-turn DataHub semantic search scoped to the current user message */
+  datahubResults?: DataHubSearchResponse | null,
 ): string {
   const parts: string[] = [BASE];
+  if (datahubResults) parts.push(relevantDataHubBlock(datahubResults));
 
   switch (viewType) {
     case 'blueprint':
@@ -173,7 +196,7 @@ risk assessments, and company blueprints.`);
   return parts.join('\n');
 }
 
-// ── Suggested prompts per view ────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Suggested prompts per view Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 export function getSuggestedPrompts(viewType: ViewType, viewData: ViewData): string[] {
   switch (viewType) {
@@ -222,10 +245,10 @@ export function getSuggestedPrompts(viewType: ViewType, viewData: ViewData): str
 
     case 'use_case_catalog':
       return [
-        'Which use cases are highest priority?',
-        'What use cases are in progress?',
-        'Suggest use cases we are missing',
-        'Which use cases have no assigned agents?',
+        'Generate a business case including financial benefits and implementation time',
+        'What are the regulatory implications if we were to roll this out nationally',
+        'Are there any other similar AI use cases in the pipeline?',
+        'What opportunities exist to collaborate with other AI use cases and/or agents?',
       ];
 
     default:
@@ -238,24 +261,24 @@ export function getSuggestedPrompts(viewType: ViewType, viewData: ViewData): str
   }
 }
 
-// ── Context badge label ───────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Context badge label Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 // Shown in the chat header so users know what context the chat is grounded in.
 
 export function getContextBadge(viewType: ViewType, viewData: ViewData): string | null {
   switch (viewType) {
     case 'blueprint':
       const bp = viewData as BlueprintContext | null;
-      if (bp?.activeDimension) return `📌 ${bp.activeDimension.label}`;
-      if (bp) return `🏢 ${bp.companyName} Blueprint`;
-      return '🏗 Blueprint';
+      if (bp?.activeDimension) return bp.activeDimension.label;
+      if (bp) return `${bp.companyName} Blueprint`;
+      return 'Blueprint';
     case 'agent_detail':
       const ag = viewData as AgentDetailContext | null;
-      return ag ? `🤖 ${ag.agentName}` : '🤖 Agent';
+      return ag ? ag.agentName : 'Agent';
     case 'use_case_detail':
       const uc = viewData as UseCaseDetailContext | null;
-      return uc ? `💡 ${uc.title}` : '💡 Use Case';
-    case 'agent_catalog':    return '📋 Agent Catalog';
-    case 'use_case_catalog': return '📋 Use Case Catalog';
+      return uc ? uc.title : 'Use Case';
+    case 'agent_catalog':    return 'Agent Catalog';
+    case 'use_case_catalog': return 'Use Case Catalog';
     default:                 return null;
   }
 }

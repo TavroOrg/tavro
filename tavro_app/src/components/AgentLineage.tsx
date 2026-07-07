@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toUserMessage } from '../utils/errorUtils';
 import { AgentData, AgentDataSource, AgentSkill, AgentTool } from '../types/agent';
-import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle, Zap, Search, Loader2, Link2, Unlink2, PlusCircle, X } from 'lucide-react';
+import { Share2, Wrench, Database, ArrowRight, Shield, CheckCircle, AlertTriangle, Zap, Search, Loader2, Unlink2, PlusCircle, Check, ChevronDown } from 'lucide-react';
 import { businessRelationsApi, AgentToolRecord, AgentTableRecord, AgentColumnRecord } from '../services/businessRelationsApi';
 
 interface AgentLineageProps {
@@ -104,10 +104,9 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     useEffect(() => { fetchTools(); }, [fetchTools]);
 
     const linkedTools = allTools.filter(t => t.is_linked && t.tool_name?.trim());
-    const filteredUnlinked = allTools.filter(t => {
-        if (t.is_linked) return false;
+    const filteredCatalogTools = allTools.filter(t => {
         if (!t.tool_name?.trim()) return false;
-        const q = toolSearch.toLowerCase();
+        const q = toolSearch.trim().toLowerCase();
         return !q || t.tool_name?.toLowerCase().includes(q) || t.tool_description?.toLowerCase().includes(q);
     });
 
@@ -161,10 +160,9 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     useEffect(() => { fetchTables(); }, [fetchTables]);
 
     const linkedTables = allTables.filter(t => t.is_linked && t.table_name?.trim());
-    const filteredUnlinkedTables = allTables.filter(t => {
-        if (t.is_linked) return false;
+    const filteredCatalogTables = allTables.filter(t => {
         if (!t.table_name?.trim()) return false;
-        const q = tableSearch.toLowerCase();
+        const q = tableSearch.trim().toLowerCase();
         return !q || t.table_name?.toLowerCase().includes(q);
     });
 
@@ -226,12 +224,30 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
     useEffect(() => { fetchColumns(); }, [fetchColumns]);
 
     const linkedColumns = allColumns.filter(c => c.is_linked && c.column_name?.trim());
-    const filteredUnlinkedColumns = allColumns.filter(c => {
-        if (c.is_linked) return false;
+    const filteredCatalogColumns = allColumns.filter(c => {
         if (!c.column_name?.trim()) return false;
-        const q = columnSearch.toLowerCase();
+        const q = columnSearch.trim().toLowerCase();
         return !q || c.column_name?.toLowerCase().includes(q) || c.table_name?.toLowerCase().includes(q);
     });
+
+    const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+    const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+    const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+    useEffect(() => {
+        if (openDropdown === null) return;
+        const key = openDropdown;
+        const id = window.setTimeout(() => searchInputRefs.current[key]?.focus(), 0);
+        const handlePointerDown = (event: MouseEvent) => {
+            const el = dropdownRefs.current[key];
+            if (el && !el.contains(event.target as Node)) setOpenDropdown(null);
+        };
+        document.addEventListener('mousedown', handlePointerDown);
+        return () => {
+            window.clearTimeout(id);
+            document.removeEventListener('mousedown', handlePointerDown);
+        };
+    }, [openDropdown]);
 
     const handleLinkColumn = async (columnId: string) => {
         if (!resolvedAgentId || actioningColumn) return;
@@ -284,9 +300,78 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
 
                 {/* ── Currently Linked Tools ─────────────────────────────── */}
                 <div className="flex flex-col gap-3">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <Wrench size={13} /> Currently Linked Tools ({linkedTools.length})
-                    </h3>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                            <Wrench size={13} /> Currently Linked Tools ({linkedTools.length})
+                        </h3>
+                        {resolvedAgentId && (
+                            <div className="relative" ref={(el) => { dropdownRefs.current.tools = el; }}>
+                                <button
+                                    onClick={() => setOpenDropdown(openDropdown === 'tools' ? null : 'tools')}
+                                    className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                                    aria-haspopup="listbox"
+                                    aria-expanded={openDropdown === 'tools'}
+                                >
+                                    <PlusCircle size={13} className="text-blue-600" />
+                                    Add Tool
+                                    <ChevronDown size={13} className="text-slate-400" />
+                                </button>
+                                {openDropdown === 'tools' && (
+                                    <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                        <div className="p-2 border-b border-slate-100">
+                                            <div className="relative">
+                                                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input
+                                                    ref={(el) => { searchInputRefs.current.tools = el; }}
+                                                    value={toolSearch}
+                                                    onChange={e => setToolSearch(e.target.value)}
+                                                    onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                                                    placeholder="Search tool..."
+                                                    className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                                            {toolsLoading ? (
+                                                <div className="flex items-center gap-2 text-xs text-slate-400 px-4 py-6 justify-center">
+                                                    <Loader2 size={13} className="animate-spin" /> Loading tools…
+                                                </div>
+                                            ) : filteredCatalogTools.length === 0 ? (
+                                                <div className="px-4 py-6 text-center text-xs text-slate-400">No tools found</div>
+                                            ) : filteredCatalogTools.map(tool => {
+                                                const isActioning = !!actioningTool && actioningTool === tool.effective_tool_id;
+                                                return (
+                                                    <button
+                                                        key={tool.effective_tool_id}
+                                                        type="button"
+                                                        role="option"
+                                                        aria-selected={tool.is_linked}
+                                                        disabled={!!actioningTool}
+                                                        onClick={() => (tool.is_linked ? handleUnlink(tool.effective_tool_id) : handleLink(tool.effective_tool_id))}
+                                                        className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                            tool.is_linked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                                                        }`}
+                                                    >
+                                                        <span className="min-w-0 flex-1">
+                                                            <span className="block font-semibold truncate">{tool.tool_name}</span>
+                                                            {tool.tool_description && (
+                                                                <span className="block text-[11px] text-slate-400 truncate">{tool.tool_description}</span>
+                                                            )}
+                                                        </span>
+                                                        {isActioning ? (
+                                                            <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                                                        ) : tool.is_linked ? (
+                                                            <Check size={15} className="shrink-0 text-blue-600" />
+                                                        ) : null}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     {toolsError && (
                         <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2.5 text-xs">
@@ -331,63 +416,6 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                         </div>
                     )}
                 </div>
-
-                {/* ── Add Tool Relation ─────────────────────────────────── */}
-                {resolvedAgentId && (
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                                <Link2 size={12} /> Add Tool Relation
-                            </p>
-                            <div className="relative w-full max-w-sm">
-                                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="text"
-                                    value={toolSearch}
-                                    onChange={e => setToolSearch(e.target.value)}
-                                    placeholder="Search tools..."
-                                    className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                                />
-                                {toolSearch && (
-                                    <button onClick={() => setToolSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                                        <X size={11} />
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                        <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                            {toolsLoading ? (
-                                <div className="flex items-center gap-2 text-xs text-slate-400 p-3">
-                                    <Loader2 size={12} className="animate-spin" /> Loading…
-                                </div>
-                            ) : !toolSearch.trim() ? (
-                                <div className="px-4 py-6 text-center text-xs text-slate-400">Search tool name</div>
-                            ) : filteredUnlinked.length === 0 ? (
-                                <div className="px-4 py-6 text-center text-xs text-slate-400">No tools found for "{toolSearch}"</div>
-                            ) : filteredUnlinked.map(tool => {
-                                const isActioning = !!actioningTool && actioningTool === tool.effective_tool_id;
-                                return (
-                                    <div key={tool.effective_tool_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-semibold text-slate-700 truncate">{tool.tool_name}</p>
-                                            {tool.tool_description && (
-                                                <p className="text-[11px] text-slate-400 truncate">{tool.tool_description}</p>
-                                            )}
-                                        </div>
-                                        <button
-                                            onClick={() => handleLink(tool.effective_tool_id)}
-                                            disabled={!!actioningTool}
-                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            {isActioning ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                                            Link
-                                        </button>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
 
                 {/* ── Skills ────────────────────────────────────────────── */}
                 <div className="flex flex-col gap-3">
@@ -435,7 +463,7 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                     )}
                 </div>
 
-                {/* ── Relationships + Add Table Relation ────────────────── */}
+                {/* ── Relationships (tables, columns, other) ────────────── */}
                 {(() => {
                     // Filter tableDataSources: if a table is in allTables catalog, only show if still linked.
                     // This ensures Remove immediately hides the row (no stale display).
@@ -477,9 +505,78 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                             ) : (
                                 <div className="flex flex-col gap-4">
                                     {/* 1. TABLE group */}
-                                    {hasTableSection && (
-                                        <div>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">TABLE</p>
+                                    <div>
+                                        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">TABLE</p>
+                                            {resolvedAgentId && (
+                                                <div className="relative" ref={(el) => { dropdownRefs.current.tables = el; }}>
+                                                    <button
+                                                        onClick={() => setOpenDropdown(openDropdown === 'tables' ? null : 'tables')}
+                                                        className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                                                        aria-haspopup="listbox"
+                                                        aria-expanded={openDropdown === 'tables'}
+                                                    >
+                                                        <PlusCircle size={13} className="text-blue-600" />
+                                                        Add Table
+                                                        <ChevronDown size={13} className="text-slate-400" />
+                                                    </button>
+                                                    {openDropdown === 'tables' && (
+                                                        <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                                            <div className="p-2 border-b border-slate-100">
+                                                                <div className="relative">
+                                                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                                    <input
+                                                                        ref={(el) => { searchInputRefs.current.tables = el; }}
+                                                                        value={tableSearch}
+                                                                        onChange={e => setTableSearch(e.target.value)}
+                                                                        onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                                                                        placeholder="Search table..."
+                                                                        className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                                                                {tablesLoading ? (
+                                                                    <div className="flex items-center gap-2 text-xs text-slate-400 px-4 py-6 justify-center">
+                                                                        <Loader2 size={13} className="animate-spin" /> Loading tables…
+                                                                    </div>
+                                                                ) : filteredCatalogTables.length === 0 ? (
+                                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">No tables found</div>
+                                                                ) : filteredCatalogTables.map(table => {
+                                                                    const isActioning = !!actioningTable && actioningTable === table.table_id;
+                                                                    return (
+                                                                        <button
+                                                                            key={table.table_id}
+                                                                            type="button"
+                                                                            role="option"
+                                                                            aria-selected={table.is_linked}
+                                                                            disabled={!!actioningTable}
+                                                                            onClick={() => (table.is_linked ? handleUnlinkTable(table.table_id) : handleLinkTable(table.table_id))}
+                                                                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                                                table.is_linked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                                                                            }`}
+                                                                        >
+                                                                            <span className="min-w-0 flex-1">
+                                                                                <span className="block font-semibold truncate">{table.table_name}</span>
+                                                                                {table.country_of_provenance && (
+                                                                                    <span className="block text-[11px] text-slate-400 truncate">{table.country_of_provenance}</span>
+                                                                                )}
+                                                                            </span>
+                                                                            {isActioning ? (
+                                                                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                                                                            ) : table.is_linked ? (
+                                                                                <Check size={15} className="shrink-0 text-blue-600" />
+                                                                            ) : null}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {hasTableSection && (
                                             <div className="flex flex-col gap-2">
                                                 {/* Entries from agent_data_sources (have PII/PHI/PCI data) */}
                                                 {visibleTableDataSources.map((ds, i) => {
@@ -565,70 +662,80 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                                     );
                                                 })}
                                             </div>
-                                        </div>
-                                    )}
-
-                                    {/* 2. ADD TABLE RELATION */}
-                                    {resolvedAgentId && (
-                                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                                            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                                                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                                                    <Link2 size={12} /> Add Table Relation
-                                                </p>
-                                                <div className="relative w-full max-w-sm">
-                                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                                                    <input
-                                                        type="text"
-                                                        value={tableSearch}
-                                                        onChange={e => setTableSearch(e.target.value)}
-                                                        placeholder="Search tables..."
-                                                        className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                                                    />
-                                                    {tableSearch && (
-                                                        <button onClick={() => setTableSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                                                            <X size={11} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                                                {tablesLoading ? (
-                                                    <div className="flex items-center gap-2 text-xs text-slate-400 p-3">
-                                                        <Loader2 size={12} className="animate-spin" /> Loading…
-                                                    </div>
-                                                ) : !tableSearch.trim() ? (
-                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">Search table name</div>
-                                                ) : filteredUnlinkedTables.length === 0 ? (
-                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">No tables found for "{tableSearch}"</div>
-                                                ) : filteredUnlinkedTables.map(table => {
-                                                    const isActioning = !!actioningTable && actioningTable === table.table_id;
-                                                    return (
-                                                        <div key={table.table_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                                                            <div className="min-w-0">
-                                                                <p className="text-sm font-semibold text-slate-700 truncate">{table.table_name}</p>
-                                                                {table.country_of_provenance && (
-                                                                    <p className="text-[11px] text-slate-400 truncate">{table.country_of_provenance}</p>
-                                                                )}
-                                                            </div>
-                                                            <button
-                                                                onClick={() => handleLinkTable(table.table_id)}
-                                                                disabled={!!actioningTable}
-                                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                            >
-                                                                {isActioning ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                                                                Link
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
+                                        )}
+                                    </div>
 
                                     {/* 3. COLUMN — dynamic with Remove button */}
-                                    {(linkedColumns.length > 0 || columnsLoading) && (
-                                        <div>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">COLUMN</p>
+                                    <div>
+                                        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">COLUMN</p>
+                                            {resolvedAgentId && (
+                                                <div className="relative" ref={(el) => { dropdownRefs.current.columns = el; }}>
+                                                    <button
+                                                        onClick={() => setOpenDropdown(openDropdown === 'columns' ? null : 'columns')}
+                                                        className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:border-blue-300 px-3 py-2 rounded-lg transition-colors"
+                                                        aria-haspopup="listbox"
+                                                        aria-expanded={openDropdown === 'columns'}
+                                                    >
+                                                        <PlusCircle size={13} className="text-blue-600" />
+                                                        Add Column
+                                                        <ChevronDown size={13} className="text-slate-400" />
+                                                    </button>
+                                                    {openDropdown === 'columns' && (
+                                                        <div className="absolute top-full right-0 mt-1 w-[300px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                                            <div className="p-2 border-b border-slate-100">
+                                                                <div className="relative">
+                                                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                                    <input
+                                                                        ref={(el) => { searchInputRefs.current.columns = el; }}
+                                                                        value={columnSearch}
+                                                                        onChange={e => setColumnSearch(e.target.value)}
+                                                                        onKeyDown={(e) => { if (e.key === 'Escape') setOpenDropdown(null); }}
+                                                                        placeholder="Search column..."
+                                                                        className="w-full pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="max-h-72 overflow-y-auto py-1" role="listbox">
+                                                                {columnsLoading ? (
+                                                                    <div className="flex items-center gap-2 text-xs text-slate-400 px-4 py-6 justify-center">
+                                                                        <Loader2 size={13} className="animate-spin" /> Loading columns…
+                                                                    </div>
+                                                                ) : filteredCatalogColumns.length === 0 ? (
+                                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">No columns found</div>
+                                                                ) : filteredCatalogColumns.map(col => {
+                                                                    const isActioning = !!actioningColumn && actioningColumn === col.column_id;
+                                                                    return (
+                                                                        <button
+                                                                            key={col.column_id}
+                                                                            type="button"
+                                                                            role="option"
+                                                                            aria-selected={col.is_linked}
+                                                                            disabled={!!actioningColumn}
+                                                                            onClick={() => (col.is_linked ? handleUnlinkColumn(col.column_id) : handleLinkColumn(col.column_id))}
+                                                                            className={`w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                                                col.is_linked ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                                                                            }`}
+                                                                        >
+                                                                            <span className="min-w-0 flex-1">
+                                                                                <span className="block font-semibold truncate">{col.column_name}</span>
+                                                                                <span className="block text-[11px] text-slate-400 truncate">{col.table_name}</span>
+                                                                            </span>
+                                                                            {isActioning ? (
+                                                                                <Loader2 size={14} className="animate-spin shrink-0 text-slate-400" />
+                                                                            ) : col.is_linked ? (
+                                                                                <Check size={15} className="shrink-0 text-blue-600" />
+                                                                            ) : null}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {(linkedColumns.length > 0 || columnsLoading) && (<>
                                             {columnsError && (
                                                 <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2.5 text-xs mb-2">
                                                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
@@ -678,63 +785,8 @@ const AgentLineage: React.FC<AgentLineageProps> = ({ agent, agentId }) => {
                                                     })}
                                                 </div>
                                             )}
-                                        </div>
-                                    )}
-
-                                    {/* 4. Add Column Relation */}
-                                    {resolvedAgentId && (
-                                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                                            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                                                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-                                                    <Link2 size={12} /> Add Column Relation
-                                                </p>
-                                                <div className="relative w-full max-w-sm">
-                                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                                                    <input
-                                                        type="text"
-                                                        value={columnSearch}
-                                                        onChange={e => setColumnSearch(e.target.value)}
-                                                        placeholder="Search columns..."
-                                                        className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                                                    />
-                                                    {columnSearch && (
-                                                        <button onClick={() => setColumnSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                                                            <X size={11} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
-                                                {columnsLoading ? (
-                                                    <div className="flex items-center gap-2 text-xs text-slate-400 p-3">
-                                                        <Loader2 size={12} className="animate-spin" /> Loading…
-                                                    </div>
-                                                ) : !columnSearch.trim() ? (
-                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">Search column name</div>
-                                                ) : filteredUnlinkedColumns.length === 0 ? (
-                                                    <div className="px-4 py-6 text-center text-xs text-slate-400">No columns found for "{columnSearch}"</div>
-                                                ) : filteredUnlinkedColumns.map(col => {
-                                                    const isActioning = !!actioningColumn && actioningColumn === col.column_id;
-                                                    return (
-                                                        <div key={col.column_id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                                                            <div className="min-w-0">
-                                                                <p className="text-sm font-semibold text-slate-700 truncate">{col.column_name}</p>
-                                                                <p className="text-[11px] text-slate-400 truncate">{col.table_name}</p>
-                                                            </div>
-                                                            <button
-                                                                onClick={() => handleLinkColumn(col.column_id)}
-                                                                disabled={!!actioningColumn}
-                                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                            >
-                                                                {isActioning ? <Loader2 size={11} className="animate-spin" /> : <PlusCircle size={11} />}
-                                                                Link
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
+                                        </>)}
+                                    </div>
 
                                     {/* 5. Other types (non-TABLE, non-COLUMN) from agent_data_sources */}
                                     {otherGroupedEntries.map(([type, sources]) => (

@@ -1,0 +1,86 @@
+FROM postgres:16-bookworm
+
+ARG PG_MAJOR=16
+ARG PGVECTOR_VERSION=0.7.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build dependencies
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        curl \
+        ca-certificates \
+        flex \
+        bison \
+        libreadline-dev \
+        zlib1g-dev \
+        pkg-config \
+        "postgresql-server-dev-${PG_MAJOR}" \
+    && rm -rf /var/lib/apt/lists/*
+
+# pgvector
+RUN set -eux; \
+    PGVECTOR_URL_PRIMARY="https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz"; \
+    PGVECTOR_URL_FALLBACK="https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v${PGVECTOR_VERSION}"; \
+    curl --fail --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors \
+        "$PGVECTOR_URL_PRIMARY" \
+        -o /tmp/pgvector.tar.gz \
+    || curl --fail --show-error --location \
+        --retry 5 --retry-delay 2 --retry-all-errors \
+        "$PGVECTOR_URL_FALLBACK" \
+        -o /tmp/pgvector.tar.gz \
+    && mkdir -p /tmp/pgvector-src \
+    && tar -xzf /tmp/pgvector.tar.gz -C /tmp/pgvector-src --strip-components=1 \
+    && cd /tmp/pgvector-src \
+    && make && make install \
+    && rm -rf /tmp/pgvector-src /tmp/pgvector.tar.gz
+
+# Apache AGE (pinned to PG16 release)
+RUN git clone \
+        --branch PG16/v1.5.0-rc0 \
+        --depth 1 \
+        https://github.com/apache/age.git \
+        /tmp/age-src \
+    && cd /tmp/age-src \
+    && make PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
+    && make install PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
+    && rm -rf /tmp/age-src
+
+# shared_preload_libraries
+ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
+
+# SQL bootstrap: OSS core schema first, then the enterprise compliance/audit
+# schema. Both land in the same directory — the entrypoint script finds and
+# sorts every *.sql file, and zz_enterprise_compliance_audit.sql's "zz_"
+# prefix guarantees it runs after tavro_setup_all.sql (whose tables it
+# depends on: twin.company, twin.dim_node, twin.set_updated_at()).
+# The enterprise repo is pulled in as a named build context (see
+# docker-compose.yml's additional_contexts: enterprise=../enterprise) rather
+# than widening this build's own context, so each repo's .dockerignore keeps
+# applying to itself.
+COPY sql/                       /docker-entrypoint-initdb.d/sql/
+COPY --from=enterprise sql/     /docker-entrypoint-initdb.d/sql/
+
+RUN printf '#!/bin/sh\n\
+set -eu\n\
+SQL_ROOT="/docker-entrypoint-initdb.d/sql"\n\
+echo "Running SQL scripts from ${SQL_ROOT}..."\n\
+if [ -f "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+  echo "Executing ${SQL_ROOT}/tavro_init_extensions.sql"\n\
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "${SQL_ROOT}/tavro_init_extensions.sql"\n\
+fi\n\
+for sql in $(find "${SQL_ROOT}" -type f -name "*.sql" | sort); do\n\
+  if [ "$sql" = "${SQL_ROOT}/tavro_init_extensions.sql" ]; then\n\
+    continue\n\
+  fi\n\
+  echo "Executing $sql"\n\
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$sql"\n\
+done\n\
+echo "All SQL scripts completed."\n' \
+> /docker-entrypoint-initdb.d/20_run_all_sql.sh \
+&& chmod +x /docker-entrypoint-initdb.d/20_run_all_sql.sh
+
+EXPOSE 5432

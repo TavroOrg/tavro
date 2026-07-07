@@ -52,7 +52,8 @@ RUN git clone \
 # shared_preload_libraries
 ENV POSTGRES_SHARED_PRELOAD_LIBRARIES="age"
 
-# SQL bootstrap: copy and execute every SQL file under sql/ on first DB init
+# SQL bootstrap: copy and execute every SQL file under sql/ on first DB init.
+# OSS-only — no compliance/audit schema here, see Dockerfile.postgres.enterprise.
 COPY sql/ /docker-entrypoint-initdb.d/sql/
 
 RUN printf '#!/bin/sh\n\
