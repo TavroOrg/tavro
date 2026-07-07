@@ -550,14 +550,16 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     window.dispatchEvent(new CustomEvent('tavro_notice', {
                         detail: {
                             key: 'tavro_catalog_notice',
-                            message: `Workflow failed for ${wf.name || wf.agent_id}.${wf.error ? ` ${wf.error}` : ''}`,
+                            message: `Risk assessment failed for ${wf.name || wf.agent_id}.`,
+                            variant: 'error',
                         },
                     }));
                 } else if (wf.status === 'completed') {
                     window.dispatchEvent(new CustomEvent('tavro_notice', {
                         detail: {
                             key: 'tavro_catalog_notice',
-                            message: `Workflow completed for ${wf.name || wf.agent_id}.`,
+                            message: `Risk assessment completed for ${wf.name || wf.agent_id}.`,
+                            variant: 'success',
                         },
                     }));
                 }
@@ -679,6 +681,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 detail: {
                     key: 'tavro_artifacts_notice',
                     message: `Artifacts generated for ${agentName}. Please refer to the Attachments tab.`,
+                    variant: 'success',
                 },
             }));
         };

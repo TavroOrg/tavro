@@ -96,12 +96,12 @@ const CreateUseCasePage: React.FC = () => {
                 linkApplicationId && 'application',
                 linkModelId && 'AI model',
             ].filter(Boolean);
-            sessionStorage.setItem(
-                'tavro_use_case_notice',
-                linkedLabels.length > 0
-                    ? `AI Use Case created and linked to ${linkedLabels.join(', ')} successfully.`
-                    : 'AI Use Case created successfully. It will appear in the catalog shortly.'
-            );
+            const useCaseSuccessMessage = linkedLabels.length > 0
+                ? `AI Use Case created and linked to ${linkedLabels.join(', ')} successfully.`
+                : 'AI Use Case created successfully. It will appear in the catalog shortly.';
+            window.dispatchEvent(new CustomEvent('tavro_notice', {
+                detail: { message: useCaseSuccessMessage, variant: 'success' },
+            }));
             refresh();
             setTimeout(() => {
                 if (linkAgentId) {
