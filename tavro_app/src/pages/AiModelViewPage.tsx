@@ -289,18 +289,50 @@ const AiModelViewPage: React.FC = () => {
     { label: '-- None --', value: '' },
     ...values.map(v => ({ label: v.label, value: v.value })),
   ];
-  const vendorOptions = toOptions(useLookupValues('ai_models', 'vendor_or_inhouse'));
-  const providerOptions = toOptions(useLookupValues('ai_models', 'provider'));
-  const modelTypeOptions = toOptions(useLookupValues('ai_models', 'model_type'));
-  const techniqueClassOptions = toOptions(useLookupValues('ai_models', 'technique_class'));
-  const learningApproachOptions = toOptions(useLookupValues('ai_models', 'learning_approach'));
-  const automationLevelOptions = toOptions(useLookupValues('ai_models', 'automation_level'));
-  const updateFrequencyOptions = toOptions(useLookupValues('ai_models', 'update_frequency'));
-  const statusOptions = toOptions(useLookupValues('ai_models', 'status'));
-  const businessCriticalityOptions = toOptions(useLookupValues('ai_models', 'business_criticality'));
-  const emergencyTierOptions = toOptions(useLookupValues('ai_models', 'emergency_tier'));
+  const vendorValues = useLookupValues('ai_models', 'vendor_or_inhouse');
+  const providerValues = useLookupValues('ai_models', 'provider');
+  const modelTypeValues = useLookupValues('ai_models', 'model_type');
+  const techniqueClassValues = useLookupValues('ai_models', 'technique_class');
+  const learningApproachValues = useLookupValues('ai_models', 'learning_approach');
+  const automationLevelValues = useLookupValues('ai_models', 'automation_level');
+  const updateFrequencyValues = useLookupValues('ai_models', 'update_frequency');
+  const statusValues = useLookupValues('ai_models', 'status');
+  const businessCriticalityValues = useLookupValues('ai_models', 'business_criticality');
+  const emergencyTierValues = useLookupValues('ai_models', 'emergency_tier');
+  const vendorOptions = toOptions(vendorValues);
+  const providerOptions = toOptions(providerValues);
+  const modelTypeOptions = toOptions(modelTypeValues);
+  const techniqueClassOptions = toOptions(techniqueClassValues);
+  const learningApproachOptions = toOptions(learningApproachValues);
+  const automationLevelOptions = toOptions(automationLevelValues);
+  const updateFrequencyOptions = toOptions(updateFrequencyValues);
+  const statusOptions = toOptions(statusValues);
+  const businessCriticalityOptions = toOptions(businessCriticalityValues);
+  const emergencyTierOptions = toOptions(emergencyTierValues);
 
   const [form, setForm] = useState<FormState>(emptyForm);
+
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      vendor_or_inhouse: prev.vendor_or_inhouse || vendorValues.find(v => v.is_default)?.value || '',
+      provider: prev.provider || providerValues.find(v => v.is_default)?.value || '',
+      model_type: prev.model_type || modelTypeValues.find(v => v.is_default)?.value || '',
+      technique_class: prev.technique_class || techniqueClassValues.find(v => v.is_default)?.value || '',
+      learning_approach: prev.learning_approach || learningApproachValues.find(v => v.is_default)?.value || '',
+      automation_level: prev.automation_level || automationLevelValues.find(v => v.is_default)?.value || '',
+      update_frequency: prev.update_frequency || updateFrequencyValues.find(v => v.is_default)?.value || '',
+      status: prev.status || statusValues.find(v => v.is_default)?.value || '',
+      business_criticality: prev.business_criticality || businessCriticalityValues.find(v => v.is_default)?.value || '',
+      emergency_tier: prev.emergency_tier || emergencyTierValues.find(v => v.is_default)?.value || '',
+    }));
+  }, [
+    isCreateMode, vendorValues, providerValues, modelTypeValues, techniqueClassValues,
+    learningApproachValues, automationLevelValues, updateFrequencyValues, statusValues,
+    businessCriticalityValues, emergencyTierValues,
+  ]);
+
   const [model, setModel] = useState<AiModelRecord | null>(null);
   const [allModels, setAllModels] = useState<AiModelRecord[]>([]);
   const [loading, setLoading] = useState(!isCreateMode);

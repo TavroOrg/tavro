@@ -73,12 +73,6 @@ const REGULATORY_IMPACT_OPTIONS: Option[] = [
   { label: 'Unregulated', value: '0.1' },
 ];
 
-const PROCESS_HEALTH_OPTIONS: Option[] = [
-  { label: 'Stable', value: 'Stable' },
-  { label: 'Needs Improvement', value: 'Needs Improvement' },
-  { label: 'At Risk', value: 'At Risk' },
-];
-
 interface ProcessFormState {
   process_number: string;
   process_name: string;
@@ -341,6 +335,21 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
   const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
+
+  // Pre-fill new-record defaults from public.lookup's is_default flag.
+  // Only applies while creating — never overrides an existing record's
+  // actual stored values.
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      business_criticality: prev.business_criticality || businessCriticalityOptions.find(v => v.is_default)?.value || '',
+      financial_impact: prev.financial_impact || financialImpactOptions.find(v => v.is_default)?.value || '',
+      reputational_impact: prev.reputational_impact || reputationalImpactOptions.find(v => v.is_default)?.value || '',
+      regulatory_impact: prev.regulatory_impact || regulatoryImpactOptions.find(v => v.is_default)?.value || '',
+      process_health_state: prev.process_health_state || processHealthOptions.find(v => v.is_default)?.value || '',
+    }));
+  }, [isCreateMode, businessCriticalityOptions, financialImpactOptions, reputationalImpactOptions, regulatoryImpactOptions, processHealthOptions]);
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
@@ -707,7 +716,7 @@ const BusinessProcessViewPage: React.FC = () => {
             >
               {config.selectChildren ?? (
                 <>
-                  <option value="">Select...</option>
+                  <option value="">-- None --</option>
                   {(config.options ?? []).map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
@@ -1552,7 +1561,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       onChange={(e) => setField('business_criticality', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {businessCriticalityOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1577,7 +1586,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       onChange={(e) => setField('financial_impact', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {financialImpactOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1603,7 +1612,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       onChange={(e) => setField('reputational_impact', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {reputationalImpactOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1628,7 +1637,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       onChange={(e) => setField('regulatory_impact', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {regulatoryImpactOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1686,7 +1695,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       onChange={(e) => setField('process_health_state', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {processHealthOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}

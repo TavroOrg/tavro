@@ -616,9 +616,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                             autoFocus
                                             className="text-xs font-bold rounded-lg border border-blue-300 px-2 py-1 outline-none focus:ring-2 focus:ring-blue-400/30 bg-white"
                                         >
-                                            {inlineEdit.value && !statusOptions.some(o => o.value === inlineEdit.value) && (
-                                                <option value={inlineEdit.value}>{inlineEdit.value}</option>
-                                            )}
+                                            <option value="">-- None --</option>
                                             {statusOptions.map(o => (
                                                 <option key={o.value} value={o.value}>{o.label}</option>
                                             ))}

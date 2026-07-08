@@ -234,6 +234,19 @@ const IntegrationViewPage: React.FC = () => {
 
   const [integration, setIntegration] = useState<IntegrationRecord | null>(null);
   const [form, setForm] = useState<IntegrationFormState>(emptyForm);
+
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      business_criticality: prev.business_criticality || businessCriticalityOptions.find(v => v.is_default)?.value || '',
+      emergency_tier: prev.emergency_tier || emergencyTierOptions.find(v => v.is_default)?.value || '',
+      protocol: prev.protocol || protocolOptions.find(v => v.is_default)?.value || '',
+      authentication_method: prev.authentication_method || authMethodOptions.find(v => v.is_default)?.value || '',
+      data_sensitivity: prev.data_sensitivity || dataSensitivityOptions.find(v => v.is_default)?.value || '',
+      availability_status: prev.availability_status || availabilityStatusOptions.find(v => v.is_default)?.value || '',
+    }));
+  }, [isCreateMode, businessCriticalityOptions, emergencyTierOptions, protocolOptions, authMethodOptions, dataSensitivityOptions, availabilityStatusOptions]);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSaving, setTagSaving] = useState(false);
@@ -515,7 +528,7 @@ const IntegrationViewPage: React.FC = () => {
               className={inputCls}
               autoFocus
             >
-              <option value="">Select...</option>
+              <option value="">-- None --</option>
               {(config.options ?? []).map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
@@ -1139,7 +1152,7 @@ const IntegrationViewPage: React.FC = () => {
                       onChange={(e) => setField('protocol', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {protocolOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1164,7 +1177,7 @@ const IntegrationViewPage: React.FC = () => {
                       onChange={(e) => setField('authentication_method', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {authMethodOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1253,7 +1266,7 @@ const IntegrationViewPage: React.FC = () => {
                       onChange={(e) => setField('data_sensitivity', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {dataSensitivityOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1278,7 +1291,7 @@ const IntegrationViewPage: React.FC = () => {
                       onChange={(e) => setField('availability_status', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {availabilityStatusOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}

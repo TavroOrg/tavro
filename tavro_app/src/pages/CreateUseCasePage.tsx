@@ -271,6 +271,7 @@ const CreateUseCasePage: React.FC = () => {
                                 <label className={labelCls}>Priority</label>
                                 {priorityOptions.length ? (
                                     <select value={form.priority} onChange={e => set('priority', e.target.value)} className={selectCls}>
+                                        <option value="">-- None --</option>
                                         {priorityOptions.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                                     </select>
                                 ) : (

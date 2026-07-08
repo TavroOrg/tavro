@@ -152,12 +152,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                     onChange={e => onEditAgentTypeChange?.(e.target.value)}
                                     className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 cursor-pointer"
                                 >
-                                    {(() => {
-                                        const current = editAgentType ?? agent.agent_type ?? 'Config-driven';
-                                        return current && !agentTypeOptions.some(t => t.value === current) && (
-                                            <option value={current}>{current}</option>
-                                        );
-                                    })()}
+                                    <option value="">-- None --</option>
                                     {agentTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                                 </select>
                             ) : (

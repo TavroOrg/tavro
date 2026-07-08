@@ -394,6 +394,15 @@ const BusinessApplicationViewPage: React.FC = () => {
   const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
   const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
 
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      emergency_tier: prev.emergency_tier || emergencyTierOptions.find(v => v.is_default)?.value || '',
+      business_criticality: prev.business_criticality || businessCriticalityOptions.find(v => v.is_default)?.value || '',
+    }));
+  }, [isCreateMode, emergencyTierOptions, businessCriticalityOptions]);
+
   const [application, setApplication] = useState<BusinessApplicationRecord | null>(null);
   const [form, setForm] = useState<ApplicationFormState>(emptyForm);
   const [tags, setTags] = useState<string[]>([]);
@@ -705,7 +714,7 @@ const BusinessApplicationViewPage: React.FC = () => {
               className={inputCls}
               autoFocus
             >
-              <option value="">Select...</option>
+              <option value="">-- None --</option>
               {(config.options ?? []).map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
@@ -1318,7 +1327,7 @@ const BusinessApplicationViewPage: React.FC = () => {
                       onChange={(e) => setField('emergency_tier', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {emergencyTierOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
@@ -1368,7 +1377,7 @@ const BusinessApplicationViewPage: React.FC = () => {
                       onChange={(e) => setField('business_criticality', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="">Select...</option>
+                      <option value="">-- None --</option>
                       {businessCriticalityOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}

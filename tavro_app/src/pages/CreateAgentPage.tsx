@@ -380,6 +380,7 @@ const CreateAgentPage: React.FC = () => {
                   onChange={e => set('agentType', e.target.value)}
                   className={inputCls}
                 >
+                  <option value="">-- None --</option>
                   {agentTypeOptions.map(t => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}

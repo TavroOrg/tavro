@@ -171,9 +171,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                                     onChange={e => setPriority(e.target.value)}
                                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
                                 >
-                                    {priority && !priorityOptions.some(p => p.value === priority) && (
-                                        <option value={priority}>{priority}</option>
-                                    )}
+                                    <option value="">-- None --</option>
                                     {priorityOptions.map(p => (
                                         <option key={p.value} value={p.value}>{p.label}</option>
                                     ))}
@@ -190,9 +188,7 @@ const EditUseCaseModal: React.FC<EditUseCaseModalProps> = ({ useCase, open, onCl
                                     onChange={e => setStatus(e.target.value)}
                                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all bg-white"
                                 >
-                                    {status && !statusOptions.some(s => s.value === status) && (
-                                        <option value={status}>{status}</option>
-                                    )}
+                                    <option value="">-- None --</option>
                                     {statusOptions.map(s => (
                                         <option key={s.value} value={s.value}>{s.label}</option>
                                     ))}
