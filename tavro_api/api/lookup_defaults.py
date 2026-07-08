@@ -169,7 +169,7 @@ LOOKUP_DEFAULTS: List[LookupDefault] = [
     ("business_processes", "business_criticality", "Tier 1 (Systemic)", "1.0", 1, True),
     ("business_processes", "business_criticality", "Tier 2 (Core)", "0.7", 2, False),
     ("business_processes", "business_criticality", "Tier 3 (Operational)", "0.4", 3, False),
-    ("business_processes", "business_criticality", "Tier 4 (Experimental)", "0.1", 3, False),
+    ("business_processes", "business_criticality", "Tier 4 (Experimental)", "0.1", 4, False),
 
     # business_processes.financial_impact
     ("business_processes", "financial_impact", "Systemic", "1", 1, True),
@@ -233,6 +233,39 @@ LOOKUP_DEFAULTS: List[LookupDefault] = [
     ("business_integrations", "availability_status", "Deprecated", "Deprecated", 2, False),
     ("business_integrations", "availability_status", "Planned", "Planned", 3, False),
     ("business_integrations", "availability_status", "Unknown", "Unknown", 4, False),
+
+    # issues.issue_type   
+    ("issues", "issue_type", "Hallucination", "Hallucination", 1, True),
+    ("issues", "issue_type", "Tool Failure", "Tool Failure", 2, False),
+    ("issues", "issue_type", "Latency Breach", "Latency Breach", 3, False),
+    ("issues", "issue_type", "Drift Violation", "Drift Violation", 4, False),
+    ("issues", "issue_type", "Guardrail Trigger", "Guardrail Trigger", 5, False),
+    ("issues", "issue_type", "Data Quality", "Data Quality", 6, False),
+    ("issues", "issue_type", "Authorization Failure", "Authorization Failure", 7, False),
+    ("issues", "issue_type", "Output Policy Violation", "Output Policy Violation", 8, False),
+    ("issues", "issue_type", "Risk Management", "Risk Management", 9, False),
+    ("issues", "issue_type", "Fraud Detection", "Fraud Detection", 10, False),
+    ("issues", "issue_type", "Customer Engagement", "Customer Engagement", 11, False),
+
+    # issues.severity
+    ("issues", "severity", "Critical", "Critical", 1, True),
+    ("issues", "severity", "High", "High", 2, False),
+    ("issues", "severity", "Medium", "Medium", 3, False),
+    ("issues", "severity", "Low", "Low", 4, False),
+    ("issues", "severity", "Informational", "Informational", 5, False),
+
+    # issues.source
+    ("issues", "source", "Evaluation Framework", "Evaluation Framework", 1, True),
+    ("issues", "source", "Alert Monitor", "Alert Monitor", 2, False),
+    ("issues", "source", "Drift Detector", "Drift Detector", 3, False),
+    ("issues", "source", "Manual Review", "Manual Review", 4, False),
+
+    # issues.status
+    ("issues", "status", "Open", "Open", 1, True),
+    ("issues", "status", "In Progress", "In Progress", 2, False),
+    ("issues", "status", "Resolved", "Resolved", 3, False),
+    ("issues", "status", "Dismissed", "Dismissed", 4, False),
+    ("issues", "status", "Escalated", "Escalated", 5, False),
 ]
 
 
