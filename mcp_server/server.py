@@ -1876,8 +1876,8 @@ async def list_dim_nodes(
     category: Optional[str] = None,
     search: Optional[str] = None,
     active_only: bool = True,
-    offset: int = 0,
-    limit: int = 100,
+    start_record: int = 1,
+    record_range: str = "1-100",
 ) -> Dict[str, Any]:
     """
     List dimension nodes for a company's blueprint.
@@ -1893,11 +1893,11 @@ async def list_dim_nodes(
                                    application, integration, organisation, risk, finance, custom).
         search (str, optional): Full-text search across label and summary.
         active_only (bool): If True (default), only return active (non-deleted) nodes.
-        offset (int): Pagination offset (default 0).
-        limit (int): Max records (default 100, max 500).
+        start_record (int): Starting record number (1-based). Default is 1.
+        record_range (str, optional): Inclusive range in "start-end" format. Defaults to "1-100".
 
     Returns:
-        Dict[str, Any]: Paginated list with total, offset, limit, items.
+        Dict[str, Any]: Paginated list with start_record, end_record, record_count, total_records, data.
     """
     try:
         token = get_access_token()
@@ -1905,15 +1905,16 @@ async def list_dim_nodes(
         log_tool_call(
             "list_dim_nodes",
             original_prompt,
-            {"company_id": company_id, "category": category, "search": search},
+            {"company_id": company_id, "category": category, "search": search,
+             "start_record": start_record, "record_range": record_range},
             tenant_id,
         )
 
         params: Dict[str, Any] = {
             "company_id": company_id,
             "active_only": active_only,
-            "offset": offset,
-            "limit": limit,
+            "start_record": start_record,
+            "record_range": record_range,
         }
         if dim_type_id:
             params["dim_type_id"] = dim_type_id

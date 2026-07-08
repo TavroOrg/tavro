@@ -4,7 +4,7 @@
 
 from uuid import UUID
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -12,7 +12,7 @@ import json
 
 from api.database import get_db
 from api.dependencies import require_tenant
-from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
+from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, AttachmentOut
 from api.routers.business_relations import (
     sync_dim_node_to_business_entity,
     _ensure_application_attachments_table,
@@ -48,7 +48,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
         raise HTTPException(status_code=404, detail="Node not found")
 
 
-@router.get("", response_model=Page)
+@router.get("")
 async def list_dim_nodes(
     company_id:  UUID,
     tenant_id: str = Depends(require_tenant),
@@ -56,10 +56,17 @@ async def list_dim_nodes(
     category:    Optional[str]   = None,
     search:      Optional[str]   = None,
     active_only: bool            = True,
-    offset:      int             = Query(0, ge=0),
-    limit:       int             = Query(100, ge=1, le=500),
+    start_record: int            = 1,
+    record_range: str            = "1-100",
     db: AsyncSession = Depends(get_db),
 ):
+    try:
+        parts = record_range.split("-")
+        start, end = int(parts[0]), int(parts[1])
+    except Exception:
+        start, end = start_record, start_record + 99
+    offset, limit = start - 1, end - start + 1
+
     await _assert_company_owned(db, str(company_id), tenant_id)
 
     filters = ["n.company_id = :company_id"]
@@ -106,7 +113,8 @@ async def list_dim_nodes(
         {**params, "limit": limit, "offset": offset},
     )
     items = [dict(r._mapping) for r in rows]
-    return {"total": total, "offset": offset, "limit": limit, "items": items}
+    return {"start_record": start, "end_record": end, "record_count": len(items),
+            "total_records": total, "data": items}
 
 
 @router.get("/{node_id}", response_model=DimNode)
