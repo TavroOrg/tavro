@@ -78,28 +78,37 @@ const RingGauge: React.FC<{ percent: number; color: string }> = ({ percent, colo
 const ColorSlider: React.FC<{
     percent: number; color: string; min: number; max: number; step: number;
     onChange: (v: number) => void;
-}> = ({ percent, color, min, max, step, onChange }) => (
-    <div className="relative h-5 flex items-center" style={{ ['--thumb-color' as string]: color }}>
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[5px] rounded-full bg-slate-100 dark:bg-slate-800" />
-        <div
-            className="absolute left-0 top-1/2 -translate-y-1/2 h-[5px] rounded-full"
-            style={{ width: `${Math.max(0, Math.min(100, percent))}%`, backgroundColor: color }}
-        />
-        <input
-            type="range" min={min} max={max} step={step} value={percent}
-            onChange={e => onChange(Number(e.target.value))}
-            className="relative z-10 w-full h-5 appearance-none bg-transparent cursor-pointer
-                [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-[5px]
-                [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-                [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--thumb-color)]
-                [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb]:cursor-grab [&::-webkit-slider-thumb]:mt-[2.5px]
-                [&::-moz-range-track]:bg-transparent [&::-moz-range-track]:h-[5px]
-                [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
-                [&::-moz-range-thumb]:bg-[var(--thumb-color)] [&::-moz-range-thumb]:border-0
-                [&::-moz-range-thumb]:shadow [&::-moz-range-thumb]:cursor-grab"
-        />
-    </div>
-);
+}> = ({ percent, color, min, max, step, onChange }) => {
+    const fillPercent = max > min ? Math.max(0, Math.min(100, ((percent - min) / (max - min)) * 100)) : 0;
+    return (
+        <div className="relative h-5 flex items-center">
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[5px] rounded-full bg-slate-100 dark:bg-slate-800" />
+            <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-[5px] rounded-full"
+                style={{ width: `${fillPercent}%`, backgroundColor: color }}
+            />
+            {/* Decorative dot — positioned with the exact same math as the fill bar
+                above, so it always sits exactly on the line regardless of browser/OS
+                native range-thumb rendering quirks. The real (invisible) native thumb
+                below still handles clicking/dragging. */}
+            <div
+                className="absolute top-1/2 w-4 h-4 rounded-full shadow pointer-events-none"
+                style={{ left: `${fillPercent}%`, backgroundColor: color, transform: 'translate(-50%, -50%)' }}
+            />
+            <input
+                type="range" min={min} max={max} step={step} value={percent}
+                onChange={e => onChange(Number(e.target.value))}
+                className="relative z-10 w-full h-5 appearance-none bg-transparent cursor-pointer
+                    [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-[5px]
+                    [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                    [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:opacity-0 [&::-webkit-slider-thumb]:cursor-grab
+                    [&::-moz-range-track]:bg-transparent [&::-moz-range-track]:h-[5px]
+                    [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
+                    [&::-moz-range-thumb]:opacity-0 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-grab"
+            />
+        </div>
+    );
+};
 
 // ── A single weight tile: colored top edge, icon chip, ring, slider, caption. ─
 const WeightTile: React.FC<{
