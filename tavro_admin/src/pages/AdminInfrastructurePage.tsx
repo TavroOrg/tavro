@@ -1,8 +1,11 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import {
     ChevronRight, CheckCircle2, AlertCircle, Eye, EyeOff,
-    Loader2, Save, Terminal,
+    Loader2, Save, Terminal, SlidersHorizontal,
 } from 'lucide-react';
+import AdminRoadmapConfigPage from './AdminRoadmapConfigPage';
+
+const COMPANY_PREFERENCES_ID = 'company-preferences';
 
 interface InfraField {
     key: string;
@@ -225,10 +228,36 @@ const AdminInfrastructurePage: React.FC = () => {
                         </button>
                     );
                 })}
+
+                {/* Company Preferences — not a credential form like the items above,
+                    so it's handled separately from INFRA_ITEMS/selectedItem below. */}
+                <button
+                    onClick={() => setSelected(COMPANY_PREFERENCES_ID)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left group
+                        ${selected === COMPANY_PREFERENCES_ID
+                            ? 'bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/30'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                        }`}
+                >
+                    <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center text-white shrink-0">
+                        <SlidersHorizontal size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold truncate ${selected === COMPANY_PREFERENCES_ID ? 'text-blue-700 dark:text-blue-400' : 'text-slate-800 dark:text-white'}`}>
+                            Company Preferences
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-500 truncate">Roadmap weights &amp; node defaults</p>
+                    </div>
+                    <ChevronRight size={15} className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 shrink-0" />
+                </button>
             </div>
 
             {/* RIGHT: config panel */}
-            {selectedItem ? (
+            {selected === COMPANY_PREFERENCES_ID ? (
+                <div className="flex-1 min-w-0 h-full overflow-y-auto">
+                    <AdminRoadmapConfigPage />
+                </div>
+            ) : selectedItem ? (
                 <div className="flex-1 min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 overflow-y-auto">
 
                     {/* header */}
