@@ -15,6 +15,7 @@ from api.dependencies import require_tenant
 from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
 from api.routers.business_relations import (
     sync_dim_node_to_business_entity,
+    get_company_node_defaults,
     _ensure_application_attachments_table,
     _ensure_process_attachments_table,
     _ensure_integration_attachments_table,
@@ -134,6 +135,15 @@ async def get_dim_node(node_id: UUID, tenant_id: str = Depends(require_tenant), 
 async def create_dim_node(body: DimNodeCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     await _assert_company_owned(db, str(body.company_id), tenant_id)
 
+    visibility = body.visibility
+    sensitive = body.sensitive
+    if visibility is None or sensitive is None:
+        default_visibility, default_sensitive = await get_company_node_defaults(db, str(body.company_id))
+        if visibility is None:
+            visibility = default_visibility
+        if sensitive is None:
+            sensitive = default_sensitive
+
     row = await db.execute(
         text("""
             INSERT INTO twin.dim_node
@@ -149,6 +159,8 @@ async def create_dim_node(body: DimNodeCreate, tenant_id: str = Depends(require_
             "dim_type_id": str(body.dim_type_id),
             "tags":        json.dumps(body.tags),
             "valid_from":  body.valid_from,
+            "visibility":  visibility,
+            "sensitive":   sensitive,
         },
     )
     await db.commit()

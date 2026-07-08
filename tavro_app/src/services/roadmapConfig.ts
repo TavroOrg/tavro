@@ -60,7 +60,7 @@ export async function syncRoadmapConfigFromServer(companyId: string): Promise<Ro
         const token = await getValidToken();
         const tenantId = localStorage.getItem('tavro_tenant_id') ?? undefined;
         const base = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
-        const res = await fetch(`${base}/api/v1/companies/${companyId}/roadmap-config`, {
+        const res = await fetch(`${base}/api/v1/companies/${companyId}/preferences`, {
             headers: {
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...(tenantId ? { 'x-tenant-id': tenantId } : {}),

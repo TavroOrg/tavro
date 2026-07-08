@@ -125,6 +125,19 @@ class BlueprintApiService {
     return req(`/companies/${id}`, { method: 'DELETE' });
   }
 
+  /** Company-wide defaults (set by the org admin in the Admin Portal → Company
+   * Preferences → Data Node Defaults) applied when pre-filling the "Add
+   * dimension" form. */
+  async getCompanyNodeDefaults(companyId: string): Promise<{ visibility: string; sensitive: boolean }> {
+    const cfg = await req<{ defaultVisibility?: string; defaultSensitive?: boolean }>(
+      `/companies/${companyId}/preferences`
+    );
+    return {
+      visibility: cfg.defaultVisibility ?? 'internal',
+      sensitive: cfg.defaultSensitive ?? false,
+    };
+  }
+
   // ── Dimension Types ────────────────────────────────────────────────────────
 
   async listDimTypes(): Promise<DimType[]> {

@@ -27,11 +27,16 @@ DEFAULT_RISK_WEIGHTS = {
     "ai_behavioral": 20,
     "strategic_reputational": 20,
 }
+DEFAULT_VISIBILITY = "internal"
+DEFAULT_SENSITIVE = False
+VALID_VISIBILITY_LEVELS = {"public", "internal", "restricted", "confidential"}
 
 
 class RoadmapConfigUpdate(BaseModel):
     priority_weights: dict[str, float] | None = None
     risk_weights: dict[str, float] | None = None
+    default_visibility: str | None = None
+    default_sensitive: bool | None = None
 
 
 def _json_dict(value: Any, default: dict) -> dict:
@@ -98,7 +103,7 @@ async def list_companies(
     ]
 
 
-@router.get("/companies/{company_id}/roadmap-config")
+@router.get("/companies/{company_id}/preferences")
 async def get_roadmap_config(
     company_id: UUID,
     auth: dict = Depends(require_portal_admin),
@@ -106,30 +111,49 @@ async def get_roadmap_config(
     async with AsyncSessionLocal() as db:
         row = await db.execute(
             text("""
-                SELECT priority_weights, risk_weights FROM twin.company_preferences
+                SELECT priority_weights, risk_weights, default_visibility, default_sensitive
+                FROM twin.company_preferences
                 WHERE company_id = :id
             """),
             {"id": str(company_id)},
         )
         result = row.mappings().first()
     if not result:
-        return {"priorityWeights": DEFAULT_PRIORITY_WEIGHTS, "riskWeights": DEFAULT_RISK_WEIGHTS}
+        return {
+            "priorityWeights": DEFAULT_PRIORITY_WEIGHTS,
+            "riskWeights": DEFAULT_RISK_WEIGHTS,
+            "defaultVisibility": DEFAULT_VISIBILITY,
+            "defaultSensitive": DEFAULT_SENSITIVE,
+        }
     return {
         "priorityWeights": _json_dict(result["priority_weights"], DEFAULT_PRIORITY_WEIGHTS),
         "riskWeights": _json_dict(result["risk_weights"], DEFAULT_RISK_WEIGHTS),
+        "defaultVisibility": result["default_visibility"] or DEFAULT_VISIBILITY,
+        "defaultSensitive": result["default_sensitive"] if result["default_sensitive"] is not None else DEFAULT_SENSITIVE,
     }
 
 
-@router.patch("/companies/{company_id}/roadmap-config")
+@router.patch("/companies/{company_id}/preferences")
 async def update_roadmap_config(
     company_id: UUID,
     body: RoadmapConfigUpdate,
     request: Request,
     auth: dict = Depends(require_portal_admin),
 ):
-    """Admin-only: upserts the company's roadmap scoring weights."""
-    if body.priority_weights is None and body.risk_weights is None:
+    """Admin-only: upserts the company's roadmap scoring weights and node defaults."""
+    if (
+        body.priority_weights is None
+        and body.risk_weights is None
+        and body.default_visibility is None
+        and body.default_sensitive is None
+    ):
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    if body.default_visibility is not None and body.default_visibility not in VALID_VISIBILITY_LEVELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"default_visibility must be one of {sorted(VALID_VISIBILITY_LEVELS)}",
+        )
 
     tenant_id: str | None = (
         request.headers.get("x-tenant-id", "").strip() or
@@ -161,27 +185,37 @@ async def update_roadmap_config(
                 if body.risk_weights is not None:
                     set_clauses.append("risk_weights = :risk_weights")
                     params["risk_weights"] = json.dumps(body.risk_weights)
+                if body.default_visibility is not None:
+                    set_clauses.append("default_visibility = :default_visibility")
+                    params["default_visibility"] = body.default_visibility
+                if body.default_sensitive is not None:
+                    set_clauses.append("default_sensitive = :default_sensitive")
+                    params["default_sensitive"] = body.default_sensitive
                 row = await db.execute(
                     text(f"""
                         UPDATE twin.company_preferences
                         SET {', '.join(set_clauses)}
                         WHERE company_id = :id
-                        RETURNING priority_weights, risk_weights
+                        RETURNING priority_weights, risk_weights, default_visibility, default_sensitive
                     """),
                     params,
                 )
             else:
                 row = await db.execute(
                     text("""
-                        INSERT INTO twin.company_preferences (company_id, tenant_id, priority_weights, risk_weights)
-                        VALUES (:company_id, :tenant_id, :priority_weights, :risk_weights)
-                        RETURNING priority_weights, risk_weights
+                        INSERT INTO twin.company_preferences
+                            (company_id, tenant_id, priority_weights, risk_weights, default_visibility, default_sensitive)
+                        VALUES
+                            (:company_id, :tenant_id, :priority_weights, :risk_weights, :default_visibility, :default_sensitive)
+                        RETURNING priority_weights, risk_weights, default_visibility, default_sensitive
                     """),
                     {
                         "company_id": cid,
                         "tenant_id": tenant_id,
                         "priority_weights": json.dumps(body.priority_weights if body.priority_weights is not None else DEFAULT_PRIORITY_WEIGHTS),
                         "risk_weights": json.dumps(body.risk_weights if body.risk_weights is not None else DEFAULT_RISK_WEIGHTS),
+                        "default_visibility": body.default_visibility if body.default_visibility is not None else DEFAULT_VISIBILITY,
+                        "default_sensitive": body.default_sensitive if body.default_sensitive is not None else DEFAULT_SENSITIVE,
                     },
                 )
 
@@ -195,4 +229,6 @@ async def update_roadmap_config(
     return {
         "priorityWeights": _json_dict(result["priority_weights"], DEFAULT_PRIORITY_WEIGHTS),
         "riskWeights": _json_dict(result["risk_weights"], DEFAULT_RISK_WEIGHTS),
+        "defaultVisibility": result["default_visibility"] or DEFAULT_VISIBILITY,
+        "defaultSensitive": result["default_sensitive"] if result["default_sensitive"] is not None else DEFAULT_SENSITIVE,
     }

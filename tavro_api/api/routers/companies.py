@@ -23,6 +23,8 @@ DEFAULT_RISK_WEIGHTS = {
     "ai_behavioral": 20,
     "strategic_reputational": 20,
 }
+DEFAULT_VISIBILITY = "internal"
+DEFAULT_SENSITIVE = False
 
 
 def _json_dict(value: Any, default: dict) -> dict:
@@ -37,7 +39,7 @@ def _json_dict(value: Any, default: dict) -> dict:
     return default
 
 
-@router.get("/{company_id}/roadmap-config")
+@router.get("/{company_id}/preferences")
 async def get_roadmap_config(company_id: UUID, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     """
     Read-only roadmap scoring weights for a company. These are configured by
@@ -46,17 +48,25 @@ async def get_roadmap_config(company_id: UUID, tenant_id: str = Depends(require_
     """
     row = await db.execute(
         text("""
-            SELECT priority_weights, risk_weights FROM twin.company_preferences
+            SELECT priority_weights, risk_weights, default_visibility, default_sensitive
+            FROM twin.company_preferences
             WHERE company_id = :id AND (tenant_id = :tid OR tenant_id IS NULL)
         """),
         {"id": str(company_id), "tid": tenant_id},
     )
     result = row.mappings().first()
     if not result:
-        return {"priorityWeights": DEFAULT_PRIORITY_WEIGHTS, "riskWeights": DEFAULT_RISK_WEIGHTS}
+        return {
+            "priorityWeights": DEFAULT_PRIORITY_WEIGHTS,
+            "riskWeights": DEFAULT_RISK_WEIGHTS,
+            "defaultVisibility": DEFAULT_VISIBILITY,
+            "defaultSensitive": DEFAULT_SENSITIVE,
+        }
     return {
         "priorityWeights": _json_dict(result["priority_weights"], DEFAULT_PRIORITY_WEIGHTS),
         "riskWeights": _json_dict(result["risk_weights"], DEFAULT_RISK_WEIGHTS),
+        "defaultVisibility": result["default_visibility"] or DEFAULT_VISIBILITY,
+        "defaultSensitive": result["default_sensitive"] if result["default_sensitive"] is not None else DEFAULT_SENSITIVE,
     }
 
 

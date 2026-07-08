@@ -9,7 +9,7 @@ import {
 import {
     getRoadmapConfig, saveRoadmapConfig,
     priorityWeightsSum, riskWeightsSum,
-    DEFAULT_CONFIG, type RoadmapConfig,
+    DEFAULT_CONFIG, type RoadmapConfig, type VisibilityLevel,
 } from '../services/roadmapConfigApi';
 
 const STORAGE_ID_KEY   = 'tavro_active_company_id';
@@ -20,7 +20,6 @@ const COMING_SOON_BADGE =
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 18;
 
-type VisibilityLevel = 'public' | 'internal' | 'restricted' | 'confidential';
 const VISIBILITY_OPTIONS: { key: VisibilityLevel; label: string }[] = [
     { key: 'public',       label: 'Public' },
     { key: 'internal',     label: 'Internal' },
@@ -147,8 +146,6 @@ const AdminRoadmapConfigPage: React.FC = () => {
 
     // ── Preview-only fields — UI shell for the rest of the company
     // preferences doc; not yet wired to a backend endpoint. ──────────────────
-    const [defaultVisibility, setDefaultVisibility] = useState<VisibilityLevel>('internal');
-    const [defaultSensitive, setDefaultSensitive]   = useState(false);
     const [allowedProviders, setAllowedProviders]   = useState<LLMProviderKey[]>(['github_copilot', 'openai', 'azure_openai', 'anthropic']);
     const [defaultProvider, setDefaultProvider]     = useState<LLMProviderKey>('github_copilot');
     const [riskReviewThreshold, setRiskReviewThreshold] = useState(3.5);
@@ -361,49 +358,46 @@ const AdminRoadmapConfigPage: React.FC = () => {
                             </div>
                         </div>
 
+                        {/* Data node defaults — live, saved via the same Save button as the weights above */}
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+                            <span className="text-sm font-semibold text-slate-800 dark:text-white">Data node defaults</span>
+                            <p className="text-[11px] text-slate-400 mb-3 mt-0.5">Applied automatically when a new data node is created.</p>
+
+                            <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 block">Default visibility</label>
+                            <div className="flex flex-wrap gap-1.5 mb-4">
+                                {VISIBILITY_OPTIONS.map(({ key, label }) => (
+                                    <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => setCfg(prev => ({ ...prev, defaultVisibility: key }))}
+                                        className={`text-[11.5px] font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
+                                            cfg.defaultVisibility === key
+                                                ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/30'
+                                                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                                        }`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                                <div>
+                                    <label className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-400 block">Mark new data nodes as sensitive</label>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">Applies a sensitivity flag by default until a reviewer clears it.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setCfg(prev => ({ ...prev, defaultSensitive: !prev.defaultSensitive }))}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 ${cfg.defaultSensitive ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ${cfg.defaultSensitive ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Coming-soon groups — UI shells, not yet wired to a save endpoint */}
                         <div className="grid grid-cols-1 gap-3.5">
-
-                            {/* Data node defaults */}
-                            <div className="bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 opacity-70">
-                                <div className="flex items-center justify-between gap-3 mb-1">
-                                    <span className="text-sm font-semibold text-slate-800 dark:text-white">Data node defaults</span>
-                                    <span className={COMING_SOON_BADGE}>Coming soon</span>
-                                </div>
-                                <p className="text-[11px] text-slate-400 mb-3">Applied automatically when a new data node is created.</p>
-
-                                <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 block">Default visibility</label>
-                                <div className="flex flex-wrap gap-1.5 mb-4">
-                                    {VISIBILITY_OPTIONS.map(({ key, label }) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            onClick={() => setDefaultVisibility(key)}
-                                            className={`text-[11.5px] font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
-                                                defaultVisibility === key
-                                                    ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/30'
-                                                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-                                            }`}
-                                        >
-                                            {label}
-                                        </button>
-                                    ))}
-                                </div>
-
-                                <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
-                                    <div>
-                                        <label className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-400 block">Mark new data nodes as sensitive</label>
-                                        <p className="text-[10px] text-slate-400 mt-0.5">Applies a sensitivity flag by default until a reviewer clears it.</p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setDefaultSensitive(v => !v)}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 ${defaultSensitive ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700'}`}
-                                    >
-                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ${defaultSensitive ? 'translate-x-6' : 'translate-x-1'}`} />
-                                    </button>
-                                </div>
-                            </div>
 
                             {/* LLM provider policy */}
                             <div className="bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 opacity-70">
