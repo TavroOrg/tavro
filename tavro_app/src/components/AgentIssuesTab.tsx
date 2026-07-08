@@ -147,32 +147,30 @@ const RelatedIssuesList: React.FC<{
 }> = ({ issues, selectedIssueId, onOpenIssue, emptyMessage = 'No related issues recorded for this agent.' }) => {
   if (issues.length === 0) {
     return (
-      <div className="p-8 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+      <div className="p-5 text-sm text-slate-500">
         {emptyMessage}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2 p-5">
       {issues.map(issue => (
         <div
           key={issue.identifier}
-          className={`flex flex-col p-4 rounded-xl border transition-colors ${selectedIssueId === issue.identifier
-            ? 'bg-blue-50 border-blue-200'
-            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+          className={`flex flex-col gap-2 rounded-xl border p-3 shadow-sm transition-colors ${selectedIssueId === issue.identifier ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 hover:border-slate-200'
           }`}
         >
-          <div className="flex justify-between items-start gap-3 mb-2">
+          <div className="flex justify-between items-start gap-3">
             <div className="min-w-0">
               <button
                 type="button"
                 onClick={() => onOpenIssue(issue.identifier)}
-                className="text-left font-bold text-sm text-blue-700 hover:underline"
+                className="text-left text-sm font-semibold text-blue-600 hover:underline"
               >
                 {issue.title}
               </button>
-              <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{issue.identifier}</span>
+              <p className="text-[11px] font-mono text-slate-400 truncate">{issue.identifier}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
               {issue.severity && (
@@ -869,9 +867,9 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
       )}
 
       {!selectedIssueId && (
-        <div className="p-5">
+        <div>
           {issues.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+            <div className="p-5 text-sm text-slate-500">
               No issues recorded. Click <span className="font-semibold text-blue-600">+ New Issue</span> to add one.
             </div>
           ) : (
