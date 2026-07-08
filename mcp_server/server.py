@@ -3132,8 +3132,8 @@ async def list_integrations(
     *,
     company_id: Optional[str],
     search: Optional[str] = None,
-    offset: int = 0,
-    limit: int = 50,
+    start_record: int = 1,
+    record_range: str = "1-50",
 ) -> Dict[str, Any]:
     """
     List business integrations, optionally filtered by company or search term.
@@ -3142,11 +3142,11 @@ async def list_integrations(
         original_prompt (str): REQUIRED verbatim user message.
         company_id (Optional[str]): REQUIRED. Active company UUID, or null if no company context is active.
         search (str, optional): Search by integration name or description.
-        offset (int): Pagination offset (default 0).
-        limit (int): Max records (default 50, max 500).
+        start_record (int): Starting record number (1-based). Default is 1.
+        record_range (str, optional): Inclusive range in "start-end" format. Defaults to "1-50".
 
     Returns:
-        Dict[str, Any]: Paginated list with total, offset, limit, items.
+        Dict[str, Any]: Paginated list with start_record, end_record, record_count, total_records, data.
     """
     try:
         token = get_access_token()
@@ -3154,11 +3154,11 @@ async def list_integrations(
         log_tool_call(
             "list_integrations",
             original_prompt,
-            {"company_id": company_id, "search": search},
+            {"company_id": company_id, "search": search, "start_record": start_record, "record_range": record_range},
             tenant_id,
         )
 
-        params: Dict[str, Any] = {"offset": offset, "limit": limit}
+        params: Dict[str, Any] = {"start_record": start_record, "record_range": record_range}
         if company_id:
             params["company_id"] = company_id
         if search:

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { fetchAllPages } from '../utils/fetchAllPages';
 import { aiModelApi } from '../services/aiModelApi';
 import { agentApi } from '../services/agentApi';
 import { useUseCases } from '../context/UseCaseContext';
@@ -312,7 +313,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         showProcesses ? businessRelationsApi.listProcesses(undefined, companyId) : Promise.resolve([] as BusinessProcessRecord[]),
         showAiModels ? aiModelApi.listModels(undefined, companyId) : Promise.resolve([] as AiModelRecord[]),
         showIntegrations ? businessRelationsApi.listIntegrations(undefined, companyId) : Promise.resolve([] as IntegrationRecord[]),
-        showUseCases ? useCaseApi.listUseCases({ companyId, recordRange: '1-200' }) : Promise.resolve(null),
+        showUseCases
+          ? fetchAllPages((start, range) => useCaseApi.listUseCases({ companyId, startRecord: start, recordRange: range })).then(data => ({ data }))
+          : Promise.resolve(null),
         showChildAgents ? agentApi.listAgentsForLinking(companyId) : Promise.resolve([] as typeof catalogAgents),
       ]);
       setRelations(agentRelations);

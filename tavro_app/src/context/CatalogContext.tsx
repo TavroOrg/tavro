@@ -3,6 +3,7 @@ import { AgentData } from '../types/agent';
 import { hasResolvedAgentRisk } from '../utils/agentRisk';
 import { agentApi, RiskWorkflowStatus } from '../services/agentApi';
 import { toUserMessage } from '../utils/errorUtils';
+import { fetchPagesProgressive } from '../utils/fetchAllPages';
 
 const AGENT_CACHE_KEY = 'tavro_catalog_agents_cache';
 const AGENT_CACHE_TS_KEY = 'tavro_catalog_agents_cache_ts';
@@ -287,99 +288,91 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 locallyPendingIds = new Set();
             }
 
-            // Page 1: fetch immediately, run the full temporal-workflow merge, show data.
-            const firstResponse = await agentApi.getAgentCatalog(1, `1-${PAGE_SIZE}`);
-            const totalRecords = firstResponse.total_records ?? 0;
-            const firstBatch = (firstResponse.data ?? []).map(normalizeItem);
+            // Loop through all pages: page 1 runs the full temporal-workflow merge
+            // and shows data immediately; later pages append newly-discovered agents.
+            await fetchPagesProgressive<any>(
+                (start, range) => agentApi.getAgentCatalog(start, range),
+                (rawBatch, isFirstPage) => {
+                    const batch = rawBatch.map(normalizeItem);
 
-            setAgents(prev => {
-                const prevMap = mapByIdentity(prev);
-                const merged = firstBatch.map(agent => {
-                    const key = identityKey(agent);
-                    const old = key ? prevMap.get(key) : undefined;
-                    const base = old ? mergeAgent(agent, old) : agent;
-                    const runningForAgent = runningRecords.some(wf => workflowMatchesAgent(wf, base));
-                    const agentIsPendingLocally = locallyPendingIds.has(norm(base.identification?.agent_id || ''));
-                    if (!runningForAgent && !agentIsPendingLocally) {
-                        if (base.identification?.governance_status === 'Risk Assessment is running') {
-                            return {
-                                ...base,
-                                identification: { ...base.identification, governance_status: null },
-                            };
-                        }
-                        return base;
-                    }
-                    return {
-                        ...base,
-                        latest_risk_score: null,
-                        latest_risk_class: null,
-                        risk_assessment: null,
-                        identification: {
-                            ...base.identification,
-                            governance_status: 'Risk Assessment is running',
-                        },
-                    };
-                });
+                    if (isFirstPage) {
+                        setAgents(prev => {
+                            const prevMap = mapByIdentity(prev);
+                            const merged = batch.map(agent => {
+                                const key = identityKey(agent);
+                                const old = key ? prevMap.get(key) : undefined;
+                                const base = old ? mergeAgent(agent, old) : agent;
+                                const runningForAgent = runningRecords.some(wf => workflowMatchesAgent(wf, base));
+                                const agentIsPendingLocally = locallyPendingIds.has(norm(base.identification?.agent_id || ''));
+                                if (!runningForAgent && !agentIsPendingLocally) {
+                                    if (base.identification?.governance_status === 'Risk Assessment is running') {
+                                        return {
+                                            ...base,
+                                            identification: { ...base.identification, governance_status: null },
+                                        };
+                                    }
+                                    return base;
+                                }
+                                return {
+                                    ...base,
+                                    latest_risk_score: null,
+                                    latest_risk_class: null,
+                                    risk_assessment: null,
+                                    identification: {
+                                        ...base.identification,
+                                        governance_status: 'Risk Assessment is running',
+                                    },
+                                };
+                            });
 
-                const mergedMap = mapByIdentity(merged);
-                const pendingCarryOver = prev.filter(a => {
-                    if (merged.some(m => sameLogicalAgent(a, m))) return false;
-                    const key = identityKey(a);
-                    if (!key && !a.name) return false;
-                    if (key && mergedMap.has(key)) return false;
-                    if (!isPendingAssessment(a)) return false;
-                    // Don't carry over deleted agents: once their ID is removed from
-                    // locallyPendingIds (which handleDelete does before refreshCatalog),
-                    // they must not survive the next fetchAgents pass.
-                    const agentId = norm(a.identification?.agent_id || '');
-                    return !agentId || locallyPendingIds.has(agentId);
-                });
+                            const mergedMap = mapByIdentity(merged);
+                            const pendingCarryOver = prev.filter(a => {
+                                if (merged.some(m => sameLogicalAgent(a, m))) return false;
+                                const key = identityKey(a);
+                                if (!key && !a.name) return false;
+                                if (key && mergedMap.has(key)) return false;
+                                if (!isPendingAssessment(a)) return false;
+                                // Don't carry over deleted agents: once their ID is removed from
+                                // locallyPendingIds (which handleDelete does before refreshCatalog),
+                                // they must not survive the next fetchAgents pass.
+                                const agentId = norm(a.identification?.agent_id || '');
+                                return !agentId || locallyPendingIds.has(agentId);
+                            });
 
-                const temporalPending = runningRecords
-                    .filter(record => {
-                        // Only create phantom tiles for workflows initiated by this
-                        // session. Without this guard, a workflow for a deleted agent
-                        // (whose DB record is gone but Temporal is still running)
-                        // would match no entry in `merged` and produce a ghost tile.
-                        const isLocallyOwned =
-                            locallyPendingIds.has(norm(record.agent_id || '')) ||
-                            locallyPendingIds.has(norm(record.agent_internal_id || ''));
-                        if (!isLocallyOwned) return false;
-                        // Use workflowMatchesAgent (flexible cross-field ID/name matching)
-                        // rather than sameLogicalAgent, which is now strict ID-only when
-                        // both sides carry an ID. The workflow's agent_internal_id can
-                        // differ from the catalog's agent_id, so strict comparison would
-                        // miss the match and produce a duplicate tile.
-                        const matched = merged.find(m => workflowMatchesAgent(record, m));
-                        if (!matched) return true;
-                        return !hasRiskClassification(matched);
-                    })
-                    .map(toPendingAgentFromWorkflow);
+                            const temporalPending = runningRecords
+                                .filter(record => {
+                                    // Only create phantom tiles for workflows initiated by this
+                                    // session. Without this guard, a workflow for a deleted agent
+                                    // (whose DB record is gone but Temporal is still running)
+                                    // would match no entry in `merged` and produce a ghost tile.
+                                    const isLocallyOwned =
+                                        locallyPendingIds.has(norm(record.agent_id || '')) ||
+                                        locallyPendingIds.has(norm(record.agent_internal_id || ''));
+                                    if (!isLocallyOwned) return false;
+                                    // Use workflowMatchesAgent (flexible cross-field ID/name matching)
+                                    // rather than sameLogicalAgent, which is now strict ID-only when
+                                    // both sides carry an ID. The workflow's agent_internal_id can
+                                    // differ from the catalog's agent_id, so strict comparison would
+                                    // miss the match and produce a duplicate tile.
+                                    const matched = merged.find(m => workflowMatchesAgent(record, m));
+                                    if (!matched) return true;
+                                    return !hasRiskClassification(matched);
+                                })
+                                .map(toPendingAgentFromWorkflow);
 
-                const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
-                const now = Date.now();
-                try {
-                    sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
-                    sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
-                } catch {
-                    // Storage quota exceeded — data lives in React state, re-fetched next load
-                }
-                setLastFetched(new Date(now));
-                return next;
-            });
-            setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
-
-            // Pages 2–N: fire all concurrently, append new agents as each arrives.
-            if (totalRecords > PAGE_SIZE) {
-                const pageStarts: number[] = [];
-                for (let start = PAGE_SIZE + 1; start <= totalRecords; start += PAGE_SIZE) {
-                    pageStarts.push(start);
-                }
-                await Promise.all(pageStarts.map(async start => {
-                    const end = Math.min(start + PAGE_SIZE - 1, totalRecords);
-                    try {
-                        const resp = await agentApi.getAgentCatalog(start, `${start}-${end}`);
-                        const batch = (resp.data ?? []).map(normalizeItem);
+                            const next = dedupeLogicalAgents([...temporalPending, ...pendingCarryOver, ...merged]);
+                            const now = Date.now();
+                            try {
+                                sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
+                                sessionStorage.setItem(AGENT_CACHE_TS_KEY, String(now));
+                            } catch {
+                                // Storage quota exceeded — data lives in React state, re-fetched next load
+                            }
+                            setLastFetched(new Date(now));
+                            return next;
+                        });
+                        setLoading(false); // Show page 1 immediately; remaining pages fill in silently.
+                    } else {
                         setAgents(prev => {
                             const prevKeys = new Set(prev.map(identityKey).filter(Boolean));
                             const fresh = batch
@@ -404,11 +397,10 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             sessionStorage.setItem(AGENT_CACHE_KEY, JSON.stringify(next));
                             return next;
                         });
-                    } catch {
-                        // Silently skip a failed page — partial data is better than nothing.
                     }
-                }));
-            }
+                },
+                PAGE_SIZE,
+            );
 
             // All pages done — stamp cache as fully valid.
             const now = Date.now();

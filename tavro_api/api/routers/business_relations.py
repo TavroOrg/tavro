@@ -3477,20 +3477,22 @@ async def list_integrations(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: str = "1-50",
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        parts = record_range.split("-")
+        start, end = int(parts[0]), int(parts[1])
+    except Exception:
+        start, end = start_record, start_record + 49
+
+    try:
         all_items = await _fetch_integrations(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data = all_items[start - 1: end]
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
@@ -4116,20 +4118,22 @@ async def list_applications(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: str = "1-50",
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        parts = record_range.split("-")
+        start, end = int(parts[0]), int(parts[1])
+    except Exception:
+        start, end = start_record, start_record + 49
+
+    try:
         all_items = await _fetch_applications(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data = all_items[start - 1: end]
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
@@ -4794,20 +4798,22 @@ async def list_processes(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: str = "1-50",
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        parts = record_range.split("-")
+        start, end = int(parts[0]), int(parts[1])
+    except Exception:
+        start, end = start_record, start_record + 49
+
+    try:
         all_items = await _fetch_processes(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
         total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data = all_items[start - 1: end]
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
