@@ -3,14 +3,13 @@ import { readRoadmapConfig } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
+import LifecycleStepper from './LifecycleStepper';
 import {
     Building2,
     ShieldCheck,
     ClipboardList,
     ShieldAlert,
     CheckCircle2,
-    Clock,
-    Archive,
     AlertTriangle,
     Target,
     FileText,
@@ -68,7 +67,10 @@ interface UseCaseViewProps {
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
     enriching?: boolean;
+    onLifecycleStageChange?: (stage: string) => void;
 }
+
+const USE_CASE_LIFECYCLE_STAGES = ['Identified', 'Scoped', 'Approved', 'In build', 'Live'];
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
     const cls = {
@@ -84,24 +86,6 @@ function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | '
     );
 }
 
-
-function StatusBadge({ status }: { status?: string | null }) {
-    if (!status) return <span className="text-slate-400 text-xs">—</span>;
-    const s = status.toLowerCase();
-    const cls = s.includes('active')
-        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-        : s.includes('review')
-            ? 'bg-amber-50 text-amber-700 border-amber-200'
-            : s.includes('deprecat')
-                ? 'bg-slate-100 text-slate-500 border-slate-200'
-                : 'bg-blue-50 text-blue-700 border-blue-200';
-    const Icon = s.includes('active') ? CheckCircle2 : s.includes('review') ? Clock : s.includes('deprecat') ? Archive : AlertTriangle;
-    return (
-        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>
-            <Icon size={11} /> {status}
-        </span>
-    );
-}
 
 function RiskBadge({ classification }: { classification?: string | null }) {
     if (!classification) return null;
@@ -302,6 +286,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     inlineEdit, inlineSaving,
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
     enriching,
+    onLifecycleStageChange,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
@@ -496,8 +481,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const linkedAgents = ((uc as any).agents ?? (uc as any).of_associated_agents ?? []).filter(Boolean);
     const linkedAgentCount = linkedAgents.length;
 
-    const statusLabel = uc.status || 'Proposed';
-
     const owner = uc.owner ?? (uc as any).use_case_owner ?? null;
     const proposedBy = uc.proposed_by ?? (uc as any).proposed_by ?? null;
     const createdAt = uc.created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
@@ -606,9 +589,15 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 </h1>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                                <StatusBadge status={statusLabel} />
                                 {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
+                            </div>
+                            <div className="max-w-md mt-2">
+                                <LifecycleStepper
+                                    stages={USE_CASE_LIFECYCLE_STAGES}
+                                    currentStage={(uc as any).status ?? 'Identified'}
+                                    onStageChange={onLifecycleStageChange}
+                                />
                             </div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">

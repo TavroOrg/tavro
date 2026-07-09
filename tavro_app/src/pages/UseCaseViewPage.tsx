@@ -1743,6 +1743,20 @@ const UseCaseViewPage: React.FC = () => {
     }
   };
 
+  const handleLifecycleStageChange = async (stage: string) => {
+    if (!id) return;
+    try {
+      await useCaseApi.updateUseCase(id, {
+        status: stage,
+        __activityName: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+      });
+      setUseCase(prev => (prev ? ({ ...prev, status: stage } as UseCaseDetail) : prev));
+      refreshUseCases();
+    } catch (err: any) {
+      console.error('Failed to update lifecycle stage:', err);
+    }
+  };
+
   const handleUseCaseSaved = (updated: {
     title: string;
     description: string;
@@ -1917,6 +1931,7 @@ const UseCaseViewPage: React.FC = () => {
           onSaveInlineEdit={handleSaveInlineEdit}
           onCancelInlineEdit={handleCancelInlineEdit}
           enriching={enriching}
+          onLifecycleStageChange={handleLifecycleStageChange}
         />
       )}
 

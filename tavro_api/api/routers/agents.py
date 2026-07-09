@@ -138,6 +138,7 @@ class AgentUpdateRequest(BaseModel):
     description: Optional[str] = None
     instruction: Optional[str] = None
     agent_type: Optional[str] = None
+    status: Optional[str] = None
     issues: Optional[List[Dict[str, Any]]] = None
     skills: Optional[List[Any]] = None
 
@@ -1444,9 +1445,9 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     a.agent_id, a.agent_internal_id, a.agent_name, a.agent_description,
                     a.source_system, a.created_ts, a.updated_ts, a.tenant_id,
                     COALESCE(a.agent_type, 'Config-driven') AS agent_type,
+                    COALESCE(a.status, 'Plan') AS status,
                     i.instruction, i.role, i.environment, i.governance_status,
-                    r.risk_classification, r.blended_risk_score, r.pii_flag,
-                    r.phi_flag, r.pci_flag
+                    r.risk_classification, r.blended_risk_score
                 FROM {CORE}.agents a
                 LEFT JOIN LATERAL (
                     SELECT instruction, role, environment, governance_status
@@ -1457,7 +1458,7 @@ async def get_agent_card(agent_id: str, request: Request, db: AsyncSession = Dep
                     LIMIT 1
                 ) i ON true
                 LEFT JOIN LATERAL (
-                    SELECT blended_risk_class AS risk_classification, blended_risk_score, pii_flag, phi_flag, pci_flag
+                    SELECT blended_risk_class AS risk_classification, blended_risk_score
                     FROM {CORE}.agent_risk_assessments
                     WHERE agent_internal_id = a.agent_internal_id
                       AND COALESCE(is_current, true) = true
@@ -1658,6 +1659,9 @@ async def update_agent(agent_id: str, body: AgentUpdateRequest, request: Request
         if body.agent_type is not None and body.agent_type.strip():
             agent_sets.append("agent_type = :agent_type")
             params["agent_type"] = body.agent_type.strip()
+        if body.status is not None and body.status.strip():
+            agent_sets.append("status = :status")
+            params["status"] = body.status.strip()
 
         if len(agent_sets) > 1:
             await db.execute(

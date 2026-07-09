@@ -283,6 +283,17 @@ def _classify_usecase_stage(status: Any) -> str:
     return "Identified"
 
 
+def _canonical_stage(value: Any, valid_stages: List[str]) -> Optional[str]:
+    """Match a raw status column value to one of the known lifecycle-stage bucket labels, case-insensitively."""
+    v = _norm(value)
+    if not v:
+        return None
+    for stage in valid_stages:
+        if v == stage.lower():
+            return stage
+    return None
+
+
 def _trend_dir(score: float) -> str:
     if score >= 7:
         return "up"
@@ -467,6 +478,7 @@ SELECT
     a.agent_name,
     a.agent_description,
     a.source_system,
+    a.status,
     a.created_ts,
     a.updated_ts,
     i.environment,
@@ -625,16 +637,16 @@ async def get_insights_summary(
     total_agents = len(agent_rows)
 
     # --- precompute per-agent derived fields ---
+    agent_stage_order = ["Plan", "Design", "Develop", "Deploy", "Monitor"]
     for a in agent_rows:
         a["_risk"] = _risk_class(a)
         a["_score"] = _risk_score(a)
-        a["_stage"] = _classify_agent_stage(a)
+        a["_stage"] = _canonical_stage(a.get("status"), agent_stage_order) or _classify_agent_stage(a)
         a["_autonomy"] = _autonomy_bucket(a.get("autonomy_level"))
         a["_provider"] = _pretty_provider(a.get("source_system"))
         a["_env"] = _pretty_env(a.get("environment"))
 
     # --- lifecycle distributions ---
-    agent_stage_order = ["Plan", "Design", "Develop", "Deploy", "Monitor"]
     agent_counts = {s: 0 for s in agent_stage_order}
     for a in agent_rows:
         agent_counts[a["_stage"]] += 1
@@ -643,7 +655,8 @@ async def get_insights_summary(
     uc_stage_order = ["Identified", "Scoped", "Approved", "In Build", "Live"]
     uc_counts = {s: 0 for s in uc_stage_order}
     for uc in uc_rows:
-        uc_counts[_classify_usecase_stage(uc.get("status"))] += 1
+        stage = _canonical_stage(uc.get("status"), uc_stage_order) or _classify_usecase_stage(uc.get("status"))
+        uc_counts[stage] += 1
     usecase_lifecycle = [{"stage": s, "count": uc_counts[s]} for s in uc_stage_order]
 
     # --- provider distribution (only Google/Azure/ServiceNow) ---

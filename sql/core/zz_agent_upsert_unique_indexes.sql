@@ -833,4 +833,30 @@ BEGIN
         END IF;
     END IF;
 
+    -- lifecycle stage now lives in the existing status column — drop the
+    -- short-lived lifecycle_stage column from any DB where it was already added.
+    IF to_regclass('core.agents') IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'lifecycle_stage'
+        ) THEN
+            ALTER TABLE core.agents DROP COLUMN lifecycle_stage;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'agents' AND column_name = 'status'
+        ) THEN
+            ALTER TABLE core.agents ADD COLUMN status TEXT DEFAULT 'Plan';
+        END IF;
+    END IF;
+
+    IF to_regclass('core.ai_use_cases') IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'core' AND table_name = 'ai_use_cases' AND column_name = 'lifecycle_stage'
+        ) THEN
+            ALTER TABLE core.ai_use_cases DROP COLUMN lifecycle_stage;
+        END IF;
+    END IF;
+
 END $$;

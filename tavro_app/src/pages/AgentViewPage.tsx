@@ -412,6 +412,7 @@ const AgentViewPage: React.FC = () => {
                     name: apiData?.agent_name ?? mcpData.name,
                     description: apiData?.agent_description ?? mcpData.description,
                     agent_type: apiData?.agent_type ?? mcpData.agent_type ?? 'Config-driven',
+                    status: apiData?.status ?? mcpData.status ?? null,
                     identification: {
                         ...mcpData.identification,
                         instruction: apiData?.instruction ?? mcpData.identification?.instruction,
@@ -434,6 +435,7 @@ const AgentViewPage: React.FC = () => {
                     description: apiData.agent_description ?? '',
                     version: '1.0',
                     agent_type: apiData.agent_type ?? 'Config-driven',
+                    status: apiData.status ?? apiCatalog?.status ?? null,
                     identification: {
                         agent_id: apiData.agent_id ?? id,
                         agent_internal_id: apiData.agent_internal_id ?? null,
@@ -764,6 +766,24 @@ const AgentViewPage: React.FC = () => {
         }, 500);
     };
 
+    const handleLifecycleStageChange = async (stage: string) => {
+        if (!agent) return;
+        const agentId = agent.identification?.agent_id ?? agent.name;
+        const currentName = agent.name ?? '';
+        try {
+            await agentApi.updateAgent(agentId, { status: stage }, currentName);
+            mcpClient.invalidateCache();
+            setAgent(prev => {
+                if (!prev) return prev;
+                const next: AgentData = { ...prev, status: stage };
+                upsertAgent(next);
+                return next;
+            });
+        } catch (err: any) {
+            setEditError(toUserMessage(err));
+        }
+    };
+
     const handleIssuesChange = (issues: AgentIssue[]) => {
         mcpClient.invalidateCache();
         setAgent(prev => {
@@ -909,6 +929,7 @@ const AgentViewPage: React.FC = () => {
                 onInlineValueChange={(value) => setInlineEdit(prev => prev ? { ...prev, value } : prev)}
                 onSaveInlineEdit={handleSaveInlineEdit}
                 onCancelInlineEdit={handleCancelInlineEdit}
+                onLifecycleStageChange={handleLifecycleStageChange}
             />
 
             {/* JSON Inspector Modal */}

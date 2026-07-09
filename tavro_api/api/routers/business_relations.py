@@ -6399,7 +6399,7 @@ async def sync_blueprint_attachments_to_integration(
 
 
 @router.get(
-    "/agents/{agent_id}",
+    "/agents/{agent_id}/relations",
     tags=["Applications", "Processes"],
     summary="Get Agent Applications and Processes",
 )
