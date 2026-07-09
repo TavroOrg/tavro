@@ -49,58 +49,6 @@ jobs:
             sleep 30
           done
 
-      - name: Set up SSH key
-        run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
-          chmod 600 /tmp/ec2_key.pem
-
-      - name: Postgres dump + config archive -> Google Drive
-        run: |
-          ssh -o StrictHostKeyChecking=no -i /tmp/ec2_key.pem \
-            ec2-user@${{ secrets.EC2_HOST }} << 'ENDSSH'
-          set -e
-
-          DATE=$(date +%Y%m%d-%H%M)
-          BACKUP_DIR="/tmp/tavro-backup-${DATE}"
-          mkdir -p "$BACKUP_DIR"
-
-          mkdir -p ~/.config/rclone
-          echo "${{ secrets.RCLONE_CONFIG_B64 }}" | base64 -d > ~/.config/rclone/rclone.conf
-
-          cd /home/ec2-user/tavro_portal
-
-          echo "==> Dumping Postgres..."
-          docker exec tavro-postgres pg_dump -U tavro_user_dev tavro \
-            | gzip > "${BACKUP_DIR}/tavro-db-${DATE}.sql.gz"
-
-          echo "==> Archiving configs..."
-          tar -czf "${BACKUP_DIR}/tavro-configs-${DATE}.tar.gz" \
-            docker-compose.yml \
-            .env \
-            agent_cards/ \
-            traefik-config/ \
-            $([ -f config.yaml ] && echo config.yaml) \
-            2>/dev/null || true
-
-          echo "==> Uploading to Google Drive..."
-          rclone copy "${BACKUP_DIR}/" gdrive:tavro-portal-dev-backups/ --progress
-
-          echo "==> Verifying upload..."
-          rclone ls gdrive:tavro-portal-dev-backups/ | grep "${DATE}"
-
-          echo "==> Pruning Drive backups older than 30 days..."
-          rclone delete --min-age 30d gdrive:tavro-portal-dev-backups/
-
-          echo "==> Cleaning up /tmp..."
-          rm -rf "${BACKUP_DIR}"
-
-          echo "Data backup complete: ${DATE}"
-          ENDSSH
-
-      - name: Clean up SSH key
-        if: always()
-        run: rm -f /tmp/ec2_key.pem
-
       - name: Prune old AMIs
         run: |
           AMIS=$(aws ec2 describe-images \
@@ -136,4 +84,3 @@ jobs:
           echo "### Backup summary" >> "$GITHUB_STEP_SUMMARY"
           echo "- **AMI**: \`${{ steps.create-ami.outputs.ami_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Time**: $(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Postgres dump + config archive**: uploaded to \`gdrive:tavro-portal-dev-backups/\`" >> "$GITHUB_STEP_SUMMARY"
