@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db, AsyncSessionLocal
+from api.routers.datahub_context import MIN_RELEVANCE, _embed_query
 
 router = APIRouter()
 
@@ -1596,7 +1598,10 @@ async def generate_spark_ideas_stream(
 
 
 @router.post("/convert", response_model=SparkConvertResponse)
-async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
+async def convert_idea(
+    request: SparkConvertRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SparkConvertResponse:
     """Expand a Spark idea into full AI use case fields via Claude."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
@@ -1649,6 +1654,48 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             blueprint_block += f"\n\nDimension Relationships:\n{edge_lines}"
         blueprint_block += "\n\n"
 
+    # Ground the use case + agent design in real DataHub assets (pgvector semantic
+    # search over twin.datahub_context), scoped to global rows plus this company.
+    datahub_context_block = ""
+    try:
+        query_text = f"{request.title}. {request.description}. {request.rationale}"
+        where = "company_id IS NULL"
+        db_params: dict[str, Any] = {"limit": 6}
+        try:
+            db_params["company_id"] = str(UUID(request.company_id))
+            where = "(company_id IS NULL OR company_id = :company_id)"
+        except ValueError:
+            pass
+
+        vector_literal = "[" + ",".join(repr(v) for v in await _embed_query(query_text)) + "]"
+        db_params["vector"] = vector_literal
+
+        datahub_query = f"""
+            SELECT
+                label,
+                entity_type,
+                chunk_text,
+                metadata->>'vendor' AS vendor,
+                1 - (embedding <=> CAST(:vector AS vector)) AS relevance
+            FROM twin.datahub_context
+            WHERE {where}
+            ORDER BY embedding <=> CAST(:vector AS vector)
+            LIMIT :limit
+        """
+
+        rows = (await db.execute(text(datahub_query), db_params)).all()
+        matches = [r._mapping for r in rows if (r._mapping["relevance"] or 0) >= MIN_RELEVANCE]
+
+        if matches:
+            lines = [
+                f"  [{m['entity_type']}] {m['label']} ({m['vendor'] or 'unknown vendor'}): "
+                f"{(m['chunk_text'] or '')[:200]}"
+                for m in matches
+            ]
+            datahub_context_block = "\nRelevant DataHub Assets:\n" + "\n".join(lines) + "\n\n"
+    except Exception as exc:
+        logger.warning("spark.convert_idea datahub context lookup failed: %s", exc)
+
     system = (
         "You are an AI governance expert who writes structured AI use case documentation. "
         "Be specific, actionable, and business-focused. No filler phrases."
@@ -1661,6 +1708,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Context: {request.signal_label or ''}\n"
         f"Dimensions: {', '.join(request.target_dimensions)}\n"
         f"{blueprint_block}"
+        f"{datahub_context_block}"
         "Return a single JSON object with exactly these fields:\n"
         "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
@@ -1725,6 +1773,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             f"Solution approach: {safe_fields.get('solution_approach', '')}\n"
             f"Dimensions: {', '.join(request.target_dimensions)}\n"
             f"{blueprint_block}"
+            f"{datahub_context_block}"
             "Return a JSON object with exactly these fields:\n"
             "- agent_name: concise agent name, max 6 words\n"
             "- description: 1–2 sentences on what the agent does\n"
