@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 httpx
 asyncpg
+fastembed
 sqlalchemy[asyncio]
 pydantic
 cryptography

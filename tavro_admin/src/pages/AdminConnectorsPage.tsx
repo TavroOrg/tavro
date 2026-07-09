@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
     ChevronRight, ChevronDown, Play, RotateCcw, CheckCircle2, AlertCircle,
     Eye, EyeOff, FileJson, Loader2, Info, ExternalLink, Clock, Save, Building2, Search,
-    Bot, AppWindow, Workflow, Plug,
+    Bot, AppWindow, Workflow, Plug, Database,
 } from 'lucide-react';
 import logoServicenow  from '../assets/logos/logo-servicenow.png';
 import logoMicrosoft   from '../assets/logos/logo-microsoft.png';
@@ -43,6 +43,11 @@ interface ExtractedProcess {
     business_process_id: string;
 }
 
+interface ExtractedDataset {
+    name: string;
+    urn:  string;
+}
+
 interface RunResult {
     status:            RunStatus;
     count?:            number;
@@ -50,6 +55,8 @@ interface RunResult {
     risk_queued?:      number;
     applications?:     ExtractedApplication[];
     processes?:        ExtractedProcess[];
+    datasets?:         ExtractedDataset[];
+    embedded?:         number;
     error?:            string;
     files_saved?:      string[];
     logs?:             string;
@@ -73,6 +80,7 @@ interface ProviderCapability {
     name:            string;
     description:     string;
     snMode?:         ServiceNowMode;
+    runUrl?:         string;
     useSharedCreds?: boolean;
     note?:           string;
     fields?:         ConnectorField[];
@@ -223,15 +231,31 @@ const PROVIDERS: ProviderDef[] = [
             ],
         }],
     },
+    {
+        id: 'datahub', name: 'DataHub', description: 'Data catalog and metadata platform',
+        initials: 'DH', color: 'from-indigo-500 to-indigo-700',
+        capabilities: [{
+            id: 'datahub_catalog', connectorId: 'datahub', name: 'Catalog Sync',
+            description: 'Pull the full dataset & column catalog from DataHub',
+            runUrl: '/api/v1/admin/integrations/datahub-catalog/run',
+            capIcon: <Database size={18} className="text-indigo-500" />,
+            fields: [
+                { key: 'url',      label: 'DataHub URL', type: 'text',     placeholder: 'https://datahub.example.com' },
+                { key: 'username', label: 'Username',    type: 'text' },
+                { key: 'password', label: 'Password',    type: 'password' },
+            ],
+        }],
+    },
 ];
 
 // ── Provider categories ────────────────────────────────────────────────────────
 
 const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
-    { label: 'Cloud Platforms',  ids: ['microsoft', 'aws', 'google'] },
-    { label: 'Enterprise & CRM', ids: ['servicenow', 'salesforce'] },
-    { label: 'Data Platforms',   ids: ['snowflake', 'databricks'] },
-    { label: 'Developer Tools',  ids: ['github'] },
+    { label: 'Cloud Platforms',       ids: ['microsoft', 'aws', 'google'] },
+    { label: 'Enterprise & CRM',      ids: ['servicenow', 'salesforce'] },
+    { label: 'Data Platforms',        ids: ['snowflake', 'databricks'] },
+    { label: 'Data Catalog Platforms', ids: ['datahub'] },
+    { label: 'Developer Tools',       ids: ['github'] },
 ];
 
 // ── Brand logos (Simple Icons via react-icons) ─────────────────────────────────
@@ -536,7 +560,7 @@ const AdminConnectorsPage: React.FC = () => {
             business_processes:    '/api/v1/admin/integrations/business-processes/run',
         };
 
-        const integrationUrl = cap.snMode ? snUrls[cap.snMode] : null;
+        const integrationUrl = cap.snMode ? snUrls[cap.snMode] : (cap.runUrl ?? null);
         const url  = integrationUrl ?? `/api/v1/admin/connectors/${cap.connectorId}/run`;
         const body = integrationUrl ? undefined : JSON.stringify({ config: creds });
 
@@ -1026,11 +1050,13 @@ const AdminConnectorsPage: React.FC = () => {
                                                     ? 'AICT connection validated successfully.'
                                                     : cap.connectorId === 'agent365'
                                                         ? `Completed — ${(capRun.result as any).agents_synced ?? capRun.result.count ?? 0} agents synced.`
-                                                        : capRun.result.processes
-                                                            ? `Completed — ${capRun.result.count ?? 0} process${(capRun.result.count ?? 0) !== 1 ? 'es' : ''} imported`
-                                                            : capRun.result.applications
-                                                                ? `Completed — ${capRun.result.count ?? 0} application${(capRun.result.count ?? 0) !== 1 ? 's' : ''} imported`
-                                                                : `Completed — ${capRun.result.count ?? 0} agent${(capRun.result.count ?? 0) !== 1 ? 's' : ''} extracted`
+                                                        : capRun.result.datasets
+                                                            ? `Completed — ${capRun.result.count ?? 0} dataset${(capRun.result.count ?? 0) !== 1 ? 's' : ''} synced and embedded`
+                                                            : capRun.result.processes
+                                                                ? `Completed — ${capRun.result.count ?? 0} process${(capRun.result.count ?? 0) !== 1 ? 'es' : ''} imported`
+                                                                : capRun.result.applications
+                                                                    ? `Completed — ${capRun.result.count ?? 0} application${(capRun.result.count ?? 0) !== 1 ? 's' : ''} imported`
+                                                                    : `Completed — ${capRun.result.count ?? 0} agent${(capRun.result.count ?? 0) !== 1 ? 's' : ''} extracted`
                                                 }
                                             </span>
                                         </div>
@@ -1067,6 +1093,25 @@ const AdminConnectorsPage: React.FC = () => {
                                                     </div>
                                                 </div>
                                             ))}
+                                        </div>
+                                    )}
+
+                                    {capRun.result.datasets && capRun.result.datasets.length > 0 && (
+                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                            {capRun.result.datasets.slice(0, 50).map(ds => (
+                                                <div key={ds.urn} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
+                                                    <Database size={14} className="text-indigo-500 shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">{ds.name || '—'}</p>
+                                                        <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">{ds.urn}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {capRun.result.datasets.length > 50 && (
+                                                <p className="text-xs text-slate-400 dark:text-slate-500 px-1">
+                                                    +{capRun.result.datasets.length - 50} more not shown
+                                                </p>
+                                            )}
                                         </div>
                                     )}
 

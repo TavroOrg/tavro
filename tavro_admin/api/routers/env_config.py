@@ -53,6 +53,11 @@ CONNECTOR_ENV_MAP: dict[str, dict[str, str]] = {
         "workspace_url":    "DATABRICKS_WORKSPACE_URL",
         "databricks_token": "DATABRICKS_TOKEN",
     },
+    "datahub": {
+        "url":      "DATAHUB_URL",
+        "username": "DATAHUB_USERNAME",
+        "password": "DATAHUB_PASSWORD",
+    },
     "gemini": {
         "client_id":     "GEMINI_CLIENT_ID",
         "client_secret": "GEMINI_CLIENT_SECRET",

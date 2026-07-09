@@ -1,7 +1,7 @@
 ﻿name: tavro
 
-include:
-  - datahub/docker-compose.datahub.yml
+# include:
+#   - datahub/docker-compose.datahub.yml
 
 x-risk-worker-base: &risk_worker_base
   image: tavro-risk-worker:local
@@ -17,7 +17,7 @@ services:
       context: .
       dockerfile: Dockerfile.postgres.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
       args:
         AGE_VERSION: "1.5.0"
         PG_MAJOR: "16"
@@ -81,7 +81,7 @@ services:
       context: .
       dockerfile: Dockerfile.api.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
     container_name: tavro-api
     restart: unless-stopped
     deploy:
@@ -212,6 +212,7 @@ services:
       # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       ADMIN_ENCRYPTION_KEY:  ${ADMIN_ENCRYPTION_KEY:-}
       AGENT_CARD_DIR:        /app/agent_cards
+      DATAHUB_CATALOG_FILE:  /app/datahub/datahub.json
       TAVRO_API_URL:         http://tavro-api:8000
       RISK_CLASSIFY_URL:     http://tavro-api:8000/api/v1/risk/classify-risk
       RISK_CONCURRENCY:      "2"
@@ -226,6 +227,7 @@ services:
     volumes:
       - ./sql:/sql:ro
       - ./tavro_api/agent_cards:/app/agent_cards
+      - ./datahub:/app/datahub:rw                     # DataHub catalog connector writes datahub.json here
       # Runtime auth config written by zitadel-configure-app; served at /runtime/tavro-admin-runtime-config.json
       - tavro_runtime_config:/app/static/runtime:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro  # docker log streaming
@@ -243,7 +245,7 @@ services:
       context: .
       dockerfile: Dockerfile.app.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
       args:
         VITE_TWIN_API_URL: ""   # empty = use relative /api/ paths via nginx proxy
         VITE_ZITADEL_ISSUER: ${VITE_ZITADEL_ISSUER}
@@ -530,7 +532,7 @@ services:
       context: .
       dockerfile: Dockerfile.mcp.${BUILD_MODE:-oss}
       additional_contexts:
-        - enterprise=../enterprise
+        - enterprise=${ENTERPRISE_CONTEXT_PATH:-.}
     container_name: risk-mcp-server
     restart: unless-stopped
     deploy:

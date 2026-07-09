@@ -1,138 +1,9 @@
 {
   "source": "datahub",
-  "query": "guidewire",
+  "query": "*",
   "total_in_datahub": 62,
   "returned": 62,
   "results": [
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc.pc_policy,PROD)",
-      "type": "DATASET",
-      "name": "pc.pc_policy",
-      "description": "**pc_policy** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Core Policy\n- **Schema:** pc\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Core Policy",
-      "schema": "pc",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Core Policy",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PolicyNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Status",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "EffectiveDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ExpirationDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CancelDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "TermNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ProductCode",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "TotalCostRPT",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PolicyType",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "UWCompanyID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        },
-        {
-          "name": "CreateTime",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "UpdateTime",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Retired",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:core_policy"
-      ]
-    },
     {
       "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc.pc_account,PROD)",
       "type": "DATASET",
@@ -165,7 +36,9 @@
           "name": "AccountNumber",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -173,9 +46,9 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "IndustryCode",
@@ -209,10 +82,8 @@
           "name": "PrimaryLanguage",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "TerritoryCode",
@@ -233,7 +104,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:core_policy"
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -282,7 +154,9 @@
           "name": "AssignedUserID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -368,63 +242,61 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "AddressLine2",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "City",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "State",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "PostalCode",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "Country",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "County",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "FIPS",
@@ -445,34 +317,33 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "Longitude",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "AddressType",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:core_policy"
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -586,90 +457,88 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "LastName",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "EmailAddress1",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "WorkPhone",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "CellPhone",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "TaxID",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "DateOfBirth",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "Gender",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "PreferredCommunication",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "AddressID",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "Subtype",
@@ -683,7 +552,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:core_policy"
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -838,7 +708,9 @@
           "name": "AssignedUserID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -888,7 +760,9 @@
           "name": "AccountID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -909,7 +783,9 @@
           "name": "AuthorID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -946,6 +822,134 @@
         "industry:insurance",
         "vendor:guidewire",
         "coverage:core_policy"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc.pc_policy,PROD)",
+      "type": "DATASET",
+      "name": "pc.pc_policy",
+      "description": "**pc_policy** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Core Policy\n- **Schema:** pc\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Core Policy",
+      "schema": "pc",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Core Policy",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PolicyNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Status",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "EffectiveDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ExpirationDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CancelDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "TermNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ProductCode",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "TotalCostRPT",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PolicyType",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "UWCompanyID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CreateTime",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "UpdateTime",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Retired",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -1192,10 +1196,8 @@
           "name": "Name",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "Tier",
@@ -1215,19 +1217,15 @@
           "name": "LicenseNumber",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "LicenseExpDate",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "Organization",
@@ -1240,26 +1238,23 @@
           "name": "PrimaryPhone",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PrimaryEmail",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:core_policy"
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -1485,26 +1480,23 @@
           "name": "PriorCarrier",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PriorPremium",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:core_policy"
+        "coverage:core_policy",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -1678,519 +1670,6 @@
       ]
     },
     {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_riagreement,PROD)",
-      "type": "DATASET",
-      "name": "pc_ri.pc_riagreement",
-      "description": "**pc_riagreement** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Reinsurance",
-      "schema": "pc_ri",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Reinsurance",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_ri",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "RIProgramID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "LayerNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "RetentionAmount",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "LayerLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ReinsurerShare",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        },
-        {
-          "name": "BrokerID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "EffectiveDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PremiumRateMethod",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CurrencyCode",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:reinsurance"
-      ]
-    },
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_rifacultative,PROD)",
-      "type": "DATASET",
-      "name": "pc_ri.pc_rifacultative",
-      "description": "**pc_rifacultative** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Reinsurance",
-      "schema": "pc_ri",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Reinsurance",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_ri",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PolicyPeriodID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "RIProgramID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CededPremium",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CededLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CessionPercent",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ReinsurerName",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        },
-        {
-          "name": "CertificateNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:reinsurance"
-      ]
-    },
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_riprogram,PROD)",
-      "type": "DATASET",
-      "name": "pc_ri.pc_riprogram",
-      "description": "**pc_riprogram** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Reinsurance",
-      "schema": "pc_ri",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Reinsurance",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_ri",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ProgramCode",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ProgramName",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        },
-        {
-          "name": "TreatyType",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "TreatyNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "InceptionDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ExpirationDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CedingCompanyID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:reinsurance"
-      ]
-    },
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrella,PROD)",
-      "type": "DATASET",
-      "name": "pc_um.pc_umbrella",
-      "description": "**pc_umbrella** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Umbrella / Excess",
-      "schema": "pc_um",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Umbrella / Excess",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_um",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PolicyPeriodID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "OccurrenceLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "AggregateLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "RetainedLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "FollowFormYN",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "SIRAmount",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:umbrella___excess"
-      ]
-    },
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrellacoverage,PROD)",
-      "type": "DATASET",
-      "name": "pc_um.pc_umbrellacoverage",
-      "description": "**pc_umbrellacoverage** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Umbrella / Excess",
-      "schema": "pc_um",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Umbrella / Excess",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_um",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "UmbrellaID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Type",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Limit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Deductible",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "Premium",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:umbrella___excess"
-      ]
-    },
-    {
-      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrellascheduledpolicy,PROD)",
-      "type": "DATASET",
-      "name": "pc_um.pc_umbrellascheduledpolicy",
-      "description": "**pc_umbrellascheduledpolicy** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
-      "industry": "Insurance",
-      "vendor": "Guidewire",
-      "application": "Guidewire PolicyCenter",
-      "coverage_area": "Umbrella / Excess",
-      "schema": "pc_um",
-      "category": "Applications",
-      "custom_properties": {
-        "app_name": "Guidewire PolicyCenter",
-        "coverage_area": "Umbrella / Excess",
-        "vendor": "Guidewire",
-        "industry": "Insurance",
-        "template_type": "industry_template",
-        "schema_name": "pc_um",
-        "category": "Applications"
-      },
-      "columns": [
-        {
-          "name": "PublicID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "UmbrellaID",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "UnderlyingPolicyNumber",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "PolicyType",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "CarrierName",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
-        },
-        {
-          "name": "OccurrenceLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "AggregateLimit",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        },
-        {
-          "name": "ExpirationDate",
-          "native_data_type": "VARCHAR",
-          "description": null,
-          "tags": [],
-          "sensitive": false
-        }
-      ],
-      "tags": [
-        "industry_template",
-        "industry:insurance",
-        "vendor:guidewire",
-        "coverage:umbrella___excess"
-      ]
-    },
-    {
       "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ba.pc_bacoverage,PROD)",
       "type": "DATASET",
       "name": "pc_ba.pc_bacoverage",
@@ -2314,7 +1793,9 @@
           "name": "DriverID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [],
+          "tags": [
+            "PII"
+          ],
           "sensitive": false
         },
         {
@@ -2322,45 +1803,41 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "LicenseState",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "DateOfBirth",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "MVRStatus",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "MVRDate",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "YearsExperience",
@@ -2381,7 +1858,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:business_auto"
+        "coverage:business_auto",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -2643,19 +2121,15 @@
           "name": "State",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "CoveredState",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PIPLimit",
@@ -2683,7 +2157,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:business_auto"
+        "coverage:business_auto",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -2726,9 +2201,9 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "Make",
@@ -2798,7 +2273,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:business_auto"
+        "coverage:business_auto",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -2854,10 +2330,8 @@
           "name": "PaymentPlanID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "DepositOverride",
@@ -2871,16 +2345,17 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:billing_integration"
+        "coverage:billing_integration",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -3000,10 +2475,8 @@
           "name": "Name",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "BillingMethod",
@@ -3023,10 +2496,8 @@
           "name": "FirstInstallmentPct",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "DepositPct",
@@ -3047,7 +2518,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:billing_integration"
+        "coverage:billing_integration",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -3117,10 +2589,8 @@
           "name": "OccupancyType",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "TIV",
@@ -3162,7 +2632,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:commercial_property"
+        "coverage:commercial_property",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -3736,10 +3207,8 @@
           "name": "ContactID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "AIType",
@@ -3774,7 +3243,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:general_liability"
+        "coverage:general_liability",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4021,17 +3491,16 @@
           "name": "PersonalAdvInjuryLimit",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:general_liability"
+        "coverage:general_liability",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4251,18 +3720,18 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "JobSiteAddress",
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "ProjectValue",
@@ -4283,7 +3752,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:inland_marine"
+        "coverage:inland_marine",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4495,35 +3965,30 @@
           "name": "SerialNumber",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PurchaseDate",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PurchasePrice",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:inland_marine"
+        "coverage:inland_marine",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4651,9 +4116,9 @@
           "native_data_type": "VARCHAR",
           "description": null,
           "tags": [
-            "sensitive"
+            "PII"
           ],
-          "sensitive": true
+          "sensitive": false
         },
         {
           "name": "ProfessionCode",
@@ -4680,17 +4145,16 @@
           "name": "GrossRevenue",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:professional_liability"
+        "coverage:professional_liability",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4874,10 +4338,8 @@
           "name": "CarrierName",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "PolicyNumber",
@@ -4919,7 +4381,517 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:professional_liability"
+        "coverage:professional_liability",
+        "contains_sensitive_data"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_riagreement,PROD)",
+      "type": "DATASET",
+      "name": "pc_ri.pc_riagreement",
+      "description": "**pc_riagreement** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Reinsurance",
+      "schema": "pc_ri",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Reinsurance",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_ri",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "RIProgramID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "LayerNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "RetentionAmount",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "LayerLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ReinsurerShare",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "BrokerID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [
+            "PII"
+          ],
+          "sensitive": false
+        },
+        {
+          "name": "EffectiveDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PremiumRateMethod",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CurrencyCode",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:reinsurance",
+        "contains_sensitive_data"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_rifacultative,PROD)",
+      "type": "DATASET",
+      "name": "pc_ri.pc_rifacultative",
+      "description": "**pc_rifacultative** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Reinsurance",
+      "schema": "pc_ri",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Reinsurance",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_ri",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PolicyPeriodID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "RIProgramID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CededPremium",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CededLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CessionPercent",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ReinsurerName",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CertificateNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:reinsurance",
+        "contains_sensitive_data"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_ri.pc_riprogram,PROD)",
+      "type": "DATASET",
+      "name": "pc_ri.pc_riprogram",
+      "description": "**pc_riprogram** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Reinsurance\n- **Schema:** pc_ri\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Reinsurance",
+      "schema": "pc_ri",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Reinsurance",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_ri",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ProgramCode",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ProgramName",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "TreatyType",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "TreatyNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "InceptionDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ExpirationDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CedingCompanyID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:reinsurance",
+        "contains_sensitive_data"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrella,PROD)",
+      "type": "DATASET",
+      "name": "pc_um.pc_umbrella",
+      "description": "**pc_umbrella** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Umbrella / Excess",
+      "schema": "pc_um",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Umbrella / Excess",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_um",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PolicyPeriodID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "OccurrenceLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "AggregateLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "RetainedLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "FollowFormYN",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "SIRAmount",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:umbrella___excess"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrellacoverage,PROD)",
+      "type": "DATASET",
+      "name": "pc_um.pc_umbrellacoverage",
+      "description": "**pc_umbrellacoverage** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Umbrella / Excess",
+      "schema": "pc_um",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Umbrella / Excess",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_um",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "UmbrellaID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Type",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Limit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Deductible",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "Premium",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:umbrella___excess"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:guidewire_policy_center,pc_um.pc_umbrellascheduledpolicy,PROD)",
+      "type": "DATASET",
+      "name": "pc_um.pc_umbrellascheduledpolicy",
+      "description": "**pc_umbrellascheduledpolicy** — Guidewire PolicyCenter\n\n- **Industry:** Insurance\n- **Vendor:** Guidewire\n- **Coverage Area:** Umbrella / Excess\n- **Schema:** pc_um\n- **Category:** Applications\n",
+      "industry": "Insurance",
+      "vendor": "Guidewire",
+      "application": "Guidewire PolicyCenter",
+      "coverage_area": "Umbrella / Excess",
+      "schema": "pc_um",
+      "category": "Applications",
+      "custom_properties": {
+        "app_name": "Guidewire PolicyCenter",
+        "coverage_area": "Umbrella / Excess",
+        "vendor": "Guidewire",
+        "industry": "Insurance",
+        "template_type": "industry_template",
+        "schema_name": "pc_um",
+        "category": "Applications"
+      },
+      "columns": [
+        {
+          "name": "PublicID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "UmbrellaID",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "UnderlyingPolicyNumber",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "PolicyType",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "CarrierName",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "OccurrenceLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "AggregateLimit",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        },
+        {
+          "name": "ExpirationDate",
+          "native_data_type": "VARCHAR",
+          "description": null,
+          "tags": [],
+          "sensitive": false
+        }
+      ],
+      "tags": [
+        "industry_template",
+        "industry:insurance",
+        "vendor:guidewire",
+        "coverage:umbrella___excess",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -4954,10 +4926,8 @@
           "name": "WCStateID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "ClassCode",
@@ -4977,10 +4947,8 @@
           "name": "Payroll",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "Rate",
@@ -5015,7 +4983,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:workers_compensation"
+        "coverage:workers_compensation",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -5050,10 +5019,8 @@
           "name": "WCStateID",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "Type",
@@ -5095,7 +5062,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:workers_compensation"
+        "coverage:workers_compensation",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -5243,17 +5211,16 @@
           "name": "State",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         }
       ],
       "tags": [
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:workers_compensation"
+        "coverage:workers_compensation",
+        "contains_sensitive_data"
       ]
     },
     {
@@ -5380,10 +5347,8 @@
           "name": "State",
           "native_data_type": "VARCHAR",
           "description": null,
-          "tags": [
-            "sensitive"
-          ],
-          "sensitive": true
+          "tags": [],
+          "sensitive": false
         },
         {
           "name": "RateEffDate",
@@ -5425,7 +5390,8 @@
         "industry_template",
         "industry:insurance",
         "vendor:guidewire",
-        "coverage:workers_compensation"
+        "coverage:workers_compensation",
+        "contains_sensitive_data"
       ]
     }
   ]

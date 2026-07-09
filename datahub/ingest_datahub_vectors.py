@@ -54,6 +54,73 @@ from utils.db import db_connection
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_BATCH_SIZE = 50
 SCHEMA_SQL_PATH = REPO_ROOT / "sql" / "twin_datahub_context.sql"
+SENSITIVE_TAGS = {"sensitive", "pii", "phi", "pci", "contains_sensitive_data"}
+
+
+def normalize_entries(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Accepts either the flat export format (top-level "results": [...],
+    e.g. datahub2.json) or a raw GraphQL search export
+    (data.search.searchResults[].entity, e.g. datahub.json) and returns the
+    flat entry shape the rest of this script expects."""
+    if data.get("results") is not None:
+        return data["results"]
+
+    search_results = ((data.get("data") or {}).get("search") or {}).get("searchResults") or []
+    entries: List[Dict[str, Any]] = []
+    for item in search_results:
+        entity = item.get("entity") or {}
+        properties = entity.get("properties") or {}
+        custom_props = {
+            cp.get("key"): cp.get("value")
+            for cp in (properties.get("customProperties") or [])
+            if cp.get("key")
+        }
+        table_tags = [
+            t["tag"]["name"]
+            for t in ((entity.get("tags") or {}).get("tags") or [])
+            if t.get("tag", {}).get("name")
+        ]
+        editable_field_tags = {
+            f.get("fieldPath"): [
+                t["tag"]["name"]
+                for t in ((f.get("globalTags") or {}).get("tags") or [])
+                if t.get("tag", {}).get("name")
+            ]
+            for f in ((entity.get("editableSchemaMetadata") or {}).get("editableSchemaFieldInfo") or [])
+        }
+
+        columns = []
+        for field in (entity.get("schemaMetadata") or {}).get("fields") or []:
+            name = field.get("fieldPath")
+            if not name:
+                continue
+            col_tags = editable_field_tags.get(name, [])
+            columns.append(
+                {
+                    "name": name,
+                    "native_data_type": field.get("nativeDataType"),
+                    "tags": col_tags,
+                    "sensitive": any(tag.strip().lower() in SENSITIVE_TAGS for tag in col_tags),
+                }
+            )
+
+        entries.append(
+            {
+                "urn": entity.get("urn"),
+                "name": entity.get("name"),
+                "type": entity.get("type"),
+                "description": properties.get("description"),
+                "industry": custom_props.get("industry"),
+                "vendor": custom_props.get("vendor"),
+                "application": custom_props.get("app_name"),
+                "coverage_area": custom_props.get("coverage_area"),
+                "schema": custom_props.get("schema_name"),
+                "category": custom_props.get("category"),
+                "tags": table_tags,
+                "columns": columns,
+            }
+        )
+    return entries
 
 
 def build_chunk_text(entry: Dict[str, Any]) -> str:
@@ -177,7 +244,7 @@ def ingest(file_path: Path, scope: str, force: bool) -> None:
 
             with file_path.open(encoding="utf-8") as f:
                 data = json.load(f)
-            entries: List[Dict[str, Any]] = data.get("results") or []
+            entries: List[Dict[str, Any]] = normalize_entries(data)
             if not entries:
                 print(f"No results found in {file_path}")
                 return

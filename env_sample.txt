@@ -112,6 +112,14 @@ SNOWFLAKE_DATABASE=
 SNOWFLAKE_SCHEMA=
 SNOWFLAKE_TOKEN=
 
+# ── Catalog Connector - DataHub GraphQL (datahub/fetch_datahub_catalog.py) ──
+# Pulls the full dataset catalog from a hosted DataHub instance's GraphQL API
+# and overwrites datahub/datahub.json. Logs in with username/password to get
+# a session cookie (no PAT available on this deployment).
+DATAHUB_URL=https://datahub-dev.tavro.ai
+DATAHUB_USERNAME=
+DATAHUB_PASSWORD=
+
 # ── Catalog Connector - Gemini ───────────────────────────────────────────────
 GEMINI_CLIENT_ID=
 GEMINI_CLIENT_SECRET=
