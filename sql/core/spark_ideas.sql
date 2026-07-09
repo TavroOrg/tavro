@@ -50,5 +50,18 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
         RAISE NOTICE 'core.spark_ideas: composite PK skipped — %', SQLERRM;
     END;
+
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+            WHERE n.nspname = 'core' AND c.conname = 'chk_spark_ideas_company_id_present'
+        ) THEN
+            ALTER TABLE core.spark_ideas
+                ADD CONSTRAINT chk_spark_ideas_company_id_present
+                CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'core.spark_ideas: company_id CHECK skipped — %', SQLERRM;
+    END;
 END $$;
 

@@ -172,6 +172,18 @@ BEGIN
         END IF;
     EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'agent_physical_ai FK skipped — %', SQLERRM; END;
 
+    -- agent_regulations_or_frameworks
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_regulations_or_frameworks_agent') THEN
+            ALTER TABLE core.agent_regulations_or_frameworks
+                ADD CONSTRAINT fk_agent_regulations_or_frameworks_agent
+                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                ON DELETE CASCADE NOT VALID;
+            RAISE NOTICE 'agent_regulations_or_frameworks: composite FK to agents added';
+        END IF;
+    EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'agent_regulations_or_frameworks FK skipped — %', SQLERRM; END;
+
     -- agent_generated_code
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_generated_code_agent') THEN

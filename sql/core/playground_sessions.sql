@@ -21,3 +21,28 @@ CREATE TABLE IF NOT EXISTS core.playground_session (
     ended_at            TIMESTAMPTZ
 );
 
+-- Critical #1 (audit_db/README.md): reject new rows with a missing/blank
+-- tenant_id or company_id, without requiring historic data to be clean
+-- first (NOT VALID).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_playground_session_tenant_id_present') THEN
+        ALTER TABLE core.playground_session
+            ADD CONSTRAINT chk_playground_session_tenant_id_present
+            CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> '') NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'playground_session: tenant_id CHECK skipped — %', SQLERRM;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_playground_session_company_id_present') THEN
+        ALTER TABLE core.playground_session
+            ADD CONSTRAINT chk_playground_session_company_id_present
+            CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'playground_session: company_id CHECK skipped — %', SQLERRM;
+END $$;
+

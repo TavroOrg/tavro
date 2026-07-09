@@ -70,4 +70,17 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
         RAISE NOTICE 'core.business_processes: composite PK skipped — %', SQLERRM;
     END;
+
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+            WHERE n.nspname = 'core' AND c.conname = 'chk_business_processes_company_id_present'
+        ) THEN
+            ALTER TABLE core.business_processes
+                ADD CONSTRAINT chk_business_processes_company_id_present
+                CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'core.business_processes: company_id CHECK skipped — %', SQLERRM;
+    END;
 END $$;

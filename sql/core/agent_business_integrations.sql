@@ -45,3 +45,28 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'agent_business_integrations->business_integrations FK skipped — %', SQLERRM;
 END $$;
+
+-- Critical #1 (audit_db/README.md): reject new rows with a missing/blank
+-- tenant_id or company_id, without requiring historic data to be clean
+-- first (NOT VALID).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_business_integrations_tenant_id_present') THEN
+        ALTER TABLE core.agent_business_integrations
+            ADD CONSTRAINT chk_agent_business_integrations_tenant_id_present
+            CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> '') NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'agent_business_integrations: tenant_id CHECK skipped — %', SQLERRM;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_business_integrations_company_id_present') THEN
+        ALTER TABLE core.agent_business_integrations
+            ADD CONSTRAINT chk_agent_business_integrations_company_id_present
+            CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'agent_business_integrations: company_id CHECK skipped — %', SQLERRM;
+END $$;
