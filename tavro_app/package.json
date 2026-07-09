@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:api": "playwright test --config=playwright/playwright.api.config.ts",
+    "test:api:ui": "playwright test --config=playwright/playwright.api.config.ts --ui",
+    "test:api:debug": "playwright test --config=playwright/playwright.api.config.ts --debug",
+    "test:api:report": "playwright show-report playwright/test-results-api/html-report"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -26,6 +30,8 @@
     "dompurify": "3.4.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^25.9.1",
     "@emnapi/core": "^1.7.1",
     "@emnapi/runtime": "^1.7.1",
     "@eslint/js": "^9.13.0",
