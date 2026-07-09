@@ -1,10 +1,10 @@
 // Section/Field picker for the Reference Tables page — mirrors the main
-// portal's left nav 1:1 (including locked/coming-soon pages) so admins pick
-// a section the way they already recognize it. table_name/column_name are
-// the real (bare, unqualified) Postgres identifiers stored on public.lookup.
+// portal's left nav so admins pick a section the way they already
+// recognize it. table_name/column_name are the real (bare, unqualified)
+// Postgres identifiers stored on public.lookup.
 //
-// Sections without fields yet still appear in the picker — their Field list
-// is just empty until someone provides the column mapping for that page.
+// Sections with no configurable fields yet are omitted entirely — add the
+// section back once you have a table/column mapping for it.
 
 export interface ReferenceFieldDef {
     fieldLabel: string;
@@ -20,10 +20,40 @@ export interface ReferenceSectionDef {
 }
 
 export const REFERENCE_FIELDS_CATALOG: ReferenceSectionDef[] = [
-    { navGroup: 'Blueprint', sectionLabel: 'Company Profile', fields: [] },
-    { navGroup: 'Blueprint', sectionLabel: 'Applications',    fields: [] },
-    { navGroup: 'Blueprint', sectionLabel: 'Processes',       fields: [] },
-    { navGroup: 'Blueprint', sectionLabel: 'Integrations',    fields: [] },
+    {
+        navGroup: 'Blueprint', sectionLabel: 'Company Profile',
+        fields: [
+            { fieldLabel: 'Industry', tableName: 'company', columnName: 'industry' },
+        ],
+    },
+    {
+        navGroup: 'Blueprint', sectionLabel: 'Applications',
+        fields: [
+            { fieldLabel: 'Emergency Tier',        tableName: 'business_applications', columnName: 'emergency_tier' },
+            { fieldLabel: 'Business Criticality',  tableName: 'business_applications', columnName: 'business_criticality' },
+        ],
+    },
+    {
+        navGroup: 'Blueprint', sectionLabel: 'Processes',
+        fields: [
+            { fieldLabel: 'Business Criticality',  tableName: 'business_processes', columnName: 'business_criticality' },
+            { fieldLabel: 'Financial Impact',       tableName: 'business_processes', columnName: 'financial_impact' },
+            { fieldLabel: 'Regulatory Impact',      tableName: 'business_processes', columnName: 'regulatory_impact' },
+            { fieldLabel: 'Reputational Impact',    tableName: 'business_processes', columnName: 'reputational_impact' },
+            { fieldLabel: 'Process Health State',   tableName: 'business_processes', columnName: 'process_health_state' },
+        ],
+    },
+    {
+        navGroup: 'Blueprint', sectionLabel: 'Integrations',
+        fields: [
+            { fieldLabel: 'Emergency Tier',          tableName: 'business_integrations', columnName: 'emergency_tier' },
+            { fieldLabel: 'Business Criticality',    tableName: 'business_integrations', columnName: 'business_criticality' },
+            { fieldLabel: 'Protocol',                tableName: 'business_integrations', columnName: 'protocol' },
+            { fieldLabel: 'Authentication Method',   tableName: 'business_integrations', columnName: 'authentication_method' },
+            { fieldLabel: 'Data Sensitivity',        tableName: 'business_integrations', columnName: 'data_sensitivity' },
+            { fieldLabel: 'Availability Status',     tableName: 'business_integrations', columnName: 'availability_status' },
+        ],
+    },
     {
         navGroup: 'Blueprint', sectionLabel: 'AI Models',
         fields: [
@@ -34,15 +64,17 @@ export const REFERENCE_FIELDS_CATALOG: ReferenceSectionDef[] = [
             { fieldLabel: 'The learning approach used to train the model',                          tableName: 'ai_models', columnName: 'learning_approach' },
             { fieldLabel: 'Level of automation of the decisions',                                    tableName: 'ai_models', columnName: 'automation_level' },
             { fieldLabel: 'How often the model is updated or retrained',                             tableName: 'ai_models', columnName: 'update_frequency' },
+            { fieldLabel: 'Status',               tableName: 'ai_models', columnName: 'status' },
+            { fieldLabel: 'Emergency Tier',        tableName: 'ai_models', columnName: 'emergency_tier' },
+            { fieldLabel: 'Business Criticality',  tableName: 'ai_models', columnName: 'business_criticality' },
         ],
     },
-    { navGroup: 'Blueprint', sectionLabel: 'Roadmap', locked: true, fields: [] },
-    { navGroup: 'Blueprint', sectionLabel: 'Spark',                 fields: [] },
 
     {
         navGroup: 'Plan', sectionLabel: 'AI Use Case',
         fields: [
             { fieldLabel: 'AI Use Case Status', tableName: 'ai_use_cases', columnName: 'status' },
+            { fieldLabel: 'Priority',            tableName: 'ai_use_cases', columnName: 'priority' },
         ],
     },
     {
@@ -52,13 +84,24 @@ export const REFERENCE_FIELDS_CATALOG: ReferenceSectionDef[] = [
         ],
     },
 
-    { navGroup: 'Build', sectionLabel: 'Agent playground',              fields: [] },
-    { navGroup: 'Build', sectionLabel: 'Agent evals', locked: true,     fields: [] },
-
-    { navGroup: 'Govern', sectionLabel: 'Guardrails',    locked: true, fields: [] },
-    { navGroup: 'Govern', sectionLabel: 'Compliance',    locked: true, fields: [] },
-    { navGroup: 'Govern', sectionLabel: 'Audit center',  locked: true, fields: [] },
-    { navGroup: 'Govern', sectionLabel: 'Issues',                      fields: [] },
+    {
+        navGroup: 'Govern', sectionLabel: 'Compliance', locked: true,
+        fields: [
+            { fieldLabel: 'Industry Tags',  tableName: 'compliance_item',   columnName: 'industry_tags' },
+            { fieldLabel: 'Jurisdiction',    tableName: 'compliance_item',   columnName: 'jurisdiction' },
+            { fieldLabel: 'Issuing Body',    tableName: 'compliance_item',   columnName: 'issuing_body' },
+            { fieldLabel: 'Impact Type',     tableName: 'compliance_impact', columnName: 'impact_type' },
+        ],
+    },
+    {
+        navGroup: 'Govern', sectionLabel: 'Issues',
+        fields: [
+            { fieldLabel: 'Issue Type', tableName: 'issues', columnName: 'issue_type' },
+            { fieldLabel: 'Severity',   tableName: 'issues', columnName: 'severity' },
+            { fieldLabel: 'Source',     tableName: 'issues', columnName: 'source' },
+            { fieldLabel: 'Status',     tableName: 'issues', columnName: 'status' },
+        ],
+    },
 ];
 
 export function findFieldLabels(tableName: string, columnName: string): { navGroup: string; sectionLabel: string; fieldLabel: string } | null {
