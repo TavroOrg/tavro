@@ -2276,14 +2276,22 @@ async def _fetch_integrations(
                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
     if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_integrations bi {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
         rows = await db.execute(
             text(
                 f"""
                 SELECT * FROM (
                     SELECT
                         {", ".join(select_cols)},
-                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn,
-                        COUNT(*) OVER () AS total_records
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
                     FROM core.business_integrations bi
                     {ba_join_sql}
                     {rel_join_sql}
@@ -2298,9 +2306,8 @@ async def _fetch_integrations(
             {**query_params, "window_start": start, "window_end": end},
         )
         raw_rows = [dict(r._mapping) for r in rows]
-        total = int(raw_rows[0]["total_records"]) if raw_rows else 0
         items = [
-            _normalize_integration_row({k: v for k, v in r.items() if k not in ("rn", "total_records")})
+            _normalize_integration_row({k: v for k, v in r.items() if k != "rn"})
             for r in raw_rows
         ]
         return items, total
@@ -2866,14 +2873,22 @@ async def _fetch_applications(
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
     if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_applications ba {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
         rows = await db.execute(
             text(
                 f"""
                 SELECT * FROM (
                     SELECT
                         {", ".join(select_cols)},
-                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn,
-                        COUNT(*) OVER () AS total_records
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
                     FROM core.business_applications ba
                     {rel_join_sql}
                     {uc_rel_sql}
@@ -2890,9 +2905,8 @@ async def _fetch_applications(
             {**query_params, "window_start": start, "window_end": end},
         )
         raw_rows = [dict(r._mapping) for r in rows]
-        total = int(raw_rows[0]["total_records"]) if raw_rows else 0
         items = [
-            _normalize_application_row({k: v for k, v in r.items() if k not in ("rn", "total_records")})
+            _normalize_application_row({k: v for k, v in r.items() if k != "rn"})
             for r in raw_rows
         ]
         return items, total
@@ -3523,14 +3537,22 @@ async def _fetch_processes(
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
     if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_processes bp {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
         rows = await db.execute(
             text(
                 f"""
                 SELECT * FROM (
                     SELECT
                         {", ".join(select_cols)},
-                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn,
-                        COUNT(*) OVER () AS total_records
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
                     FROM core.business_processes bp
                     LEFT JOIN core.business_processes parent
                         ON parent.business_process_id = bp.parent_process_id
@@ -3552,9 +3574,8 @@ async def _fetch_processes(
             {**query_params, "window_start": start, "window_end": end},
         )
         raw_rows = [dict(r._mapping) for r in rows]
-        total = int(raw_rows[0]["total_records"]) if raw_rows else 0
         items = [
-            _normalize_process_row({k: v for k, v in r.items() if k not in ("rn", "total_records")})
+            _normalize_process_row({k: v for k, v in r.items() if k != "rn"})
             for r in raw_rows
         ]
         return items, total
@@ -3592,13 +3613,16 @@ async def list_integrations(
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     start_record: int = 1,
-    record_range: str = "1-50",
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        parts = record_range.split("-")
-        start, end = int(parts[0]), int(parts[1])
-    except Exception:
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
         start, end = start_record, start_record + 49
 
     try:
@@ -4231,13 +4255,16 @@ async def list_applications(
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     start_record: int = 1,
-    record_range: str = "1-50",
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        parts = record_range.split("-")
-        start, end = int(parts[0]), int(parts[1])
-    except Exception:
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
         start, end = start_record, start_record + 49
 
     try:
@@ -4909,13 +4936,16 @@ async def list_processes(
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
     start_record: int = 1,
-    record_range: str = "1-50",
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        parts = record_range.split("-")
-        start, end = int(parts[0]), int(parts[1])
-    except Exception:
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
         start, end = start_record, start_record + 49
 
     try:

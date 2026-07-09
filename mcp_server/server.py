@@ -1877,7 +1877,7 @@ async def list_dim_nodes(
     search: Optional[str] = None,
     active_only: bool = True,
     start_record: int = 1,
-    record_range: str = "1-100",
+    record_range: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     List dimension nodes for a company's blueprint.
@@ -1914,8 +1914,9 @@ async def list_dim_nodes(
             "company_id": company_id,
             "active_only": active_only,
             "start_record": start_record,
-            "record_range": record_range,
         }
+        if record_range:
+            params["record_range"] = record_range
         if dim_type_id:
             params["dim_type_id"] = dim_type_id
         if category:
@@ -3134,7 +3135,7 @@ async def list_integrations(
     company_id: Optional[str],
     search: Optional[str] = None,
     start_record: int = 1,
-    record_range: str = "1-50",
+    record_range: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     List business integrations, optionally filtered by company or search term.
@@ -3159,7 +3160,9 @@ async def list_integrations(
             tenant_id,
         )
 
-        params: Dict[str, Any] = {"start_record": start_record, "record_range": record_range}
+        params: Dict[str, Any] = {"start_record": start_record}
+        if record_range:
+            params["record_range"] = record_range
         if company_id:
             params["company_id"] = company_id
         if search:

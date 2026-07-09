@@ -57,13 +57,16 @@ async def list_dim_nodes(
     search:      Optional[str]   = None,
     active_only: bool            = True,
     start_record: int            = 1,
-    record_range: str            = "1-100",
+    record_range: Optional[str]  = None,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        parts = record_range.split("-")
-        start, end = int(parts[0]), int(parts[1])
-    except Exception:
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 99
+    else:
         start, end = start_record, start_record + 99
 
     await _assert_company_owned(db, str(company_id), tenant_id)
@@ -88,14 +91,25 @@ async def list_dim_nodes(
 
     where = " AND ".join(filters)
 
+    # Independent count so `total` stays correct even when the requested
+    # window matches zero rows (e.g. a page past the end of the results).
+    count_row = await db.execute(
+        text(f"""
+            SELECT count(*) FROM twin.dim_node n
+            JOIN twin.dim_type t ON t.id = n.dim_type_id
+            WHERE {where}
+        """),
+        params,
+    )
+    total = count_row.scalar() or 0
+
     rows = await db.execute(
         text(f"""
             SELECT * FROM (
                 SELECT n.*,
                        t.name     AS dim_type_name,
                        t.category AS category,
-                       ROW_NUMBER() OVER (ORDER BY t.category, n.label) AS rn,
-                       COUNT(*) OVER () AS total_records
+                       ROW_NUMBER() OVER (ORDER BY t.category, n.label) AS rn
                 FROM twin.dim_node n
                 JOIN twin.dim_type t ON t.id = n.dim_type_id
                 WHERE {where}
@@ -106,8 +120,7 @@ async def list_dim_nodes(
         {**params, "window_start": start, "window_end": end},
     )
     raw_rows = [dict(r._mapping) for r in rows]
-    total = int(raw_rows[0]["total_records"]) if raw_rows else 0
-    items = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in raw_rows]
+    items = [{k: v for k, v in r.items() if k != "rn"} for r in raw_rows]
     return {"start_record": start, "end_record": end, "record_count": len(items),
             "total_records": total, "data": items}
 
