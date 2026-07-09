@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check } from 'lucide-react';
+import { Check, AlertTriangle } from 'lucide-react';
 
 interface LifecycleStepperProps {
     stages: string[];
@@ -9,13 +9,23 @@ interface LifecycleStepperProps {
 }
 
 const LifecycleStepper: React.FC<LifecycleStepperProps> = ({ stages, currentStage, onStageChange, disabled }) => {
-    const currentIndex = Math.max(0, stages.findIndex(s => s.toLowerCase() === (currentStage ?? '').toLowerCase()));
+    const matchedIndex = stages.findIndex(s => s.toLowerCase() === (currentStage ?? '').toLowerCase());
+    const isUnrecognized = !!currentStage && matchedIndex === -1;
+    const currentIndex = matchedIndex === -1 ? -1 : matchedIndex;
 
     return (
         <div className="flex items-center w-full">
+            {isUnrecognized && (
+                <span
+                    title={`Unrecognized status "${currentStage}" — not one of the known lifecycle stages`}
+                    className="mr-2 shrink-0 text-amber-500"
+                >
+                    <AlertTriangle size={14} />
+                </span>
+            )}
             {stages.map((stage, i) => {
-                const isCompleted = i < currentIndex;
-                const isCurrent = i === currentIndex;
+                const isCompleted = !isUnrecognized && i < currentIndex;
+                const isCurrent = !isUnrecognized && i === currentIndex;
                 const clickable = !disabled && !!onStageChange && !isCurrent;
 
                 return (

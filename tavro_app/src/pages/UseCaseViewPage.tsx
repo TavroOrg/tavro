@@ -1451,6 +1451,7 @@ const UseCaseViewPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [enriching, setEnriching] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem('tavro_enriching_use_cases');
@@ -1478,7 +1479,7 @@ const UseCaseViewPage: React.FC = () => {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  const { refresh: refreshUseCases } = useUseCases();
+  const { refresh: refreshUseCases, upsertUseCase } = useUseCases();
 
   const handleDelete = async () => {
     if (!id) return;
@@ -1745,15 +1746,21 @@ const UseCaseViewPage: React.FC = () => {
 
   const handleLifecycleStageChange = async (stage: string) => {
     if (!id) return;
+    setLifecycleError(null);
     try {
       await useCaseApi.updateUseCase(id, {
         status: stage,
         __activityName: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
       });
       setUseCase(prev => (prev ? ({ ...prev, status: stage } as UseCaseDetail) : prev));
-      refreshUseCases();
+      upsertUseCase({
+        identifier: id,
+        name: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+        status: stage,
+      });
     } catch (err: any) {
       console.error('Failed to update lifecycle stage:', err);
+      setLifecycleError(toUserMessage(err) || 'Failed to update lifecycle stage. Please try again.');
     }
   };
 
@@ -1932,6 +1939,7 @@ const UseCaseViewPage: React.FC = () => {
           onCancelInlineEdit={handleCancelInlineEdit}
           enriching={enriching}
           onLifecycleStageChange={handleLifecycleStageChange}
+          lifecycleError={lifecycleError}
         />
       )}
 

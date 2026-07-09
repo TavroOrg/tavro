@@ -3,8 +3,7 @@ import { AgentData, AGENT_TYPES } from '../types/agent';
 import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
 import LifecycleStepper from './LifecycleStepper';
-
-const AGENT_LIFECYCLE_STAGES = ['Plan', 'Design', 'Develop', 'Deploy', 'Monitor'];
+import { AGENT_LIFECYCLE_STAGES } from '../constants/lifecycle';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 

@@ -220,23 +220,6 @@ def _pretty_provider(value: Any) -> str:
     return raw
 
 
-def _normalize_lifecycle(value: Any) -> Optional[str]:
-    stage = re.sub(r"[_-]+", " ", _norm(value))
-    if not stage:
-        return None
-    if any(k in stage for k in ("monitor", "operate", "active governance", "live")):
-        return "Monitor"
-    if any(k in stage for k in ("deploy", "release", "launch")):
-        return "Deploy"
-    if any(k in stage for k in ("develop", "development", "build", "test")):
-        return "Develop"
-    if any(k in stage for k in ("design", "prototype", "variant")):
-        return "Design"
-    if any(k in stage for k in ("plan", "idea", "identify", "blueprint")):
-        return "Plan"
-    return None
-
-
 def _has_usecase_context(row: Dict[str, Any]) -> bool:
     return (row.get("business_process_count") or 0) > 0 or (row.get("business_application_count") or 0) > 0
 

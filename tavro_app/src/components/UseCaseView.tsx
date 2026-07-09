@@ -4,6 +4,7 @@ import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import LifecycleStepper from './LifecycleStepper';
+import { USE_CASE_LIFECYCLE_STAGES } from '../constants/lifecycle';
 import {
     Building2,
     ShieldCheck,
@@ -68,9 +69,8 @@ interface UseCaseViewProps {
     onCancelInlineEdit?: () => void;
     enriching?: boolean;
     onLifecycleStageChange?: (stage: string) => void;
+    lifecycleError?: string | null;
 }
-
-const USE_CASE_LIFECYCLE_STAGES = ['Identified', 'Scoped', 'Approved', 'In build', 'Live'];
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
     const cls = {
@@ -287,6 +287,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
     enriching,
     onLifecycleStageChange,
+    lifecycleError,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
@@ -598,6 +599,9 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     currentStage={(uc as any).status ?? 'Identified'}
                                     onStageChange={onLifecycleStageChange}
                                 />
+                                {lifecycleError && (
+                                    <p className="mt-1.5 text-xs font-medium text-red-500">{lifecycleError}</p>
+                                )}
                             </div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">

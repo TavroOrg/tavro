@@ -13,6 +13,7 @@ import {
     Code2, Boxes, Map, TestTube2, Shield, TrendingUp, Activity, Cpu,
     Upload, Filter, Bookmark, FileText
 } from 'lucide-react';
+import { AGENT_LIFECYCLE_STAGES, USE_CASE_LIFECYCLE_STAGES } from '../constants/lifecycle';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface TocSection {
@@ -517,14 +518,14 @@ const UserGuidePage: React.FC = () => {
                             <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1.5">Agent Lifecycle Distribution</p>
                             <p className="text-slate-500 dark:text-slate-400 mb-2">Shows your agent portfolio across all 5 lifecycle stages:</p>
                             <div className="flex flex-wrap gap-2">
-                                {['Plan', 'Design', 'Develop', 'Deploy', 'Monitor'].map(s => <Badge key={s} color="slate">{s}</Badge>)}
+                                {AGENT_LIFECYCLE_STAGES.map(s => <Badge key={s} color="slate">{s}</Badge>)}
                             </div>
                         </div>
                         <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3.5 text-sm">
                             <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1.5">Use Case Lifecycle Distribution</p>
                             <p className="text-slate-500 dark:text-slate-400 mb-2">Tracks AI use cases from idea to live across 5 stages:</p>
                             <div className="flex flex-wrap gap-2">
-                                {['Identified', 'Scoped', 'Approved', 'In Build', 'Live'].map(s => <Badge key={s} color="blue">{s}</Badge>)}
+                                {USE_CASE_LIFECYCLE_STAGES.map(s => <Badge key={s} color="blue">{s}</Badge>)}
                             </div>
                         </div>
                     </div>
