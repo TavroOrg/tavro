@@ -84,6 +84,17 @@ class SparkReactionResponse(BaseModel):
     popularity_score: int
 
 
+class SparkIdeaUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    rationale: str | None = None
+    complexity: str | None = None
+    estimated_impact: str | None = None
+    signal_type: str | None = None
+    signal_label: str | None = None
+    target_dimensions: list[str] | None = None
+
+
 class SparkConvertRequest(BaseModel):
     idea_id: str
     company_id: str
@@ -1261,6 +1272,63 @@ async def update_spark_idea_reaction(
         idea_id=idea_id,
         user_reaction=payload.reaction,
         popularity_score=popularity_score,
+    )
+
+
+@router.patch("/ideas/{idea_id}", response_model=SparkIdea)
+async def update_spark_idea(
+    request: Request,
+    idea_id: str,
+    payload: SparkIdeaUpdateRequest,
+    company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
+    db: AsyncSession = Depends(get_db),
+) -> SparkIdea:
+    """Edit an idea's content fields (title, description, rationale, complexity, impact, signal, dimensions)."""
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+    params: dict[str, Any] = {"company_id": company_id, "idea_id": idea_id, "tenant_id": tenant_id}
+
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        set_clauses = []
+        for field, value in updates.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        await db.execute(text(f"""
+            UPDATE core.spark_ideas
+            SET {", ".join(set_clauses)}, updated_at = NOW()
+            WHERE {company_where} AND idea_id = :idea_id
+              {tenant_where}
+        """), params)
+        await db.commit()
+
+    row = (await db.execute(text(f"""
+        SELECT idea_id, title, description, rationale, signal_type, signal_label,
+               target_dimensions, target_nodes, complexity, estimated_impact, similar_agents,
+               user_reaction, popularity_score
+        FROM core.spark_ideas
+        WHERE {company_where} AND idea_id = :idea_id
+          {tenant_where}
+    """), params)).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Spark idea not found")
+
+    return SparkIdea(
+        idea_id=row["idea_id"],
+        title=row["title"],
+        description=row["description"] or "",
+        rationale=row["rationale"] or "",
+        signal_type=row["signal_type"] or "gap_coverage",
+        signal_label=row["signal_label"] or "",
+        target_dimensions=list(row["target_dimensions"] or []),
+        target_nodes=[SparkTargetNode(**n) for n in (row["target_nodes"] or [])],
+        complexity=row["complexity"] or "Medium",
+        estimated_impact=row["estimated_impact"] or "Medium",
+        similar_agents=[SparkSimilarAgent(**a) for a in (row["similar_agents"] or [])],
+        user_reaction=row["user_reaction"],
+        popularity_score=row["popularity_score"] or 0,
     )
 
 
