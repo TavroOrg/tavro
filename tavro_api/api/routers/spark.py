@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db, AsyncSessionLocal
+from api.migrations.init_tables import _split_sql_statements
 from api.routers.datahub_context import MIN_RELEVANCE, _embed_query
 
 router = APIRouter()
@@ -121,7 +122,7 @@ class SparkIdeaBatchRequest(BaseModel):
 
 async def ensure_spark_table() -> None:
     ddl_sql = _load_spark_ddl()
-    ddl_statements = [stmt.strip() for stmt in ddl_sql.split(";") if stmt.strip()]
+    ddl_statements = _split_sql_statements(ddl_sql)
     async with AsyncSessionLocal() as db:
         for stmt in ddl_statements:
             await db.execute(text(stmt))
