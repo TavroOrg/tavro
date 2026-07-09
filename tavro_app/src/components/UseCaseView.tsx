@@ -315,7 +315,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
             const result = await useCaseApi.generateUseCaseReport(uc.identifier);
             const ucTitle: string = (uc as any).name ?? (uc as any).title ?? 'Use Case';
             window.dispatchEvent(new CustomEvent('tavro_notice', {
-                detail: { message: `Report generated for "${ucTitle}"` },
+                detail: { message: `Report generated for "${ucTitle}"`, variant: 'success' },
             }));
             window.dispatchEvent(new CustomEvent('tavro:attachment-uploaded', {
                 detail: { entityType: 'use_case', entityId: uc.identifier },
@@ -323,7 +323,7 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
         } catch (err) {
             console.error('[UseCaseView] Generate report failed', err);
             window.dispatchEvent(new CustomEvent('tavro_notice', {
-                detail: { message: 'Failed to generate report. Please try again.' },
+                detail: { message: 'Failed to generate report. Please try again.', variant: 'error' },
             }));
         } finally {
             setGeneratingReport(false);

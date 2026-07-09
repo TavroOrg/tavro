@@ -4,14 +4,12 @@ import { toUserMessage } from '../utils/errorUtils';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
-  AppWindow,
   ArrowLeft,
-  Bot,
   Boxes,
   Check,
   CheckCircle2,
   ChevronDown,
-  ClipboardList,
+  ChevronUp,
   Download,
   Info,
   Loader2,
@@ -25,7 +23,6 @@ import {
   Sparkles,
   Trash2,
   Unlink2,
-  Workflow,
   XCircle,
 } from 'lucide-react';
 import { aiModelApi } from '../services/aiModelApi';
@@ -593,6 +590,15 @@ const AiModelViewPage: React.FC = () => {
   }, [companyAgents, agentSearch]);
 
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -1178,11 +1184,22 @@ const AiModelViewPage: React.FC = () => {
       </>)}
 
       {tab === 'business_impact' && !isCreateMode && model && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-5">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Bot size={15} />Agents ({linkedAgents.length})
-            </h3>
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[400px] flex flex-col gap-6">
+          {relationError && (
+            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{relationError}</div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => toggleSection('agents')}
+              className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+              aria-expanded={!collapsedSections.has('agents')}
+            >
+              {collapsedSections.has('agents') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              Currently Related Agents ({linkedAgents.length})
+            </button>
             <div className="relative" ref={(el) => { dropdownRefs.current.agents = el; }}>
               <button
                 onClick={() => setOpenDropdown(openDropdown === 'agents' ? null : 'agents')}
@@ -1258,47 +1275,49 @@ const AiModelViewPage: React.FC = () => {
             </div>
           </div>
 
-          {relationError && (
-            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{relationError}</div>
-          )}
-
-          <div className="flex flex-col gap-3">
+          {!collapsedSections.has('agents') && (
+          <div className="divide-y divide-slate-100">
+            {linkedAgents.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No linked Agents</div>
+            )}
             {linkedAgents.map((ag, idx) => {
               const aid = ag.agent_id ?? ag.agent_internal_id ?? `agent-${idx}`;
               const removeKey = `remove:${aid}`;
               return (
-                <div key={`${aid}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div key={`${aid}-${idx}`} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
-                    <Link to={`/agent/${encodeURIComponent(aid)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                    <Link to={`/agent/${encodeURIComponent(aid)}`} className="text-sm font-semibold text-blue-600 hover:underline">
                       {ag.agent_name || aid}
                     </Link>
-                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{aid}</span>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{aid}</p>
                   </div>
                   <button
                     onClick={() => removeAgent(aid)}
                     disabled={actingAgent === removeKey}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
                   >
-                    {actingAgent === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    {actingAgent === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                     Remove
                   </button>
                 </div>
               );
             })}
-            {linkedAgents.length === 0 && (
-              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No linked Agents
-              </div>
-            )}
+          </div>
+          )}
           </div>
 
           {/* ── AI Use Cases (many-to-many) ── */}
-          <div className="h-px bg-slate-100 w-full" />
-
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <ClipboardList size={15} />AI Use Cases ({linkedUseCases.length})
-            </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => toggleSection('useCases')}
+              className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+              aria-expanded={!collapsedSections.has('useCases')}
+            >
+              {collapsedSections.has('useCases') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              Currently Related AI Use Cases ({linkedUseCases.length})
+            </button>
             <div className="relative" ref={(el) => { dropdownRefs.current.useCases = el; }}>
               <button
                 onClick={() => setOpenDropdown(openDropdown === 'useCases' ? null : 'useCases')}
@@ -1374,17 +1393,21 @@ const AiModelViewPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
+          {!collapsedSections.has('useCases') && (
+          <div className="divide-y divide-slate-100">
+            {linkedUseCases.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No linked AI Use Cases.</div>
+            )}
             {linkedUseCases.map((uc, idx) => {
               const ucId = uc.ai_use_case_id || `use-case-${idx}`;
               const removeKey = `remove:${ucId}`;
               return (
-                <div key={`${ucId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div key={`${ucId}-${idx}`} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
-                    <Link to={`/use-case/${encodeURIComponent(ucId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                    <Link to={`/use-case/${encodeURIComponent(ucId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
                       {uc.ai_use_case_name || ucId}
                     </Link>
-                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{ucId}</span>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{ucId}</p>
                     {uc.description && (
                       <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{uc.description}</span>
                     )}
@@ -1392,28 +1415,30 @@ const AiModelViewPage: React.FC = () => {
                   <button
                     onClick={() => removeUseCase(ucId)}
                     disabled={actingUseCase === removeKey}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
                   >
-                    {actingUseCase === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    {actingUseCase === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                     Remove
                   </button>
                 </div>
               );
             })}
-            {linkedUseCases.length === 0 && (
-              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No linked AI Use Cases.
-              </div>
-            )}
+          </div>
+          )}
           </div>
 
           {/* ── Related Applications (many-to-many) ── */}
-          <div className="h-px bg-slate-100 w-full" />
-
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <AppWindow size={15} />Applications ({linkedApplications.length})
-            </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => toggleSection('applications')}
+              className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+              aria-expanded={!collapsedSections.has('applications')}
+            >
+              {collapsedSections.has('applications') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              Currently Related Applications ({linkedApplications.length})
+            </button>
             <div className="relative" ref={(el) => { dropdownRefs.current.applications = el; }}>
               <button
                 onClick={() => setOpenDropdown(openDropdown === 'applications' ? null : 'applications')}
@@ -1488,17 +1513,21 @@ const AiModelViewPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
+          {!collapsedSections.has('applications') && (
+          <div className="divide-y divide-slate-100">
+            {linkedApplications.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No linked Applications.</div>
+            )}
             {linkedApplications.map((app, idx) => {
               const appId = app.business_application_id || `application-${idx}`;
               const removeKey = `remove:${appId}`;
               return (
-                <div key={`${appId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div key={`${appId}-${idx}`} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
-                    <Link to={`/applications/${encodeURIComponent(appId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                    <Link to={`/applications/${encodeURIComponent(appId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
                       {app.application_name || appId}
                     </Link>
-                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{appId}</span>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{appId}</p>
                     {app.description && (
                       <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{app.description}</span>
                     )}
@@ -1506,28 +1535,30 @@ const AiModelViewPage: React.FC = () => {
                   <button
                     onClick={() => removeApplication(appId)}
                     disabled={actingApplication === removeKey}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
                   >
-                    {actingApplication === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    {actingApplication === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                     Remove
                   </button>
                 </div>
               );
             })}
-            {linkedApplications.length === 0 && (
-              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No linked Applications.
-              </div>
-            )}
+          </div>
+          )}
           </div>
 
           {/* ── Related Processes (many-to-many) ── */}
-          <div className="h-px bg-slate-100 w-full" />
-
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Workflow size={15} />Processes ({linkedProcesses.length})
-            </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => toggleSection('processes')}
+              className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+              aria-expanded={!collapsedSections.has('processes')}
+            >
+              {collapsedSections.has('processes') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              Currently Related Processes ({linkedProcesses.length})
+            </button>
             <div className="relative" ref={(el) => { dropdownRefs.current.processes = el; }}>
               <button
                 onClick={() => setOpenDropdown(openDropdown === 'processes' ? null : 'processes')}
@@ -1602,17 +1633,21 @@ const AiModelViewPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
+          {!collapsedSections.has('processes') && (
+          <div className="divide-y divide-slate-100">
+            {linkedProcesses.length === 0 && (
+              <div className="p-5 text-sm text-slate-500">No linked Processes.</div>
+            )}
             {linkedProcesses.map((proc, idx) => {
               const procId = proc.business_process_id || `process-${idx}`;
               const removeKey = `remove:${procId}`;
               return (
-                <div key={`${procId}-${idx}`} className="flex items-center justify-between gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div key={`${procId}-${idx}`} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0">
-                    <Link to={`/processes/${encodeURIComponent(procId)}`} className="font-bold text-sm text-blue-700 hover:underline">
+                    <Link to={`/processes/${encodeURIComponent(procId)}`} className="text-sm font-semibold text-blue-600 hover:underline">
                       {proc.process_name || procId}
                     </Link>
-                    <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{procId}</span>
+                    <p className="text-[11px] font-mono text-slate-400 truncate">{procId}</p>
                     {proc.description && (
                       <span className="block text-xs text-slate-500 mt-1 max-w-[640px]">{proc.description}</span>
                     )}
@@ -1620,19 +1655,16 @@ const AiModelViewPage: React.FC = () => {
                   <button
                     onClick={() => removeProcess(procId)}
                     disabled={actingProcess === removeKey}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
                   >
-                    {actingProcess === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                    {actingProcess === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                     Remove
                   </button>
                 </div>
               );
             })}
-            {linkedProcesses.length === 0 && (
-              <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No linked Processes.
-              </div>
-            )}
+          </div>
+          )}
           </div>
 
         </div>
