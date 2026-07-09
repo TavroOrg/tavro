@@ -37,3 +37,42 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP
 );
+
+-- Critical #1 (audit_db/README.md): reject new rows with a missing/blank
+-- tenant_id without requiring historic data to be clean first (NOT VALID).
+-- Once audit_db/check_null_tenant_across_db.sql shows zero violations, run:
+--   ALTER TABLE core.business_applications VALIDATE CONSTRAINT chk_business_applications_tenant_id_present;
+--
+-- Critical #2: composite primary key (tenant_id, company_id, business_application_id).
+-- ux_core_business_applications (added in zz_agent_upsert_unique_indexes.sql)
+-- already covers this exact column set, so it is reused in place via
+-- "USING INDEX" instead of building a duplicate index.
+DO $$
+BEGIN
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+            WHERE n.nspname = 'core' AND c.conname = 'chk_business_applications_tenant_id_present'
+        ) THEN
+            ALTER TABLE core.business_applications
+                ADD CONSTRAINT chk_business_applications_tenant_id_present
+                CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> '') NOT VALID;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'core.business_applications: tenant_id CHECK skipped — %', SQLERRM;
+    END;
+
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pk_core_business_applications') THEN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ux_core_business_applications') THEN
+                ALTER TABLE core.business_applications
+                    ADD CONSTRAINT pk_core_business_applications PRIMARY KEY USING INDEX ux_core_business_applications;
+            ELSE
+                ALTER TABLE core.business_applications
+                    ADD CONSTRAINT pk_core_business_applications PRIMARY KEY (tenant_id, company_id, business_application_id);
+            END IF;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'core.business_applications: composite PK skipped — %', SQLERRM;
+    END;
+END $$;

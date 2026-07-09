@@ -23,3 +23,21 @@ CREATE TABLE IF NOT EXISTS core.agent_risk_assessments (
 	summary TEXT
 );
 
+-- High #2 (audit_db/README.md): composite FK to core.agents. RESTRICT, not
+-- CASCADE — risk history should block accidental agent deletion, not
+-- silently vanish with it. NOT VALID: safe on a live table with existing
+-- data; validate later with
+-- ALTER TABLE core.agent_risk_assessments VALIDATE CONSTRAINT fk_agent_risk_assessments_agent;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_risk_assessments_agent') THEN
+        ALTER TABLE core.agent_risk_assessments
+            ADD CONSTRAINT fk_agent_risk_assessments_agent
+            FOREIGN KEY (tenant_id, company_id, agent_internal_id)
+            REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+            ON DELETE RESTRICT NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'agent_risk_assessments: composite FK skipped — %', SQLERRM;
+END $$;
+

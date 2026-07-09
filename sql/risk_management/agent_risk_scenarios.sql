@@ -24,3 +24,21 @@ CREATE TABLE IF NOT EXISTS risk_management.agent_risk_scenarios (
   cvss_score DECIMAL(10, 2),
   aivss_score DECIMAL(10, 2)
 );
+
+-- High #2 (audit_db/README.md): FK to risk_management.agent_risk_assessment
+-- (CASCADE — a scenario has no meaning without its assessment).
+-- Single-column: risk_management was not part of the Critical #2 composite
+-- rollout. NOT VALID: safe on a live table with existing data; validate
+-- later with
+-- ALTER TABLE risk_management.agent_risk_scenarios VALIDATE CONSTRAINT fk_agent_risk_scenarios_assessment;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_risk_scenarios_assessment') THEN
+        ALTER TABLE risk_management.agent_risk_scenarios
+            ADD CONSTRAINT fk_agent_risk_scenarios_assessment
+            FOREIGN KEY (assessment_id) REFERENCES risk_management.agent_risk_assessment (assessment_id)
+            ON DELETE CASCADE NOT VALID;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'agent_risk_scenarios->agent_risk_assessment FK skipped — %', SQLERRM;
+END $$;
