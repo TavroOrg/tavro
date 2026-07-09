@@ -238,7 +238,7 @@ const Settings: React.FC = () => {
                                             <p className="text-[10px] text-slate-400 dark:text-slate-500">
                                                 {s.byokType === 'github' && 'Uses your GitHub Copilot subscription via the local proxy server.'}
                                                 {s.byokType === 'openai' && 'Uses Copilot SDK BYOK with OpenAI or OpenAI-compatible endpoints.'}
-                                                {s.byokType === 'azure' && 'Uses Copilot SDK BYOK with Azure OpenAI. Base URL required.'}
+                                                {s.byokType === 'azure' && 'Uses Copilot SDK BYOK with Azure OpenAI.'}
                                                 {s.byokType === 'anthropic' && 'Uses Copilot SDK BYOK with Anthropic Claude.'}
                                                 {!s.byokType && 'Select how requests are routed.'}
                                             </p>

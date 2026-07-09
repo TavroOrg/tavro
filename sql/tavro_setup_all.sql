@@ -214,6 +214,23 @@ CREATE INDEX IF NOT EXISTS context_log_company_idx ON twin.context_log (company_
 CREATE INDEX IF NOT EXISTS context_log_caller_idx  ON twin.context_log (caller_type, caller_id);
 CREATE INDEX IF NOT EXISTS context_log_chunks_idx  ON twin.context_log USING GIN (chunk_ids);
 
+-- user_preferences — per-user (Zitadel `sub`) server-side preferences:
+-- default company, theme, LLM provider/model/BYOK settings. API keys stay
+-- client-side (localStorage) — never stored here.
+CREATE TABLE IF NOT EXISTS twin.user_preferences (
+    user_id             TEXT        PRIMARY KEY,
+    tenant_id           TEXT,
+    default_company_id  UUID        REFERENCES twin.company (id) ON DELETE SET NULL,
+    theme               TEXT        NOT NULL DEFAULT 'system',
+    llm_provider        TEXT,
+    llm_model           TEXT,
+    llm_byok_type       TEXT,
+    llm_byok_base_url   TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS user_preferences_tenant_idx ON twin.user_preferences (tenant_id);
+
 -- ── Triggers ──────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION twin.set_updated_at()
@@ -230,6 +247,12 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
     CREATE TRIGGER dim_node_updated_at
         BEFORE UPDATE ON twin.dim_node
+        FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TRIGGER user_preferences_updated_at
+        BEFORE UPDATE ON twin.user_preferences
         FOR EACH ROW EXECUTE FUNCTION twin.set_updated_at();
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
@@ -310,6 +333,7 @@ ON CONFLICT (name) DO NOTHING;
 \echo ' Tables created:'
 \echo '   twin.company, twin.dim_type, twin.dim_node'
 \echo '   twin.dim_edge, twin.source_ref, twin.dim_node_attachment, twin.context_log'
+\echo '   twin.user_preferences'
 \echo '   public.agent_attachment'
 \echo ''
 \echo ' Seed data loaded:'
