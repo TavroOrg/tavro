@@ -9,6 +9,13 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      matrix:
+        instance:
+          - id: i-076e2d611f5f4250b
+            name: portal-sandbox
+          - id: i-05bf3bbea1c16bd04
+            name: portal-dev
 
     steps:
       - name: Configure AWS credentials
@@ -22,13 +29,13 @@ jobs:
         id: create-ami
         run: |
           AMI_ID=$(aws ec2 create-image \
-            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
-            --name "tavro-ec2-backup-$(date +%Y%m%d-%H%M)" \
+            --instance-id "${{ matrix.instance.id }}" \
+            --name "tavro-ec2-backup-${{ matrix.instance.name }}-$(date +%Y%m%d-%H%M)" \
             --no-reboot \
-            --description "Automated Tavro EC2 backup" \
+            --description "Automated Tavro EC2 backup for ${{ matrix.instance.name }}" \
             --output text)
           echo "ami_id=$AMI_ID" >> "$GITHUB_OUTPUT"
-          echo "Created AMI: $AMI_ID"
+          echo "Created AMI: $AMI_ID for ${{ matrix.instance.name }}"
 
       - name: Wait for AMI to be available
         run: |
@@ -49,11 +56,11 @@ jobs:
             sleep 30
           done
 
-      - name: Prune old AMIs
+      - name: Prune old AMIs for this instance
         run: |
           AMIS=$(aws ec2 describe-images \
             --owners self \
-            --filters "Name=name,Values=tavro-ec2-backup-*" \
+            --filters "Name=name,Values=tavro-ec2-backup-${{ matrix.instance.name }}-*" \
             --query 'sort_by(Images, &CreationDate)[*].ImageId' \
             --output text)
 
@@ -75,12 +82,13 @@ jobs:
               done
             done
           else
-            echo "Only $TOTAL AMI(s) -- nothing to prune."
+            echo "Only $TOTAL AMI(s) for ${{ matrix.instance.name }} -- nothing to prune."
           fi
 
       - name: Summary
         if: always()
         run: |
-          echo "### Backup summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Backup summary — ${{ matrix.instance.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Instance**: \`${{ matrix.instance.id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **AMI**: \`${{ steps.create-ami.outputs.ami_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Time**: $(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_STEP_SUMMARY"
