@@ -65,7 +65,6 @@ async def list_dim_nodes(
         start, end = int(parts[0]), int(parts[1])
     except Exception:
         start, end = start_record, start_record + 99
-    offset, limit = start - 1, end - start + 1
 
     await _assert_company_owned(db, str(company_id), tenant_id)
 
@@ -89,30 +88,26 @@ async def list_dim_nodes(
 
     where = " AND ".join(filters)
 
-    count_row = await db.execute(
-        text(f"""
-            SELECT count(*) FROM twin.dim_node n
-            JOIN twin.dim_type t ON t.id = n.dim_type_id
-            WHERE {where}
-        """),
-        params,
-    )
-    total = count_row.scalar()
-
     rows = await db.execute(
         text(f"""
-            SELECT n.*,
-                   t.name     AS dim_type_name,
-                   t.category AS category
-            FROM twin.dim_node n
-            JOIN twin.dim_type t ON t.id = n.dim_type_id
-            WHERE {where}
-            ORDER BY t.category, n.label
-            LIMIT :limit OFFSET :offset
+            SELECT * FROM (
+                SELECT n.*,
+                       t.name     AS dim_type_name,
+                       t.category AS category,
+                       ROW_NUMBER() OVER (ORDER BY t.category, n.label) AS rn,
+                       COUNT(*) OVER () AS total_records
+                FROM twin.dim_node n
+                JOIN twin.dim_type t ON t.id = n.dim_type_id
+                WHERE {where}
+            ) windowed
+            WHERE rn BETWEEN :window_start AND :window_end
+            ORDER BY rn
         """),
-        {**params, "limit": limit, "offset": offset},
+        {**params, "window_start": start, "window_end": end},
     )
-    items = [dict(r._mapping) for r in rows]
+    raw_rows = [dict(r._mapping) for r in rows]
+    total = int(raw_rows[0]["total_records"]) if raw_rows else 0
+    items = [{k: v for k, v in r.items() if k not in ("rn", "total_records")} for r in raw_rows]
     return {"start_record": start, "end_record": end, "record_count": len(items),
             "total_records": total, "data": items}
 
