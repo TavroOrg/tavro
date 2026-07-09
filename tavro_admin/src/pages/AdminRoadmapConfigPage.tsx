@@ -27,14 +27,6 @@ const VISIBILITY_OPTIONS: { key: VisibilityLevel; label: string }[] = [
     { key: 'confidential', label: 'Confidential' },
 ];
 
-type LLMProviderKey = 'github_copilot' | 'openai' | 'azure_openai' | 'anthropic';
-const LLM_PROVIDER_OPTIONS: { key: LLMProviderKey; label: string }[] = [
-    { key: 'github_copilot', label: 'GitHub Copilot' },
-    { key: 'openai',         label: 'OpenAI' },
-    { key: 'azure_openai',   label: 'Azure OpenAI / Azure AI Foundry' },
-    { key: 'anthropic',      label: 'Anthropic (Claude)' },
-];
-
 // ── Allocation badge — green "N% allocated" pill with a live dot, turns
 // amber when the group's weights don't sum to 100%. ─────────────────────────
 const AllocationBadge: React.FC<{ total: number }> = ({ total }) => {
@@ -144,20 +136,9 @@ const AdminRoadmapConfigPage: React.FC = () => {
     const [error, setError]             = useState<string | null>(null);
     const [saveState, setSaveState]     = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-    // ── Preview-only fields — UI shell for the rest of the company
+    // ── Preview-only field — UI shell for the rest of the company
     // preferences doc; not yet wired to a backend endpoint. ──────────────────
-    const [allowedProviders, setAllowedProviders]   = useState<LLMProviderKey[]>(['github_copilot', 'openai', 'azure_openai', 'anthropic']);
-    const [defaultProvider, setDefaultProvider]     = useState<LLMProviderKey>('github_copilot');
     const [riskReviewThreshold, setRiskReviewThreshold] = useState(3.5);
-
-    const toggleProvider = (key: LLMProviderKey) => {
-        setAllowedProviders(prev => {
-            const next = prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key];
-            // Keep the default provider valid — fall back to the first remaining allowed one.
-            if (!next.includes(defaultProvider) && next.length > 0) setDefaultProvider(next[0]);
-            return next;
-        });
-    };
 
     const pwSum = +(priorityWeightsSum(cfg.priorityWeights) * 100).toFixed(1);
     const rwSum = riskWeightsSum(cfg.riskWeights);
@@ -287,9 +268,6 @@ const AdminRoadmapConfigPage: React.FC = () => {
                                     <p className="text-xs text-slate-400 max-w-md leading-snug">
                                         Controls how Business Value, Effort, and Risk combine into a single priority score.
                                     </p>
-                                    <span className="inline-block mt-1.5 font-mono text-[11px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                                        Score = (BV × {(cfg.priorityWeights.BV * 100).toFixed(0)}%) + ((6−Effort) × {(cfg.priorityWeights.TC * 100).toFixed(0)}%) − (Risk × {(cfg.priorityWeights.RISK * 100).toFixed(0)}%)
-                                    </span>
                                 </div>
                                 <AllocationBadge total={pwSum} />
                             </div>
@@ -396,70 +374,25 @@ const AdminRoadmapConfigPage: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Coming-soon groups — UI shells, not yet wired to a save endpoint */}
-                        <div className="grid grid-cols-1 gap-3.5">
-
-                            {/* LLM provider policy */}
-                            <div className="bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 opacity-70">
-                                <div className="flex items-center justify-between gap-3 mb-1">
-                                    <span className="text-sm font-semibold text-slate-800 dark:text-white">LLM provider policy</span>
-                                    <span className={COMING_SOON_BADGE}>Coming soon</span>
-                                </div>
-                                <p className="text-[11px] text-slate-400 mb-3">Restrict which model providers users at this company can choose from.</p>
-
-                                <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 block">Allowed providers</label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mb-4">
-                                    {LLM_PROVIDER_OPTIONS.map(({ key, label }) => (
-                                        <label
-                                            key={key}
-                                            className="flex items-center gap-2 text-[11.5px] px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer"
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={allowedProviders.includes(key)}
-                                                onChange={() => toggleProvider(key)}
-                                                className="accent-indigo-600"
-                                            />
-                                            <span className="text-slate-700 dark:text-slate-300 font-medium">{label}</span>
-                                        </label>
-                                    ))}
-                                </div>
-
-                                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                                    <label className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5 block">Preferred provider for new users</label>
-                                    <select
-                                        value={defaultProvider}
-                                        onChange={e => setDefaultProvider(e.target.value as LLMProviderKey)}
-                                        className="w-full sm:w-64 text-[11.5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 rounded-lg px-3 py-2 outline-none"
-                                    >
-                                        {LLM_PROVIDER_OPTIONS.filter(p => allowedProviders.includes(p.key)).map(({ key, label }) => (
-                                            <option key={key} value={key}>{label}</option>
-                                        ))}
-                                    </select>
-                                </div>
+                        {/* Risk governance — UI shell, not yet wired to a save endpoint */}
+                        <div className="bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 opacity-70">
+                            <div className="flex items-center justify-between gap-3 mb-1">
+                                <span className="text-sm font-semibold text-slate-800 dark:text-white">Risk governance</span>
+                                <span className={COMING_SOON_BADGE}>Coming soon</span>
                             </div>
+                            <p className="text-[11px] text-slate-400 mb-4">Use cases scoring at or above this threshold are automatically flagged for governance review.</p>
 
-                            {/* Risk governance */}
-                            <div className="bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 opacity-70">
-                                <div className="flex items-center justify-between gap-3 mb-1">
-                                    <span className="text-sm font-semibold text-slate-800 dark:text-white">Risk governance</span>
-                                    <span className={COMING_SOON_BADGE}>Coming soon</span>
+                            <div className="max-w-sm">
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-400">Risk review threshold</label>
+                                    <span className="text-xs font-mono font-bold text-orange-700 dark:text-orange-400">{riskReviewThreshold.toFixed(1)} / 5.0</span>
                                 </div>
-                                <p className="text-[11px] text-slate-400 mb-4">Use cases scoring at or above this threshold are automatically flagged for governance review.</p>
-
-                                <div className="max-w-sm">
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <label className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-400">Risk review threshold</label>
-                                        <span className="text-xs font-mono font-bold text-orange-700 dark:text-orange-400">{riskReviewThreshold.toFixed(1)} / 5.0</span>
-                                    </div>
-                                    <ColorSlider
-                                        percent={(riskReviewThreshold / 5) * 100}
-                                        color="#C2540A" min={0} max={100} step={2}
-                                        onChange={v => setRiskReviewThreshold(+(v / 20).toFixed(1))}
-                                    />
-                                </div>
+                                <ColorSlider
+                                    percent={(riskReviewThreshold / 5) * 100}
+                                    color="#C2540A" min={0} max={100} step={2}
+                                    onChange={v => setRiskReviewThreshold(+(v / 20).toFixed(1))}
+                                />
                             </div>
-
                         </div>
 
                     </div>

@@ -425,6 +425,24 @@ async def get_company_node_defaults(db: AsyncSession, company_id: str) -> tuple[
     return visibility, bool(sensitive)
 
 
+async def _apply_company_node_defaults(db: AsyncSession, company_id: Optional[str], canonical: dict) -> None:
+    """If the caller didn't specify visibility/sensitive on a new business entity,
+    fill them from the company's configured node defaults *before* the INSERT.
+    Without this, core.business_applications/business_processes/business_integrations'
+    own column DEFAULT ('internal'/false) silently fills the gap — and that concrete
+    value then looks like an explicit choice to the downstream dim_node sync,
+    defeating get_company_node_defaults() there."""
+    if not company_id:
+        return
+    if canonical.get("visibility") is not None and canonical.get("sensitive") is not None:
+        return
+    default_visibility, default_sensitive = await get_company_node_defaults(db, company_id)
+    if canonical.get("visibility") is None:
+        canonical["visibility"] = default_visibility
+    if canonical.get("sensitive") is None:
+        canonical["sensitive"] = default_sensitive
+
+
 async def _upsert_dim_node_for_entity(
     db: AsyncSession,
     company_id: str,
@@ -3576,6 +3594,7 @@ async def create_integration(
         )
 
     canonical = body.model_dump(exclude_unset=True)
+    await _apply_company_node_defaults(db, company_id, canonical)
     insert_values: dict[str, Any] = {"integration_id": integration_id}
     tenant_id = _tenant(request)
     if tenant_id and "tenant_id" in int_cols:
@@ -4205,6 +4224,7 @@ async def create_application(
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
     canonical = _canonical_payload(body.model_dump(exclude_unset=True), _APPLICATION_ALIAS_MAP)
+    await _apply_company_node_defaults(db, company_id, canonical)
 
     app_id = uuid4().hex
     existing = await _fetch_applications(db, application_id=app_id)
@@ -4885,6 +4905,7 @@ async def create_process(
     canonical = _normalize_process_dropdown_values(
         _canonical_payload(body.model_dump(exclude_unset=True), _PROCESS_ALIAS_MAP)
     )
+    await _apply_company_node_defaults(db, company_id, canonical)
 
     process_id = uuid4().hex
     existing = await _fetch_processes(db, process_id=process_id)

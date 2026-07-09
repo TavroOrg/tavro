@@ -2591,6 +2591,8 @@ async def create_application(
     latest_released_version: Optional[str] = None,
     latest_release_date: Optional[str] = None,
     latest_release_documentation_link: Optional[str] = None,
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Create a new business application and optionally link it to a company's blueprint.
@@ -2620,6 +2622,13 @@ async def create_application(
         latest_released_version (str, optional): Latest vendor release.
         latest_release_date (str, optional): Date of latest release.
         latest_release_documentation_link (str, optional): Link to release docs.
+        visibility (str, optional): One of "public" | "internal" | "restricted" | "confidential".
+                                    Set this ONLY if the user explicitly states a visibility level
+                                    in their request — otherwise leave it null so the company's
+                                    configured default applies.
+        sensitive (bool, optional): Whether to flag this as sensitive data. Set this ONLY if the
+                                    user explicitly says so (e.g. "mark it sensitive") — otherwise
+                                    leave it null so the company's configured default applies.
 
     Returns:
         Dict[str, Any]: Created application record with business_application_id and all fields.
@@ -2655,6 +2664,8 @@ async def create_application(
             ("latest_released_version", latest_released_version),
             ("latest_release_date", latest_release_date),
             ("latest_release_documentation_link", latest_release_documentation_link),
+            ("visibility", visibility),
+            ("sensitive", sensitive),
         ]:
             if val is not None:
                 payload[field] = val
@@ -2923,6 +2934,8 @@ async def create_process(
     regulatory_impact: Optional[str] = None,
     sla: Optional[str] = None,
     process_health_state: Optional[str] = None,
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Create a new business process and optionally link it to a company's blueprint.
@@ -2948,6 +2961,13 @@ async def create_process(
         regulatory_impact (str, optional): "Restricted" | "Statutory" | "Governed" | "Unregulated".
         sla (str, optional): Service Level Agreement description.
         process_health_state (str, optional): Current health state of the process.
+        visibility (str, optional): One of "public" | "internal" | "restricted" | "confidential".
+                                    Set this ONLY if the user explicitly states a visibility level
+                                    in their request — otherwise leave it null so the company's
+                                    configured default applies.
+        sensitive (bool, optional): Whether to flag this as sensitive data. Set this ONLY if the
+                                    user explicitly says so (e.g. "mark it sensitive") — otherwise
+                                    leave it null so the company's configured default applies.
 
     Returns:
         Dict[str, Any]: Created process record with business_process_id and all fields.
@@ -2978,6 +2998,8 @@ async def create_process(
             ("regulatory_impact", regulatory_impact),
             ("sla", sla),
             ("process_health_state", process_health_state),
+            ("visibility", visibility),
+            ("sensitive", sensitive),
         ]:
             if val is not None:
                 payload[field] = val
@@ -3238,6 +3260,8 @@ async def create_integration(
     sla: Optional[str] = None,
     version: Optional[str] = None,
     parent_application_id: Optional[str] = None,
+    visibility: Optional[str] = None,
+    sensitive: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Create a new business integration and optionally link it to a company's blueprint.
@@ -3263,6 +3287,13 @@ async def create_integration(
         sla (str, optional): Service Level Agreement.
         version (str, optional): Integration version.
         parent_application_id (str, optional): ID of the parent business application.
+        visibility (str, optional): One of "public" | "internal" | "restricted" | "confidential".
+                                    Set this ONLY if the user explicitly states a visibility level
+                                    in their request — otherwise leave it null so the company's
+                                    configured default applies.
+        sensitive (bool, optional): Whether to flag this as sensitive data. Set this ONLY if the
+                                    user explicitly says so (e.g. "mark it sensitive") — otherwise
+                                    leave it null so the company's configured default applies.
 
     Returns:
         Dict[str, Any]: Created integration record with integration_id and all fields.
@@ -3294,6 +3325,8 @@ async def create_integration(
             ("sla", sla),
             ("version", version),
             ("parent_application_id", parent_application_id),
+            ("visibility", visibility),
+            ("sensitive", sensitive),
         ]:
             if val is not None:
                 payload[field] = val
