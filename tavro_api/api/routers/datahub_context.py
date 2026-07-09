@@ -141,10 +141,10 @@ async def search_datahub_context(
                 metadata->>'vendor'       AS vendor,
                 metadata->>'application'  AS application,
                 metadata->>'column_count' AS column_count,
-                1 - (embedding <=> :vector::vector) AS relevance
+                1 - (embedding <=> CAST(:vector AS vector)) AS relevance
             FROM twin.datahub_context
             WHERE {where}
-            ORDER BY embedding <=> :vector::vector
+            ORDER BY embedding <=> CAST(:vector AS vector)
             LIMIT :limit
         """),
         params,
