@@ -268,6 +268,46 @@ LOOKUP_DEFAULTS: List[LookupDefault] = [
     ("issues", "status", "Escalated", "Escalated", 5, False),
 ]
 
+TENANT_WIDE_DEFAULTS: List[LookupDefault] = [
+    # company.industry
+    ("company", "industry", "Commercial Banking", "Commercial Banking", 1, False),
+    ("company", "industry", "Insurance", "Insurance", 2, False),
+    ("company", "industry", "Healthcare", "Healthcare", 3, False),
+    ("company", "industry", "Manufacturing", "Manufacturing", 4, False),
+    ("company", "industry", "Retail & CPG", "Retail & CPG", 5, False),
+    ("company", "industry", "Technology", "Technology", 6, False),
+]
+
+
+async def ensure_tenant_wide_defaults(db: AsyncSession, tenant_id: str) -> None:
+    
+    if not TENANT_WIDE_DEFAULTS:
+        return
+    await db.execute(
+        text("""
+            INSERT INTO public.lookup
+                (tenant_id, company_id, table_name, column_name, label, value, sequence, is_default, active, created_ts, updated_ts)
+            SELECT :tenant_id, NULL, :table_name, :column_name, :label, :value, :sequence, :is_default, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.lookup
+                WHERE tenant_id = :tenant_id AND company_id IS NULL
+                  AND table_name = :table_name AND column_name = :column_name AND value = :value
+            )
+        """),
+        [
+            {
+                "tenant_id": tenant_id,
+                "table_name": table_name,
+                "column_name": column_name,
+                "label": label,
+                "value": value,
+                "sequence": sequence,
+                "is_default": is_default,
+            }
+            for table_name, column_name, label, value, sequence, is_default in TENANT_WIDE_DEFAULTS
+        ],
+    )
+
 
 async def seed_lookup_defaults(db: AsyncSession, tenant_id: str, company_id: str) -> None:
     """
@@ -277,30 +317,31 @@ async def seed_lookup_defaults(db: AsyncSession, tenant_id: str, company_id: str
     untouched via ON CONFLICT DO NOTHING, so it never clobbers values an
     admin has already customized for this company.
     """
-    if not LOOKUP_DEFAULTS:
-        return
-    await db.execute(
-        text("""
-            INSERT INTO public.lookup
-                (tenant_id, company_id, table_name, column_name, label, value, sequence, is_default, active, created_ts, updated_ts)
-            VALUES
-                (:tenant_id, :company_id, :table_name, :column_name, :label, :value, :sequence, :is_default, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (tenant_id, company_id, table_name, column_name, value) DO NOTHING
-        """),
-        [
-            {
-                "tenant_id": tenant_id,
-                "company_id": company_id,
-                "table_name": table_name,
-                "column_name": column_name,
-                "label": label,
-                "value": value,
-                "sequence": sequence,
-                "is_default": is_default,
-            }
-            for table_name, column_name, label, value, sequence, is_default in LOOKUP_DEFAULTS
-        ],
-    )
+    if LOOKUP_DEFAULTS:
+        await db.execute(
+            text("""
+                INSERT INTO public.lookup
+                    (tenant_id, company_id, table_name, column_name, label, value, sequence, is_default, active, created_ts, updated_ts)
+                VALUES
+                    (:tenant_id, :company_id, :table_name, :column_name, :label, :value, :sequence, :is_default, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (tenant_id, company_id, table_name, column_name, value) DO NOTHING
+            """),
+            [
+                {
+                    "tenant_id": tenant_id,
+                    "company_id": company_id,
+                    "table_name": table_name,
+                    "column_name": column_name,
+                    "label": label,
+                    "value": value,
+                    "sequence": sequence,
+                    "is_default": is_default,
+                }
+                for table_name, column_name, label, value, sequence, is_default in LOOKUP_DEFAULTS
+            ],
+        )
+
+    await ensure_tenant_wide_defaults(db, tenant_id)
 
 
 async def delete_lookup_defaults(db: AsyncSession, tenant_id: str, company_id: str) -> None:

@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.lookup_defaults import ensure_tenant_wide_defaults
 
 router = APIRouter()
 
@@ -35,6 +36,11 @@ async def list_lookup_values(
     db: AsyncSession = Depends(get_db),
 ):
     tenant_id = _tenant(request)
+
+    if tenant_id:
+        await ensure_tenant_wide_defaults(db, tenant_id)
+        await db.commit()
+
     conditions = ["active = TRUE"]
     params = {}
 
@@ -47,7 +53,7 @@ async def list_lookup_values(
         conditions.append("tenant_id IS NULL")
 
     if company_id:
-        conditions.append("company_id = :company_id")
+        conditions.append("(company_id = :company_id OR company_id IS NULL)")
         params["company_id"] = company_id
     else:
         conditions.append("company_id IS NULL")
