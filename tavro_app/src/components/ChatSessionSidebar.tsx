@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { Plus, Trash2, MessageCircle, X } from 'lucide-react';
 import { useChatSessions } from '../context/ChatSessionContext';
 
+// Unused (dead code) — only 'copilot' sessions exist today; none of these keys match.
 const PROVIDER_SHORT: Record<string, string> = {
-  openai: 'OpenAI',
-  gemini: 'Gemini',
-  anthropic: 'Claude',
+  // openai: 'OpenAI',
+  // gemini: 'Gemini',
+  // anthropic: 'Claude',
 };
 
 function relativeTime(iso: string): string {

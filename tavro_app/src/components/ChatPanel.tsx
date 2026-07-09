@@ -636,7 +636,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const [configuredProviders, setConfiguredProviders] = useState<{ provider: LLMProvider; label: string }[]>([]);
 
     useEffect(() => {
-        const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
+        // Unused (dead code) — only 'copilot' is a supported top-level provider today.
+        // const providers: LLMProvider[] = ['openai', 'gemini', 'anthropic', 'copilot'];
+        const providers: LLMProvider[] = ['copilot'];
         const configured = providers
             .map(p => ({ provider: p, cfg: getProviderConfig(p) }))
             .filter(x => x.cfg !== null)

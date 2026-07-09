@@ -6,7 +6,11 @@
  * mcpClient.ts's copilotOrchestrator), not this file.
  */
 
-export type LLMProvider = 'openai' | 'gemini' | 'anthropic' | 'copilot';
+// Only 'copilot' is a supported top-level provider today (with 'openai'/'azure'/'anthropic'
+// available as its BYOK sub-providers — see CopilotBYOKConfig below, a separate type).
+// 'openai' | 'gemini' | 'anthropic' kept here, commented, for reference:
+// export type LLMProvider = 'openai' | 'gemini' | 'anthropic' | 'copilot';
+export type LLMProvider = 'copilot';
 
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -45,9 +49,9 @@ export interface LLMConfig {
 }
 
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
-    openai:    'gpt-4o',
-    gemini:    'gemini-1.5-flash',
-    anthropic: 'claude-sonnet-4-6',
+    // openai:    'gpt-4o',
+    // gemini:    'gemini-1.5-flash',
+    // anthropic: 'claude-sonnet-4-6',
     copilot:   'gpt-4.1',
 };
 
@@ -60,9 +64,9 @@ export const DEFAULT_MODELS: Record<LLMProvider, string> = {
 // };
 
 export const PROVIDER_LABELS: Record<LLMProvider, string> = {
-    openai:    'OpenAI',
-    gemini:    'Google Gemini',
-    anthropic: 'Anthropic (Claude)',
+    // openai:    'OpenAI',
+    // gemini:    'Google Gemini',
+    // anthropic: 'Anthropic (Claude)',
     copilot:   'GitHub Copilot SDK',
 };
 

@@ -64,9 +64,11 @@ const Settings: React.FC = () => {
     const BYOK_DEFAULT_MODELS: Record<ByokType, string> = {
         github: 'gpt-4.1', openai: 'gpt-5.5', azure: 'gpt-4o', anthropic: 'claude-sonnet-4-6',
     };
+    // Unused (dead code) — getModelOptions only reaches this branch when p !== 'copilot',
+    // which never happens since ALL_PROVIDERS only contains 'copilot'.
     const PROVIDER_MODEL_OPTIONS: Partial<Record<LLMProvider, string[]>> = {
-        openai:    ['gpt-4o', 'gpt-5.5'],
-        anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+        // openai:    ['gpt-4o', 'gpt-5.5'],
+        // anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
     };
     const BYOK_MODEL_OPTIONS: Partial<Record<ByokType, string[]>> = {
         openai:    ['gpt-4o', 'gpt-5.5'],
@@ -87,9 +89,9 @@ const Settings: React.FC = () => {
         return base;
     };
     const [providerStates, setProviderStates] = useState<Record<LLMProvider, ProviderState>>(() => ({
-        openai: initProviderState('openai'),
-        gemini: initProviderState('gemini'),
-        anthropic: initProviderState('anthropic'),
+        // openai: initProviderState('openai'),
+        // gemini: initProviderState('gemini'),
+        // anthropic: initProviderState('anthropic'),
         copilot: initProviderState('copilot'),
     }));
     const [activeProvider, setActiveProviderState] = useState<LLMProvider | null>(getActiveProvider);
@@ -102,7 +104,9 @@ const Settings: React.FC = () => {
     useEffect(() => {
         if (getActiveProvider()) return;
         userContextApi.getUserContext().then(ctx => {
-            if (!ctx.llm_provider) return;
+            // Only 'copilot' is a supported top-level provider today — ignore any
+            // stale 'openai'/'gemini'/'anthropic' value a legacy record might hold.
+            if (!ctx.llm_provider || ctx.llm_provider !== 'copilot') return;
             const p = ctx.llm_provider as LLMProvider;
             const byok = ctx.llm_byok_type && ctx.llm_byok_type !== 'github'
                 ? { type: ctx.llm_byok_type as 'openai' | 'azure' | 'anthropic', baseUrl: ctx.llm_byok_base_url || undefined }
