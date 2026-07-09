@@ -327,7 +327,7 @@ const IdeaCard: React.FC<{
           {idea.title}
         </h3>
 
-        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed flex-1">
+        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
           {idea.description}
         </p>
 
