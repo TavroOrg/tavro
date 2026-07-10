@@ -207,6 +207,7 @@ class UseCaseCreateRequest(BaseModel):
     business_problem_statement: str
     expected_benefits: str
     priority: str
+    status: Optional[str] = None
     regulatory_impact: Optional[List[str]] = None
     solution_approach: Optional[str] = None
     use_case_owner: Optional[str] = None
@@ -598,7 +599,7 @@ async def create_use_case(
                      implementation_roadmap, recommendation, executive_summary)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
-                     :problem, :benefits, :priority, 'Identified',
+                     :problem, :benefits, :priority, :status,
                      :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname,
                      :assumptions, :qfb, :tfis, :ice, :roi, :risk_cons, :impl_roadmap, :recom, :exec_summary)
             """),
@@ -609,6 +610,7 @@ async def create_use_case(
                 "problem": body.business_problem_statement,
                 "benefits": body.expected_benefits,
                 "priority": priority,
+                "status": body.status or None,
                 "solution": body.solution_approach or "",
                 "cid": cid, "cname": cname,
                 "assumptions": body.assumptions or "",

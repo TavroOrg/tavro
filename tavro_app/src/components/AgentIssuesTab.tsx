@@ -3,6 +3,7 @@ import { toUserMessage } from '../utils/errorUtils';
 import { AlertTriangle, ArrowLeft, CalendarDays, Check, Loader2, Pencil, Plus, Save, Trash2, X, XCircle } from 'lucide-react';
 import type { AgentData, AgentIssue } from '../types/agent';
 import { agentApi, type AgentIssuePayload } from '../services/agentApi';
+import { useLookupValues } from '../context/LookupContext';
 
 interface AgentIssuesTabProps {
   agent: AgentData;
@@ -13,31 +14,6 @@ type IssueDetail = AgentIssue & {
   linked_agents?: Array<{ agent_id: string; agent_name: string }>;
 };
 
-const ISSUE_TYPES = [
-  'Hallucination',
-  'Tool Failure',
-  'Latency Breach',
-  'Drift Violation',
-  'Guardrail Trigger',
-  'Data Quality',
-  'Authorization Failure',
-  'Output Policy Violation',
-  'Risk Management',
-  'Fraud Detection',
-  'Customer Engagement',
-];
-
-const SEVERITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low', 'Informational'];
-
-const SOURCE_OPTIONS = [
-  'Evaluation Framework',
-  'Alert Monitor',
-  'Drift Detector',
-  'Manual Review',
-];
-
-const STATUS_OPTIONS = ['Open', 'In Progress', 'Resolved', 'Dismissed', 'Escalated'];
-
 const emptyForm = {
   title: '',
   description: '',
@@ -46,7 +22,7 @@ const emptyForm = {
   source: '',
   detected_at: '',
   resolved_at: '',
-  status: 'Open',
+  status: '',
   resolution_notes: '',
   assignee: '',
   owner: '',
@@ -213,6 +189,14 @@ const RelatedIssuesList: React.FC<{
 
 const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }) => {
   const agentId = agent.identification?.agent_id ?? '';
+  const issueTypeValues = useLookupValues('issues', 'issue_type');
+  const severityValues = useLookupValues('issues', 'severity');
+  const sourceValues = useLookupValues('issues', 'source');
+  const statusValues = useLookupValues('issues', 'status');
+  const ISSUE_TYPES = issueTypeValues.map(v => v.value);
+  const SEVERITY_OPTIONS = severityValues.map(v => v.value);
+  const SOURCE_OPTIONS = sourceValues.map(v => v.value);
+  const STATUS_OPTIONS = statusValues.map(v => v.value);
   const [issues, setIssues] = useState<AgentIssue[]>(agent.issues ?? []);
   const [saving, setSaving] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -231,6 +215,18 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
   useEffect(() => {
     setIssues(agent.issues ?? []);
   }, [agent.issues]);
+
+
+  useEffect(() => {
+    if (!formOpen) return;
+    setForm(prev => ({
+      ...prev,
+      issue_type: prev.issue_type || issueTypeValues.find(v => v.is_default)?.value || '',
+      severity: prev.severity || severityValues.find(v => v.is_default)?.value || '',
+      source: prev.source || sourceValues.find(v => v.is_default)?.value || '',
+      status: prev.status || statusValues.find(v => v.is_default)?.value || 'Open',
+    }));
+  }, [formOpen, issueTypeValues, severityValues, sourceValues, statusValues]);
 
   useEffect(() => {
     setSelectedIssueId(null);
@@ -493,7 +489,7 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
                 autoFocus
                 className="min-w-0 flex-1 text-sm text-slate-700 bg-white border border-blue-300 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">Select...</option>
+                <option value="">-- None --</option>
                 {(config.options ?? []).map(option => (
                   <option key={option} value={option}>{option}</option>
                 ))}
@@ -608,33 +604,50 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Issue Type</span>
-                <select value={form.issue_type} onChange={e => updateField('issue_type', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Select type…</option>
-                  {ISSUE_TYPES.map(t => <option key={t}>{t}</option>)}
-                </select>
+                {ISSUE_TYPES.length === 0 ? (
+                  <div className="text-sm text-slate-400 italic px-1 py-2">No issue type options configured</div>
+                ) : (
+                  <select value={form.issue_type} onChange={e => updateField('issue_type', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">-- None --</option>
+                    {ISSUE_TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                )}
               </label>
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Severity</span>
-                <select value={form.severity} onChange={e => updateField('severity', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Select severity…</option>
-                  {SEVERITY_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                </select>
+                {SEVERITY_OPTIONS.length === 0 ? (
+                  <div className="text-sm text-slate-400 italic px-1 py-2">No severity options configured</div>
+                ) : (
+                  <select value={form.severity} onChange={e => updateField('severity', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">-- None --</option>
+                    {SEVERITY_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                )}
               </label>
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Source</span>
-                <select value={form.source} onChange={e => updateField('source', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Select source…</option>
-                  {SOURCE_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                </select>
+                {SOURCE_OPTIONS.length === 0 ? (
+                  <div className="text-sm text-slate-400 italic px-1 py-2">No source options configured</div>
+                ) : (
+                  <select value={form.source} onChange={e => updateField('source', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">-- None --</option>
+                    {SOURCE_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                )}
               </label>
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Status</span>
-                <select value={form.status} onChange={e => updateField('status', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                </select>
+                {STATUS_OPTIONS.length === 0 ? (
+                  <div className="text-sm text-slate-400 italic px-1 py-2">No status options configured</div>
+                ) : (
+                  <select value={form.status} onChange={e => updateField('status', e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">-- None --</option>
+                    {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                )}
               </label>
 
               <label className="flex flex-col gap-1.5">
@@ -787,30 +800,47 @@ const AgentIssuesTab: React.FC<AgentIssuesTabProps> = ({ agent, onIssuesChange }
 
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Issue Type</span>
-                      <select value={issueForm.issue_type} onChange={e => updateIssueField('issue_type', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Select type...</option>
-                        {ISSUE_TYPES.map(t => <option key={t}>{t}</option>)}
-                      </select>
+                      {ISSUE_TYPES.length === 0 ? (
+                        <div className="text-sm text-slate-400 italic px-1 py-2">No issue type options configured</div>
+                      ) : (
+                        <select value={issueForm.issue_type} onChange={e => updateIssueField('issue_type', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                          <option value="">-- None --</option>
+                          {ISSUE_TYPES.map(t => <option key={t}>{t}</option>)}
+                        </select>
+                      )}
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Severity</span>
-                      <select value={issueForm.severity} onChange={e => updateIssueField('severity', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Select severity...</option>
-                        {SEVERITY_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                      </select>
+                      {SEVERITY_OPTIONS.length === 0 ? (
+                        <div className="text-sm text-slate-400 italic px-1 py-2">No severity options configured</div>
+                      ) : (
+                        <select value={issueForm.severity} onChange={e => updateIssueField('severity', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                          <option value="">-- None --</option>
+                          {SEVERITY_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      )}
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Status</span>
-                      <select value={issueForm.status} onChange={e => updateIssueField('status', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                      </select>
+                      {STATUS_OPTIONS.length === 0 ? (
+                        <div className="text-sm text-slate-400 italic px-1 py-2">No status options configured</div>
+                      ) : (
+                        <select value={issueForm.status} onChange={e => updateIssueField('status', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                          <option value="">-- None --</option>
+                          {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      )}
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Source</span>
-                      <select value={issueForm.source} onChange={e => updateIssueField('source', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Select source...</option>
-                        {SOURCE_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                      </select>
+                      {SOURCE_OPTIONS.length === 0 ? (
+                        <div className="text-sm text-slate-400 italic px-1 py-2">No source options configured</div>
+                      ) : (
+                        <select value={issueForm.source} onChange={e => updateIssueField('source', e.target.value)} className="text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                          <option value="">-- None --</option>
+                          {SOURCE_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      )}
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assignee</span>

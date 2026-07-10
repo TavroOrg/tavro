@@ -1733,6 +1733,7 @@ const UseCaseViewPage: React.FC = () => {
       if (field === 'title') payload.title = value.trim();
       else if (field === 'description') payload.description = value.trim();
       else if (field === 'priority') payload.priority = value;
+      else if (field === 'status') payload.status = value;
       else if (field === 'owner') payload.use_case_owner = value.trim();
       else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
       else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
@@ -1753,6 +1754,7 @@ const UseCaseViewPage: React.FC = () => {
         if (field === 'title') { next.name = value.trim(); next.title = value.trim(); }
         else if (field === 'description') next.description = value.trim();
         else if (field === 'priority') next.priority = value;
+        else if (field === 'status') next.status = value;
         else if (field === 'owner') { next.owner = value.trim(); next.use_case_owner = value.trim(); }
         else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
         else if (field === 'expected_benefits') next.expected_benefits = value.trim();

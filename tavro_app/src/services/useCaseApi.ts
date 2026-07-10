@@ -49,6 +49,7 @@ export interface UseCaseCreatePayload {
     business_problem_statement: string;
     expected_benefits: string;
     priority: string;
+    status?: string;
     regulatory_impact?: string[];
     solution_approach?: string;
     use_case_owner?: string;
@@ -107,6 +108,7 @@ function changedUseCaseFields(payload: UseCaseUpdatePayload): string {
     if (payload.business_problem_statement !== undefined) fields.push('problem statement');
     if (payload.expected_benefits !== undefined) fields.push('expected benefits');
     if (payload.priority !== undefined) fields.push('priority');
+    if (payload.status !== undefined) fields.push('status');
     if (payload.solution_approach !== undefined) fields.push('solution approach');
     if (payload.use_case_owner !== undefined) fields.push('owner');
     if (payload.executive_summary !== undefined) fields.push('executive summary');

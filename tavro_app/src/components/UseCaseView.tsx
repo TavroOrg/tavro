@@ -4,7 +4,7 @@ import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
 import LifecycleStepper from './LifecycleStepper';
-import { USE_CASE_LIFECYCLE_STAGES } from '../constants/lifecycle';
+import { useLookupValues } from '../context/LookupContext';
 import {
     Building2,
     ShieldCheck,
@@ -291,6 +291,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
+    const statusOptions = useLookupValues('ai_use_cases', 'status');
+    const statusStages = statusOptions.map(o => o.value);
 
     const handleGenerateReport = async () => {
         if (!uc.identifier) return;
@@ -594,11 +596,15 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
                             </div>
                             <div className="max-w-md mt-2">
-                                <LifecycleStepper
-                                    stages={USE_CASE_LIFECYCLE_STAGES}
-                                    currentStage={(uc as any).status ?? 'Identified'}
-                                    onStageChange={onLifecycleStageChange}
-                                />
+                                {statusStages.length === 0 ? (
+                                    <div className="text-sm text-slate-400 dark:text-slate-500 italic">No status options configured</div>
+                                ) : (
+                                    <LifecycleStepper
+                                        stages={statusStages}
+                                        currentStage={(uc as any).status ?? null}
+                                        onStageChange={onLifecycleStageChange}
+                                    />
+                                )}
                                 {lifecycleError && (
                                     <p className="mt-1.5 text-xs font-medium text-red-500">{lifecycleError}</p>
                                 )}

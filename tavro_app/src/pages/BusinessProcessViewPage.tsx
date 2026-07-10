@@ -39,6 +39,7 @@ import { useUseCases } from '../context/UseCaseContext';
 import { useBlueprint } from '../context/BlueprintContext';
 import { agentApi } from '../services/agentApi';
 import { blueprintApi } from '../services/blueprintApi';
+import { useLookupValues } from '../context/LookupContext';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
 type Tab = 'overview' | 'related_agents' | 'related_processes' | 'related_use_cases' | 'related_ai_models' | 'related_applications' | 'blueprint';
@@ -70,12 +71,6 @@ const REGULATORY_IMPACT_OPTIONS: Option[] = [
   { label: 'Statutory', value: '0.7' },
   { label: 'Governed', value: '0.4' },
   { label: 'Unregulated', value: '0.1' },
-];
-
-const PROCESS_HEALTH_OPTIONS: Option[] = [
-  { label: 'Stable', value: 'Stable' },
-  { label: 'Needs Improvement', value: 'Needs Improvement' },
-  { label: 'At Risk', value: 'At Risk' },
 ];
 
 interface ProcessFormState {
@@ -306,6 +301,11 @@ const BusinessProcessViewPage: React.FC = () => {
   const { agents: catalogAgents } = useCatalog();
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
   const { activeCompany } = useBlueprint();
+  const businessCriticalityOptions = useLookupValues('business_processes', 'business_criticality');
+  const financialImpactOptions = useLookupValues('business_processes', 'financial_impact');
+  const reputationalImpactOptions = useLookupValues('business_processes', 'reputational_impact');
+  const regulatoryImpactOptions = useLookupValues('business_processes', 'regulatory_impact');
+  const processHealthOptions = useLookupValues('business_processes', 'process_health_state');
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
@@ -335,6 +335,21 @@ const BusinessProcessViewPage: React.FC = () => {
 
   const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
   const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
+
+  // Pre-fill new-record defaults from public.lookup's is_default flag.
+  // Only applies while creating — never overrides an existing record's
+  // actual stored values.
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      business_criticality: prev.business_criticality || businessCriticalityOptions.find(v => v.is_default)?.value || '',
+      financial_impact: prev.financial_impact || financialImpactOptions.find(v => v.is_default)?.value || '',
+      reputational_impact: prev.reputational_impact || reputationalImpactOptions.find(v => v.is_default)?.value || '',
+      regulatory_impact: prev.regulatory_impact || regulatoryImpactOptions.find(v => v.is_default)?.value || '',
+      process_health_state: prev.process_health_state || processHealthOptions.find(v => v.is_default)?.value || '',
+    }));
+  }, [isCreateMode, businessCriticalityOptions, financialImpactOptions, reputationalImpactOptions, regulatoryImpactOptions, processHealthOptions]);
 
   const [process, setProcess] = useState<BusinessProcessRecord | null>(null);
   const [form, setForm] = useState<ProcessFormState>(emptyForm);
@@ -701,7 +716,7 @@ const BusinessProcessViewPage: React.FC = () => {
             >
               {config.selectChildren ?? (
                 <>
-                  <option value="">Select...</option>
+                  <option value="">-- None --</option>
                   {(config.options ?? []).map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
@@ -1538,20 +1553,24 @@ const BusinessProcessViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
                 {editing ? (
-                  <select
-                    value={form.business_criticality}
-                    onChange={(e) => setField('business_criticality', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {BUSINESS_CRITICALITY_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  businessCriticalityOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No business criticality options configured</div>
+                  ) : (
+                    <select
+                      value={form.business_criticality}
+                      onChange={(e) => setField('business_criticality', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {businessCriticalityOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS), {
+                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, businessCriticalityOptions), {
                     kind: 'select',
-                    options: BUSINESS_CRITICALITY_OPTIONS,
+                    options: businessCriticalityOptions,
                   })
                 )}
               </div>
@@ -1559,20 +1578,24 @@ const BusinessProcessViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Financial Impact" hint={HINTS.financial_impact} />
                 {editing ? (
-                  <select
-                    value={form.financial_impact}
-                    onChange={(e) => setField('financial_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {FINANCIAL_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  financialImpactOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No financial impact options configured</div>
+                  ) : (
+                    <select
+                      value={form.financial_impact}
+                      onChange={(e) => setField('financial_impact', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {financialImpactOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, FINANCIAL_IMPACT_OPTIONS), {
+                  renderInlineEditable('financial_impact', labelFromOptions(form.financial_impact, financialImpactOptions), {
                     kind: 'select',
-                    options: FINANCIAL_IMPACT_OPTIONS,
+                    options: financialImpactOptions,
                   })
                 )}
               </div>
@@ -1581,20 +1604,24 @@ const BusinessProcessViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Reputational Impact" hint={HINTS.reputational_impact} />
                 {editing ? (
-                  <select
-                    value={form.reputational_impact}
-                    onChange={(e) => setField('reputational_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {REPUTATIONAL_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  reputationalImpactOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No reputational impact options configured</div>
+                  ) : (
+                    <select
+                      value={form.reputational_impact}
+                      onChange={(e) => setField('reputational_impact', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {reputationalImpactOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, REPUTATIONAL_IMPACT_OPTIONS), {
+                  renderInlineEditable('reputational_impact', labelFromOptions(form.reputational_impact, reputationalImpactOptions), {
                     kind: 'select',
-                    options: REPUTATIONAL_IMPACT_OPTIONS,
+                    options: reputationalImpactOptions,
                   })
                 )}
               </div>
@@ -1602,20 +1629,24 @@ const BusinessProcessViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Regulatory Impact" hint={HINTS.regulatory_impact} />
                 {editing ? (
-                  <select
-                    value={form.regulatory_impact}
-                    onChange={(e) => setField('regulatory_impact', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {REGULATORY_IMPACT_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  regulatoryImpactOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No regulatory impact options configured</div>
+                  ) : (
+                    <select
+                      value={form.regulatory_impact}
+                      onChange={(e) => setField('regulatory_impact', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {regulatoryImpactOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('regulatory_impact', labelFromOptions(form.regulatory_impact, REGULATORY_IMPACT_OPTIONS), {
+                  renderInlineEditable('regulatory_impact', labelFromOptions(form.regulatory_impact, regulatoryImpactOptions), {
                     kind: 'select',
-                    options: REGULATORY_IMPACT_OPTIONS,
+                    options: regulatoryImpactOptions,
                   })
                 )}
               </div>
@@ -1656,20 +1687,24 @@ const BusinessProcessViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Process Health State" />
                 {editing ? (
-                  <select
-                    value={form.process_health_state}
-                    onChange={(e) => setField('process_health_state', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {PROCESS_HEALTH_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  processHealthOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No process health options configured</div>
+                  ) : (
+                    <select
+                      value={form.process_health_state}
+                      onChange={(e) => setField('process_health_state', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {processHealthOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('process_health_state', labelFromOptions(form.process_health_state, PROCESS_HEALTH_OPTIONS), {
+                  renderInlineEditable('process_health_state', labelFromOptions(form.process_health_state, processHealthOptions), {
                     kind: 'select',
-                    options: PROCESS_HEALTH_OPTIONS,
+                    options: processHealthOptions,
                   })
                 )}
               </div>
@@ -1891,7 +1926,7 @@ const BusinessProcessViewPage: React.FC = () => {
                       const owner = full?.owner || 'N/A';
                       const businessCriticality = labelFromOptions(
                         toText(full?.business_criticality),
-                        BUSINESS_CRITICALITY_OPTIONS,
+                        businessCriticalityOptions,
                       );
                       const processHealthState = full?.process_health_state || 'N/A';
                       const associatedAgents = toText(full?.num_of_associated_agents, 'N/A');
