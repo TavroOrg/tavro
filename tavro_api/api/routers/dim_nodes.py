@@ -4,7 +4,7 @@
 
 from uuid import UUID
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -12,7 +12,7 @@ import json
 
 from api.database import get_db
 from api.dependencies import require_tenant
-from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, Page, AttachmentOut
+from api.schemas import DimNode, DimNodeCreate, DimNodeUpdate, AttachmentOut
 from api.routers.business_relations import (
     sync_dim_node_to_business_entity,
     _ensure_application_attachments_table,
@@ -48,7 +48,7 @@ async def _assert_node_owned(db: AsyncSession, node_id: str, tenant_id: str) -> 
         raise HTTPException(status_code=404, detail="Node not found")
 
 
-@router.get("", response_model=Page)
+@router.get("")
 async def list_dim_nodes(
     company_id:  UUID,
     tenant_id: str = Depends(require_tenant),
@@ -56,10 +56,19 @@ async def list_dim_nodes(
     category:    Optional[str]   = None,
     search:      Optional[str]   = None,
     active_only: bool            = True,
-    offset:      int             = Query(0, ge=0),
-    limit:       int             = Query(100, ge=1, le=500),
+    start_record: int            = 1,
+    record_range: Optional[str]  = None,
     db: AsyncSession = Depends(get_db),
 ):
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 99
+    else:
+        start, end = start_record, start_record + 99
+
     await _assert_company_owned(db, str(company_id), tenant_id)
 
     filters = ["n.company_id = :company_id"]
@@ -82,6 +91,8 @@ async def list_dim_nodes(
 
     where = " AND ".join(filters)
 
+    # Independent count so `total` stays correct even when the requested
+    # window matches zero rows (e.g. a page past the end of the results).
     count_row = await db.execute(
         text(f"""
             SELECT count(*) FROM twin.dim_node n
@@ -90,23 +101,28 @@ async def list_dim_nodes(
         """),
         params,
     )
-    total = count_row.scalar()
+    total = count_row.scalar() or 0
 
     rows = await db.execute(
         text(f"""
-            SELECT n.*,
-                   t.name     AS dim_type_name,
-                   t.category AS category
-            FROM twin.dim_node n
-            JOIN twin.dim_type t ON t.id = n.dim_type_id
-            WHERE {where}
-            ORDER BY t.category, n.label
-            LIMIT :limit OFFSET :offset
+            SELECT * FROM (
+                SELECT n.*,
+                       t.name     AS dim_type_name,
+                       t.category AS category,
+                       ROW_NUMBER() OVER (ORDER BY t.category, n.label) AS rn
+                FROM twin.dim_node n
+                JOIN twin.dim_type t ON t.id = n.dim_type_id
+                WHERE {where}
+            ) windowed
+            WHERE rn BETWEEN :window_start AND :window_end
+            ORDER BY rn
         """),
-        {**params, "limit": limit, "offset": offset},
+        {**params, "window_start": start, "window_end": end},
     )
-    items = [dict(r._mapping) for r in rows]
-    return {"total": total, "offset": offset, "limit": limit, "items": items}
+    raw_rows = [dict(r._mapping) for r in rows]
+    items = [{k: v for k, v in r.items() if k != "rn"} for r in raw_rows]
+    return {"start_record": start, "end_record": end, "record_count": len(items),
+            "total_records": total, "data": items}
 
 
 @router.get("/{node_id}", response_model=DimNode)
