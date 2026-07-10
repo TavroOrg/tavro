@@ -619,6 +619,52 @@ Start your response with { and end with }."""
 
 
 # =============================================================
+# Structured-output tool — used instead of free-text JSON so the Anthropic
+# API itself enforces valid, schema-conformant output. Hand-written JSON in
+# prose is prone to truncation/formatting errors on long research responses
+# (unescaped quotes in citations, imperfect continuation merges, etc.); a
+# tool call's `input` is parsed and validated by Anthropic server-side, so it
+# can never come back as malformed JSON the way free text can.
+# =============================================================
+
+BLUEPRINT_RESULT_TOOL: dict = {
+    "name": "submit_blueprint_research",
+    "description": (
+        "Submit the final set of Blueprint dimension nodes for this company, along with "
+        "the sources used and a one-sentence notice. Call this exactly once, only when "
+        "you have finished any necessary research (filings, web search) and are ready to "
+        "give your final answer."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "nodes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": ["profile", "strategy", "organisation", "finance"],
+                        },
+                        "label":      {"type": "string"},
+                        "summary":    {"type": "string"},
+                        "tags":       {"type": "array", "items": {"type": "string"}},
+                        "visibility": {"type": "string", "enum": ["internal", "restricted", "public"]},
+                        "sensitive":  {"type": "boolean"},
+                    },
+                    "required": ["category", "label", "summary", "tags"],
+                },
+            },
+            "sources": {"type": "array", "items": {"type": "string"}},
+            "notice":  {"type": "string"},
+        },
+        "required": ["nodes", "sources", "notice"],
+    },
+}
+
+
+# =============================================================
 # SSE helper
 # =============================================================
 
@@ -794,13 +840,32 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
             # Public:  SEC EDGAR + web search up to RESEARCH_MAX_SEARCH_TURNS + full tokens
             max_turns  = RESEARCH_MAX_SEARCH_TURNS if is_public else 0
             max_tokens = RESEARCH_MAX_OUTPUT_TOKENS if is_public else min(RESEARCH_MAX_OUTPUT_TOKENS, 2500)
-            tools = [{"type": "web_search_20250305", "name": "web_search"}] \
-                    if (is_public and provider == "anthropic" and max_turns > 0) else None
+
+            # Anthropic: always require the final answer via the structured
+            # submit_blueprint_research tool, so the API guarantees valid JSON instead of
+            # relying on hand-written prose JSON (the actual source of the intermittent
+            # parse errors — truncation and formatting slips on long free-text output).
+            # Web search stays available as an additional tool for public companies so the
+            # model can still research before calling submit_blueprint_research.
+            use_structured_tool = provider == "anthropic"
+            tools: list[dict] | None = None
+            tool_choice: dict | None = None
+            if use_structured_tool:
+                tools = []
+                if is_public and max_turns > 0:
+                    tools.append({"type": "web_search_20250305", "name": "web_search"})
+                tools.append(BLUEPRINT_RESULT_TOOL)
+                if not is_public:
+                    # Nothing to search for — force the structured result immediately.
+                    tool_choice = {"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]}
+            elif is_public and max_turns > 0:
+                tools = [{"type": "web_search_20250305", "name": "web_search"}]
 
             # ── Prompt/tools banner ──────────────────────────────────────────
             log("-" * 60)
             log(f"SYSTEM PROMPT    : {'PUBLIC_RESEARCH_SYSTEM' if is_public else 'PRIVATE_RESEARCH_SYSTEM'}")
-            log(f"WEB SEARCH TOOLS : {'ENABLED' if tools else 'DISABLED (private — pure generation)'}")
+            log(f"STRUCTURED TOOL  : {'ENABLED' if use_structured_tool else 'DISABLED (openai — legacy free-text JSON)'}")
+            log(f"WEB SEARCH TOOLS : {'ENABLED' if (is_public and max_turns > 0) else 'DISABLED (private — pure generation)'}")
             log(f"MAX SEARCH TURNS : {max_turns}")
             log(f"MAX TOKENS       : {max_tokens}")
             log(f"SEC PATH         : {'YES — ticker lookup + EDGAR' if is_public else 'NO — private company, skipped'}")
@@ -817,7 +882,10 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     if provider == "openai":
                         data = await _call_openai(api_key, messages, system_prompt, max_tokens)
                     else:
-                        data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
+                        data = await _call_anthropic(
+                            api_key, messages, system_prompt, tools, max_tokens,
+                            tool_choice=tool_choice,
+                        )
                     last_exc = None
                     break
                 except Exception as exc:
@@ -846,116 +914,188 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 raise last_exc  # public company — still surface the error
             log(f"Turn 1 done — stop_reason={data.get('stop_reason')} usage={data.get('usage',{})}")
             turns_used = 0
+            parsed: dict | None = None
 
-            # ── Follow-up web-search turns ───────────────────────────────────
-            while (provider == "anthropic"
-                   and data.get("stop_reason") == "tool_use"
-                   and turns_used < max_turns):
-                tool_results = _collect_tool_results(data)
-                if not tool_results:
-                    break
-                turns_used += 1
-                log(f"Web-search turn {turns_used}/{max_turns}")
-                await emit({"type": "status",
-                            "message": f"AI searching the web (pass {turns_used} of {max_turns})…"})
-                messages.append({"role": "assistant", "content": data["content"]})
-                messages.append({"role": "user",      "content": tool_results})
-                data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
-                log(f"Search turn {turns_used} done — stop_reason={data.get('stop_reason')}")
-
-            # ── Force answer if turn cap hit ─────────────────────────────────
-            if provider == "anthropic" and data.get("stop_reason") == "tool_use":
-                tool_results = _collect_tool_results(data)
-                if tool_results:
-                    log("Turn cap hit — forcing final answer without tools")
-                    await emit({"type": "status",
-                                "message": "Web-search limit reached — compiling results…"})
-                    messages.append({"role": "assistant", "content": data["content"]})
-                    messages.append({
-                        "role": "user",
-                        "content": [{
-                            **tr,
-                            "content": (
-                                "Search limit reached. Using information gathered so far, "
-                                "return ONLY the JSON object now."
-                            ),
-                        } for tr in tool_results],
-                    })
-                    data = await _call_anthropic(
-                        api_key, messages, system_prompt,
-                        tools=None,
-                        max_tokens=max_tokens,
+            # ── Structured-tool loop (Anthropic) ─────────────────────────────
+            # Loop until the model calls submit_blueprint_research (guaranteed valid,
+            # schema-conformant JSON from the API itself), handling web-search turns and
+            # truncation along the way. Bounded by max_turns (search) and a small cap on
+            # forced-answer/retry attempts so this can never spin forever.
+            if use_structured_tool:
+                force_attempts = 0
+                while True:
+                    blocks = [b for b in data.get("content", []) if b.get("type") == "tool_use"]
+                    schema_block = next(
+                        (b for b in blocks if b.get("name") == BLUEPRINT_RESULT_TOOL["name"]), None
                     )
-                    log(f"Final forced answer — stop_reason={data.get('stop_reason')}")
 
-            # ── Extract text ─────────────────────────────────────────────────
-            raw_text = _collect_text(data)
-            log(f"Raw AI response ({len(raw_text)} chars):\n"
-                f"{'─'*60}\n{raw_text}\n{'─'*60}")
-            if not raw_text:
-                log("ERROR — AI returned empty text")
-                await queue.put({"type": "error",
-                                 "message": "AI returned an empty response. Please try again."})
-                return
+                    # A tool_use block only represents a *complete* answer when generation
+                    # finished normally (stop_reason == "tool_use"). If the response was cut
+                    # off by the token limit while the model was still writing the tool's
+                    # arguments, Anthropic can still return a tool_use block, but its `input`
+                    # may be incomplete or empty. Accepting that as-is — without checking
+                    # stop_reason or that it actually contains nodes — is exactly what
+                    # produced empty "0 of 0 dimensions" results with the default notice
+                    # text (meaning "notice" was missing from a truncated/degenerate input).
+                    if (schema_block is not None
+                            and data.get("stop_reason") == "tool_use"
+                            and (schema_block.get("input") or {}).get("nodes")):
+                        parsed = schema_block["input"]
+                        log(f"Structured result received via '{BLUEPRINT_RESULT_TOOL['name']}' tool call "
+                            f"— {len(parsed.get('nodes', []))} nodes")
+                        break
 
-            # ── Parse JSON ───────────────────────────────────────────────────
-            log("Parsing JSON response")
-            await emit({"type": "status", "message": "Parsing results…"})
-            cleaned = raw_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-                cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+                    if schema_block is not None and data.get("stop_reason") == "tool_use":
+                        # Tool was called but returned no usable nodes — never silently accept
+                        # an empty result; ask the model to resubmit, bounded by force_attempts.
+                        if force_attempts < 3:
+                            force_attempts += 1
+                            log("Structured tool call returned no/empty nodes — asking model to resubmit "
+                                f"(attempt {force_attempts})")
+                            await emit({"type": "status",
+                                        "message": "AI returned an incomplete result — retrying…"})
+                            messages.append({"role": "assistant", "content": data["content"]})
+                            messages.append({"role": "user", "content": [{
+                                "type":        "tool_result",
+                                "tool_use_id": schema_block["id"],
+                                "content": (
+                                    "That submission had an empty or missing 'nodes' array, which is "
+                                    "invalid. Call submit_blueprint_research again with the full set of "
+                                    "dimension nodes as instructed."
+                                ),
+                            }]})
+                            data = await _call_anthropic(
+                                api_key, messages, system_prompt,
+                                tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                                tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
+                            )
+                            continue
+                        log("Giving up after repeated empty structured results — "
+                            "falling back to free-text JSON parsing")
+                        break
 
-            extracted = _extract_json(cleaned)
-
-            # Truncation recovery
-            if data.get("stop_reason") == "max_tokens":
-                try:
-                    json.loads(extracted)
-                    log("max_tokens but JSON is valid — no continuation needed")
-                except json.JSONDecodeError:
-                    log("max_tokens AND JSON truncated — requesting continuation")
-                    await emit({"type": "status",
-                                "message": "Response was truncated — requesting continuation…"})
-                    messages.append({"role": "assistant", "content": raw_text})
-                    messages.append({"role": "user", "content": (
-                        "Your previous response was cut off before the JSON was complete. "
-                        "Please continue and complete the JSON object from where you left off. "
-                        "Return ONLY the continuation — no preamble, no backticks."
-                    )})
-                    if provider == "openai":
-                        cont_data = await _call_openai(
-                            api_key, messages, system_prompt, max_tokens
-                        )
-                    else:
-                        cont_data = await _call_anthropic(
+                    if data.get("stop_reason") == "max_tokens" and force_attempts < 2:
+                        force_attempts += 1
+                        max_tokens = max_tokens + RESEARCH_MAX_OUTPUT_TOKENS
+                        log(f"Structured response truncated before completion — retrying with "
+                            f"max_tokens={max_tokens} (attempt {force_attempts})")
+                        await emit({"type": "status",
+                                    "message": "Response was truncated — retrying with a larger budget…"})
+                        data = await _call_anthropic(
                             api_key, messages, system_prompt,
-                            tools=None,
-                            max_tokens=max_tokens,
+                            tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                            tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
                         )
-                    continuation = _collect_text(cont_data).strip()
-                    log(f"Continuation length: {len(continuation)} chars")
-                    merged = raw_text.rstrip() + continuation
-                    extracted = _extract_json(merged)
+                        continue
 
-            # Escape raw control characters (newlines/tabs) inside string values —
-            # models occasionally emit these in long summaries, causing JSONDecodeError.
-            sanitized = _sanitize_json_control_chars(extracted)
+                    if data.get("stop_reason") != "tool_use":
+                        log("Model did not return a structured tool call — "
+                            "falling back to free-text JSON parsing")
+                        break
 
-            try:
-                parsed = json.loads(sanitized)
-            except json.JSONDecodeError as e:
-                log(f"ERROR — JSON parse failed: {e} | snippet: {sanitized[:300]!r}")
-                await queue.put({"type": "error",
-                                 "message": f"JSON parse error: {str(e)[:200]}"})
-                return
+                    search_blocks = [b for b in blocks if b.get("name") == "web_search"]
+                    if search_blocks and turns_used < max_turns:
+                        turns_used += 1
+                        log(f"Web-search turn {turns_used}/{max_turns}")
+                        await emit({"type": "status",
+                                    "message": f"AI searching the web (pass {turns_used} of {max_turns})…"})
+                        tool_results = _collect_tool_results(data)
+                        messages.append({"role": "assistant", "content": data["content"]})
+                        messages.append({"role": "user",      "content": tool_results})
+                        data = await _call_anthropic(api_key, messages, system_prompt, tools, max_tokens)
+                        log(f"Search turn {turns_used} done — stop_reason={data.get('stop_reason')}")
+                        continue
+
+                    if force_attempts < 3:
+                        force_attempts += 1
+                        log("Turn cap hit — forcing final structured answer")
+                        await emit({"type": "status",
+                                    "message": "Web-search limit reached — compiling results…"})
+                        tool_results = _collect_tool_results(data)
+                        messages.append({"role": "assistant", "content": data["content"]})
+                        messages.append({"role": "user",      "content": tool_results})
+                        data = await _call_anthropic(
+                            api_key, messages, system_prompt,
+                            tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
+                            tool_choice={"type": "tool", "name": BLUEPRINT_RESULT_TOOL["name"]},
+                        )
+                        continue
+
+                    log("Giving up on structured tool call after repeated attempts — "
+                        "falling back to free-text JSON parsing")
+                    break
+
+            if parsed is None:
+                # ── Legacy free-text JSON path ───────────────────────────────
+                # Fallback for providers/situations where the structured tool call wasn't
+                # used (OpenAI, or the rare case where Anthropic still answered in prose).
+                raw_text = _collect_text(data)
+                log(f"Raw AI response ({len(raw_text)} chars):\n"
+                    f"{'─'*60}\n{raw_text}\n{'─'*60}")
+                if not raw_text:
+                    log("ERROR — AI returned empty text")
+                    await queue.put({"type": "error",
+                                     "message": "AI returned an empty response. Please try again."})
+                    return
+
+                # ── Parse JSON ───────────────────────────────────────────────
+                log("Parsing JSON response")
+                await emit({"type": "status", "message": "Parsing results…"})
+                cleaned = raw_text.strip()
+                if cleaned.startswith("```"):
+                    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+                extracted = _extract_json(cleaned)
+
+                # Truncation recovery
+                if data.get("stop_reason") == "max_tokens":
+                    try:
+                        json.loads(extracted)
+                        log("max_tokens but JSON is valid — no continuation needed")
+                    except json.JSONDecodeError:
+                        log("max_tokens AND JSON truncated — requesting continuation")
+                        await emit({"type": "status",
+                                    "message": "Response was truncated — requesting continuation…"})
+                        messages.append({"role": "assistant", "content": raw_text})
+                        messages.append({"role": "user", "content": (
+                            "Your previous response was cut off before the JSON was complete. "
+                            "Please continue and complete the JSON object from where you left off. "
+                            "Return ONLY the continuation — no preamble, no backticks."
+                        )})
+                        if provider == "openai":
+                            cont_data = await _call_openai(
+                                api_key, messages, system_prompt, max_tokens
+                            )
+                        else:
+                            cont_data = await _call_anthropic(
+                                api_key, messages, system_prompt,
+                                tools=None,
+                                max_tokens=max_tokens,
+                            )
+                        continuation = _collect_text(cont_data).strip()
+                        log(f"Continuation length: {len(continuation)} chars")
+                        merged = raw_text.rstrip() + continuation
+                        extracted = _extract_json(merged)
+
+                # Escape raw control characters (newlines/tabs) inside string values —
+                # models occasionally emit these in long summaries, causing JSONDecodeError.
+                sanitized = _sanitize_json_control_chars(extracted)
+
+                try:
+                    parsed = json.loads(sanitized)
+                except json.JSONDecodeError as e:
+                    log(f"ERROR — JSON parse failed: {e} | snippet: {sanitized[:300]!r}")
+                    await queue.put({"type": "error",
+                                     "message": f"JSON parse error: {str(e)[:200]}"})
+                    return
 
             result = ResearchResponse(
                 nodes=[ResearchedNode(**n) for n in parsed.get("nodes", [])],
                 sources=parsed.get("sources", []),
                 notice=parsed.get("notice", "AI-generated from public sources — please verify before use."),
                 turns_used=turns_used,
-                tokens_cap=RESEARCH_MAX_OUTPUT_TOKENS,
+                tokens_cap=max_tokens,
             )
             log("=" * 60)
             log(f"RESEARCH RESULT — {'PUBLIC' if is_public else 'PRIVATE'} company: {body.company_name!r}")

@@ -100,11 +100,12 @@ def _sanitize_json_control_chars(text: str) -> str:
 
 
 async def _call_anthropic(
-    api_key:    str,
-    messages:   list[dict],
-    system:     str,
-    tools:      list[dict] | None = None,
-    max_tokens: int = RESEARCH_MAX_OUTPUT_TOKENS,
+    api_key:     str,
+    messages:    list[dict],
+    system:      str,
+    tools:       list[dict] | None = None,
+    max_tokens:  int = RESEARCH_MAX_OUTPUT_TOKENS,
+    tool_choice: dict | None = None,
 ) -> dict:
     payload: dict[str, Any] = {
         "model":      ANTHROPIC_MODEL,
@@ -114,6 +115,8 @@ async def _call_anthropic(
     }
     if tools:
         payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
