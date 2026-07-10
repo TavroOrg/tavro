@@ -24,8 +24,10 @@ import {
   Target,
   LayoutGrid,
   List,
+  Pencil,
 } from 'lucide-react';
 import { useBlueprint } from '../context/BlueprintContext';
+import EditIdeaModal from '../components/EditIdeaModal';
 import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
 import { useCaseApi } from '../services/useCaseApi';
@@ -250,11 +252,12 @@ const IdeaCard: React.FC<{
   deleting?: boolean;
   onDelete: () => void;
   onReact: (reaction: IdeaReaction) => void;
+  onEdit: () => void;
   onClick: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
-}> = ({ idea, reaction, deleting = false, onDelete, onReact, onClick, selectMode = false, selected = false, onSelect }) => {
+}> = ({ idea, reaction, deleting = false, onDelete, onReact, onEdit, onClick, selectMode = false, selected = false, onSelect }) => {
   const signal = SIGNAL_META[idea.signal_type] ?? SIGNAL_META['gap_coverage'];
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
@@ -301,6 +304,14 @@ const IdeaCard: React.FC<{
               </button>
               <button
                 type="button"
+                onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+                title="Edit idea"
+              >
+                <Pencil size={16} />
+              </button>
+              <button
+                type="button"
                 onClick={(e) => { e.stopPropagation(); onDelete(); }}
                 disabled={deleting}
                 className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -316,7 +327,7 @@ const IdeaCard: React.FC<{
           {idea.title}
         </h3>
 
-        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed flex-1">
+        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
           {idea.description}
         </p>
 
@@ -324,7 +335,7 @@ const IdeaCard: React.FC<{
           <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${signal.color}`}>
             {signal.label}
           </span>
-          {idea.target_dimensions.slice(0, 2).map(d => (
+          {idea.target_dimensions.map(d => (
             <span key={d} className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 capitalize">
               {d}
             </span>
@@ -356,11 +367,13 @@ const IdeaCard: React.FC<{
 
 // ── Idea List Row (list-view variant) ────────────────────────────────────────
 
-const LIST_GRID = 'grid-cols-[84px_1fr_160px_180px_100px_80px_32px]';
+const LIST_GRID = 'grid-cols-[124px_1fr_160px_180px_100px_80px_32px]';
 const PAGE_SIZE = 10;
 const DEFAULT_IDEA_COUNT = 5;
 const MIN_IDEA_COUNT = 1;
 const MAX_IDEA_COUNT = 16;
+const IMPACT_OPTIONS = ['High'];
+const COMPLEXITY_OPTIONS = ['Low'];
 
 const IdeaListRow: React.FC<{
   idea: SparkIdea;
@@ -368,11 +381,12 @@ const IdeaListRow: React.FC<{
   deleting?: boolean;
   onDelete: () => void;
   onReact: (reaction: IdeaReaction) => void;
+  onEdit: () => void;
   onClick: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
-}> = ({ idea, reaction, deleting = false, onDelete, onReact, onClick, selectMode = false, selected = false, onSelect }) => {
+}> = ({ idea, reaction, deleting = false, onDelete, onReact, onEdit, onClick, selectMode = false, selected = false, onSelect }) => {
   const signal = SIGNAL_META[idea.signal_type] ?? SIGNAL_META['gap_coverage'];
   const complexityClass = COMPLEXITY_META[idea.complexity] ?? COMPLEXITY_META['Medium'];
   const impactClass = IMPACT_META[idea.estimated_impact] ?? IMPACT_META['Medium'];
@@ -392,6 +406,14 @@ const IdeaListRow: React.FC<{
         </div>
       ) : (
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onEdit(); }}
+            className="p-1 rounded text-slate-300 hover:text-violet-600 transition-colors"
+            title="Edit idea"
+          >
+            <Pencil size={14} />
+          </button>
           <button
             type="button"
             onClick={e => { e.stopPropagation(); onDelete(); }}
@@ -434,8 +456,8 @@ const IdeaListRow: React.FC<{
       </div>
 
       {/* Col 4: Dimensions */}
-      <div className="flex gap-1 flex-wrap">
-        {idea.target_dimensions.slice(0, 2).map(d => (
+      <div className="flex gap-1 flex-wrap py-1">
+        {idea.target_dimensions.map(d => (
           <span key={d} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 capitalize">
             {d}
           </span>
@@ -830,11 +852,14 @@ const SparkPage: React.FC = () => {
   const [reactions, setReactions] = useState<Record<string, IdeaReaction>>({});
   const [popularity, setPopularity] = useState<Record<string, number>>({});
   const [selectedIdea, setSelectedIdea] = useState<SparkIdea | null>(null);
+  const [editingIdea, setEditingIdea] = useState<SparkIdea | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(true);
   const [activeDimensions, setActiveDimensions] = useState<Set<string>>(new Set());
+  const [activeImpact, setActiveImpact] = useState<Set<string>>(new Set());
+  const [activeComplexity, setActiveComplexity] = useState<Set<string>>(new Set());
   const [showMostLiked, setShowMostLiked] = useState(false);
   const [search, setSearch] = useState('');
   const [hasLibrary, setHasLibrary] = useState(false);
@@ -869,6 +894,24 @@ const SparkPage: React.FC = () => {
       return next;
     });
   }, []);
+
+  const toggleImpact = (level: string) => {
+    setActiveImpact(prev => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  };
+
+  const toggleComplexity = (level: string) => {
+    setActiveComplexity(prev => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  };
 
   const toggleDimension = (key: string) => {
     setActiveDimensions(prev => {
@@ -1092,18 +1135,26 @@ const SparkPage: React.FC = () => {
     }
   }, [companyId, deletingIds, ideas]);
 
+  const handleIdeaSaved = useCallback((updated: SparkIdea) => {
+    setIdeas(prev => prev.map(i => i.idea_id === updated.idea_id ? { ...i, ...updated } : i));
+    setSelectedIdea(prev => prev?.idea_id === updated.idea_id ? { ...prev, ...updated } : prev);
+  }, []);
+
   // Client-side filters applied to whatever is currently loaded
   const filteredIdeas = useMemo(() => {
-    const dimensionFiltered = activeDimensions.size > 0
+    let result = activeDimensions.size > 0
       ? ideas.filter(i => i.target_dimensions.some(d => activeDimensions.has(d)))
       : ideas;
 
-    if (!showMostLiked) return dimensionFiltered;
+    if (activeImpact.size > 0) result = result.filter(i => activeImpact.has(i.estimated_impact));
+    if (activeComplexity.size > 0) result = result.filter(i => activeComplexity.has(i.complexity));
 
-    return dimensionFiltered
+    if (!showMostLiked) return result;
+
+    return result
       .filter(i => (popularity[i.idea_id] ?? 0) > 0)
       .sort((a, b) => (popularity[b.idea_id] ?? 0) - (popularity[a.idea_id] ?? 0));
-  }, [activeDimensions, ideas, popularity, showMostLiked]);
+  }, [activeComplexity, activeDimensions, activeImpact, ideas, popularity, showMostLiked]);
 
   const isSearching = search.trim().length > 0;
   const totalPages = Math.max(1, Math.ceil(filteredIdeas.length / PAGE_SIZE));
@@ -1311,16 +1362,16 @@ const SparkPage: React.FC = () => {
           </p>
         <button
           onClick={() => setContextOpen(o => !o)}
-          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all flex-shrink-0 ${contextOpen || activeDimensions.size > 0 || showMostLiked
+          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all flex-shrink-0 ${contextOpen || activeDimensions.size > 0 || activeImpact.size > 0 || activeComplexity.size > 0 || showMostLiked
               ? 'bg-violet-600 text-white border-violet-600'
               : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400'
             }`}
         >
           <SlidersHorizontal size={15} />
           <span className="hidden sm:inline">Filters</span>
-          {(activeDimensions.size > 0 || showMostLiked) && (
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${contextOpen || activeDimensions.size > 0 || showMostLiked ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'}`}>
-              {activeDimensions.size + (showMostLiked ? 1 : 0)}
+          {(activeDimensions.size > 0 || activeImpact.size > 0 || activeComplexity.size > 0 || showMostLiked) && (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${contextOpen || activeDimensions.size > 0 || activeImpact.size > 0 || activeComplexity.size > 0 || showMostLiked ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'}`}>
+              {activeDimensions.size + activeImpact.size + activeComplexity.size + (showMostLiked ? 1 : 0)}
             </span>
           )}
           {contextOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1391,10 +1442,42 @@ const SparkPage: React.FC = () => {
                 </button>
               );
             })}
-            {(activeDimensions.size > 0 || showMostLiked) && (
+            {IMPACT_OPTIONS.map(level => {
+              const active = activeImpact.has(level);
+              return (
+                <button
+                  key={`impact-${level}`}
+                  onClick={() => toggleImpact(level)}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${active
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400'
+                    }`}
+                >
+                  {level} Impact
+                </button>
+              );
+            })}
+            {COMPLEXITY_OPTIONS.map(level => {
+              const active = activeComplexity.has(level);
+              return (
+                <button
+                  key={`complexity-${level}`}
+                  onClick={() => toggleComplexity(level)}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${active
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400'
+                    }`}
+                >
+                  {level} Complexity
+                </button>
+              );
+            })}
+            {(activeDimensions.size > 0 || activeImpact.size > 0 || activeComplexity.size > 0 || showMostLiked) && (
               <button
                 onClick={() => {
                   setActiveDimensions(new Set());
+                  setActiveImpact(new Set());
+                  setActiveComplexity(new Set());
                   setShowMostLiked(false);
                 }}
                 className="text-xs text-slate-400 hover:text-slate-600 underline"
@@ -1475,6 +1558,7 @@ const SparkPage: React.FC = () => {
                 deleting={deletingIds.has(idea.idea_id)}
                 onDelete={() => handleDeleteIdea(idea.idea_id)}
                 onReact={(reaction) => { void handleReact(idea.idea_id, reaction); }}
+                onEdit={() => setEditingIdea(idea)}
                 onClick={() => setSelectedIdea(idea)}
                 selectMode={selectMode}
                 selected={selectedForDelete.has(idea.idea_id)}
@@ -1492,6 +1576,7 @@ const SparkPage: React.FC = () => {
                 deleting={deletingIds.has(idea.idea_id)}
                 onDelete={() => handleDeleteIdea(idea.idea_id)}
                 onReact={(reaction) => { void handleReact(idea.idea_id, reaction); }}
+                onEdit={() => setEditingIdea(idea)}
                 onClick={() => setSelectedIdea(idea)}
                 selectMode={selectMode}
                 selected={selectedForDelete.has(idea.idea_id)}
@@ -1546,14 +1631,16 @@ const SparkPage: React.FC = () => {
             ? <p className="text-sm">No ideas match &ldquo;{search}&rdquo;</p>
             : showMostLiked
               ? <p className="text-sm">No liked ideas yet</p>
-              : <p className="text-sm">No ideas match the selected dimension filters</p>
+              : <p className="text-sm">No ideas match the selected filters</p>
           }
           <div className="flex gap-3">
             {search && <button onClick={() => setSearch('')} className="text-xs text-violet-500 hover:underline">Clear search</button>}
-            {(activeDimensions.size > 0 || showMostLiked) && (
+            {(activeDimensions.size > 0 || activeImpact.size > 0 || activeComplexity.size > 0 || showMostLiked) && (
               <button
                 onClick={() => {
                   setActiveDimensions(new Set());
+                  setActiveImpact(new Set());
+                  setActiveComplexity(new Set());
                   setShowMostLiked(false);
                 }}
                 className="text-xs text-violet-500 hover:underline"
@@ -1572,6 +1659,17 @@ const SparkPage: React.FC = () => {
           companyId={companyId}
           blueprintCtx={blueprintCtx ?? undefined}
           onClose={() => setSelectedIdea(null)}
+        />
+      )}
+
+      {/* ── Edit Idea Modal ── */}
+      {editingIdea && companyId && (
+        <EditIdeaModal
+          idea={editingIdea}
+          companyId={companyId}
+          open={!!editingIdea}
+          onClose={() => setEditingIdea(null)}
+          onSaved={handleIdeaSaved}
         />
       )}
     </div>
