@@ -29,6 +29,7 @@ import { aiModelApi } from '../services/aiModelApi';
 import { agentApi } from '../services/agentApi';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { fetchAllPages } from '../utils/fetchAllPages';
 import { useCatalog } from '../context/CatalogContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { mcpClient } from '../services/mcpClient';
@@ -347,8 +348,8 @@ const AiModelViewPage: React.FC = () => {
     businessRelationsApi.listApplications(undefined, activeCompany?.id).then(setAllApplications).catch(() => setAllApplications([]));
     businessRelationsApi.listProcesses(undefined, activeCompany?.id).then(setAllProcesses).catch(() => setAllProcesses([]));
     agentApi.listAgentsForLinking(activeCompany?.id).then(setCompanyAgents).catch(() => setCompanyAgents([]));
-    useCaseApi.listUseCases({ companyId: activeCompany?.id, recordRange: '1-500' })
-      .then(res => setCompanyUseCases((res.data ?? []).map((raw: any) => ({
+    fetchAllPages((start, range) => useCaseApi.listUseCases({ companyId: activeCompany?.id, startRecord: start, recordRange: range }))
+      .then(raws => setCompanyUseCases(raws.map((raw: any) => ({
         identifier: raw.identifier ?? raw.use_case_id ?? raw.id ?? '',
         name: raw.name ?? raw.title ?? raw.use_case_name ?? '',
         description: raw.description ?? null,
