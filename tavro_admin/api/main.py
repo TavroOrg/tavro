@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api.routers import connectors, docker_logs, env_config, business_applications, companies
+from api.routers import connectors, docker_logs, env_config, business_applications, companies, lookup
 from api.dependencies.auth import require_portal_admin
 from catalog_connector.connector.agent365_inbound_connector import router as agent365_router
 
@@ -54,6 +54,7 @@ app.include_router(connectors.router,            prefix="/api/v1/admin",       t
 app.include_router(env_config.router,            prefix="/api/v1/admin",       tags=["Env Config"])
 app.include_router(business_applications.router, prefix="/api/v1/admin",       tags=["Integrations"])
 app.include_router(companies.router,             prefix="/api/v1/admin",       tags=["Companies"])
+app.include_router(lookup.router,                prefix="/api/v1/admin",       tags=["Reference Tables"])
 app.include_router(docker_logs.router,           prefix="/api/v1/docker-logs", tags=["Docker Logs"])
 app.include_router(agent365_router,                                                tags=["Agent365"])
 

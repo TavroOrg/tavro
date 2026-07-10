@@ -63,6 +63,7 @@ export interface UseCaseUpdatePayload {
     business_problem_statement?: string;
     expected_benefits?: string;
     priority?: string;
+    status?: string;
     solution_approach?: string;
     use_case_owner?: string;
     executive_summary?: string;
