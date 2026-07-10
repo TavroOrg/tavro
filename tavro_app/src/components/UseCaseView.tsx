@@ -3,6 +3,7 @@ import { readRoadmapConfig } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
+import LifecycleStepper from './LifecycleStepper';
 import { useLookupValues } from '../context/LookupContext';
 import {
     Building2,
@@ -10,8 +11,6 @@ import {
     ClipboardList,
     ShieldAlert,
     CheckCircle2,
-    Clock,
-    Archive,
     AlertTriangle,
     Target,
     FileText,
@@ -69,6 +68,8 @@ interface UseCaseViewProps {
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
     enriching?: boolean;
+    onLifecycleStageChange?: (stage: string) => void;
+    lifecycleError?: string | null;
 }
 
 function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | 'emerald' | 'amber' | 'slate' }) {
@@ -85,24 +86,6 @@ function MetaBadge({ text, color = 'slate' }: { text: string; color?: 'blue' | '
     );
 }
 
-
-function StatusBadge({ status }: { status?: string | null }) {
-    if (!status) return <span className="text-slate-400 text-xs">—</span>;
-    const s = status.toLowerCase();
-    const cls = s.includes('active')
-        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-        : s.includes('review')
-            ? 'bg-amber-50 text-amber-700 border-amber-200'
-            : s.includes('deprecat')
-                ? 'bg-slate-100 text-slate-500 border-slate-200'
-                : 'bg-blue-50 text-blue-700 border-blue-200';
-    const Icon = s.includes('active') ? CheckCircle2 : s.includes('review') ? Clock : s.includes('deprecat') ? Archive : AlertTriangle;
-    return (
-        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>
-            <Icon size={11} /> {status}
-        </span>
-    );
-}
 
 function RiskBadge({ classification }: { classification?: string | null }) {
     if (!classification) return null;
@@ -303,10 +286,13 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     inlineEdit, inlineSaving,
     onStartInlineEdit, onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
     enriching,
+    onLifecycleStageChange,
+    lifecycleError,
 }) => {
     const [activeTab, setActiveTab] = React.useState('details');
     const [generatingReport, setGeneratingReport] = React.useState(false);
     const statusOptions = useLookupValues('ai_use_cases', 'status');
+    const statusStages = statusOptions.map(o => o.value);
 
     const handleGenerateReport = async () => {
         if (!uc.identifier) return;
@@ -498,8 +484,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
     const linkedAgents = ((uc as any).agents ?? (uc as any).of_associated_agents ?? []).filter(Boolean);
     const linkedAgentCount = linkedAgents.length;
 
-    const statusLabel = uc.status || 'Proposed';
-
     const owner = uc.owner ?? (uc as any).use_case_owner ?? null;
     const proposedBy = uc.proposed_by ?? (uc as any).proposed_by ?? null;
     const createdAt = uc.created_ts ?? (uc as any).created_at ?? (uc as any).sys_created_on ?? null;
@@ -608,33 +592,22 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                 </h1>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                                {inlineEdit?.field === 'status' ? (
-                                    <div className="flex items-center gap-2">
-                                        <select
-                                            value={inlineEdit.value}
-                                            onChange={e => onInlineValueChange?.(e.target.value)}
-                                            autoFocus
-                                            className="text-xs font-bold rounded-lg border border-blue-300 px-2 py-1 outline-none focus:ring-2 focus:ring-blue-400/30 bg-white"
-                                        >
-                                            <option value="">-- None --</option>
-                                            {statusOptions.map(o => (
-                                                <option key={o.value} value={o.value}>{o.label}</option>
-                                            ))}
-                                        </select>
-                                        {renderInlineActions('status')}
-                                    </div>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        onClick={() => onStartInlineEdit?.('status', statusLabel)}
-                                        title="Click to change status"
-                                        className="bg-transparent border-none p-0 cursor-pointer"
-                                    >
-                                        <StatusBadge status={statusLabel} />
-                                    </button>
-                                )}
                                 {uc.function && <MetaBadge text={String(uc.function)} color="blue" />}
                                 {(uc as any).use_case_type && <MetaBadge text={String((uc as any).use_case_type)} color="slate" />}
+                            </div>
+                            <div className="max-w-md mt-2">
+                                {statusStages.length === 0 ? (
+                                    <div className="text-sm text-slate-400 dark:text-slate-500 italic">No status options configured</div>
+                                ) : (
+                                    <LifecycleStepper
+                                        stages={statusStages}
+                                        currentStage={(uc as any).status ?? null}
+                                        onStageChange={onLifecycleStageChange}
+                                    />
+                                )}
+                                {lifecycleError && (
+                                    <p className="mt-1.5 text-xs font-medium text-red-500">{lifecycleError}</p>
+                                )}
                             </div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">

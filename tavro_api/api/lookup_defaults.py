@@ -100,6 +100,13 @@ LOOKUP_DEFAULTS: List[LookupDefault] = [
     # ("agents", "agent_type", "Rule-based", "Rule-based", 5, False),
     # ("agents", "agent_type", "Hybrid", "Hybrid", 6, False),
 
+    # agents.status (lifecycle stage)
+    ("agents", "status", "Plan", "Plan", 1, True),
+    ("agents", "status", "Design", "Design", 2, False),
+    ("agents", "status", "Develop", "Develop", 3, False),
+    ("agents", "status", "Deploy", "Deploy", 4, False),
+    ("agents", "status", "Monitor", "Monitor", 5, False),
+
     # agent_data_sources.access_level
     ("agent_data_sources", "access_level", "Read-Only", "Read-Only", 1, False),
     ("agent_data_sources", "access_level", "Write-Only", "Write-Only", 2, False),

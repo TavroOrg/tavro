@@ -15,6 +15,7 @@ import {
     type InsightsRiskAgent,
 } from '../services/insightsApi';
 import { toUserMessage } from '../utils/errorUtils';
+import { AGENT_LIFECYCLE_STAGES, USE_CASE_LIFECYCLE_STAGES } from '../constants/lifecycle';
 
 // All page data is now computed by the backend (GET /api/v1/insights/summary),
 // which aggregates live over the core.* / twin.* tables. This page only fetches
@@ -112,21 +113,25 @@ type ResearchRefresh = {
     stale: boolean;
 };
 
-const AGENT_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = [
-    { stage: 'Plan', sub: 'Use case → blueprint', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', dot: 'bg-violet-500' },
-    { stage: 'Design', sub: 'Variants & trade-offs', color: 'bg-teal-500', light: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', dot: 'bg-teal-500' },
-    { stage: 'Develop', sub: 'Build & test', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
-    { stage: 'Deploy', sub: 'Environment release', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' },
-    { stage: 'Monitor', sub: 'Active governance', color: 'bg-amber-500', light: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+// Metadata is ordered to match AGENT_LIFECYCLE_STAGES / USE_CASE_LIFECYCLE_STAGES — the
+// stage name itself comes from those shared constants so the two can't drift apart.
+const AGENT_STAGE_META: Omit<StageDatum, 'count' | 'stage'>[] = [
+    { sub: 'Use case → blueprint', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', dot: 'bg-violet-500' },
+    { sub: 'Variants & trade-offs', color: 'bg-teal-500', light: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', dot: 'bg-teal-500' },
+    { sub: 'Build & test', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
+    { sub: 'Environment release', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' },
+    { sub: 'Active governance', color: 'bg-amber-500', light: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
 ];
+const AGENT_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = AGENT_LIFECYCLE_STAGES.map((stage, i) => ({ stage, ...AGENT_STAGE_META[i] }));
 
-const USECASE_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = [
-    { stage: 'Identified', sub: 'Captured & logged', color: 'bg-sky-500', light: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
-    { stage: 'Scoped', sub: 'Requirements defined', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200' },
-    { stage: 'Approved', sub: 'Prioritised & funded', color: 'bg-teal-500', light: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200' },
-    { stage: 'In Build', sub: 'Agent under dev', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-    { stage: 'Live', sub: 'Deployed & active', color: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+const USECASE_STAGE_META: Omit<StageDatum, 'count' | 'stage'>[] = [
+    { sub: 'Captured & logged', color: 'bg-sky-500', light: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
+    { sub: 'Requirements defined', color: 'bg-violet-500', light: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200' },
+    { sub: 'Prioritised & funded', color: 'bg-teal-500', light: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200' },
+    { sub: 'Agent under dev', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    { sub: 'Deployed & active', color: 'bg-emerald-500', light: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
 ];
+const USECASE_STAGE_TEMPLATE: Omit<StageDatum, 'count'>[] = USE_CASE_LIFECYCLE_STAGES.map((stage, i) => ({ stage, ...USECASE_STAGE_META[i] }));
 
 // Canonical provider / risk / autonomy buckets — colors live here; counts come
 // from the server payload and are merged in by label.

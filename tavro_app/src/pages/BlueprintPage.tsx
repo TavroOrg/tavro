@@ -20,9 +20,7 @@ import AddDimNodeModal from '../components/AddDimNodeModal';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 import { useBlueprintChatSync } from '../hooks/useChatSync';
 
-const ALL_CATEGORIES: DimCategory[] = [
-  'profile', 'strategy', 'organisation', 'finance', 'risk', 'application', 'process', 'integration',
-];
+const ALL_CATEGORIES: DimCategory[] = Object.keys(CATEGORY_LABELS) as DimCategory[];
 
 type ViewMode = 'graph' | 'grid' | 'list';
 
