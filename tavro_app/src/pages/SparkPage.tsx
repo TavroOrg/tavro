@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toUserMessage } from '../utils/errorUtils';
+import { toUserMessage, notifyError, notifyInfo } from '../utils/errorUtils';
+import { appLogger } from '../services/logger';
 import { createPortal } from 'react-dom';
 import {
   Zap,
@@ -26,8 +27,10 @@ import {
   List,
 } from 'lucide-react';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useUseCases } from '../context/UseCaseContext';
 import { sparkApi } from '../services/sparkApi';
 import { mcpClient } from '../services/mcpClient';
+import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
 import { portalActivity } from '../services/portalActivity';
 import type { SparkIdea } from '../types/spark';
@@ -481,6 +484,7 @@ const IdeaModal: React.FC<{
   onClose: () => void;
 }> = ({ idea, companyId, blueprintCtx, onClose }) => {
   const navigate = useNavigate();
+  const { upsertUseCase, refresh: refreshUseCases } = useUseCases();
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
   const signal = SIGNAL_META[idea.signal_type] ?? SIGNAL_META['gap_coverage'];
@@ -523,6 +527,10 @@ const IdeaModal: React.FC<{
         throw new Error(created?.details || created?.error || 'Use case creation failed');
       }
 
+      upsertUseCase({ identifier: useCaseId, name: idea.title, status: 'Proposed' });
+      refreshUseCases();
+      window.dispatchEvent(new CustomEvent('tavro:catalog-item-changed'));
+
       // Step 2: Mark this use case as "enriching" so the detail page can show a banner
       try {
         const raw = localStorage.getItem('tavro_enriching_use_cases');
@@ -530,6 +538,9 @@ const IdeaModal: React.FC<{
         if (!enriching.includes(useCaseId)) enriching.push(useCaseId);
         localStorage.setItem('tavro_enriching_use_cases', JSON.stringify(enriching));
       } catch { /* best-effort */ }
+      window.dispatchEvent(new CustomEvent('tavro_usecase_enriching_started', {
+        detail: { use_case_id: useCaseId },
+      }));
 
       // Step 3: Navigate immediately + close modal
       setConverting(false);
@@ -553,8 +564,29 @@ const IdeaModal: React.FC<{
 
       (async () => {
         try {
-          const { use_case_fields: fields, agent_recommendation: agentRecRaw } = await sparkApi.convertIdea(ideaSnapshot);
-          const agentRec = asRecord(agentRecRaw);
+          const {
+            use_case_fields: fields,
+            agent_recommendations: agentRecsRaw,
+            agent_recommendation_error: agentRecError,
+            agent_recommendation_fatal: agentRecFatal,
+          } = await sparkApi.convertIdea(ideaSnapshot);
+          const agentRecs = Array.isArray(agentRecsRaw)
+            ? agentRecsRaw.map(asRecord).filter((r): r is Record<string, unknown> => !!r)
+            : [];
+
+          if (agentRecs.length === 0) {
+            if (agentRecFatal) {
+              notifyError(
+                `Couldn't generate AI agents for "${idea.title}": ${agentRecError ?? 'Unknown reason'}`,
+                `spark_agent_gen_${idea.idea_id}`,
+              );
+            } else {
+              notifyInfo(
+                `"${idea.title}" was created, but no AI agents could be auto-suggested for it. You can add agents manually from the use case page.`,
+                `spark_agent_gen_${idea.idea_id}`,
+              );
+            }
+          }
 
           // Update use case with all enriched + business case fields
           await useCaseApi.updateUseCase(useCaseId, {
@@ -575,33 +607,40 @@ const IdeaModal: React.FC<{
             __activityName: idea.title,
           });
 
-          // Create agent and link (best-effort)
-          const agentName =
-            asNonEmptyString(agentRec?.agent_name) ??
-            asNonEmptyString(agentRec?.name) ??
-            `${idea.title} Agent`;
+          // Create agents and link them (best-effort). One idea can expand into a small team
+          // of agents (e.g. extraction + analysis) — create + link each one independently so
+          // a failure on one agent doesn't block the rest.
+          let apps: { application_name: string; description: string }[] = [];
           try {
-            let enrichedTools = normalizeAgentTools(agentRec?.tools);
+            const appCatalog = await mcpClient.getApplicationCatalog({
+              original_prompt: `Find applications relevant to: ${idea.title}`,
+              start_record: 1,
+              record_range: '1-20',
+            });
+            const appCatalogRecord = asRecord(appCatalog);
+            const appRows =
+              (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
+              (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
+              [];
+            for (const row of appRows) {
+              const app = asRecord(row);
+              if (!app) continue;
+              const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
+              if (!applicationName) continue;
+              apps.push({ application_name: applicationName, description: asNonEmptyString(app.description) ?? '' });
+            }
+          } catch { /* catalog fetch best-effort */ }
+
+          const failedAgents: string[] = [];
+          const agentNameToId = new Map<string, string>();
+          for (const agentRec of agentRecs) {
+            const agentName =
+              asNonEmptyString(agentRec?.agent_name) ??
+              asNonEmptyString(agentRec?.name) ??
+              `${idea.title} Agent`;
             try {
-              const appCatalog = await mcpClient.getApplicationCatalog({
-                original_prompt: `Find applications relevant to: ${idea.title}`,
-                start_record: 1,
-                record_range: '1-20',
-              });
-              const appCatalogRecord = asRecord(appCatalog);
-              const appRows =
-                (appCatalogRecord && Array.isArray(appCatalogRecord.applications) && appCatalogRecord.applications) ||
-                (appCatalogRecord && Array.isArray(appCatalogRecord.items) && appCatalogRecord.items) ||
-                (appCatalogRecord && Array.isArray(appCatalogRecord.agents) && appCatalogRecord.agents) ||
-                [];
-              const apps: { application_name: string; description: string }[] = [];
-              for (const row of appRows) {
-                const app = asRecord(row);
-                if (!app) continue;
-                const applicationName = asNonEmptyString(app.application_name) ?? asNonEmptyString(app.name);
-                if (!applicationName) continue;
-                apps.push({ application_name: applicationName, description: asNonEmptyString(app.description) ?? '' });
-              }
+              let enrichedTools = normalizeAgentTools(agentRec?.tools);
               if (apps.length > 0) {
                 enrichedTools = enrichedTools.map((tool: AgentTool) => {
                   const match = apps.find(a =>
@@ -611,40 +650,80 @@ const IdeaModal: React.FC<{
                   return match ? { name: match.application_name, description: match.description || tool.description } : tool;
                 });
               }
-            } catch { /* catalog fetch best-effort */ }
 
-            const agentTables = normalizeAgentTables(agentRec?.tables);
-            const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
-            const agentSkills = normalizeAgentSkills(agentRec?.skills);
+              const agentTables = normalizeAgentTables(agentRec?.tables);
+              const agentColumns = normalizeAgentColumns(agentRec?.columns, agentTables);
+              const agentSkills = normalizeAgentSkills(agentRec?.skills);
 
-            const agent = await mcpClient.createAgent({
-              agent_name: agentName,
-              description: asNonEmptyString(agentRec?.description) ?? agentName,
-              instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
-              tools: enrichedTools.length > 0 ? enrichedTools : undefined,
-              tables: agentTables.length > 0 ? agentTables : undefined,
-              columns: agentColumns.length > 0 ? agentColumns : undefined,
-              skills: agentSkills.length > 0 ? agentSkills : undefined,
-              knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
-              original_prompt: `Create agent for AI use case: ${idea.title}`,
-              source: 'spark',
-            });
+              const agent = await mcpClient.createAgent({
+                agent_name: agentName,
+                description: asNonEmptyString(agentRec?.description) ?? agentName,
+                instruction: asNonEmptyString(agentRec?.instruction) ?? asNonEmptyString(agentRec?.description) ?? `Implement the use case: ${idea.title}`,
+                tools: enrichedTools.length > 0 ? enrichedTools : undefined,
+                tables: agentTables.length > 0 ? agentTables : undefined,
+                columns: agentColumns.length > 0 ? agentColumns : undefined,
+                skills: agentSkills.length > 0 ? agentSkills : undefined,
+                knowledge_source: normalizeKnowledgeSource(agentRec?.knowledge_source),
+                original_prompt: `Create agent for AI use case: ${idea.title}`,
+                source: 'spark',
+              });
 
-            const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
-            if (agentId) {
-              await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
-              try {
-                const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
-                const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
-                localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(Array.from(new Set([...pending, agentId]))));
-                const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
-                const meta = metaRaw ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>) : [];
-                const filtered = meta.filter(item => item.agent_id !== agentId);
-                filtered.unshift({ agent_id: agentId, name: agentName, description: asNonEmptyString(agentRec?.description) ?? agentName, created_at: new Date().toISOString() });
-                localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
-              } catch { /* best-effort */ }
+              const agentId = extractStringByKeys(agent, ['agent_id', 'agent_catalog_id', 'id']);
+              if (agentId) {
+                agentNameToId.set(agentName, agentId);
+                await mcpClient.createAiUseCaseAgentRelationship(useCaseId, agentId);
+                try {
+                  const pendingRaw = localStorage.getItem('tavro_pending_assessment_agents');
+                  const pending = pendingRaw ? (JSON.parse(pendingRaw) as string[]) : [];
+                  localStorage.setItem('tavro_pending_assessment_agents', JSON.stringify(Array.from(new Set([...pending, agentId]))));
+                  const metaRaw = localStorage.getItem('tavro_pending_assessment_agent_meta');
+                  const meta = metaRaw ? (JSON.parse(metaRaw) as Array<{ agent_id: string; name: string; description: string; created_at: string }>) : [];
+                  const filtered = meta.filter(item => item.agent_id !== agentId);
+                  filtered.unshift({ agent_id: agentId, name: agentName, description: asNonEmptyString(agentRec?.description) ?? agentName, created_at: new Date().toISOString() });
+                  localStorage.setItem('tavro_pending_assessment_agent_meta', JSON.stringify(filtered));
+                } catch { /* best-effort */ }
+              }
+            } catch (agentErr) {
+              failedAgents.push(agentName);
+              appLogger.error(`Failed to create agent "${agentName}" for use case "${idea.title}"`, {
+                useCaseId,
+                agentName,
+                error: toUserMessage(agentErr),
+              });
+              // best-effort — continue creating the remaining agents
             }
-          } catch { /* agent creation best-effort */ }
+          }
+
+          // Wire up agent-to-agent (parent/child) relations Claude proposed for this team,
+          // e.g. an ingestion agent feeding a scoring agent. Best-effort — a use case's agents
+          // are still fully usable standalone if a link fails.
+          for (const agentRec of agentRecs) {
+            const upstreamName = asNonEmptyString(agentRec?.upstream_agent_name);
+            if (!upstreamName) continue;
+            const childName =
+              asNonEmptyString(agentRec?.agent_name) ??
+              asNonEmptyString(agentRec?.name) ??
+              `${idea.title} Agent`;
+            const parentId = agentNameToId.get(upstreamName);
+            const childId = agentNameToId.get(childName);
+            if (!parentId || !childId || parentId === childId) continue;
+            try {
+              await businessRelationsApi.linkAgentToChildAgent(parentId, childId);
+            } catch (relErr) {
+              appLogger.error(`Failed to link agent "${upstreamName}" -> "${childName}" for use case "${idea.title}"`, {
+                useCaseId,
+                error: toUserMessage(relErr),
+              });
+              // best-effort — continue linking the remaining agents
+            }
+          }
+
+          if (failedAgents.length > 0) {
+            notifyError(
+              `${failedAgents.length} of ${agentRecs.length} agent${agentRecs.length === 1 ? '' : 's'} failed to create for "${idea.title}": ${failedAgents.join(', ')}. See Dev Logs for details.`,
+              `spark_agent_create_${idea.idea_id}`,
+            );
+          }
 
           // Remove enriching marker
           try {
@@ -660,7 +739,14 @@ const IdeaModal: React.FC<{
           }));
 
         } catch (enrichErr) {
-          console.error('[Spark] Background enrichment failed for use case', useCaseId, enrichErr);
+          appLogger.error(`Background enrichment failed for use case "${idea.title}" — no agents were created`, {
+            useCaseId,
+            error: toUserMessage(enrichErr),
+          });
+          notifyError(
+            `Couldn't finish setting up "${idea.title}": ${toUserMessage(enrichErr)}`,
+            `spark_enrich_${idea.idea_id}`,
+          );
           // Clean up the enriching marker silently — the use case was already created
           try {
             const raw = localStorage.getItem('tavro_enriching_use_cases');
