@@ -3,14 +3,10 @@ import { toUserMessage } from '../utils/errorUtils';
 import { Link } from 'react-router-dom';
 import { AgentData } from '../types/agent';
 import {
-  AppWindow,
-  Bot,
-  Boxes,
-  BriefcaseBusiness,
   Check,
   CheckCircle2,
   ChevronDown,
-  Link2,
+  ChevronUp,
   Loader2,
   Plus,
   PlusCircle,
@@ -21,6 +17,7 @@ import {
 } from 'lucide-react';
 import { businessRelationsApi } from '../services/businessRelationsApi';
 import { useCaseApi } from '../services/useCaseApi';
+import { fetchAllPages } from '../utils/fetchAllPages';
 import { aiModelApi } from '../services/aiModelApi';
 import { agentApi } from '../services/agentApi';
 import { useUseCases } from '../context/UseCaseContext';
@@ -240,6 +237,15 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
   const [allIntegrations, setAllIntegrations] = useState<IntegrationRecord[]>([]);
   const [integrationSearch, setIntegrationSearch] = useState('');
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -307,7 +313,9 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         showProcesses ? businessRelationsApi.listProcesses(undefined, companyId) : Promise.resolve([] as BusinessProcessRecord[]),
         showAiModels ? aiModelApi.listModels(undefined, companyId) : Promise.resolve([] as AiModelRecord[]),
         showIntegrations ? businessRelationsApi.listIntegrations(undefined, companyId) : Promise.resolve([] as IntegrationRecord[]),
-        showUseCases ? useCaseApi.listUseCases({ companyId, recordRange: '1-200' }) : Promise.resolve(null),
+        showUseCases
+          ? fetchAllPages((start, range) => useCaseApi.listUseCases({ companyId, startRecord: start, recordRange: range })).then(data => ({ data }))
+          : Promise.resolve(null),
         showChildAgents ? agentApi.listAgentsForLinking(companyId) : Promise.resolve([] as typeof catalogAgents),
       ]);
       setRelations(agentRelations);
@@ -707,11 +715,17 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
         )}
 
         {showApplications && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <AppWindow size={13} /> Applications ({displayedApplications.length})
-              </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('applications')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('applications')}
+              >
+                {collapsedSections.has('applications') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related Applications ({displayedApplications.length})
+              </button>
               {agentId && !showingLiveData && (
                 <Link
                   to={createApplicationHref}
@@ -798,33 +812,37 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('applications') && (
+            <div className="divide-y divide-slate-100">
+              {displayedApplications.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No related applications.</div>
+              )}
               {displayedApplications.map((app: any, idx) => {
                 const applicationId = app.business_application_id || app.identifier || app.name || `app-${idx}`;
                 const removeKey = `remove-app:${applicationId}`;
                 return (
-                  <div key={`${applicationId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
-                    <div className="flex justify-between items-start gap-3 mb-2">
-                      <div>
+                  <div key={`${applicationId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="min-w-0">
                         <Link
                           to={`/applications/${encodeURIComponent(applicationId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {app.application_name || app.name || applicationId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">
+                        <p className="text-[11px] font-mono text-slate-400 truncate">
                           {applicationId}
-                        </span>
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {getRiskBadge(app.business_criticality)}
                         {showingLiveData && (
                           <button
                             onClick={() => handleRemoveApplication(applicationId)}
                             disabled={actingKey === removeKey}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                             Remove
                           </button>
                         )}
@@ -836,23 +854,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   </div>
                 );
               })}
-              {displayedApplications.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No related applications.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
 
-        {showApplications && (showProcesses || showChildAgents) && <div className="h-px bg-slate-100 w-full" />}
-
         {showProcesses && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <BriefcaseBusiness size={13} /> Processes ({displayedProcesses.length})
-              </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('processes')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('processes')}
+              >
+                {collapsedSections.has('processes') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related Processes ({displayedProcesses.length})
+              </button>
               {agentId && !showingLiveData && (
                 <Link
                   to={createProcessHref}
@@ -939,33 +957,37 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('processes') && (
+            <div className="divide-y divide-slate-100">
+              {displayedProcesses.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No related processes.</div>
+              )}
               {displayedProcesses.map((proc: any, idx) => {
                 const processId = proc.business_process_id || proc.identifier || proc.name || `process-${idx}`;
                 const removeKey = `remove-proc:${processId}`;
                 return (
-                  <div key={`${processId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                  <div key={`${processId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <Link
                           to={`/processes/${encodeURIComponent(processId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {proc.process_name || proc.name || processId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">
+                        <p className="text-[11px] font-mono text-slate-400 truncate">
                           {processId}
-                        </span>
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {getRiskBadge(proc.business_criticality)}
                         {showingLiveData && (
                           <button
                             onClick={() => handleRemoveProcess(processId)}
                             disabled={actingKey === removeKey}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                             Remove
                           </button>
                         )}
@@ -973,13 +995,13 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                     </div>
 
                     {(proc.process_description || proc.description) && (
-                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">
+                      <span className="block text-xs text-slate-500 max-w-[640px]">
                         {proc.process_description || proc.description}
                       </span>
                     )}
 
                     {showingLiveData && proc.related_processes && proc.related_processes.length > 0 && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {proc.related_processes.map((related: any) => (
                           <Link
                             key={`${processId}-${related.business_process_id}-${related.relationship_type || 'RELATED'}`}
@@ -996,23 +1018,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   </div>
                 );
               })}
-              {displayedProcesses.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No related processes.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
 
-        {showProcesses && showChildAgents && <div className="h-px bg-slate-100 w-full" />}
-
         {showChildAgents && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Bot size={13} /> Agent to Agent ({liveChildAgents.length})
-              </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('childAgents')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('childAgents')}
+              >
+                {collapsedSections.has('childAgents') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related Agents ({liveChildAgents.length})
+              </button>
               <div className="relative" ref={(el) => { dropdownRefs.current.childAgents = el; }}>
                 <button
                   onClick={() => setOpenDropdown(openDropdown === 'childAgents' ? null : 'childAgents')}
@@ -1078,25 +1100,29 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('childAgents') && (
+            <div className="divide-y divide-slate-100">
+              {liveChildAgents.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No linked agents.</div>
+              )}
               {liveChildAgents.map((ca, idx) => {
                 const childId = ca.agent_id ?? ca.agent_internal_id ?? `child-${idx}`;
                 const removeKey = `remove-child:${childId}`;
                 return (
-                  <div key={`${childId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                  <div key={`${childId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <Link
                           to={`/agent/${encodeURIComponent(childId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {ca.agent_name || childId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">
+                        <p className="text-[11px] font-mono text-slate-400 truncate">
                           {childId}
-                        </span>
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {ca.direction && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {ca.direction === 'PARENT' ? 'Parent' : 'Child'}
@@ -1106,44 +1132,44 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                           <button
                             onClick={() => handleRemoveChildAgent(childId)}
                             disabled={actingKey === removeKey}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                             Remove
                           </button>
                         )}
                       </div>
                     </div>
                     {ca.agent_description && (
-                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">
+                      <span className="block text-xs text-slate-500 max-w-[640px]">
                         {ca.agent_description}
                       </span>
                     )}
                     {ca.relationship_label && (
-                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 w-fit">
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 w-fit">
                         {ca.relationship_label}
                       </span>
                     )}
                   </div>
                 );
               })}
-              {liveChildAgents.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No linked agents.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
 
-        {(showProcesses || showChildAgents) && showAiModels && <div className="h-px bg-slate-100 w-full" />}
-
         {showAiModels && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Boxes size={13} /> AI Models ({liveAiModels.length})
-              </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('aiModels')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('aiModels')}
+              >
+                {collapsedSections.has('aiModels') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related AI Models ({liveAiModels.length})
+              </button>
               {agentId && !showingLiveData && (
                 <Link
                   to={`/ai-models/new?linkAgentId=${encodeURIComponent(agentId)}`}
@@ -1230,23 +1256,27 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                 </div>
               )}
             </div>
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('aiModels') && (
+            <div className="divide-y divide-slate-100">
+              {liveAiModels.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No linked AI models.</div>
+              )}
               {liveAiModels.map((m, idx) => {
                 const modelId = m.ai_model_id || `model-${idx}`;
                 const removeKey = `remove-model:${modelId}`;
                 return (
-                  <div key={`${modelId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                  <div key={`${modelId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <Link
                           to={`/ai-models/${encodeURIComponent(modelId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {m.model_name || modelId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{modelId}</span>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{modelId}</p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {m.status && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {m.status}
@@ -1256,37 +1286,37 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                           <button
                             onClick={() => handleRemoveAiModel(modelId)}
                             disabled={actingKey === removeKey}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                             Remove
                           </button>
                         )}
                       </div>
                     </div>
                     {m.description && (
-                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">{m.description}</span>
+                      <span className="block text-xs text-slate-500 max-w-[640px]">{m.description}</span>
                     )}
                   </div>
                 );
               })}
-              {liveAiModels.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No linked AI models.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
 
-        {(showProcesses || showChildAgents || showAiModels) && showUseCases && <div className="h-px bg-slate-100 w-full" />}
-
         {showUseCases && (
-          <div className={`flex flex-col gap-3 ${mode === 'all' ? 'order-first' : ''}`}>
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <BriefcaseBusiness size={13} /> AI Use Cases ({linkedUseCases.length})
-              </h3>
+          <div className={`bg-white rounded-2xl border border-slate-200 ${mode === 'all' ? 'order-first' : ''}`}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('useCases')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('useCases')}
+              >
+                {collapsedSections.has('useCases') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related AI Use Cases ({linkedUseCases.length})
+              </button>
               <div className="relative" ref={(el) => { dropdownRefs.current.useCases = el; }}>
                 <button
                   onClick={() => setOpenDropdown(openDropdown === 'useCases' ? null : 'useCases')}
@@ -1364,30 +1394,34 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               </div>
             </div>
 
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('useCases') && (
+            <div className="divide-y divide-slate-100">
+              {linkedUseCases.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No linked AI use cases.</div>
+              )}
               {linkedUseCases.map((uc, idx) => {
                 const useCaseId = uc.identifier || `use-case-${idx}`;
                 const removeKey = `remove-uc:${useCaseId}`;
                 return (
-                  <div key={`${useCaseId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
-                    <div className="flex justify-between items-start gap-3 mb-2">
-                      <div>
+                  <div key={`${useCaseId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="min-w-0">
                         <Link
                           to={`/use-case/${encodeURIComponent(useCaseId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {uc.name || useCaseId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{useCaseId}</span>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{useCaseId}</p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {uc.priority && getRiskBadge(uc.priority)}
                         <button
                           onClick={() => handleUnlinkUseCase(useCaseId)}
                           disabled={actingKey === removeKey}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                          {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                           Remove
                         </button>
                       </div>
@@ -1398,21 +1432,23 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                   </div>
                 );
               })}
-              {linkedUseCases.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No linked AI use cases.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
 
         {showIntegrations && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Link2 size={13} /> Integrations ({liveIntegrations.length})
-              </h3>
+          <div className="bg-white rounded-2xl border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toggleSection('integrations')}
+                className="flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-blue-600 transition-colors"
+                aria-expanded={!collapsedSections.has('integrations')}
+              >
+                {collapsedSections.has('integrations') ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                Currently Related Integrations ({liveIntegrations.length})
+              </button>
               {agentId && !showingLiveData && (
                 <Link
                   to={createIntegrationHref}
@@ -1500,23 +1536,27 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
               )}
             </div>
 
-            <div className="flex flex-col gap-3">
+            {!collapsedSections.has('integrations') && (
+            <div className="divide-y divide-slate-100">
+              {liveIntegrations.length === 0 && (
+                <div className="p-5 text-sm text-slate-500">No linked integrations.</div>
+              )}
               {liveIntegrations.map((integration, idx) => {
                 const integrationId = integration.integration_id || `integration-${idx}`;
                 const removeKey = `remove-integration:${integrationId}`;
                 return (
-                  <div key={`${integrationId}-${idx}`} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
+                  <div key={`${integrationId}-${idx}`} className="px-5 py-3 flex flex-col gap-2">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <Link
                           to={`/integrations/${encodeURIComponent(integrationId)}`}
-                          className="font-bold text-sm text-blue-700 hover:underline"
+                          className="text-sm font-semibold text-blue-600 hover:underline"
                         >
                           {integration.integration_name || integrationId}
                         </Link>
-                        <span className="block text-[11px] font-mono text-slate-400 mt-0.5">{integrationId}</span>
+                        <p className="text-[11px] font-mono text-slate-400 truncate">{integrationId}</p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {integration.availability_status && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {integration.availability_status}
@@ -1526,26 +1566,22 @@ const AgentRelatedTab: React.FC<AgentRelatedTabProps> = ({
                           <button
                             onClick={() => handleRemoveIntegration(integrationId)}
                             disabled={actingKey === removeKey}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {actingKey === removeKey ? <Loader2 size={11} className="animate-spin" /> : <Unlink2 size={11} />}
+                            {actingKey === removeKey ? <Loader2 size={12} className="animate-spin" /> : <Unlink2 size={12} />}
                             Remove
                           </button>
                         )}
                       </div>
                     </div>
                     {integration.integration_description && (
-                      <span className="block text-xs text-slate-500 mt-0.5 max-w-[640px]">{integration.integration_description}</span>
+                      <span className="block text-xs text-slate-500 max-w-[640px]">{integration.integration_description}</span>
                     )}
                   </div>
                 );
               })}
-              {liveIntegrations.length === 0 && (
-                <div className="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  No linked integrations.
-                </div>
-              )}
             </div>
+            )}
           </div>
         )}
       </div>

@@ -1982,7 +1982,12 @@ async def _fetch_integrations(
     company_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     filter_related_by_company_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+):
+    """Returns a plain list of rows, unless both `start`/`end` (1-based, inclusive)
+    are given, in which case it returns `(rows, total)` windowed via a single
+    ROW_NUMBER()/COUNT(*) OVER() query — same convention as agents.py/use_cases.py."""
     await _ensure_integrations_table(db)
 
     int_cols = await _table_columns(db, "core", "business_integrations")
@@ -2273,6 +2278,43 @@ async def _fetch_integrations(
         _replace_select_col(select_cols, "residual_risk_classification_score",
                          "COALESCE(company_risk_class.company_residual_score, 0.0) AS residual_risk_classification_score")
 
+    if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_integrations bi {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
+        rows = await db.execute(
+            text(
+                f"""
+                SELECT * FROM (
+                    SELECT
+                        {", ".join(select_cols)},
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
+                    FROM core.business_integrations bi
+                    {ba_join_sql}
+                    {rel_join_sql}
+                    {int_company_risk_lateral_sql}
+                    {int_company_risk_class_lateral_sql}
+                    {where_sql}
+                ) windowed
+                WHERE rn BETWEEN :window_start AND :window_end
+                ORDER BY rn
+                """
+            ),
+            {**query_params, "window_start": start, "window_end": end},
+        )
+        raw_rows = [dict(r._mapping) for r in rows]
+        items = [
+            _normalize_integration_row({k: v for k, v in r.items() if k != "rn"})
+            for r in raw_rows
+        ]
+        return items, total
+
     rows = await db.execute(
         text(
             f"""
@@ -2300,7 +2342,12 @@ async def _fetch_applications(
     company_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     filter_related_by_company_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+):
+    """Returns a plain list of rows, unless both `start`/`end` (1-based, inclusive)
+    are given, in which case it returns `(rows, total)` windowed via a single
+    ROW_NUMBER()/COUNT(*) OVER() query — same convention as agents.py/use_cases.py."""
     app_cols = await _table_columns(db, "core", "business_applications")
     if "business_application_id" not in app_cols:
         raise HTTPException(
@@ -2828,6 +2875,45 @@ async def _fetch_applications(
 
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
+    if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_applications ba {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
+        rows = await db.execute(
+            text(
+                f"""
+                SELECT * FROM (
+                    SELECT
+                        {", ".join(select_cols)},
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
+                    FROM core.business_applications ba
+                    {rel_join_sql}
+                    {uc_rel_sql}
+                    {mdl_rel_sql}
+                    {proc_rel_sql}
+                    {company_risk_lateral_sql}
+                    {company_risk_class_lateral_sql}
+                    {where_sql}
+                ) windowed
+                WHERE rn BETWEEN :window_start AND :window_end
+                ORDER BY rn
+                """
+            ),
+            {**query_params, "window_start": start, "window_end": end},
+        )
+        raw_rows = [dict(r._mapping) for r in rows]
+        items = [
+            _normalize_application_row({k: v for k, v in r.items() if k != "rn"})
+            for r in raw_rows
+        ]
+        return items, total
+
     rows = await db.execute(
         text(
             f"""
@@ -2857,7 +2943,12 @@ async def _fetch_processes(
     company_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     filter_related_by_company_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+):
+    """Returns a plain list of rows, unless both `start`/`end` (1-based, inclusive)
+    are given, in which case it returns `(rows, total)` windowed via a single
+    ROW_NUMBER()/COUNT(*) OVER() query — same convention as agents.py/use_cases.py."""
     process_cols = await _table_columns(db, "core", "business_processes")
     if "business_process_id" not in process_cols:
         raise HTTPException(
@@ -3448,6 +3539,50 @@ async def _fetch_processes(
 
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
+    if start is not None and end is not None:
+        # Independent count so `total` stays correct even when the requested
+        # window matches zero rows (e.g. a page past the end of the results) —
+        # cheap since it only touches the base table, not the lateral joins.
+        count_row = await db.execute(
+            text(f"SELECT COUNT(*) FROM core.business_processes bp {where_sql}"),
+            query_params,
+        )
+        total = count_row.scalar() or 0
+
+        rows = await db.execute(
+            text(
+                f"""
+                SELECT * FROM (
+                    SELECT
+                        {", ".join(select_cols)},
+                        ROW_NUMBER() OVER (ORDER BY {order_sql}) AS rn
+                    FROM core.business_processes bp
+                    LEFT JOIN core.business_processes parent
+                        ON parent.business_process_id = bp.parent_process_id
+                       {parent_tenant_join}
+                       {parent_company_join}
+                    {rel_join_sql}
+                    {proc_rel_sql}
+                    {uc_rel_sql}
+                    {mdl_rel_sql}
+                    {app_rel_sql}
+                    {proc_company_risk_lateral_sql}
+                    {proc_company_risk_class_lateral_sql}
+                    {where_sql}
+                ) windowed
+                WHERE rn BETWEEN :window_start AND :window_end
+                ORDER BY rn
+                """
+            ),
+            {**query_params, "window_start": start, "window_end": end},
+        )
+        raw_rows = [dict(r._mapping) for r in rows]
+        items = [
+            _normalize_process_row({k: v for k, v in r.items() if k != "rn"})
+            for r in raw_rows
+        ]
+        return items, total
+
     rows = await db.execute(
         text(
             f"""
@@ -3480,20 +3615,23 @@ async def list_integrations(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
+        start, end = start_record, start_record + 49
+
     try:
-        all_items = await _fetch_integrations(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
-        total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data, total = await _fetch_integrations(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request), start=start, end=end)
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
@@ -4119,20 +4257,23 @@ async def list_applications(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
+        start, end = start_record, start_record + 49
+
     try:
-        all_items = await _fetch_applications(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
-        total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data, total = await _fetch_applications(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request), start=start, end=end)
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
@@ -4797,20 +4938,23 @@ async def list_processes(
     q: Optional[str] = Query(default=None),
     company_id: Optional[str] = Query(default=None, description="Filter by company UUID"),
     tenant_id: Optional[str] = Query(default=None, description="Filter by tenant ID"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    start_record: int = 1,
+    record_range: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    if record_range:
+        try:
+            parts = record_range.split("-")
+            start, end = int(parts[0]), int(parts[1])
+        except Exception:
+            start, end = start_record, start_record + 49
+    else:
+        start, end = start_record, start_record + 49
+
     try:
-        all_items = await _fetch_processes(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request))
-        total = len(all_items)
-        items = all_items[offset : offset + limit]
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "items": items,
-        }
+        data, total = await _fetch_processes(db, search=q, company_id=company_id, filter_related_by_company_id=company_id, tenant_id=(tenant_id or "").strip() or _tenant(request), start=start, end=end)
+        return {"start_record": start, "end_record": end, "record_count": len(data),
+                "total_records": total, "data": data}
     except HTTPException:
         raise
     except Exception as exc:
@@ -6402,7 +6546,7 @@ async def sync_blueprint_attachments_to_integration(
 
 
 @router.get(
-    "/agents/{agent_id}",
+    "/agents/{agent_id}/relations",
     tags=["Applications", "Processes"],
     summary="Get Agent Applications and Processes",
 )
