@@ -304,4 +304,5 @@ export interface AgentData {
   latest_risk_class?: string | null;
   latest_event_status?: string | null;
   agent_type?: string | null;
+  status?: string | null;
 }

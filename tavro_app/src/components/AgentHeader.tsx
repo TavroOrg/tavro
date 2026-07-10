@@ -2,6 +2,8 @@
 import { AgentData, AGENT_TYPES } from '../types/agent';
 import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
+import LifecycleStepper from './LifecycleStepper';
+import { AGENT_LIFECYCLE_STAGES } from '../constants/lifecycle';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -18,6 +20,7 @@ interface AgentHeaderProps {
     onInlineValueChange?: (value: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    onLifecycleStageChange?: (stage: string) => void;
 }
 
 const Badge: React.FC<{ text: string; color?: 'blue' | 'emerald' | 'amber' | 'rose' | 'slate' }> = ({ text, color = 'slate' }) => {
@@ -44,6 +47,7 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     onInlineValueChange,
     onSaveInlineEdit,
     onCancelInlineEdit,
+    onLifecycleStageChange,
 }) => {
     const id = agent.identification;
     const caps = agent.capabilities;
@@ -178,6 +182,13 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                 )}
                             </div>
                         )}
+                        <div className="max-w-md w-full mt-3">
+                            <LifecycleStepper
+                                stages={AGENT_LIFECYCLE_STAGES}
+                                currentStage={agent.status ?? 'Plan'}
+                                onStageChange={onLifecycleStageChange}
+                            />
+                        </div>
                     </div>
                 </div>
 
