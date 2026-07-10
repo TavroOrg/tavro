@@ -1731,27 +1731,59 @@ async def convert_idea(
 
     safe_fields = dict(fallback_fields)  # start from fallback; overwrite if Claude succeeds
 
-    try:
-        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=4096)
+    
+    required_business_case_keys = [
+        "title", "description", "business_problem_statement", "expected_benefits",
+        "solution_approach", "assumptions", "quantified_financial_benefits",
+        "total_financial_impact_summary", "implementation_cost_estimate",
+        "return_on_investment", "risk_considerations", "implementation_roadmap",
+        "recommendation", "executive_summary",
+    ]
+
+    def _to_str(v: Any) -> str:
+        if isinstance(v, list):
+            return ", ".join(str(i) for i in v)
+        return str(v) if v is not None else ""
+
+    def _strip_curly_braces(s: str) -> str:
+        s = s.strip()
+        while s.startswith("{") and s.endswith("}"):
+            s = s[1:-1].strip()
+        return s
+
+    async def _request_business_case_fields(extra_instruction: str = "") -> dict[str, Any]:
+        data = await _call_anthropic(
+            api_key, [{"role": "user", "content": user + extra_instruction}], system, max_tokens=4096
+        )
         raw_text = "".join(
             block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"
         )
-        fields = json.loads(_extract_json_object(raw_text))
-        if not isinstance(fields, dict):
+        parsed = json.loads(_extract_json_object(raw_text))
+        if not isinstance(parsed, dict):
             raise ValueError("Non-dict response")
+        return parsed
 
+    try:
+        fields = await _request_business_case_fields()
         fields.setdefault("priority", priority)
 
-        def _to_str(v: Any) -> str:
-            if isinstance(v, list):
-                return ", ".join(str(i) for i in v)
-            return str(v) if v is not None else ""
-
-        def _strip_curly_braces(s: str) -> str:
-            s = s.strip()
-            while s.startswith("{") and s.endswith("}"):
-                s = s[1:-1].strip()
-            return s
+        missing_keys = [k for k in required_business_case_keys if not _to_str(fields.get(k)).strip()]
+        if missing_keys:
+            logger.warning(
+                "spark.convert_idea business case response missing fields %s — retrying", missing_keys
+            )
+            retry_instruction = (
+                "\n\nYour previous response omitted these required fields: "
+                f"{', '.join(missing_keys)}. Return the complete JSON object again, "
+                "making sure every field listed above is present and non-empty."
+            )
+            try:
+                retry_fields = await _request_business_case_fields(retry_instruction)
+                for k in missing_keys:
+                    if _to_str(retry_fields.get(k)).strip():
+                        fields[k] = retry_fields[k]
+            except Exception as retry_exc:
+                logger.warning("spark.convert_idea business case retry failed: %s", retry_exc)
 
         # Merge into fallback so all expected keys are always present
         for k, v in fields.items():
