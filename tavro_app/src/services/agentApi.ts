@@ -63,6 +63,7 @@ export interface AgentUpdatePayload {
     description?: string;
     instruction?: string;
     agent_type?: string;
+    status?: string;
     issues?: AgentIssuePayload[];
     skills?: Array<{
         id?: string;

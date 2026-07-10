@@ -229,6 +229,7 @@ class UseCaseUpdateRequest(BaseModel):
     business_problem_statement: Optional[str] = None
     expected_benefits: Optional[str] = None
     priority: Optional[str] = None
+    status: Optional[str] = None
     solution_approach: Optional[str] = None
     use_case_owner: Optional[str] = None
     assumptions: Optional[str] = None
@@ -597,7 +598,7 @@ async def create_use_case(
                      implementation_roadmap, recommendation, executive_summary)
                 VALUES
                     (:tid, :uid, :name, :desc, :owner,
-                     :problem, :benefits, :priority, 'New',
+                     :problem, :benefits, :priority, 'Identified',
                      :solution, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :cid, :cname,
                      :assumptions, :qfb, :tfis, :ice, :roi, :risk_cons, :impl_roadmap, :recom, :exec_summary)
             """),
@@ -1034,6 +1035,9 @@ async def update_use_case(use_case_id: str, body: UseCaseUpdateRequest, db: Asyn
         if body.priority and body.priority.strip():
             sets.append("priority = :priority")
             params["priority"] = _normalize_priority(body.priority)
+        if body.status and body.status.strip():
+            sets.append("status = :status")
+            params["status"] = body.status.strip()
         if body.solution_approach is not None:
             sets.append("solution_approach = :solution")
             params["solution"] = body.solution_approach.strip()

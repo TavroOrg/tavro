@@ -372,7 +372,7 @@ class BusinessRelationsApi {
     const params = new URLSearchParams();
     if (companyId) params.set('company_id', companyId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    return req(`/agents/${encodeURIComponent(agentId)}${suffix}`);
+    return req(`/agents/${encodeURIComponent(agentId)}/relations${suffix}`);
   }
 
   async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
