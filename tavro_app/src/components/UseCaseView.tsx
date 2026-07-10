@@ -922,14 +922,8 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                 {activeTab === 'business_case' && (
                     <div className="flex flex-col gap-6 animate-fade-in">
 
-                        {/* Generate Report button — shown only when all business case fields are populated */}
+                        {/* Generate Report button */}
                         {(() => {
-                            const allFieldsPopulated = Boolean(
-                                executiveSummary && problemStatement && expectedBenefits && solutionApproach &&
-                                assumptions && quantifiedFinancialBenefits && totalFinancialImpactSummary &&
-                                implementationCostEstimate && returnOnInvestment && riskConsiderations &&
-                                implementationRoadmap && recommendation
-                            );
                             if (enriching) {
                                 return (
                                     <div className="flex justify-end">
@@ -940,7 +934,6 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
                                     </div>
                                 );
                             }
-                            if (!allFieldsPopulated) return null;
                             return (
                                 <div className="flex justify-end">
                                     <button

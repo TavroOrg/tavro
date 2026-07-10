@@ -1027,7 +1027,41 @@ async def update_agent(
 
 
 @core.tool(name="update_ai_use_case")
-async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str] = None, title: str, description: str, business_problem_statement: str, expected_benefits: str, priority: str, regulatory_impact: Optional[List[str]] = None, solution_approach: Optional[str] = None, use_case_owner: Optional[str] = None, impacted_business_applications: Optional[List[str]] = None, impacted_business_processes: Optional[List[str]] = None) -> Dict[str, Any]:
+async def update_ai_use_case(
+    original_prompt: str,
+    *,
+    use_case_id: Optional[str] = None,
+    title: str,
+    description: str,
+    business_problem_statement: str,
+    expected_benefits: str,
+    priority: str,
+    regulatory_impact: Optional[List[str]] = None,
+    solution_approach: Optional[str] = None,
+    use_case_owner: Optional[str] = None,
+    impacted_business_applications: Optional[List[str]] = None,
+    impacted_business_processes: Optional[List[str]] = None,
+    function: Optional[str] = None,
+    proposed_by: Optional[str] = None,
+    status: Optional[str] = None,
+    assumptions: Optional[str] = None,
+    quantified_financial_benefits: Optional[str] = None,
+    total_financial_impact_summary: Optional[str] = None,
+    implementation_cost_estimate: Optional[str] = None,
+    return_on_investment: Optional[str] = None,
+    risk_considerations: Optional[str] = None,
+    implementation_roadmap: Optional[str] = None,
+    recommendation: Optional[str] = None,
+    executive_summary: Optional[str] = None,
+    business_value_score: Optional[int] = None,
+    data_readiness_score: Optional[int] = None,
+    technical_complexity_score: Optional[int] = None,
+    risk_data_privacy_score: Optional[int] = None,
+    risk_operational_score: Optional[int] = None,
+    risk_compliance_score: Optional[int] = None,
+    risk_ai_behavioral_score: Optional[int] = None,
+    risk_strategic_reputational_score: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Update an existing AI use case definition.
 
@@ -1044,6 +1078,26 @@ async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str]
         use_case_owner (Optional[str]): Updated use case owner.
         impacted_business_applications (Optional[List[str]]): Updated impacted business applications.
         impacted_business_processes (Optional[List[str]]): Updated impacted business processes.
+        function (Optional[str]): Updated business function.
+        proposed_by (Optional[str]): Updated proposer.
+        status (Optional[str]): Updated status.
+        assumptions (Optional[str]): Updated assumptions.
+        quantified_financial_benefits (Optional[str]): Updated quantified financial benefits.
+        total_financial_impact_summary (Optional[str]): Updated total financial impact summary.
+        implementation_cost_estimate (Optional[str]): Updated implementation cost estimate.
+        return_on_investment (Optional[str]): Updated return on investment.
+        risk_considerations (Optional[str]): Updated risk considerations.
+        implementation_roadmap (Optional[str]): Updated implementation roadmap.
+        recommendation (Optional[str]): Updated recommendation.
+        executive_summary (Optional[str]): Updated executive summary.
+        business_value_score (Optional[int]): Updated business value score (1-5).
+        data_readiness_score (Optional[int]): Updated data readiness score (1-5).
+        technical_complexity_score (Optional[int]): Updated technical complexity score (1-5).
+        risk_data_privacy_score (Optional[int]): Updated data privacy risk score (1-5).
+        risk_operational_score (Optional[int]): Updated operational risk score (1-5).
+        risk_compliance_score (Optional[int]): Updated compliance risk score (1-5).
+        risk_ai_behavioral_score (Optional[int]): Updated AI behavioral risk score (1-5).
+        risk_strategic_reputational_score (Optional[int]): Updated strategic/reputational risk score (1-5).
 
     Returns:
         Dict[str, Any]
@@ -1069,6 +1123,26 @@ async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str]
                 "use_case_owner": use_case_owner,
                 "impacted_business_applications": impacted_business_applications,
                 "impacted_business_processes": impacted_business_processes,
+                "function": function,
+                "proposed_by": proposed_by,
+                "status": status,
+                "assumptions": assumptions,
+                "quantified_financial_benefits": quantified_financial_benefits,
+                "total_financial_impact_summary": total_financial_impact_summary,
+                "implementation_cost_estimate": implementation_cost_estimate,
+                "return_on_investment": return_on_investment,
+                "risk_considerations": risk_considerations,
+                "implementation_roadmap": implementation_roadmap,
+                "recommendation": recommendation,
+                "executive_summary": executive_summary,
+                "business_value_score": business_value_score,
+                "data_readiness_score": data_readiness_score,
+                "technical_complexity_score": technical_complexity_score,
+                "risk_data_privacy_score": risk_data_privacy_score,
+                "risk_operational_score": risk_operational_score,
+                "risk_compliance_score": risk_compliance_score,
+                "risk_ai_behavioral_score": risk_ai_behavioral_score,
+                "risk_strategic_reputational_score": risk_strategic_reputational_score,
             },
             tenant_id,
         )
@@ -1085,6 +1159,26 @@ async def update_ai_use_case(original_prompt: str, *, use_case_id: Optional[str]
             use_case_owner=use_case_owner,
             impacted_business_applications=impacted_business_applications,
             impacted_business_processes=impacted_business_processes,
+            function=function,
+            proposed_by=proposed_by,
+            status=status,
+            assumptions=assumptions,
+            quantified_financial_benefits=quantified_financial_benefits,
+            total_financial_impact_summary=total_financial_impact_summary,
+            implementation_cost_estimate=implementation_cost_estimate,
+            return_on_investment=return_on_investment,
+            risk_considerations=risk_considerations,
+            implementation_roadmap=implementation_roadmap,
+            recommendation=recommendation,
+            executive_summary=executive_summary,
+            business_value_score=business_value_score,
+            data_readiness_score=data_readiness_score,
+            technical_complexity_score=technical_complexity_score,
+            risk_data_privacy_score=risk_data_privacy_score,
+            risk_operational_score=risk_operational_score,
+            risk_compliance_score=risk_compliance_score,
+            risk_ai_behavioral_score=risk_ai_behavioral_score,
+            risk_strategic_reputational_score=risk_strategic_reputational_score,
             tenant_id=str(tenant_id),
         )
 
