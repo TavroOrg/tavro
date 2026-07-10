@@ -11,3 +11,6 @@ google-auth
 psycopg2-binary
 google-auth-oauthlib
 docker
+pandas
+fastembed
+python-multipart
