@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS core.ai_use_cases (
   problem_statement TEXT,
   expected_benefits TEXT,
   priority TEXT,
-  status TEXT,
+  status TEXT DEFAULT 'Identified',
   created_ts timestamp,
   updated_ts timestamp,
   agent_risk_exposure_are decimal(10, 2),

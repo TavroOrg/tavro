@@ -218,6 +218,24 @@ class SparkApi {
     return result;
   }
 
+  /** Edit an idea's content fields (title, description, rationale, complexity, impact, signal, dimensions). */
+  async updateIdea(
+    companyId: string,
+    ideaId: string,
+    patch: Partial<Pick<SparkIdea, 'title' | 'description' | 'rationale' | 'complexity' | 'estimated_impact' | 'signal_type' | 'signal_label' | 'target_dimensions'>>,
+  ): Promise<SparkIdea> {
+    const params = new URLSearchParams({ company_id: companyId });
+    appLogger.req('Spark updateIdea', { companyId, ideaId, fields: Object.keys(patch) });
+    const t0 = Date.now();
+    const result = await req<SparkIdea>(`/spark/ideas/${encodeURIComponent(ideaId)}?${params.toString()}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+    appLogger.res('Spark updateIdea', { ideaId }, Date.now() - t0);
+    portalActivity.record(`Edited Spark idea "${result.title}"`, 'violet');
+    return result;
+  }
+
   /** Delete all stored ideas for a company. */
   async resetIdeas(companyId: string): Promise<void> {
     const params = new URLSearchParams({ company_id: companyId });
