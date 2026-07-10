@@ -45,7 +45,6 @@ type ChatViewContext = {
         companyId?: string;
         companyName: string;
         industry: string;
-        region: string;
         dimensions: { label: string; category: string; summary?: string | null }[];
         edges?: { sourceLabel: string; targetLabel: string; relType: string }[];
     } | null;
@@ -720,7 +719,7 @@ ${toolSummary}`;
                 return `
 
 ## Blueprint-Grounded Tool Parameters
-Company: ${bp.companyName} | Industry: ${bp.industry} | Region: ${bp.region}${bp.companyId ? ` | Company ID: ${bp.companyId}` : ''}
+Company: ${bp.companyName} | Industry: ${bp.industry}${bp.companyId ? ` | Company ID: ${bp.companyId}` : ''}
 
 **MANDATORY**: Whenever you call a write tool (create_agent, create_ai_use_case, or any tool that creates/modifies records), you MUST set the \`company_id\` parameter to "${bp.companyId ?? ''}" — this is the active company's UUID. Never omit or change this value.
 
@@ -736,7 +735,7 @@ When calling any of these tools, derive generated parameter values from the blue
 - Parameters describing problems, risks, or constraints (e.g. \`business_problem_statement\`, \`risk_*\`, \`constraint\`): ground in [risk] dimensions and any dimension that has a [risks] or [depends_on] relationship to a risk node.
 - Parameters describing expected value or outcomes (e.g. \`expected_benefits\`, \`goals\`, \`objective\`): ground in [strategy] dimensions and dimensions connected via [enables] or [supports] relationships.
 - Parameters describing technical context (e.g. \`tools\`, \`integrations\`, \`platform\`): ground in [technology] and [integration] dimensions.
-- Parameters describing industry or geography (e.g. \`industry\`, \`region\`, \`sector\`): always use "${bp.industry}" and "${bp.region}" from the blueprint — never override these.
+- Parameters describing industry or sector (e.g. \`industry\`, \`sector\`): always use "${bp.industry}" from the blueprint — never override this.
 
 For read-only or list tools not in the write list above, no blueprint enrichment is needed.
 Every generated value must be coherent with the blueprint. Do not fabricate data that contradicts the company's profile.`;

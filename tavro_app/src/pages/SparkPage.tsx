@@ -875,7 +875,6 @@ const SparkPage: React.FC = () => {
   const companyId = activeCompany?.id ?? null;
   const companyName = activeCompany?.name;
   const industry = activeCompany?.industry;
-  const region = activeCompany?.region;
 
   const syncPersistedMetrics = useCallback((nextIdeas: SparkIdea[], replace = false) => {
     setReactions(prev => {
@@ -1028,7 +1027,6 @@ const SparkPage: React.FC = () => {
         ideaCount,
         companyName,
         industry,
-        region,
       )) {
         generatedCount += 1;
         setIdeas(prev => {
@@ -1052,7 +1050,7 @@ const SparkPage: React.FC = () => {
     } finally {
       setGenerating(false);
     }
-  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, region, popularity, reactions]);
+  }, [companyId, activeDimensions, direction, ideaCount, companyName, industry, popularity, reactions]);
 
   const enterSelectMode = () => {
     setSelectMode(true);

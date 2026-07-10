@@ -41,7 +41,6 @@ class ResearchRequest(BaseModel):
     company_name: str
     ticker:       str | None = None
     industry:     str
-    region:       str  = ""     # kept for backwards-compat; no longer required
     is_public:    bool = False  # true = public company even if ticker omitted
 
 class ResearchedNode(BaseModel):

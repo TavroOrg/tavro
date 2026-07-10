@@ -228,7 +228,7 @@ const filteredCompanies = useMemo(() => {
                           : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
                           }`}>
                         <div className="font-semibold truncate">{c.name}</div>
-                        <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{c.industry} · {c.region}</div>
+                        <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{c.industry}</div>
                       </button>
                       <button
                         onClick={() => handleDeleteCompany(c)}

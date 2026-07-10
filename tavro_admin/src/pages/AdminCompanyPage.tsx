@@ -6,7 +6,6 @@ interface Company {
     id:           string;
     name:         string;
     industry:     string;
-    region:       string;
     legal_entity: string | null;
 }
 
@@ -71,8 +70,7 @@ const AdminCompanyPage: React.FC = () => {
 
     const filtered = companies.filter(c =>
         c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.industry.toLowerCase().includes(search.toLowerCase()) ||
-        c.region.toLowerCase().includes(search.toLowerCase())
+        c.industry.toLowerCase().includes(search.toLowerCase())
     );
 
     const handleSelect = (company: Company) => {
@@ -176,7 +174,7 @@ const AdminCompanyPage: React.FC = () => {
                                                     <span className="flex-1 min-w-0">
                                                         <span className="font-semibold truncate block">{c.name}</span>
                                                         <span className="text-xs text-slate-400 dark:text-slate-500 truncate block">
-                                                            {c.industry}{c.region ? ` · ${c.region}` : ''}
+                                                            {c.industry}
                                                         </span>
                                                     </span>
                                                     {selected?.id === c.id && (
@@ -203,12 +201,6 @@ const AdminCompanyPage: React.FC = () => {
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs">
-                                    {selected.region && (
-                                        <div>
-                                            <span className="text-slate-400 dark:text-slate-500 uppercase tracking-wide font-semibold">Region</span>
-                                            <p className="text-slate-700 dark:text-slate-300 mt-0.5">{selected.region}</p>
-                                        </div>
-                                    )}
                                     {selected.legal_entity && (
                                         <div>
                                             <span className="text-slate-400 dark:text-slate-500 uppercase tracking-wide font-semibold">Legal Entity</span>

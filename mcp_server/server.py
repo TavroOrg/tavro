@@ -1286,7 +1286,6 @@ async def generate_spark_ideas(
     idea_count: int = 5,
     company_name: Optional[str] = None,
     industry: Optional[str] = None,
-    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate fresh AI use-case ideas ("Spark" ideas) for a company by scanning its blueprint
@@ -1312,7 +1311,6 @@ async def generate_spark_ideas(
     idea_count (int): Number of ideas to generate, between 1 and 16. Defaults to 5.
     company_name (str, optional): Company display name, used to ground idea language.
     industry (str, optional): Company industry, used to ground idea language.
-    region (str, optional): Company region, used to ground idea language.
 
     Returns:
     Dict[str, Any]: { "ideas": [ { idea_id, title, description, rationale, signal_type,
@@ -1381,7 +1379,6 @@ async def generate_spark_ideas(
                     "direction": direction_clean,
                     "companyName": company_name,
                     "industry": industry,
-                    "region": region,
                     "edges": context.get("edges"),
                     "ideaCount": count,
                     "similarAgents": context.get("similar_agents"),
@@ -1531,7 +1528,7 @@ async def convert_spark_idea(
 
 
 @core.tool(name="create_company")
-async def create_company(original_prompt: str, *, name: str, industry: str, region: str, legal_entity: str) -> Dict[str, Any]:
+async def create_company(original_prompt: str, *, name: str, industry: str, legal_entity: str) -> Dict[str, Any]:
     """
     Create a new company entity.
 
@@ -1539,7 +1536,6 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
         original_prompt (str): REQUIRED verbatim user message.
         name (str): Company name.
         industry (str): Company industry.
-        region (str): Company region.
         legal_entity (str): Legal entity information.
 
     Returns:
@@ -1555,7 +1551,6 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
             {
                 "name": name,
                 "industry": industry,
-                "region": region,
                 "legal_entity": legal_entity,
             },
             tenant_id,
@@ -1564,7 +1559,6 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
         result = AgentMetadataExporter.create_company(
             name=name,
             industry=industry,
-            region=region,
             legal_entity=legal_entity,
             tenant_id=str(tenant_id),
         )
@@ -1612,7 +1606,7 @@ async def get_company(original_prompt: str, *, company_id: str) -> Dict[str, Any
 
 
 @core.tool(name="update_company")
-async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, region: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
+async def update_company(original_prompt: str, *, company_id: str, name: Optional[str] = None, industry: Optional[str] = None, legal_entity: Optional[str] = None) -> Dict[str, Any]:
     """
     Update an existing company entity.
 
@@ -1621,7 +1615,6 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
         company_id (str): Company identifier.
         name (Optional[str]): Updated name.
         industry (Optional[str]): Updated industry.
-        region (Optional[str]): Updated region.
         legal_entity (Optional[str]): Updated legal entity information.
 
     Returns:
@@ -1638,7 +1631,6 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
                 "company_id": company_id,
                 "name": name,
                 "industry": industry,
-                "region": region,
                 "legal_entity": legal_entity,
             },
             tenant_id,
@@ -1658,7 +1650,6 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
         payload = {
             "name": name if name is not None else existing.get("name"),
             "industry": industry if industry is not None else existing.get("industry"),
-            "region": region if region is not None else existing.get("region"),
             "legal_entity": legal_entity if legal_entity is not None else existing.get("legal_entity"),
         }
 
@@ -1669,7 +1660,6 @@ async def update_company(original_prompt: str, *, company_id: str, name: Optiona
             company_id=company_id,
             name=payload["name"],
             industry=payload["industry"],
-            region=payload["region"],
             legal_entity=payload["legal_entity"],
             tenant_id=str(tenant_id),
         )
@@ -1758,7 +1748,6 @@ async def research_blueprint(
     company_id: str,
     company_name: str,
     industry: str,
-    region: str = "",
     ticker: Optional[str] = None,
     is_public: bool = False,
 ) -> Dict[str, Any]:
@@ -1779,7 +1768,6 @@ async def research_blueprint(
         company_id (str): UUID of the company to research.
         company_name (str): Full name of the company.
         industry (str): Company industry (e.g. "Financial Services", "Healthcare").
-        region (str): Geographic region (optional).
         ticker (str, optional): Stock ticker symbol for public companies (e.g. "AAPL").
         is_public (bool): True if the company is publicly traded.
 
@@ -1797,7 +1785,6 @@ async def research_blueprint(
                 "company_id": company_id,
                 "company_name": company_name,
                 "industry": industry,
-                "region": region,
                 "ticker": ticker,
                 "is_public": is_public,
             },
@@ -1808,7 +1795,6 @@ async def research_blueprint(
             "company_id": company_id,
             "company_name": company_name,
             "industry": industry,
-            "region": region,
             "is_public": is_public or bool(ticker),
         }
         if ticker:

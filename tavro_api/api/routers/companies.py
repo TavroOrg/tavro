@@ -53,8 +53,8 @@ async def get_company(company_id: UUID, tenant_id: str = Depends(require_tenant)
 async def create_company(body: CompanyCreate, tenant_id: str = Depends(require_tenant), db: AsyncSession = Depends(get_db)):
     row = await db.execute(
         text("""
-            INSERT INTO twin.company (name, industry, region, legal_entity, tenant_id)
-            VALUES (:name, :industry, :region, :legal_entity, :tenant_id)
+            INSERT INTO twin.company (name, industry, legal_entity, tenant_id)
+            VALUES (:name, :industry, :legal_entity, :tenant_id)
             RETURNING *
         """),
         {**body.model_dump(), "tenant_id": tenant_id},
