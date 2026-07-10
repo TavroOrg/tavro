@@ -1484,6 +1484,7 @@ const UseCaseViewPage: React.FC = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<{ field: string; value: string } | null>(null);
   const [inlineSaving, setInlineSaving] = useState<string | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [enriching, setEnriching] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem('tavro_enriching_use_cases');
@@ -1511,7 +1512,7 @@ const UseCaseViewPage: React.FC = () => {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  const { refresh: refreshUseCases } = useUseCases();
+  const { refresh: refreshUseCases, upsertUseCase } = useUseCases();
 
   const handleDelete = async () => {
     if (!id) return;
@@ -1732,6 +1733,7 @@ const UseCaseViewPage: React.FC = () => {
       if (field === 'title') payload.title = value.trim();
       else if (field === 'description') payload.description = value.trim();
       else if (field === 'priority') payload.priority = value;
+      else if (field === 'status') payload.status = value;
       else if (field === 'owner') payload.use_case_owner = value.trim();
       else if (field === 'problem_statement') payload.business_problem_statement = value.trim();
       else if (field === 'expected_benefits') payload.expected_benefits = value.trim();
@@ -1752,6 +1754,7 @@ const UseCaseViewPage: React.FC = () => {
         if (field === 'title') { next.name = value.trim(); next.title = value.trim(); }
         else if (field === 'description') next.description = value.trim();
         else if (field === 'priority') next.priority = value;
+        else if (field === 'status') next.status = value;
         else if (field === 'owner') { next.owner = value.trim(); next.use_case_owner = value.trim(); }
         else if (field === 'problem_statement') { next.problem_statement = value.trim(); next.business_problem_statement = value.trim(); }
         else if (field === 'expected_benefits') next.expected_benefits = value.trim();
@@ -1773,6 +1776,26 @@ const UseCaseViewPage: React.FC = () => {
       console.error('Failed to save inline edit:', err);
     } finally {
       setInlineSaving(null);
+    }
+  };
+
+  const handleLifecycleStageChange = async (stage: string) => {
+    if (!id) return;
+    setLifecycleError(null);
+    try {
+      await useCaseApi.updateUseCase(id, {
+        status: stage,
+        __activityName: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+      });
+      setUseCase(prev => (prev ? ({ ...prev, status: stage } as UseCaseDetail) : prev));
+      upsertUseCase({
+        identifier: id,
+        name: (useCase as any)?.name ?? (useCase as any)?.title ?? id,
+        status: stage,
+      });
+    } catch (err: any) {
+      console.error('Failed to update lifecycle stage:', err);
+      setLifecycleError(toUserMessage(err) || 'Failed to update lifecycle stage. Please try again.');
     }
   };
 
@@ -1950,6 +1973,8 @@ const UseCaseViewPage: React.FC = () => {
           onSaveInlineEdit={handleSaveInlineEdit}
           onCancelInlineEdit={handleCancelInlineEdit}
           enriching={enriching}
+          onLifecycleStageChange={handleLifecycleStageChange}
+          lifecycleError={lifecycleError}
         />
       )}
 

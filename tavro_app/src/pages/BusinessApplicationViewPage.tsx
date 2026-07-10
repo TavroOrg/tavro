@@ -39,6 +39,7 @@ import { useBlueprint } from '../context/BlueprintContext';
 import { useUseCases } from '../context/UseCaseContext';
 import { agentApi } from '../services/agentApi';
 import { blueprintApi } from '../services/blueprintApi';
+import { useLookupValues } from '../context/LookupContext';
 import AddDimEdgeModal from '../components/AddDimEdgeModal';
 
 type Tab = 'overview' | 'related' | 'related_use_cases' | 'related_ai_models' | 'related_processes' | 'blueprint';
@@ -361,6 +362,8 @@ const BusinessApplicationViewPage: React.FC = () => {
   const { agents: catalogAgents } = useCatalog();
   const { activeCompany } = useBlueprint();
   const { useCases: allUseCases, refresh: refreshUseCases } = useUseCases();
+  const emergencyTierOptions = useLookupValues('business_applications', 'emergency_tier');
+  const businessCriticalityOptions = useLookupValues('business_applications', 'business_criticality');
   const isCreateMode = !id || id === 'new';
   const linkAgentId = (searchParams.get('linkAgentId') || '').trim();
   const linkUseCaseId = (searchParams.get('linkUseCaseId') || '').trim();
@@ -390,6 +393,15 @@ const BusinessApplicationViewPage: React.FC = () => {
 
   const agents = companyAgents.length > 0 ? companyAgents : catalogAgents;
   const useCasesForLinking = companyUseCases.length > 0 ? companyUseCases : allUseCases;
+
+  useEffect(() => {
+    if (!isCreateMode) return;
+    setForm(prev => ({
+      ...prev,
+      emergency_tier: prev.emergency_tier || emergencyTierOptions.find(v => v.is_default)?.value || '',
+      business_criticality: prev.business_criticality || businessCriticalityOptions.find(v => v.is_default)?.value || '',
+    }));
+  }, [isCreateMode, emergencyTierOptions, businessCriticalityOptions]);
 
   const [application, setApplication] = useState<BusinessApplicationRecord | null>(null);
   const [form, setForm] = useState<ApplicationFormState>(emptyForm);
@@ -702,7 +714,7 @@ const BusinessApplicationViewPage: React.FC = () => {
               className={inputCls}
               autoFocus
             >
-              <option value="">Select...</option>
+              <option value="">-- None --</option>
               {(config.options ?? []).map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
@@ -1307,20 +1319,24 @@ const BusinessApplicationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Emergency Tier" hint={HINTS.emergency_tier} />
                 {editing ? (
-                  <select
-                    value={form.emergency_tier}
-                    onChange={(e) => setField('emergency_tier', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {EMERGENCY_TIER_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  emergencyTierOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No emergency tier options configured</div>
+                  ) : (
+                    <select
+                      value={form.emergency_tier}
+                      onChange={(e) => setField('emergency_tier', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {emergencyTierOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('emergency_tier', labelFromOptions(form.emergency_tier, EMERGENCY_TIER_OPTIONS), {
+                  renderInlineEditable('emergency_tier', labelFromOptions(form.emergency_tier, emergencyTierOptions), {
                     kind: 'select',
-                    options: EMERGENCY_TIER_OPTIONS,
+                    options: emergencyTierOptions,
                   })
                 )}
               </div>
@@ -1353,20 +1369,24 @@ const BusinessApplicationViewPage: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <HintLabel label="Business Criticality" hint={HINTS.business_criticality} />
                 {editing ? (
-                  <select
-                    value={form.business_criticality}
-                    onChange={(e) => setField('business_criticality', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">Select...</option>
-                    {BUSINESS_CRITICALITY_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  businessCriticalityOptions.length === 0 ? (
+                    <div className="text-sm text-slate-400 italic px-1 py-2.5">No business criticality options configured</div>
+                  ) : (
+                    <select
+                      value={form.business_criticality}
+                      onChange={(e) => setField('business_criticality', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">-- None --</option>
+                      {businessCriticalityOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )
                 ) : (
-                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, BUSINESS_CRITICALITY_OPTIONS), {
+                  renderInlineEditable('business_criticality', labelFromOptions(form.business_criticality, businessCriticalityOptions), {
                     kind: 'select',
-                    options: BUSINESS_CRITICALITY_OPTIONS,
+                    options: businessCriticalityOptions,
                   })
                 )}
               </div>

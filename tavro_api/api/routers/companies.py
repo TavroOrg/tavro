@@ -12,6 +12,7 @@ from sqlalchemy import text
 from api.database import get_db
 from api.dependencies import require_tenant
 from api.schemas import Company, CompanyCreate, CompanyUpdate, Page
+from api.lookup_defaults import seed_lookup_defaults, delete_lookup_defaults
 
 router = APIRouter()
 
@@ -114,8 +115,12 @@ async def create_company(body: CompanyCreate, tenant_id: str = Depends(require_t
         """),
         {**body.model_dump(), "tenant_id": tenant_id},
     )
+    company = dict(row.mappings().first())
+    
+    await seed_lookup_defaults(db, tenant_id, str(company["id"]))
+
     await db.commit()
-    return dict(row.mappings().first())
+    return company
 
 
 @router.patch("/{company_id}", response_model=Company)
@@ -231,6 +236,11 @@ async def delete_company(company_id: UUID, tenant_id: str = Depends(require_tena
             )
     except Exception:
         pass  # AGE cleanup is best-effort
+
+    # Delete this company's lookup picklist rows (status/priority/criticality/etc.)
+    # scoped to this exact tenant+company — never touches other companies'
+    # rows or tenant-wide (company_id IS NULL) rows.
+    await delete_lookup_defaults(db, tenant_id, cid)
 
     # Delete the company — Postgres cascades handle dim_node, dim_edge, source_ref
     await db.execute(

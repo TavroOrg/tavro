@@ -5,7 +5,7 @@
 //   Step 3 — Industry template (Process, Application, Integration, Risk)
 //   Step 4 — Confirm + create
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toUserMessage } from '../utils/errorUtils';
 import {
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { blueprintApi } from '../services/blueprintApi';
 import { useBlueprint } from '../context/BlueprintContext';
+import { useLookupValues } from '../context/LookupContext';
 import type { CompanyCreate } from '../types/blueprint';
 import { CATEGORY_PALETTE, CATEGORY_LABELS } from '../types/blueprint';
 
@@ -107,6 +108,14 @@ const BlueprintSetupPage: React.FC = () => {
     is_public:    false as boolean | null,   // null = not selected yet
     ticker:       '',
   });
+
+  const industryOptions = useLookupValues('company', 'industry');
+  useEffect(() => {
+    setForm(prev => ({
+      ...prev,
+      industry: prev.industry || industryOptions.find(o => o.is_default)?.value || '',
+    }));
+  }, [industryOptions]);
 
   // ── Research state ─────────────────────────────────────────────────────────
   const [researching,     setResearching]     = useState(false);
@@ -292,8 +301,16 @@ const BlueprintSetupPage: React.FC = () => {
               </Field>
 
               <Field label="Industry" required>
-                <input value={form.industry} onChange={e => update('industry', e.target.value)}
-                  placeholder="e.g. Commercial Banking" className={inputCls} />
+                {industryOptions.length === 0 ? (
+                  <div className="text-sm text-slate-400 dark:text-slate-500 italic px-1 py-2.5">No industry options configured</div>
+                ) : (
+                  <select value={form.industry} onChange={e => update('industry', e.target.value)} className={inputCls}>
+                    <option value="">-- None --</option>
+                    {industryOptions.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                )}
               </Field>
 
               <Field label="Legal entity name">

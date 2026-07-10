@@ -1,7 +1,9 @@
 ﻿import React from 'react';
-import { AgentData, AGENT_TYPES } from '../types/agent';
+import { AgentData } from '../types/agent';
 import { Bot, ExternalLink, Globe, BookOpen, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { getAgentRiskLevel } from '../utils/agentRisk';
+import { useLookupValues } from '../context/LookupContext';
+import LifecycleStepper from './LifecycleStepper';
 
 type AgentInlineField = 'name' | 'description' | 'instruction';
 
@@ -18,6 +20,7 @@ interface AgentHeaderProps {
     onInlineValueChange?: (value: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    onLifecycleStageChange?: (stage: string) => void;
 }
 
 const Badge: React.FC<{ text: string; color?: 'blue' | 'emerald' | 'amber' | 'rose' | 'slate' }> = ({ text, color = 'slate' }) => {
@@ -44,9 +47,13 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
     onInlineValueChange,
     onSaveInlineEdit,
     onCancelInlineEdit,
+    onLifecycleStageChange,
 }) => {
     const id = agent.identification;
     const caps = agent.capabilities;
+    const agentTypeOptions = useLookupValues('agents', 'agent_type');
+    const statusOptions = useLookupValues('agents', 'status');
+    const statusStages = statusOptions.map(o => o.value);
 
     const capBadges: string[] = [];
     if (caps?.streaming === true) capBadges.push('Streaming');
@@ -150,7 +157,8 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                     onChange={e => onEditAgentTypeChange?.(e.target.value)}
                                     className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-blue-400 cursor-pointer"
                                 >
-                                    {AGENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                    <option value="">-- None --</option>
+                                    {agentTypeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                                 </select>
                             ) : (
                                 <Badge text={agent.agent_type || 'Config-driven'} color="slate" />
@@ -178,6 +186,17 @@ const AgentHeader: React.FC<AgentHeaderProps> = ({
                                 )}
                             </div>
                         )}
+                        <div className="max-w-md w-full mt-3">
+                            {statusStages.length === 0 ? (
+                                <div className="text-sm text-slate-400 italic">No status options configured</div>
+                            ) : (
+                                <LifecycleStepper
+                                    stages={statusStages}
+                                    currentStage={agent.status ?? null}
+                                    onStageChange={onLifecycleStageChange}
+                                />
+                            )}
+                        </div>
                     </div>
                 </div>
 

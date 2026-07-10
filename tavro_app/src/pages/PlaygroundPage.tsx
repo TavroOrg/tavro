@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { agentApi } from '../services/agentApi';
 import { appLogger } from '../services/logger';
+import { fetchAllPages } from '../utils/fetchAllPages';
 import AgentClaudeSupportTab from '../components/AgentClaudeSupportTab';
 import { generateMarkdownPdf, isPdfExportRequest, extractPdfBody, inferDocType } from '../utils/pdfGenerator';
 import { usePlayground } from '../context/PlaygroundContext';
@@ -221,8 +222,8 @@ const PlaygroundPage: React.FC = () => {
     document.addEventListener('mousedown', handlePointerDown);
 
     setAgentsLoading(true);
-    agentApi.getAgentCatalog(1, '1-100', activeCompany?.id)
-      .then(res => setCatalogAgents(res.data ?? []))
+    fetchAllPages((start, range) => agentApi.getAgentCatalog(start, range, activeCompany?.id))
+      .then(agents => setCatalogAgents(agents))
       .catch(() => setCatalogAgents([]))
       .finally(() => setAgentsLoading(false));
 

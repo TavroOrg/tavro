@@ -11,6 +11,7 @@ import type {
 import { portalActivity } from './portalActivity';
 import { parseApiError } from '../utils/errorUtils';
 import { appLogger } from './logger';
+import { fetchAllPages } from '../utils/fetchAllPages';
 
 export interface AgentTableRecord {
   table_id: string;
@@ -186,25 +187,24 @@ function changedIntegrationFields(payload: IntegrationUpsertPayload): string {
 
 class BusinessRelationsApi {
   async listApplications(search?: string, companyId?: string): Promise<BusinessApplicationRecord[]> {
-    const params = new URLSearchParams();
-    if (search?.trim()) params.set('q', search.trim());
-    if (companyId) params.set('company_id', companyId);
-    params.set('offset', '0');
-    params.set('limit', '500');
-    const suffix = params.toString() ? `?${params.toString()}` : '';
-    appLogger.req('GET /api/v1/applications', { search, companyId });
-    const t0 = Date.now();
-    const data = await req<any>(`/applications${suffix}`);
-    const items = Array.isArray(data) ? data as BusinessApplicationRecord[] : (data?.items ?? []) as BusinessApplicationRecord[];
-    appLogger.res('GET /api/v1/applications', { count: items.length }, Date.now() - t0);
-    return items;
+    return fetchAllPages<BusinessApplicationRecord>(async (startRecord, recordRange) => {
+      const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
+      if (search?.trim()) params.set('q', search.trim());
+      if (companyId) params.set('company_id', companyId);
+      appLogger.req('GET /api/v1/applications', { startRecord, recordRange, search, companyId });
+      const t0 = Date.now();
+      const data = await req<any>(`/applications?${params.toString()}`);
+      const normalized = Array.isArray(data) ? { total_records: data.length, data } : data;
+      appLogger.res('GET /api/v1/applications', { totalRecords: normalized.total_records, count: (normalized.data ?? []).length }, Date.now() - t0);
+      return normalized;
+    });
   }
 
   async countApplications(companyId?: string): Promise<number> {
-    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
     if (companyId) params.set('company_id', companyId);
     const data = await req<any>(`/applications?${params.toString()}`);
-    return (data?.total ?? 0) as number;
+    return (data?.total_records ?? 0) as number;
   }
 
   async getApplication(applicationId: string, companyId?: string): Promise<BusinessApplicationRecord> {
@@ -274,25 +274,24 @@ class BusinessRelationsApi {
   }
 
   async listProcesses(search?: string, companyId?: string): Promise<BusinessProcessRecord[]> {
-    const params = new URLSearchParams();
-    if (search?.trim()) params.set('q', search.trim());
-    if (companyId) params.set('company_id', companyId);
-    params.set('offset', '0');
-    params.set('limit', '500');
-    const suffix = params.toString() ? `?${params.toString()}` : '';
-    appLogger.req('GET /api/v1/processes', { search, companyId });
-    const t0 = Date.now();
-    const data = await req<any>(`/processes${suffix}`);
-    const items = Array.isArray(data) ? data as BusinessProcessRecord[] : (data?.items ?? []) as BusinessProcessRecord[];
-    appLogger.res('GET /api/v1/processes', { count: items.length }, Date.now() - t0);
-    return items;
+    return fetchAllPages<BusinessProcessRecord>(async (startRecord, recordRange) => {
+      const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
+      if (search?.trim()) params.set('q', search.trim());
+      if (companyId) params.set('company_id', companyId);
+      appLogger.req('GET /api/v1/processes', { startRecord, recordRange, search, companyId });
+      const t0 = Date.now();
+      const data = await req<any>(`/processes?${params.toString()}`);
+      const normalized = Array.isArray(data) ? { total_records: data.length, data } : data;
+      appLogger.res('GET /api/v1/processes', { totalRecords: normalized.total_records, count: (normalized.data ?? []).length }, Date.now() - t0);
+      return normalized;
+    });
   }
 
   async countProcesses(companyId?: string): Promise<number> {
-    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
     if (companyId) params.set('company_id', companyId);
     const data = await req<any>(`/processes?${params.toString()}`);
-    return (data?.total ?? 0) as number;
+    return (data?.total_records ?? 0) as number;
   }
 
   async getProcess(processId: string, companyId?: string): Promise<BusinessProcessRecord> {
@@ -372,7 +371,7 @@ class BusinessRelationsApi {
     const params = new URLSearchParams();
     if (companyId) params.set('company_id', companyId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    return req(`/agents/${encodeURIComponent(agentId)}${suffix}`);
+    return req(`/agents/${encodeURIComponent(agentId)}/relations${suffix}`);
   }
 
   async listAgentAttachments(agentId: string): Promise<AgentAttachmentRecord[]> {
@@ -651,25 +650,24 @@ class BusinessRelationsApi {
   }
 
   async listIntegrations(search?: string, companyId?: string): Promise<IntegrationRecord[]> {
-    const params = new URLSearchParams();
-    if (search?.trim()) params.set('q', search.trim());
-    if (companyId) params.set('company_id', companyId);
-    params.set('offset', '0');
-    params.set('limit', '500');
-    const suffix = params.toString() ? `?${params.toString()}` : '';
-    appLogger.req('GET /api/v1/integrations', { search, companyId });
-    const t0 = Date.now();
-    const data = await req<unknown>(`/integrations${suffix}`);
-    const items = Array.isArray(data) ? data as IntegrationRecord[] : ((data as { items?: IntegrationRecord[] })?.items ?? []) as IntegrationRecord[];
-    appLogger.res('GET /api/v1/integrations', { count: items.length }, Date.now() - t0);
-    return items;
+    return fetchAllPages<IntegrationRecord>(async (startRecord, recordRange) => {
+      const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
+      if (search?.trim()) params.set('q', search.trim());
+      if (companyId) params.set('company_id', companyId);
+      appLogger.req('GET /api/v1/integrations', { startRecord, recordRange, search, companyId });
+      const t0 = Date.now();
+      const data = await req<any>(`/integrations?${params.toString()}`);
+      const normalized = Array.isArray(data) ? { total_records: data.length, data } : data;
+      appLogger.res('GET /api/v1/integrations', { totalRecords: normalized.total_records, count: (normalized.data ?? []).length }, Date.now() - t0);
+      return normalized;
+    });
   }
 
   async countIntegrations(companyId?: string): Promise<number> {
-    const params = new URLSearchParams({ offset: '0', limit: '1' });
+    const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
     if (companyId) params.set('company_id', companyId);
     const data = await req<any>(`/integrations?${params.toString()}`);
-    return (data?.total ?? 0) as number;
+    return (data?.total_records ?? 0) as number;
   }
 
   async getIntegration(integrationId: string, companyId?: string): Promise<IntegrationRecord> {

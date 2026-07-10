@@ -33,6 +33,7 @@ interface AgentViewProps {
     onInlineValueChange?: (value: string) => void;
     onSaveInlineEdit?: () => void;
     onCancelInlineEdit?: () => void;
+    onLifecycleStageChange?: (stage: string) => void;
 }
 
 type TabType =
@@ -63,6 +64,7 @@ const AgentView: React.FC<AgentViewProps> = ({
     editInstruction, onEditInstructionChange,
     inlineEdit, inlineSaving, onStartInlineEdit,
     onInlineValueChange, onSaveInlineEdit, onCancelInlineEdit,
+    onLifecycleStageChange,
 }) => {
     const [activeTab, setActiveTab] = useState<TabType>('IDENTIFICATION');
     const agentId = agent.identification?.agent_id;
@@ -90,6 +92,7 @@ const AgentView: React.FC<AgentViewProps> = ({
                     onInlineValueChange={onInlineValueChange}
                     onSaveInlineEdit={onSaveInlineEdit}
                     onCancelInlineEdit={onCancelInlineEdit}
+                    onLifecycleStageChange={onLifecycleStageChange}
                 />
             </div>
 

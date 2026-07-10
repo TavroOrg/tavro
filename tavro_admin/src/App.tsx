@@ -12,6 +12,7 @@ import AdminCompanyPage from './pages/AdminCompanyPage';
 import AdminInfrastructurePage from './pages/AdminInfrastructurePage';
 import AdminUserGuidePage from './pages/AdminUserGuidePage';
 import AdminRoadmapConfigPage from './pages/AdminRoadmapConfigPage';
+import AdminReferenceTablesPage from './pages/AdminReferenceTablesPage';
 
 function isAuthenticated(): boolean {
     const token = localStorage.getItem('tavro_admin_access_token');
@@ -60,6 +61,7 @@ function App() {
                         <Route path="container-logs" element={<AdminContainerLogsPage />} />
                         <Route path="settings" element={<AdminSettingsPage />} />
                         <Route path="company-preferences" element={<AdminRoadmapConfigPage />} />
+                        <Route path="reference-tables" element={<AdminReferenceTablesPage />} />
                         <Route path="infrastructure" element={<AdminInfrastructurePage />} />
                     </Route>
                     <Route path="*" element={<Navigate to="/" replace />} />
