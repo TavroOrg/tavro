@@ -82,8 +82,6 @@ CREATE TABLE IF NOT EXISTS twin.company (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE twin.company DROP COLUMN IF EXISTS region;
-DROP INDEX IF EXISTS twin.company_name_region_tenant_uidx;
 CREATE UNIQUE INDEX IF NOT EXISTS company_name_tenant_uidx
     ON twin.company (lower(name), tenant_id);
 CREATE INDEX IF NOT EXISTS twin_company_tenant_idx ON twin.company (tenant_id);
