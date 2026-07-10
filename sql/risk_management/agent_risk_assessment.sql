@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS risk_management.agent_risk_assessment (
-  tenant_id TEXT,
-  company_id TEXT,
+  tenant_id TEXT NOT NULL,
+  company_id TEXT NOT NULL,
   agent_name TEXT,
   agent_risk_assessment_name TEXT,
   analysis_requested_at timestamp,
@@ -53,29 +53,7 @@ CREATE TABLE IF NOT EXISTS risk_management.agent_risk_assessment (
   self_modification decimal(10, 2),
   opacity_reflexivity decimal(10, 2),
   blended_risk_score decimal(10, 2),
-  agent_internal_id TEXT);
-
--- Critical #1 (audit_db/README.md): reject new rows with a missing/blank
--- tenant_id or company_id, without requiring historic data to be clean
--- first (NOT VALID).
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_risk_assessment_tenant_id_present') THEN
-        ALTER TABLE risk_management.agent_risk_assessment
-            ADD CONSTRAINT chk_agent_risk_assessment_tenant_id_present
-            CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> '') NOT VALID;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'risk_management.agent_risk_assessment: tenant_id CHECK skipped — %', SQLERRM;
-END $$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_risk_assessment_company_id_present') THEN
-        ALTER TABLE risk_management.agent_risk_assessment
-            ADD CONSTRAINT chk_agent_risk_assessment_company_id_present
-            CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'risk_management.agent_risk_assessment: company_id CHECK skipped — %', SQLERRM;
-END $$;
+  agent_internal_id TEXT,
+  CONSTRAINT chk_agent_risk_assessment_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+  CONSTRAINT chk_agent_risk_assessment_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
+);

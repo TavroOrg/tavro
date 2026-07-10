@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS core.agent_governance_events (
-	tenant_id TEXT,
-	company_id TEXT,
+	tenant_id TEXT NOT NULL,
+	company_id TEXT NOT NULL,
 	governance_event_id TEXT,
 	agent_id TEXT,
 	event_type TEXT,
@@ -9,49 +9,7 @@ CREATE TABLE IF NOT EXISTS core.agent_governance_events (
 	status TEXT,
 	notes TEXT,
 	created_ts timestamp,
-	agent_internal_id TEXT
+	agent_internal_id TEXT,
+	CONSTRAINT chk_agent_governance_events_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
+	CONSTRAINT chk_agent_governance_events_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
 );
-
--- High #2 (audit_db/README.md): composite FK to core.agents. SET NULL, not
--- CASCADE — governance/audit events should outlive the agent they were
--- logged against rather than disappear when the agent is deleted. NOT VALID:
--- safe on a live table with existing data; validate later with
--- ALTER TABLE core.agent_governance_events VALIDATE CONSTRAINT fk_agent_governance_events_agent;
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_governance_events_agent') THEN
-        ALTER TABLE core.agent_governance_events
-            ADD CONSTRAINT fk_agent_governance_events_agent
-            FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-            REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
-            ON DELETE SET NULL NOT VALID;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'agent_governance_events: composite FK skipped — %', SQLERRM;
-END $$;
-
--- Critical #1 (audit_db/README.md): reject new rows with a missing/blank
--- tenant_id or company_id, without requiring historic data to be clean
--- first (NOT VALID).
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_governance_events_tenant_id_present') THEN
-        ALTER TABLE core.agent_governance_events
-            ADD CONSTRAINT chk_agent_governance_events_tenant_id_present
-            CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> '') NOT VALID;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'agent_governance_events: tenant_id CHECK skipped — %', SQLERRM;
-END $$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_agent_governance_events_company_id_present') THEN
-        ALTER TABLE core.agent_governance_events
-            ADD CONSTRAINT chk_agent_governance_events_company_id_present
-            CHECK (company_id IS NOT NULL AND btrim(company_id) <> '') NOT VALID;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'agent_governance_events: company_id CHECK skipped — %', SQLERRM;
-END $$;
-

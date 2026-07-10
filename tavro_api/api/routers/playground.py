@@ -409,11 +409,18 @@ async def _resolve_agent_identifiers(
     if not agent_id:
         return None, None
     try:
+        # No tenant is known yet at this call site — this is the fallback
+        # path specifically for resolving it. agent_id is no longer
+        # globally unique (ux_core_agents_current is now tenant/company
+        # scoped), so if the same agent_id exists as "current" in more
+        # than one tenant, this deliberately picks the most recently
+        # updated one rather than an arbitrary row.
         row = await db.execute(
             text("""
                 SELECT tenant_id, company_id, agent_internal_id
                 FROM core.agents
                 WHERE agent_id = :aid AND is_current = true
+                ORDER BY updated_ts DESC
                 LIMIT 1
             """),
             {"aid": agent_id},

@@ -132,12 +132,14 @@ def has_meaningful_data(data) -> bool:
 # SOURCE HASH CHECK  (unchanged logic — SQL is identical Postgres / Athena)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_current_agent_source_hash(agent_id: str):
+def get_current_agent_source_hash(agent_id: str, tenant_id: str = None):
+    tenant_filter = f"AND tenant_id = {_sq(tenant_id)}" if tenant_id else ""
     sql = f"""
         SELECT source_hash
         FROM core.agents
         WHERE agent_id = {_sq(agent_id)}
           AND is_current = true
+          {tenant_filter}
         ORDER BY updated_ts DESC
         LIMIT 1
     """
@@ -229,7 +231,7 @@ def upsert_agent(
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
-        ON CONFLICT (agent_id, agent_name) WHERE is_current = true
+        ON CONFLICT (tenant_id, company_id, agent_id) WHERE is_current = true
         DO UPDATE SET
             agent_internal_id      = EXCLUDED.agent_internal_id,
             agent_description      = EXCLUDED.agent_description,
@@ -1581,7 +1583,7 @@ def process_card(card_dict: dict, tenant_id: str = None, company_id: str = None,
     print(f"Incoming source_hash={incoming_source_hash}")
 
     try:
-        existing_source_hash = get_current_agent_source_hash(agent_id)
+        existing_source_hash = get_current_agent_source_hash(agent_id, tenant_id)
         print(f"Existing source_hash={existing_source_hash}")
 
         if existing_source_hash == incoming_source_hash:

@@ -1263,9 +1263,10 @@ async def link_agent(use_case_id: str, body: LinkAgentRequest, request: Request,
         if not use_case:
             raise HTTPException(status_code=404, detail=f"AI Use Case '{normalized_use_case_id}' not found.")
 
+        agent_tenant_filter = "AND tenant_id = :tid" if tenant_id else ""
         agent_row = await db.execute(
-            text(f"SELECT agent_internal_id, agent_name FROM {CORE}.agents WHERE agent_id = :aid AND is_current = true LIMIT 1"),
-            {"aid": agent_id},
+            text(f"SELECT agent_internal_id, agent_name FROM {CORE}.agents WHERE agent_id = :aid AND is_current = true {agent_tenant_filter} LIMIT 1"),
+            {"aid": agent_id, "tid": tenant_id},
         )
         agent = agent_row.mappings().first()
         if not agent:

@@ -508,8 +508,9 @@ class AICTInboundConnector(BaseConnector):
             # value injected by the admin portal's process_card monkey-patch.
             linked_models = [m for m in (bot.get("ai_model") or []) if m.get("name")]
             if linked_models:
+                tenant_filter = f"AND tenant_id = '{TENANT_ID}'" if TENANT_ID else ""
                 tid_rows = execute_query(
-                    f"SELECT tenant_id FROM core.agents WHERE agent_id = '{bot['botid']}' AND is_current = true LIMIT 1"
+                    f"SELECT tenant_id FROM core.agents WHERE agent_id = '{bot['botid']}' AND is_current = true {tenant_filter} LIMIT 1"
                 )
                 agent_tenant_id = (tid_rows[0]["tenant_id"] if tid_rows else None) or TENANT_ID or None
                 self._upsert_linked_ai_models(linked_models, tenant_id=agent_tenant_id)
@@ -520,8 +521,9 @@ class AICTInboundConnector(BaseConnector):
                 continue
 
             # Get parent's agent_internal_id from DB
+            parent_tenant_filter = f"AND tenant_id = '{TENANT_ID}'" if TENANT_ID else ""
             rows = execute_query(
-                f"SELECT agent_internal_id FROM core.agents WHERE agent_id = '{bot['botid']}' LIMIT 1"
+                f"SELECT agent_internal_id FROM core.agents WHERE agent_id = '{bot['botid']}' {parent_tenant_filter} LIMIT 1"
             )
             if not rows:
                 logger.warning("AICT inbound: could not find agent in DB for agent_id='%s' (name='%s') — skipping child linking", bot['botid'], bot.get('name'))
@@ -548,8 +550,9 @@ class AICTInboundConnector(BaseConnector):
                     logger.error("AICT inbound: process_card FAILED for child '%s' (agent_id=%s) — %s", child_name, child_agent_id, e, exc_info=True)
                     continue
 
+                child_tenant_filter = f"AND tenant_id = '{TENANT_ID}'" if TENANT_ID else ""
                 child_rows = execute_query(
-                    f"SELECT agent_internal_id FROM core.agents WHERE agent_id = '{child_bot['botid']}' LIMIT 1"
+                    f"SELECT agent_internal_id FROM core.agents WHERE agent_id = '{child_bot['botid']}' {child_tenant_filter} LIMIT 1"
                 )
                 if not child_rows:
                     continue

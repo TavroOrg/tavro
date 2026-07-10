@@ -1,5 +1,4 @@
 -- =============================================================
--- RUN THIS DIRECTLY AGAINST THE HOSTED PRODUCTION DATABASE
 -- Implements Critical #1 and #2 from audit_db/README.md:
 --   1. Enforce tenant_id AND company_id presence on every table that
 --      carries them (Zitadel-issued, fetched by the app — not a value
@@ -9,57 +8,25 @@
 --   2. Promote composite (tenant_id, company_id, <asset_id>) keys to
 --      PRIMARY KEY wherever that is safe without breaking a live FK
 --
--- SAFE TO RUN ON A LIVE DATABASE:
---   - CHECK constraints are added NOT VALID: they block new violating
---     INSERT/UPDATE immediately but do NOT scan or fail against existing
---     rows at creation time, so no downtime and no risk of the ALTER
---     itself failing because of pre-existing bad data.
---   - NOT NULL promotion is automatic and safe: this script tries
---     VALIDATE CONSTRAINT (proves no existing NULL/blank rows, lightweight
---     lock) then ALTER COLUMN ... SET NOT NULL (metadata-only once
---     validated) for every table. If a table isn't clean yet, VALIDATE
---     fails, the guard catches it, and that one table is skipped — no
---     manual follow-up step needed; just re-run this script after the
---     data is fixed and it picks up where it left off.
---   - Composite PRIMARY KEY / UNIQUE additions DO scan the table and WILL
---     fail if any existing row has a NULL tenant_id/company_id/asset_id, or
---     a duplicate combination. Each one below is wrapped in its own
---     BEGIN/EXCEPTION block, so a table that isn't ready yet logs a NOTICE
---     and is skipped — it will NOT abort the rest of this script.
---   - Idempotent: safe to re-run. Already-applied constraints are detected
---     via pg_constraint / information_schema and skipped.
+-- Runs automatically on app startup (tavro_api/api/migrations/init_tables.py
+-- discovers and executes every sql/core/*.sql file alphabetically). Named
+-- to sort after zz_agent_upsert_unique_indexes.sql, since Section B reuses
+-- unique indexes defined there.
 --
--- BEFORE RUNNING:
---   1. Run check_null_tenant_across_db.sql and check_null_company_id_across_db.sql
---      in this same folder first, to know which tables (if any) will be
---      skipped below due to existing NULL data.
---   2. Take this action during a low-traffic window even though the
---      operations are individually safe — ADD CONSTRAINT PRIMARY KEY builds
---      its backing index under a table-level lock (see PRODUCTION NOTE
---      below for large tables).
+-- Every table's own CREATE TABLE file under sql/core/ (agents.sql,
+-- business_applications.sql, etc.) now contains ONLY its schema
+-- definition — every constraint/migration statement for that table lives
+-- here instead, consolidated in one place. This is also the exact file to
+-- run manually against an already-provisioned hosted database — see
+-- audit_db/critical_01_tenant_and_composite_pk.sql, which is kept in sync
+-- with this one for that purpose.
 --
--- PRODUCTION NOTE — large tables:
--- CREATE INDEX CONCURRENTLY cannot run inside a DO block's implicit
--- transaction. If any of the tables below already hold significant
--- production volume, build the unique index out-of-band FIRST, as its own
--- statement, outside any transaction:
---   CREATE UNIQUE INDEX CONCURRENTLY ux_pending_<table>
---       ON <schema>.<table> (tenant_id, company_id, <asset_id>);
--- Re-running this script afterwards will detect a same-shape index does not
--- exist under the exact expected name and will attempt to build one inline —
--- so if you pre-build one, name it to match what each block below checks for
--- (ux_core_business_applications / ux_core_business_processes are reused
--- automatically; for the others, pre-build under the final constraint name
--- and this script's "already exists" check will skip cleanly).
+-- SAFE TO RUN ON A LIVE DATABASE — see audit_db/critical_01_tenant_and_composite_pk.sql
+-- for the full safety notes (NOT VALID checks, VALIDATE-then-SET-NOT-NULL
+-- promotion, idempotency, and the production notes on large tables).
 --
--- AFTER RUNNING — nothing manual required for tenant_id/company_id: this
--- script's Section A already attempts VALIDATE + SET NOT NULL for every
--- table on this same run. Check the NOTICE output for any table that was
--- skipped ("likely existing NULL/blank rows") — clean that table's data
--- and re-run this script to pick it up; no other step needed.
---
--- SCOPE — Section A (tenant_id/company_id presence + NOT NULL) covers every table
--- across core/curated/raw/risk_management dynamically, via
+-- SCOPE — Section A (tenant_id/company_id presence + NOT NULL) covers every
+-- table across core/curated/raw/risk_management dynamically, via
 -- information_schema — no hardcoded table list, so it automatically
 -- includes any table added later. Section B (composite PK/UNIQUE) is
 -- necessarily hardcoded, since promoting a key is relationship-specific:
@@ -79,14 +46,6 @@
 -- raw.run_time_logs have tenant_id but no company_id column: ingestion
 -- happens before company resolution, so only the tenant_id CHECK applies
 -- to those three.
---
--- This exact logic is also embedded in each table's own definition file
--- under sql/core/ (agents.sql, business_applications.sql, etc.) plus the
--- dynamic sql/core/zz_tenant_company_id_hardening.sql, so that fresh/dev
--- environments provisioned via tavro_api/api/migrations/init_tables.py
--- pick it up automatically. This file exists solely so you have ONE script
--- to run once, right now, against the already-provisioned hosted
--- production database.
 -- =============================================================
 
 -- ============================================================
@@ -323,9 +282,3 @@ BEGIN
     END;
 
 END $$;
-
--- After running, check server logs / client output for any "skipped" NOTICE
--- lines above — Section A skips are almost always pre-existing NULL data
--- (harmless, just means that table isn't clean yet); Section B skips are
--- usually NULL tenant_id/company_id/asset_id blocking the PK build, or a
--- duplicate combination that needs de-duplication first.

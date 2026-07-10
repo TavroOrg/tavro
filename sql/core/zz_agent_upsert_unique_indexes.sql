@@ -1,5 +1,28 @@
+-- BUG FIX: this index was originally global (agent_id, agent_name), with no
+-- tenant_id/company_id scope — that made "current" agent identity unique
+-- across the ENTIRE database, not per tenant. Copying an agent from one
+-- tenant to another (same agent_id, same is_current=true) violated the
+-- index even though the destination is a different tenant/company
+-- entirely. Fixed to scope uniqueness to (tenant_id, company_id, agent_id).
+-- The guard below detects and repairs an already-existing global-shaped
+-- index on a live database; on a fresh install the CREATE UNIQUE INDEX
+-- below just builds the correct shape directly.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'core' AND indexname = 'ux_core_agents_current'
+          AND indexdef NOT LIKE '%tenant_id%'
+    ) THEN
+        DROP INDEX core.ux_core_agents_current;
+        RAISE NOTICE 'Dropped legacy global-scope ux_core_agents_current index';
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'ux_core_agents_current legacy-index check skipped — %', SQLERRM;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
-ON core.agents (agent_id, agent_name)
+ON core.agents (tenant_id, company_id, agent_id)
 WHERE is_current = true;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_generated_code

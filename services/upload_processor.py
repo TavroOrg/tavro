@@ -112,10 +112,12 @@ def _canonical_entity_id(raw_id, raw_name) -> Optional[str]:
 # Source-hash check
 # ---------------------------------------------------------------------------
 
-def _get_source_hash(conn, agent_id: str) -> Optional[str]:
+def _get_source_hash(conn, agent_id: str, tenant_id: Optional[str] = None) -> Optional[str]:
+    tenant_filter = f"AND tenant_id = {_sq(tenant_id)}" if tenant_id else ""
     rows = _query(conn, f"""
         SELECT source_hash FROM {CORE}.agents
         WHERE agent_id = {_sq(agent_id)} AND is_current = true
+          {tenant_filter}
         ORDER BY updated_ts DESC LIMIT 1
     """)
     return rows[0]["source_hash"] if rows else None
@@ -163,7 +165,7 @@ def _upsert_agent(conn, card: dict, now_str: str, source_hash: str, tenant_id: O
             TIMESTAMP '{now_str}', NULL, true,
             TIMESTAMP '{now_str}', TIMESTAMP '{now_str}'
         )
-        ON CONFLICT (agent_id, agent_name) WHERE is_current = true
+        ON CONFLICT (tenant_id, company_id, agent_id) WHERE is_current = true
         DO UPDATE SET
             tenant_id              = EXCLUDED.tenant_id,
             agent_internal_id      = EXCLUDED.agent_internal_id,
@@ -1446,7 +1448,7 @@ def process_card_for_upload(card_dict: dict, tenant_id: Optional[str] = None, co
 
     try:
         with _db() as conn:
-            existing_hash = _get_source_hash(conn, agent_id)
+            existing_hash = _get_source_hash(conn, agent_id, tenant_id)
             if existing_hash == incoming_source_hash:
                 print(f"[INFO] No changes detected for agent_id={agent_id}. Skipping.")
                 return True
