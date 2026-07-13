@@ -236,3 +236,10 @@ tavro_api/api/routers/compliance_research.py
 node_modules/
 tavro_admin/dist/
 tavro_admin/.vite/
+
+# Playwright e2e — local credentials and generated artifacts
+tavro_app/playwright/.env.e2e
+tavro_app/playwright/.auth/
+tavro_app/playwright/test-results-e2e/
+tavro_app/playwright/test-results-e2e-cleanup/
+tavro_app/playwright-report/
