@@ -27,6 +27,7 @@ const TAVRO_VERSION = 'v.3.1';
 import { mcpClient } from '../services/mcpClient';
 import { clearAllSessions } from '../store/chatSessionStore';
 import { getUserDisplayName, fetchUserDisplayName } from '../services/auth';
+import { syncRoadmapConfigFromServer } from '../services/roadmapConfig';
 
 import travoLogo from '../assets/travo_logo.png';
 
@@ -132,6 +133,13 @@ const Layout: React.FC = () => {
     useEffect(() => {
         fetchUserDisplayName().then(name => { if (name) setUserName(name); });
     }, []);
+
+    // Keep the roadmap-weights cache in sync with the admin-configured values
+    // for whichever company is active — pages that read it (e.g. use case
+    // scoring) listen for ROADMAP_CONFIG_UPDATED_EVENT to refresh.
+    useEffect(() => {
+        if (activeCompany?.id) syncRoadmapConfigFromServer(activeCompany.id);
+    }, [activeCompany]);
 
     const fetchCatalogCounts = useCallback(() => {
         const companyId = activeCompany?.id;

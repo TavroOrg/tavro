@@ -407,6 +407,44 @@ _ENTITY_COL_MAP: dict[str, str] = {
     "integration": "integration_id",
 }
 
+_FALLBACK_NODE_VISIBILITY = "internal"
+_FALLBACK_NODE_SENSITIVE = False
+
+
+async def get_company_node_defaults(db: AsyncSession, company_id: str) -> tuple[str, bool]:
+    """Company-configured defaults (Admin Portal → Company Preferences → Data Node
+    Defaults) applied to a new twin.dim_node when the caller doesn't specify
+    visibility/sensitive explicitly. Falls back to the historical hardcoded
+    defaults if the company has no company_preferences row yet."""
+    row = await db.execute(
+        text("SELECT default_visibility, default_sensitive FROM twin.company_preferences WHERE company_id = :cid"),
+        {"cid": company_id},
+    )
+    prefs = row.mappings().first()
+    if not prefs:
+        return _FALLBACK_NODE_VISIBILITY, _FALLBACK_NODE_SENSITIVE
+    visibility = prefs["default_visibility"] or _FALLBACK_NODE_VISIBILITY
+    sensitive = prefs["default_sensitive"] if prefs["default_sensitive"] is not None else _FALLBACK_NODE_SENSITIVE
+    return visibility, bool(sensitive)
+
+
+async def _apply_company_node_defaults(db: AsyncSession, company_id: Optional[str], canonical: dict) -> None:
+    """If the caller didn't specify visibility/sensitive on a new business entity,
+    fill them from the company's configured node defaults *before* the INSERT.
+    Without this, core.business_applications/business_processes/business_integrations'
+    own column DEFAULT ('internal'/false) silently fills the gap — and that concrete
+    value then looks like an explicit choice to the downstream dim_node sync,
+    defeating get_company_node_defaults() there."""
+    if not company_id:
+        return
+    if canonical.get("visibility") is not None and canonical.get("sensitive") is not None:
+        return
+    default_visibility, default_sensitive = await get_company_node_defaults(db, company_id)
+    if canonical.get("visibility") is None:
+        canonical["visibility"] = default_visibility
+    if canonical.get("sensitive") is None:
+        canonical["sensitive"] = default_sensitive
+
 
 async def _upsert_dim_node_for_entity(
     db: AsyncSession,
@@ -487,6 +525,10 @@ async def _upsert_dim_node_for_entity(
         )
         return node_id
     else:
+        # New node — fall back to the company's configured node defaults for
+        # any field the caller didn't explicitly specify.
+        default_visibility, default_sensitive = await get_company_node_defaults(db, company_id)
+
         # Build INSERT; include entity_id column when provided
         ins_cols = "company_id, dim_type_id, label, summary, tags, visibility, sensitive"
         ins_vals = ":company_id, :dim_type_id, :label, :summary, cast(:tags as jsonb), :visibility, :sensitive"
@@ -496,8 +538,8 @@ async def _upsert_dim_node_for_entity(
             "label": label,
             "summary": summary,
             "tags": json.dumps(tags or []),
-            "visibility": visibility or "internal",
-            "sensitive": sensitive if sensitive is not None else False,
+            "visibility": visibility or default_visibility,
+            "sensitive": sensitive if sensitive is not None else default_sensitive,
         }
         if entity_id and entity_col:
             ins_cols += f", {entity_col}"
@@ -3693,6 +3735,7 @@ async def create_integration(
         )
 
     canonical = body.model_dump(exclude_unset=True)
+    await _apply_company_node_defaults(db, company_id, canonical)
     insert_values: dict[str, Any] = {"integration_id": integration_id}
     tenant_id = _tenant(request)
     if tenant_id and "tenant_id" in int_cols:
@@ -4325,6 +4368,7 @@ async def create_application(
 ):
     app_cols = await _table_columns(db, "core", "business_applications")
     canonical = _canonical_payload(body.model_dump(exclude_unset=True), _APPLICATION_ALIAS_MAP)
+    await _apply_company_node_defaults(db, company_id, canonical)
 
     app_id = uuid4().hex
     existing = await _fetch_applications(db, application_id=app_id)
@@ -5008,6 +5052,7 @@ async def create_process(
     canonical = _normalize_process_dropdown_values(
         _canonical_payload(body.model_dump(exclude_unset=True), _PROCESS_ALIAS_MAP)
     )
+    await _apply_company_node_defaults(db, company_id, canonical)
 
     process_id = uuid4().hex
     existing = await _fetch_processes(db, process_id=process_id)

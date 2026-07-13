@@ -1,5 +1,5 @@
 import React from 'react';
-import { readRoadmapConfig } from '../services/roadmapConfig';
+import { readRoadmapConfig, ROADMAP_CONFIG_UPDATED_EVENT } from '../services/roadmapConfig';
 import { useCaseApi } from '../services/useCaseApi';
 import { Link } from 'react-router-dom';
 import { UseCaseDetail } from '../types/useCase';
@@ -349,8 +349,15 @@ const UseCaseView: React.FC<UseCaseViewProps> = ({
 
     const [expandedDims, setExpandedDims] = React.useState<Set<string>>(new Set());
 
-    // Platform-level weights — set in Settings → Roadmap configuration
-    const cfg = React.useMemo(() => readRoadmapConfig(), []);
+    // Company-wide weights — configured by the org admin in the Admin Portal.
+    // Layout.tsx syncs the cache on load/company-switch; listen so this view
+    // picks up the latest values even if it was already mounted.
+    const [cfg, setCfg] = React.useState(() => readRoadmapConfig());
+    React.useEffect(() => {
+        const handler = () => setCfg(readRoadmapConfig());
+        window.addEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+        return () => window.removeEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+    }, []);
     const riskWeights = cfg.riskWeights;
 
     const riskScoredCount = Object.values(riskScores).filter(s => s !== null).length;
