@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator
 from uuid import uuid4
 
@@ -31,6 +32,27 @@ router = APIRouter()
 
 # RESEARCH_MAX_SEARCH_TURNS: max web-search round-trips (override via env var).
 RESEARCH_MAX_SEARCH_TURNS: int = int(os.getenv("RESEARCH_MAX_SEARCH_TURNS", "3"))
+
+# How far back to look for SEC filings, relative to *now* — computed fresh on every
+# call (never a fixed calendar year) so this stays correct indefinitely.
+SEC_SEARCH_LOOKBACK_YEARS: int = int(os.getenv("SEC_SEARCH_LOOKBACK_YEARS", "5"))
+
+
+def _today() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _today_str() -> str:
+    """Current UTC date as YYYY-MM-DD — used to ground the AI on 'now' so research
+    reasoning about the 'most recently completed fiscal year/quarter' is always
+    relative to the actual request date, not the model's training-data cutoff."""
+    return _today().strftime("%Y-%m-%d")
+
+
+def _sec_search_start_date() -> str:
+    """Rolling lower bound for SEC full-text search — always SEC_SEARCH_LOOKBACK_YEARS
+    before today, so it never goes stale like a hardcoded calendar date would."""
+    return (_today() - timedelta(days=365 * SEC_SEARCH_LOOKBACK_YEARS)).strftime("%Y-%m-%d")
 
 
 # =============================================================
@@ -233,7 +255,7 @@ async def _fetch_sec_filing_info(ticker: str) -> dict:
         ) as client:
             # ── Step 1: Search EDGAR for the ticker's annual-report filings ──
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{ticker}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": "2021-01-01"}
+            params1 = {"q": f'"{ticker}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": _sec_search_start_date()}
             _logger.debug("[SEC/ticker] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/ticker] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -304,7 +326,7 @@ async def _search_sec_by_name(company_name: str) -> dict:
         ) as client:
             # ── Step 1: Full-text search for recent annual-report filings ────
             url1 = "https://efts.sec.gov/LATEST/search-index"
-            params1 = {"q": f'"{company_name}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": "2022-01-01"}
+            params1 = {"q": f'"{company_name}"', "forms": "10-K,20-F", "dateRange": "custom", "startdt": _sec_search_start_date()}
             _logger.debug("[SEC/name] GET %s params=%s", url1, params1)
             search_resp = await client.get(url1, params=params1)
             _logger.debug("[SEC/name] step1 status=%s body=%s", search_resp.status_code, search_resp.text[:800])
@@ -576,7 +598,7 @@ Return ONLY a JSON object (no prose, no markdown fences, no explanation):
       "sensitive": false
     }
   ],
-  "sources": ["10-K FY2024 (SEC EDGAR)", "10-Q Q3 FY2024", "Q3 FY2024 Earnings Call Transcript", "Investor Presentation Sept 2024", "DEF 14A 2024"],
+  "sources": ["10-K FY<year> (SEC EDGAR)", "10-Q Q<n> FY<year>", "Q<n> FY<year> Earnings Call Transcript", "Investor Presentation <month year>", "DEF 14A <year>"],
   "notice": "One sentence noting this is sourced from SEC EDGAR filings and investor communications."
 }
 
@@ -611,7 +633,9 @@ Rules:
 - Base summaries on the actual filing/transcript/presentation text; cite the fiscal period
   (year and quarter) in each summary
 - Treat "Form 20-F" as the foreign-private-issuer equivalent of the 10-K annual report
-- Use specific numbers (e.g. "$5.2B revenue FY2023", "$1.3B revenue Q3 FY2024") where disclosed
+- Use specific numbers with the actual fiscal period disclosed in the source document
+  (e.g. "$5.2B revenue FY<year>", "$1.3B revenue Q<n> FY<year>") — always the real year/quarter
+  from the filing, never assumed or copied from these examples
 - Summaries: 2-5 sentences, plain text, no bullet points
 - Tags: lowercase, hyphen-separated, max 8 per node
 - Return ONLY the raw JSON object. No markdown. No code fences. No backticks.
@@ -800,6 +824,7 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                         "the SEC filings."
                     )
                 user_prompt = (
+                    f"Today's date : {_today_str()}\n"
                     f"Research this PUBLIC company using its SEC EDGAR {annual_form} filing, "
                     f"most recent 10-Q, and investor communications, then return the Blueprint "
                     f"JSON:\n\n"
@@ -808,6 +833,9 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                     f"Industry: {body.industry}\n"
                     f"{sec_block}\n"
                     f"{instruction}\n\n"
+                    f"Use today's date above to determine what 'most recently completed fiscal "
+                    f"year' and 'most recently completed fiscal quarter' actually mean right now "
+                    f"— do not assume a particular year from memory.\n\n"
                     f"Return ONLY the JSON object — no other text."
                 )
                 system_prompt = PUBLIC_RESEARCH_SYSTEM
@@ -823,12 +851,15 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                         "regulatory financial filing in the finance dimension, where applicable.\n"
                     )
                 user_prompt = (
+                    f"Today's date : {_today_str()}\n"
                     f"Generate baseline Blueprint dimensions for this PRIVATE company:\n\n"
                     f"Company : {body.company_name}\n"
                     f"Industry: {body.industry}\n"
                     f"{bank_note}\n"
                     f"Do NOT use web search. Use your knowledge of this industry to generate "
                     f"plausible Profile, Strategy, Organisation, and Finance dimensions. "
+                    f"Use today's date above (not any date from your training data) if you "
+                    f"reference timeframes such as 'current' or 'recent'. "
                     f"Return ONLY the JSON object — no other text."
                 )
                 system_prompt = PRIVATE_RESEARCH_SYSTEM
