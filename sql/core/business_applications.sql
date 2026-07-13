@@ -37,5 +37,6 @@ CREATE TABLE IF NOT EXISTS core.business_applications (
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP,
     CONSTRAINT chk_business_applications_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
-    CONSTRAINT chk_business_applications_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
+    CONSTRAINT chk_business_applications_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_core_business_applications PRIMARY KEY (tenant_id, company_id, business_application_id)
 );

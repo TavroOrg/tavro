@@ -108,11 +108,11 @@ ON core.business_process_business_applications (business_process_id, business_ap
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agent_data_sources
 ON core.agent_data_sources (agent_internal_id, source_object_id, target_object_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_applications
-ON core.business_applications (tenant_id, company_id, business_application_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_core_business_processes
-ON core.business_processes (tenant_id, company_id, business_process_id);
+-- ux_core_business_applications / ux_core_business_processes removed:
+-- both tables now declare their composite PK inline in
+-- sql/core/business_applications.sql / business_processes.sql. On an
+-- already-existing production database, critical_01_tenant_and_composite_pk.sql
+-- still promotes whatever unique index is already there under those names.
 
 -- ux_core_columns removed: column_id is now the PRIMARY KEY
 

@@ -32,5 +32,6 @@ CREATE TABLE IF NOT EXISTS core.business_processes (
     created_ts TIMESTAMP,
     updated_ts TIMESTAMP,
     CONSTRAINT chk_business_processes_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
-    CONSTRAINT chk_business_processes_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
+    CONSTRAINT chk_business_processes_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
+    CONSTRAINT pk_core_business_processes PRIMARY KEY (tenant_id, company_id, business_process_id)
 );
