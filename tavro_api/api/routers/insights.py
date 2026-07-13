@@ -25,7 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
-from api.routers.agents import CORE, _require_tenant
+from api.routers.agents import CORE, CURATED, _require_tenant
 from api.error_handler import raise_server_error
 
 router = APIRouter()
@@ -455,15 +455,35 @@ def _profile_dimension_hint(categories: List[str], category_labels: Dict[str, st
 # ---------------------------------------------------------------------------
 
 _AGENTS_SQL = f"""
+WITH agent_universe AS (
+    -- Same row set as GET /agents/ (get_agent_catalog): curated.agent_360 rows,
+    -- plus any core.agents rows not yet synced into the curated view.
+    SELECT a360.agent_id, a360.agent_internal_id, a360.agent_name,
+           a360.tenant_id, a360.company_id
+    FROM {CURATED}.agent_360 a360
+    WHERE (a360.tenant_id = :tid OR a360.tenant_id IS NULL)
+
+    UNION ALL
+
+    SELECT ca.agent_id, ca.agent_internal_id, ca.agent_name,
+           ca.tenant_id, ca.company_id
+    FROM {CORE}.agents ca
+    WHERE COALESCE(ca.is_current, TRUE) = TRUE
+      AND (ca.tenant_id = :tid OR ca.tenant_id IS NULL)
+      AND NOT EXISTS (
+          SELECT 1 FROM {CURATED}.agent_360 a360x WHERE a360x.agent_id = ca.agent_id
+      )
+)
 SELECT
-    a.agent_id,
-    a.agent_internal_id,
-    a.agent_name,
+    au.agent_id,
+    au.agent_internal_id,
+    au.agent_name,
     a.agent_description,
     a.source_system,
     a.status,
     a.created_ts,
     a.updated_ts,
+    au.company_id,
     i.environment,
     i.governance_status,
     cfg.autonomy_level,
@@ -479,18 +499,21 @@ SELECT
     COALESCE(ds.cnt, 0) AS data_source_count,
     COALESCE(bp.cnt, 0) AS business_process_count,
     COALESCE(ba.cnt, 0) AS business_application_count
-FROM {CORE}.agents a
+FROM agent_universe au
+LEFT JOIN {CORE}.agents a
+  ON a.agent_id = au.agent_id AND a.agent_internal_id = au.agent_internal_id
+ AND COALESCE(a.is_current, TRUE) = TRUE
 LEFT JOIN LATERAL (
     SELECT environment, governance_status
     FROM {CORE}.agent_identifications
-    WHERE agent_id = a.agent_id AND COALESCE(is_current, TRUE) = TRUE
+    WHERE agent_id = au.agent_id AND COALESCE(is_current, TRUE) = TRUE
     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
     LIMIT 1
 ) i ON TRUE
 LEFT JOIN LATERAL (
     SELECT autonomy_level
     FROM {CORE}.agent_configurations
-    WHERE agent_internal_id = a.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
+    WHERE agent_internal_id = au.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
     ORDER BY is_current DESC NULLS LAST, updated_ts DESC NULLS LAST
     LIMIT 1
 ) cfg ON TRUE
@@ -498,28 +521,27 @@ LEFT JOIN LATERAL (
     SELECT blended_risk_score, blended_risk_class, regulatory_risk_score,
            regulatory_risk_class, aivss_score, aivss_class, state_name, assessment_ts
     FROM {CORE}.agent_risk_assessments
-    WHERE agent_internal_id = a.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
+    WHERE agent_internal_id = au.agent_internal_id AND COALESCE(is_current, TRUE) = TRUE
     ORDER BY assessment_ts DESC NULLS LAST, updated_ts DESC NULLS LAST
     LIMIT 1
 ) r ON TRUE
 LEFT JOIN LATERAL (
     SELECT application_name
     FROM {CORE}.agent_business_applications
-    WHERE agent_internal_id = a.agent_internal_id
+    WHERE agent_internal_id = au.agent_internal_id
     ORDER BY created_ts DESC NULLS LAST
     LIMIT 1
 ) app ON TRUE
 LEFT JOIN (
     SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_data_sources GROUP BY agent_internal_id
-) ds ON ds.agent_internal_id = a.agent_internal_id
+) ds ON ds.agent_internal_id = au.agent_internal_id
 LEFT JOIN (
     SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_processes GROUP BY agent_internal_id
-) bp ON bp.agent_internal_id = a.agent_internal_id
+) bp ON bp.agent_internal_id = au.agent_internal_id
 LEFT JOIN (
     SELECT agent_internal_id, COUNT(*)::int AS cnt FROM {CORE}.agent_business_applications GROUP BY agent_internal_id
-) ba ON ba.agent_internal_id = a.agent_internal_id
-WHERE COALESCE(a.is_current, TRUE) = TRUE
-  AND (a.tenant_id = :tid OR a.tenant_id IS NULL)
+) ba ON ba.agent_internal_id = au.agent_internal_id
+WHERE TRUE
 """
 
 _USECASES_SQL = f"""
@@ -584,19 +606,7 @@ async def get_insights_summary(
 
     if cid:
         params["cid"] = cid
-        try:
-            col_check = await db.execute(
-                text("""
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = :schema AND table_name = :tbl AND column_name = 'company_id'
-                    LIMIT 1
-                """),
-                {"schema": CORE, "tbl": "agents"},
-            )
-            if col_check.first():
-                agent_sql += "\n  AND (CAST(a.company_id AS text) = :cid OR a.company_id IS NULL OR CAST(a.company_id AS text) = '')"
-        except Exception:
-            pass
+        agent_sql += "\n  AND (CAST(au.company_id AS text) = :cid OR au.company_id IS NULL OR TRIM(CAST(au.company_id AS text)) = '' OR au.company_id = 'None')"
         try:
             col_check = await db.execute(
                 text("""
