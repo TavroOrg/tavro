@@ -244,6 +244,40 @@ async def resolve_company_context(
         return None
 
 
+async def set_default_company(
+    tenant_id: Optional[str],
+    user_id: Optional[str],
+    company_id: str,
+) -> None:
+    """Persist company_id as the caller's default company preference (best-effort).
+
+    Called after create_company so a newly created company always becomes the
+    user's default going forward — whether it's their first company or one of
+    several. Failure here must never fail the company-creation call itself.
+
+    require_tenant on the PATCH endpoint rejects an empty x-tenant-id, and
+    external MCP clients frequently have no tenant_id claim at all (see
+    resolve_company_context's tenant_id=None case) — fall back to user_id as
+    the tenant identifier, mirroring the portal's own org_id -> sub fallback
+    in tavro_app/src/services/auth.ts's extractAndStoreTenantId().
+    """
+    if not user_id or not company_id:
+        return
+    effective_tenant_id = tenant_id or user_id
+    headers = {"x-user-id": user_id, "x-tenant-id": str(effective_tenant_id)}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.patch(
+                f"{TAVRO_API_URL}/api/v1/user/context",
+                json={"default_company_id": company_id},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            print(f"[set_default_company] user_id={user_id!r} -> default_company_id={company_id!r}")
+    except Exception as e:
+        print(f"[set_default_company] FAILED user_id={user_id!r} company_id={company_id!r}: {e!r}")
+
+
 @core.tool(name="get_agent_card")
 async def get_agent_card(original_prompt: str, *, agent_name: Optional[str] = None, agent_id: Optional[str] = None, company_id: Optional[str]) -> Dict[str, Any]:
     """
@@ -1491,6 +1525,7 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
 
         log_tool_call(
             "create_company",
@@ -1511,6 +1546,14 @@ async def create_company(original_prompt: str, *, name: str, industry: str, regi
             legal_entity=legal_entity,
             tenant_id=str(tenant_id),
         )
+
+        # Always set the newly created company as the caller's default —
+        # whether it's their first company or an additional one — mirroring
+        # the portal's own behavior (BlueprintSetupPage.tsx calls selectCompany()
+        # right after creation, which triggers the same default_company_id write-back).
+        new_company_id = result.get("company_id")
+        if new_company_id:
+            await set_default_company(tenant_id, user_id, new_company_id)
 
         return result
 
