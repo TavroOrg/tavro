@@ -1,5 +1,5 @@
 /**
- * Portal UI/UX validation — one file, six requirement areas:
+ * Portal UI/UX validation — one file, eight requirement areas:
  *
  *   0. Creation forms (required-field validation, the exact system
  *      message/feedback each "Create X" flow shows on success, and the
@@ -7,11 +7,16 @@
  *   1. Searchable relationship pickers  (smooth filtering, scannable list, saves on submit)
  *   2. Screen real-estate & responsiveness (dense screens on standard laptops,
  *      at multiple browser zoom levels, including tables and modals)
- *   3. Component feedback (nav counters, loading states — and that linking
- *      updates the UI live, without a hard page reload)
+ *   3. Component feedback (nav badge counts match rendered content — the
+ *      loading-state/no-hard-reload checks for linking live under section 1)
  *   4. System notifications (the global toast banner: correct message,
  *      manual dismiss, auto-dismiss timing)
  *   5. Insights page (stat tiles, every dashboard card, refresh loading state)
+ *   6. Text readability — WCAG color-contrast (via axe-core) and minimum
+ *      font size, on every list page and every entity detail page
+ *   7. Component consistency (shared "Add X" trigger / "Create X" submit /
+ *      "Load X" modal buttons render identically everywhere they're reused;
+ *      page-title heading size is consistent within each page tier)
  *
  * All of it runs against the same "Add X" relationship-picker pattern that repeats
  * identically across every entity detail page in the portal — Agent, AI Model,
@@ -50,6 +55,7 @@
  */
 
 import { test, expect, type Page, type Locator } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 interface TestDataRef { id: string; name: string; }
 interface TestDataIds {
@@ -854,9 +860,16 @@ test.describe('2c. Responsiveness — tables scroll within their own container',
 // ── Modals ───────────────────────────────────────────────────────────────────
 
 test.describe('2d. Responsiveness — modals fit within the viewport', () => {
+  // Every "Load X" bulk-CSV-import modal in the portal (confirmed via a
+  // directory listing of src/components/Load*Modal.tsx: LoadAgentsModal,
+  // LoadApplicationsModal, LoadProcessesModal, LoadIntegrationsModal,
+  // LoadAIUseCaseModal — only AI Models has no such modal).
   const MODALS = [
     { openFrom: '/catalog', buttonName: /^load agents$/i, title: /^load agents$/i },
     { openFrom: '/applications', buttonName: /^load applications$/i, title: /^load applications$/i },
+    { openFrom: '/processes', buttonName: /^load processes$/i, title: /^load processes$/i },
+    { openFrom: '/integrations', buttonName: /^load integrations$/i, title: /^load integrations$/i },
+    { openFrom: '/use-cases', buttonName: /^load ai use case$/i, title: /^load ai use case$/i },
   ];
 
   for (const viewport of LAPTOP_VIEWPORTS) {
@@ -937,69 +950,10 @@ test.describe('3. Component feedback', () => {
       });
     }
   });
-
-  test.describe('Linking updates counters live, without a hard reload', () => {
-    for (const entity of ENTITY_PAGES) {
-      test.describe(`${entity.name} detail page`, () => {
-        test.beforeEach(async ({ page }) => {
-          await openEntity(page, entity);
-        });
-
-        for (const picker of entity.pickers) {
-          test(`linking via "Add ${picker.addLabel}" shows a loading state and updates the counter without reloading`, async ({ page }) => {
-            await ensurePickerTab(page, entity, picker);
-            const trigger = pickerTrigger(page, picker);
-            test.skip(!(await trigger.isVisible({ timeout: 5_000 }).catch(() => false)), `"Add ${picker.addLabel}" trigger not present on this ${entity.name}`);
-
-            const before = await readCounter(page, picker);
-            await trigger.click();
-
-            const listbox = page.getByRole('listbox').first();
-            await expect(listbox).toBeVisible({ timeout: 5_000 });
-
-            // Search for one of our own fixtures by name — see the identical
-            // reasoning in section 1: grabbing "whichever option is first" in
-            // the unfiltered list is unsafe on an instance with many
-            // pre-existing records.
-            const optionLabel = requireTestData()[PICKER_TARGET_KEY[picker.key]].name;
-            const searchBox = pickerSearchBox(page, picker);
-            await expect(searchBox, `Search input not found inside the ${picker.addLabel} picker`).toBeVisible({ timeout: 5_000 });
-            await searchBox.fill(optionLabel);
-            await page.waitForTimeout(300);
-
-            const option = listbox.getByRole('option', { name: new RegExp(escapeRegex(optionLabel), 'i') }).first();
-            const found = await option.isVisible({ timeout: 3_000 }).catch(() => false);
-            test.skip(!found, `Fixture "${optionLabel}" not found via search in the ${picker.addLabel} picker`);
-            const alreadyLinked = (await option.getAttribute('aria-selected')) === 'true';
-            test.skip(alreadyLinked, `Fixture "${optionLabel}" is already linked — nothing to link`);
-
-            await plantNoReloadMarker(page);
-            await option.click();
-
-            const spinnerAppeared = await listbox.locator('svg.animate-spin').first().isVisible({ timeout: 1_500 }).catch(() => false);
-
-            await expect(option, 'Option should flip to a selected/linked state once the request completes')
-              .toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
-            expect(await markerSurvived(page), 'Linking caused a hard reload instead of an in-place SPA update').toBe(true);
-
-            const after = await readCounter(page, picker);
-            expect(after, 'Counter did not update in place after linking').toBe(before + 1);
-
-            console.log(`[component-feedback] ${entity.name} → ${picker.addLabel} "${optionLabel}": counter ${before}→${after}, spinner observed=${spinnerAppeared}`);
-
-            // ── cleanup ────────────────────────────────────────────────────────
-            await ensurePickerOpen(trigger, listbox);
-            await expect(listbox).toBeVisible({ timeout: 5_000 });
-            await searchBox.fill(optionLabel);
-            await page.waitForTimeout(300);
-            await option.click();
-            await expect(page.getByText(new RegExp(`currently related ${picker.counterPlural}\\s*\\(${before}\\)`, 'i')))
-              .toBeVisible({ timeout: 10_000 });
-          });
-        }
-      });
-    }
-  });
+  // Loading-state/no-hard-reload feedback while linking is checked inline as
+  // part of section 1's own "linking an option..." test (spinner + reload
+  // marker + live counter update) rather than as a separate, near-identical
+  // pass over the same entity/picker matrix here.
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1098,5 +1052,248 @@ test.describe('5. Insights page', () => {
 
     await expect(refreshButton, 'Refresh button should re-enable once the summary reload completes').toBeEnabled({ timeout: 15_000 });
     await expect(page.getByText(/something went wrong|failed to load/i), 'Refresh should not surface an error banner on a normal reload').not.toBeVisible({ timeout: 1_000 });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. Text readability — color contrast and minimum font size
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Two independent readability checks:
+//  - Color contrast (WCAG, via axe-core — computed the same way real screen
+//    readers/accessibility tooling do, rather than us re-deriving relative
+//    luminance by hand). Scoped to just the `color-contrast` rule, not a full
+//    accessibility audit, since contrast is what's actually being asked for.
+//  - Minimum font size: axe has no rule for this (it isn't itself a WCAG
+//    success criterion), so this is a small custom scan flagging genuinely
+//    tiny text — below MIN_READABLE_FONT_PX — as its own, separate concern
+//    from contrast (some of the contrast violations above are ALSO tiny
+//    text, e.g. 9px "Chat"/"No scores yet" labels, but a element can fail
+//    one check without the other).
+//
+// Both throw a plain Error with just a formatted summary on failure, instead
+// of using expect(...).toEqual([]) — that would otherwise make Playwright's
+// diff engine dump the entire raw axe/DOM result (hundreds of lines) into
+// the failure message.
+
+async function assertNoContrastViolations(page: Page, label: string) {
+  const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
+  if (results.violations.length === 0) return;
+  const lines = results.violations.flatMap((v) =>
+    v.nodes.map((n) => {
+      const data = (n.any[0]?.data ?? {}) as { contrastRatio?: number; expectedContrastRatio?: string; fgColor?: string; bgColor?: string; fontSize?: string };
+      return `  - "${n.html.replace(/\s+/g, ' ').slice(0, 100)}" — contrast ${data.contrastRatio} (needs ${data.expectedContrastRatio}), fg ${data.fgColor} on bg ${data.bgColor}, ${data.fontSize}`;
+    }),
+  );
+  throw new Error(`${label} has ${results.violations.reduce((n, v) => n + v.nodes.length, 0)} color-contrast violation(s):\n${lines.join('\n')}`);
+}
+
+const MIN_READABLE_FONT_PX = 10;
+
+async function assertNoUnreadablySmallText(page: Page, label: string) {
+  const violations = await page.evaluate((minPx) => {
+    const results: Array<{ text: string; fontSizePx: number; tag: string }> = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => (node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    let node: Node | null;
+    // eslint-disable-next-line no-cond-assign
+    while ((node = walker.nextNode())) {
+      const el = node.parentElement;
+      if (!el) continue;
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) continue;
+      const fontSizePx = parseFloat(style.fontSize);
+      if (fontSizePx < minPx) {
+        results.push({ text: node.textContent!.trim().slice(0, 60), fontSizePx, tag: el.tagName.toLowerCase() });
+      }
+    }
+    return results;
+  }, MIN_READABLE_FONT_PX);
+
+  if (violations.length === 0) return;
+  const lines = violations.map((v) => `  - <${v.tag}> "${v.text}" — ${v.fontSizePx}px (below ${MIN_READABLE_FONT_PX}px minimum)`);
+  throw new Error(`${label} has ${violations.length} element(s) with text smaller than ${MIN_READABLE_FONT_PX}px:\n${lines.join('\n')}`);
+}
+
+test.describe('6. Text readability', () => {
+  for (const route of LIST_ROUTES) {
+    test(`${route.label} has no color-contrast violations`, async ({ page }) => {
+      await page.goto(route.path);
+      await expect(page).not.toHaveURL(/\/login/);
+      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+      await assertNoContrastViolations(page, route.label);
+    });
+
+    test(`${route.label} has no unreadably small text`, async ({ page }) => {
+      await page.goto(route.path);
+      await expect(page).not.toHaveURL(/\/login/);
+      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+      await assertNoUnreadablySmallText(page, route.label);
+    });
+  }
+
+  for (const entity of ENTITY_PAGES) {
+    test(`${entity.name} detail page has no color-contrast violations`, async ({ page }) => {
+      await openEntity(page, entity);
+      await assertNoContrastViolations(page, `${entity.name} detail page`);
+    });
+
+    test(`${entity.name} detail page has no unreadably small text`, async ({ page }) => {
+      await openEntity(page, entity);
+      await assertNoUnreadablySmallText(page, `${entity.name} detail page`);
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. Component consistency — the same shared components should look and
+//    behave identically everywhere they're reused across the portal
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The subset of computed style that should be identical for every instance
+ *  of a shared component, regardless of which page renders it — layout-only
+ *  properties (position, width) are deliberately excluded since those can
+ *  legitimately vary by container. */
+async function sampleTextStyle(locator: Locator) {
+  return locator.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return {
+      fontFamily: s.fontFamily,
+      fontSize: s.fontSize,
+      fontWeight: s.fontWeight,
+      borderRadius: s.borderRadius,
+      backgroundColor: s.backgroundColor,
+      color: s.color,
+    };
+  });
+}
+
+function assertStylesConsistent(samples: Array<{ label: string; style: Record<string, string> }>, componentName: string) {
+  const [first, ...rest] = samples;
+  for (const sample of rest) {
+    expect(sample.style, `${componentName} on "${sample.label}" doesn't match the same component on "${first.label}" — shared components should render identically everywhere`)
+      .toEqual(first.style);
+  }
+}
+
+test.describe('7. Component consistency across the portal', () => {
+  test('"Add X" relationship-picker trigger button looks identical on every entity detail page', async ({ page }) => {
+    const samples: Array<{ label: string; style: Record<string, string> }> = [];
+    for (const entity of ENTITY_PAGES) {
+      await openEntity(page, entity);
+      const picker = entity.pickers[0];
+      await ensurePickerTab(page, entity, picker);
+      const trigger = pickerTrigger(page, picker);
+      if (!(await trigger.isVisible({ timeout: 3_000 }).catch(() => false))) continue;
+      samples.push({ label: `${entity.name} → ${picker.addLabel}`, style: await sampleTextStyle(trigger) });
+    }
+    expect(samples.length, 'No "Add X" trigger buttons found to compare across entity pages').toBeGreaterThan(1);
+    assertStylesConsistent(samples, '"Add X" trigger button');
+  });
+
+  test('"Create X" primary submit button looks identical on every creation form', async ({ page }) => {
+    const CREATE_FORMS = [
+      { path: '/agents/new', buttonName: /^create agent$/i, label: 'Create Agent' },
+      { path: '/use-cases/new', buttonName: /^create use case$/i, label: 'Create Use Case' },
+      { path: '/ai-models/new', buttonName: /^create model$/i, label: 'Create Model' },
+      { path: '/applications/new', buttonName: /^create application$/i, label: 'Create Application' },
+      { path: '/processes/new', buttonName: /^create process$/i, label: 'Create Process' },
+      { path: '/integrations/new', buttonName: /^create integration$/i, label: 'Create Integration' },
+    ];
+    const samples: Array<{ label: string; style: Record<string, string> }> = [];
+    for (const form of CREATE_FORMS) {
+      await page.goto(form.path);
+      await expect(page).not.toHaveURL(/\/login/);
+      const button = page.getByRole('button', { name: form.buttonName }).first();
+      await expect(button, `"${form.label}" submit button not found on ${form.path}`).toBeVisible({ timeout: 8_000 });
+      // Disabled state only applies an opacity filter (Tailwind's disabled:opacity-50)
+      // on top of the same underlying color — comparing the true background/text
+      // colors doesn't require filling the form to enable the button first.
+      samples.push({ label: form.label, style: await sampleTextStyle(button) });
+    }
+    assertStylesConsistent(samples, '"Create X" primary submit button');
+  });
+
+  test('"Load X" modal trigger button and modal panel look identical across every modal', async ({ page }) => {
+    // Every "Load X" bulk-CSV-import modal in the portal (LoadAgentsModal,
+    // LoadApplicationsModal, LoadProcessesModal, LoadIntegrationsModal,
+    // LoadAIUseCaseModal — only AI Models has no such modal).
+    const MODALS = [
+      { openFrom: '/catalog', buttonName: /^load agents$/i, title: /^load agents$/i, label: 'Load Agents' },
+      { openFrom: '/applications', buttonName: /^load applications$/i, title: /^load applications$/i, label: 'Load Applications' },
+      { openFrom: '/processes', buttonName: /^load processes$/i, title: /^load processes$/i, label: 'Load Processes' },
+      { openFrom: '/integrations', buttonName: /^load integrations$/i, title: /^load integrations$/i, label: 'Load Integrations' },
+      { openFrom: '/use-cases', buttonName: /^load ai use case$/i, title: /^load ai use case$/i, label: 'Load AI Use Case' },
+    ];
+    const triggerSamples: Array<{ label: string; style: Record<string, string> }> = [];
+    const panelSamples: Array<{ label: string; style: Record<string, string> }> = [];
+    for (const modal of MODALS) {
+      await page.goto(modal.openFrom);
+      await expect(page).not.toHaveURL(/\/login/);
+      const openButton = page.getByRole('button', { name: modal.buttonName }).first();
+      test.skip(!(await openButton.isVisible({ timeout: 5_000 }).catch(() => false)), `"${modal.label}" button not found on ${modal.openFrom}`);
+      triggerSamples.push({ label: modal.label, style: await sampleTextStyle(openButton) });
+
+      await openButton.click();
+      const heading = page.getByRole('heading', { name: modal.title }).first();
+      await expect(heading, `Modal with heading matching ${modal.title} did not open`).toBeVisible({ timeout: 5_000 });
+      const panel = heading.locator('xpath=ancestor::div[contains(@class, "rounded-2xl")][1]');
+      const box = await panel.boundingBox();
+      const panelStyle = await panel.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { borderRadius: s.borderRadius, boxShadow: s.boxShadow, backgroundColor: s.backgroundColor };
+      });
+      panelSamples.push({ label: modal.label, style: { ...panelStyle, width: `${Math.round(box?.width ?? 0)}px` } });
+      await page.mouse.click(2, 2);
+    }
+    assertStylesConsistent(triggerSamples, '"Load X" modal trigger button');
+    // Modal panel *width* should match too (not just corner-radius/shadow/background) —
+    // this is what "consistent modal popup size" actually means across different modals.
+    assertStylesConsistent(panelSamples, '"Load X" modal panel');
+  });
+
+  test('page-title heading is consistently sized within each page tier', async ({ page }) => {
+    // Two legitimate tiers exist by design (confirmed via grep of each page's own
+    // heading markup): the six catalog/list pages share an <h2 class="text-xl">
+    // page title, while the four standalone app sections (Insights, Spark,
+    // Settings, Agent Playground) each use their own <h1>. Comparing across tiers
+    // would flag an intentional distinction as a false positive — comparing
+    // *within* a tier still catches a genuine outlier (e.g. one page's <h1>
+    // rendering smaller than the others).
+    const LIST_TIER = [
+      { path: '/catalog', label: 'Agent Catalog' },
+      { path: '/use-cases', label: 'AI Use Case Catalog' },
+      { path: '/ai-models', label: 'AI Models' },
+      { path: '/applications', label: 'Applications' },
+      { path: '/processes', label: 'Processes' },
+      { path: '/integrations', label: 'Integrations' },
+    ];
+    const SECTION_TIER = [
+      { path: '/insights', label: 'Insights' },
+      { path: '/spark', label: 'Spark' },
+      { path: '/settings', label: 'Application Settings' },
+      { path: '/playground', label: 'Agent Playground' },
+    ];
+
+    async function sampleHeadingStyle(pagePath: string, level: number) {
+      await page.goto(pagePath);
+      await expect(page).not.toHaveURL(/\/login/);
+      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+      const heading = page.getByRole('heading', { level }).first();
+      await expect(heading, `No level-${level} heading found on ${pagePath}`).toBeVisible({ timeout: 8_000 });
+      return heading.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { fontSize: s.fontSize, fontWeight: s.fontWeight };
+      });
+    }
+
+    const listSamples: Array<{ label: string; style: Record<string, string> }> = [];
+    for (const p of LIST_TIER) listSamples.push({ label: p.label, style: await sampleHeadingStyle(p.path, 2) });
+    assertStylesConsistent(listSamples, 'List-page title (<h2>)');
+
+    const sectionSamples: Array<{ label: string; style: Record<string, string> }> = [];
+    for (const p of SECTION_TIER) sectionSamples.push({ label: p.label, style: await sampleHeadingStyle(p.path, 1) });
+    assertStylesConsistent(sectionSamples, 'App-section title (<h1>)');
   });
 });
