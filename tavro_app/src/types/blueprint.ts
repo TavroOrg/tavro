@@ -17,7 +17,6 @@ export interface Company {
   id: string;
   name: string;
   industry: string;
-  region: string;
   legal_entity?: string | null;
   created_at: string;
   updated_at: string;
@@ -26,7 +25,6 @@ export interface Company {
 export interface CompanyCreate {
   name: string;
   industry: string;
-  region?: string;
   legal_entity?: string;
 }
 

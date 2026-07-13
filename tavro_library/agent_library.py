@@ -3858,7 +3858,6 @@ class AgentMetadataExporter:
         cls,
         name: str,
         industry: str,
-        region: str,
         legal_entity: str,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -3872,7 +3871,6 @@ class AgentMetadataExporter:
         payload = {
             "name": name,
             "industry": industry,
-            "region": region,
             "legal_entity": legal_entity,
         }
 
@@ -3903,7 +3901,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
@@ -3954,7 +3951,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
@@ -3974,7 +3970,6 @@ class AgentMetadataExporter:
         company_id: str,
         name: str,
         industry: str,
-        region: str,
         legal_entity: str,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -3988,7 +3983,6 @@ class AgentMetadataExporter:
         payload = {
             "name": name,
             "industry": industry,
-            "region": region,
             "legal_entity": legal_entity,
         }
 
@@ -4021,7 +4015,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
