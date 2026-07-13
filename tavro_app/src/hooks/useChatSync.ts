@@ -32,7 +32,7 @@ export function useChatSync(viewType: ViewType, data: ViewData) {
  * Compresses node list to summaries only (avoids huge context objects).
  */
 export function useBlueprintChatSync(
-  company: { id: string; name: string; industry: string; region: string } | null,
+  company: { id: string; name: string; industry: string } | null,
   nodes:   { id: string; label: string; category?: string; summary?: string | null }[],
   activeDimension?: { label: string; category?: string; summary?: string | null },
 ) {
@@ -44,7 +44,6 @@ export function useBlueprintChatSync(
       companyId:   company.id,
       companyName: company.name,
       industry:    company.industry,
-      region:      company.region,
       // Send max 30 nodes — enough context without bloating the system prompt
       dimensions:  nodes.slice(0, 30).map(n => ({
         label:    n.label,

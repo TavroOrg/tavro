@@ -3504,6 +3504,26 @@ class AgentMetadataExporter:
         use_case_owner: Optional[str] = None,
         impacted_business_applications: Optional[List[str]] = None,
         impacted_business_processes: Optional[List[str]] = None,
+        function: Optional[str] = None,
+        proposed_by: Optional[str] = None,
+        status: Optional[str] = None,
+        assumptions: Optional[str] = None,
+        quantified_financial_benefits: Optional[str] = None,
+        total_financial_impact_summary: Optional[str] = None,
+        implementation_cost_estimate: Optional[str] = None,
+        return_on_investment: Optional[str] = None,
+        risk_considerations: Optional[str] = None,
+        implementation_roadmap: Optional[str] = None,
+        recommendation: Optional[str] = None,
+        executive_summary: Optional[str] = None,
+        business_value_score: Optional[int] = None,
+        data_readiness_score: Optional[int] = None,
+        technical_complexity_score: Optional[int] = None,
+        risk_data_privacy_score: Optional[int] = None,
+        risk_operational_score: Optional[int] = None,
+        risk_compliance_score: Optional[int] = None,
+        risk_ai_behavioral_score: Optional[int] = None,
+        risk_strategic_reputational_score: Optional[int] = None,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -3625,6 +3645,42 @@ class AgentMetadataExporter:
             updates.append(
                 f"impacted_business_processes = '{cls.sanitize(processes_str or '')}'"
             )
+
+        def add_text_update(column: str, value: Optional[str]):
+            if value is not None and column in existing_cols:
+                updates.append(f"{column} = '{cls.sanitize(value)}'")
+
+        def add_score_update(column: str, value: Optional[int]):
+            if value is None or column not in existing_cols:
+                return
+            score = int(value)
+            if not 1 <= score <= 5:
+                raise ValueError(f"{column} must be between 1 and 5.")
+            updates.append(f"{column} = {score}")
+
+        # ---------- 5b. Descriptive / business fields ----------
+        add_text_update("function", function)
+        add_text_update("proposed_by", proposed_by)
+        add_text_update("status", status)
+        add_text_update("assumptions", assumptions)
+        add_text_update("quantified_financial_benefits", quantified_financial_benefits)
+        add_text_update("total_financial_impact_summary", total_financial_impact_summary)
+        add_text_update("implementation_cost_estimate", implementation_cost_estimate)
+        add_text_update("return_on_investment", return_on_investment)
+        add_text_update("risk_considerations", risk_considerations)
+        add_text_update("implementation_roadmap", implementation_roadmap)
+        add_text_update("recommendation", recommendation)
+        add_text_update("executive_summary", executive_summary)
+
+        # ---------- 5c. Manual score overrides ----------
+        add_score_update("business_value_score", business_value_score)
+        add_score_update("data_readiness_score", data_readiness_score)
+        add_score_update("technical_complexity_score", technical_complexity_score)
+        add_score_update("risk_data_privacy_score", risk_data_privacy_score)
+        add_score_update("risk_operational_score", risk_operational_score)
+        add_score_update("risk_compliance_score", risk_compliance_score)
+        add_score_update("risk_ai_behavioral_score", risk_ai_behavioral_score)
+        add_score_update("risk_strategic_reputational_score", risk_strategic_reputational_score)
 
         # ---------- 6. No-op Handling ----------
         if not updates:
@@ -3802,7 +3858,6 @@ class AgentMetadataExporter:
         cls,
         name: str,
         industry: str,
-        region: str,
         legal_entity: str,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -3816,7 +3871,6 @@ class AgentMetadataExporter:
         payload = {
             "name": name,
             "industry": industry,
-            "region": region,
             "legal_entity": legal_entity,
         }
 
@@ -3847,7 +3901,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
@@ -3898,7 +3951,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
@@ -3918,7 +3970,6 @@ class AgentMetadataExporter:
         company_id: str,
         name: str,
         industry: str,
-        region: str,
         legal_entity: str,
         tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -3932,7 +3983,6 @@ class AgentMetadataExporter:
         payload = {
             "name": name,
             "industry": industry,
-            "region": region,
             "legal_entity": legal_entity,
         }
 
@@ -3965,7 +4015,6 @@ class AgentMetadataExporter:
                 "company_id": data.get("id"),
                 "name": data.get("name"),
                 "industry": data.get("industry"),
-                "region": data.get("region"),
                 "legal_entity": data.get("legal_entity"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),

@@ -79,7 +79,6 @@ class SparkApi {
     ideaCount?: number,
     companyName?: string,
     industry?: string,
-    region?: string,
   ): AsyncGenerator<SparkIdea> {
     appLogger.req('Spark generateIdeasStream', { companyId, dimensions, direction: direction ?? '(none)', ideaCount });
     const t0 = Date.now();
@@ -110,7 +109,6 @@ class SparkApi {
         direction: direction?.trim() || null,
         companyName: companyName?.trim() || null,
         industry: industry?.trim() || null,
-        region: region?.trim() || null,
         edges: context.edges,
         ideaCount: ideaCount ?? 5,
         similarAgents: context.similar_agents,
@@ -215,6 +213,24 @@ class SparkApi {
       },
     );
     appLogger.res('Spark updateIdeaReaction', { ideaId, reaction: result.user_reaction }, Date.now() - t0);
+    return result;
+  }
+
+  /** Edit an idea's content fields (title, description, rationale, complexity, impact, signal, dimensions). */
+  async updateIdea(
+    companyId: string,
+    ideaId: string,
+    patch: Partial<Pick<SparkIdea, 'title' | 'description' | 'rationale' | 'complexity' | 'estimated_impact' | 'signal_type' | 'signal_label' | 'target_dimensions'>>,
+  ): Promise<SparkIdea> {
+    const params = new URLSearchParams({ company_id: companyId });
+    appLogger.req('Spark updateIdea', { companyId, ideaId, fields: Object.keys(patch) });
+    const t0 = Date.now();
+    const result = await req<SparkIdea>(`/spark/ideas/${encodeURIComponent(ideaId)}?${params.toString()}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+    appLogger.res('Spark updateIdea', { ideaId }, Date.now() - t0);
+    portalActivity.record(`Edited Spark idea "${result.title}"`, 'violet');
     return result;
   }
 

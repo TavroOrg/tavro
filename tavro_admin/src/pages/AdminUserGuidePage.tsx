@@ -335,7 +335,7 @@ const AdminUserGuidePage: React.FC = () => {
                     <StepList
                         items={[
                             <>Open <strong>Company</strong> from the left navigation.</>,
-                            <>Use the searchable dropdown to find the right company by name, industry, or region.</>,
+                            <>Use the searchable dropdown to find the right company by name or industry.</>,
                             <>Click the company to make it active. The selection is stored locally and shown in the footer.</>,
                         ]}
                     />
