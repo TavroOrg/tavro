@@ -103,8 +103,8 @@ export const BlueprintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoading(true);
     setError(null);
     try {
-      const page = await blueprintApi.listNodes({ company_id: company.id, limit: 500 });
-      setNodes(page.items);
+      const nodes = await blueprintApi.listNodes({ company_id: company.id });
+      setNodes(nodes);
       setLastFetched(new Date());
     } catch (err: any) {
       setError(toUserMessage(err));

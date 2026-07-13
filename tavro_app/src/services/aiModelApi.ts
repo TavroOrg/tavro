@@ -6,6 +6,7 @@ import type {
 import { portalActivity } from './portalActivity';
 import { parseApiError } from '../utils/errorUtils';
 import { appLogger } from './logger';
+import { fetchAllPages } from '../utils/fetchAllPages';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -85,21 +86,21 @@ function changedAiModelFields(payload: AiModelUpsertPayload): string {
 
 class AiModelApi {
   async listModels(search?: string, companyId?: string): Promise<AiModelRecord[]> {
-    const params = new URLSearchParams();
-    if (search?.trim()) params.set('q', search.trim());
-    params.set('record_range', '1-500');
-    if (companyId) params.set('company_id', companyId);
-    const suffix = params.toString() ? `?${params.toString()}` : '';
-    appLogger.req('GET /api/v1/ai-models/', { search, companyId });
-    const t0 = Date.now();
-    const data = await req<any>(`/ai-models/${suffix}`);
-    const items = Array.isArray(data) ? data as AiModelRecord[] : (data?.items ?? data?.data ?? []) as AiModelRecord[];
-    appLogger.res('GET /api/v1/ai-models/', { count: items.length }, Date.now() - t0);
-    return items;
+    return fetchAllPages<AiModelRecord>(async (startRecord, recordRange) => {
+      const params = new URLSearchParams({ start_record: String(startRecord), record_range: recordRange });
+      if (search?.trim()) params.set('q', search.trim());
+      if (companyId) params.set('company_id', companyId);
+      appLogger.req('GET /api/v1/ai-models/', { startRecord, recordRange, search, companyId });
+      const t0 = Date.now();
+      const data = await req<any>(`/ai-models/?${params.toString()}`);
+      const normalized = Array.isArray(data) ? { total_records: data.length, data } : data;
+      appLogger.res('GET /api/v1/ai-models/', { totalRecords: normalized.total_records, count: (normalized.data ?? normalized.items ?? []).length }, Date.now() - t0);
+      return normalized;
+    });
   }
 
   async countModels(companyId?: string): Promise<number> {
-    const params = new URLSearchParams({ 'record_range': '1-1' });
+    const params = new URLSearchParams({ start_record: '1', record_range: '1-1' });
     if (companyId) params.set('company_id', companyId);
     const data = await req<any>(`/ai-models/?${params.toString()}`);
     return (data?.total_records ?? 0) as number;

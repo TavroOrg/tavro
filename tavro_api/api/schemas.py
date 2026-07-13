@@ -93,6 +93,11 @@ class DimNodeCreate(DimNodeBase):
     company_id:  UUID
     dim_type_id: UUID
     valid_from:  Optional[datetime] = None
+    # Overrides DimNodeBase's concrete defaults with None so the endpoint can tell
+    # "caller omitted this" apart from "caller explicitly chose internal/false" and
+    # fall back to the company's configured node defaults instead of a hardcoded one.
+    visibility:  Optional[VisibilityLevel] = None
+    sensitive:   Optional[bool]            = None
 
 class DimNodeUpdate(BaseModel):
     label:       Optional[str]            = None

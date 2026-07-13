@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db, AsyncSessionLocal
+from api.routers.datahub_context import MIN_RELEVANCE, _embed_query
 
 router = APIRouter()
 
@@ -80,6 +82,17 @@ class SparkReactionResponse(BaseModel):
     idea_id: str
     user_reaction: Literal["like", "dislike"] | None = None
     popularity_score: int
+
+
+class SparkIdeaUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    rationale: str | None = None
+    complexity: str | None = None
+    estimated_impact: str | None = None
+    signal_type: str | None = None
+    signal_label: str | None = None
+    target_dimensions: list[str] | None = None
 
 
 class SparkConvertRequest(BaseModel):
@@ -1262,6 +1275,63 @@ async def update_spark_idea_reaction(
     )
 
 
+@router.patch("/ideas/{idea_id}", response_model=SparkIdea)
+async def update_spark_idea(
+    request: Request,
+    idea_id: str,
+    payload: SparkIdeaUpdateRequest,
+    company_id: str = Query(..., description="Company UUID"),
+    tenant_id: str | None = Query(None, description="Filter by tenant ID"),
+    db: AsyncSession = Depends(get_db),
+) -> SparkIdea:
+    """Edit an idea's content fields (title, description, rationale, complexity, impact, signal, dimensions)."""
+    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_where = "AND tenant_id = :tenant_id" if tenant_id else ""
+    company_where = "(company_id = :company_id OR company_id IS NULL OR TRIM(CAST(company_id AS text)) = '' OR company_id = 'None')"
+    params: dict[str, Any] = {"company_id": company_id, "idea_id": idea_id, "tenant_id": tenant_id}
+
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        set_clauses = []
+        for field, value in updates.items():
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+        await db.execute(text(f"""
+            UPDATE core.spark_ideas
+            SET {", ".join(set_clauses)}, updated_at = NOW()
+            WHERE {company_where} AND idea_id = :idea_id
+              {tenant_where}
+        """), params)
+        await db.commit()
+
+    row = (await db.execute(text(f"""
+        SELECT idea_id, title, description, rationale, signal_type, signal_label,
+               target_dimensions, target_nodes, complexity, estimated_impact, similar_agents,
+               user_reaction, popularity_score
+        FROM core.spark_ideas
+        WHERE {company_where} AND idea_id = :idea_id
+          {tenant_where}
+    """), params)).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Spark idea not found")
+
+    return SparkIdea(
+        idea_id=row["idea_id"],
+        title=row["title"],
+        description=row["description"] or "",
+        rationale=row["rationale"] or "",
+        signal_type=row["signal_type"] or "gap_coverage",
+        signal_label=row["signal_label"] or "",
+        target_dimensions=list(row["target_dimensions"] or []),
+        target_nodes=[SparkTargetNode(**n) for n in (row["target_nodes"] or [])],
+        complexity=row["complexity"] or "Medium",
+        estimated_impact=row["estimated_impact"] or "Medium",
+        similar_agents=[SparkSimilarAgent(**a) for a in (row["similar_agents"] or [])],
+        user_reaction=row["user_reaction"],
+        popularity_score=row["popularity_score"] or 0,
+    )
+
+
 @router.delete("/ideas", status_code=204)
 async def reset_spark_ideas(
     request: Request,
@@ -1596,7 +1666,10 @@ async def generate_spark_ideas_stream(
 
 
 @router.post("/convert", response_model=SparkConvertResponse)
-async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
+async def convert_idea(
+    request: SparkConvertRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SparkConvertResponse:
     """Expand a Spark idea into full AI use case fields via Claude."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
@@ -1649,6 +1722,48 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             blueprint_block += f"\n\nDimension Relationships:\n{edge_lines}"
         blueprint_block += "\n\n"
 
+    # Ground the use case + agent design in real DataHub assets (pgvector semantic
+    # search over twin.datahub_context), scoped to global rows plus this company.
+    datahub_context_block = ""
+    try:
+        query_text = f"{request.title}. {request.description}. {request.rationale}"
+        where = "company_id IS NULL"
+        db_params: dict[str, Any] = {"limit": 6}
+        try:
+            db_params["company_id"] = str(UUID(request.company_id))
+            where = "(company_id IS NULL OR company_id = :company_id)"
+        except ValueError:
+            pass
+
+        vector_literal = "[" + ",".join(repr(v) for v in await _embed_query(query_text)) + "]"
+        db_params["vector"] = vector_literal
+
+        datahub_query = f"""
+            SELECT
+                label,
+                entity_type,
+                chunk_text,
+                metadata->>'vendor' AS vendor,
+                1 - (embedding <=> CAST(:vector AS vector)) AS relevance
+            FROM twin.datahub_context
+            WHERE {where}
+            ORDER BY embedding <=> CAST(:vector AS vector)
+            LIMIT :limit
+        """
+
+        rows = (await db.execute(text(datahub_query), db_params)).all()
+        matches = [r._mapping for r in rows if (r._mapping["relevance"] or 0) >= MIN_RELEVANCE]
+
+        if matches:
+            lines = [
+                f"  [{m['entity_type']}] {m['label']} ({m['vendor'] or 'unknown vendor'}): "
+                f"{(m['chunk_text'] or '')[:200]}"
+                for m in matches
+            ]
+            datahub_context_block = "\nRelevant DataHub Assets:\n" + "\n".join(lines) + "\n\n"
+    except Exception as exc:
+        logger.warning("spark.convert_idea datahub context lookup failed: %s", exc)
+
     system = (
         "You are an AI governance expert who writes structured AI use case documentation. "
         "Be specific, actionable, and business-focused. No filler phrases."
@@ -1661,6 +1776,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
         f"Context: {request.signal_label or ''}\n"
         f"Dimensions: {', '.join(request.target_dimensions)}\n"
         f"{blueprint_block}"
+        f"{datahub_context_block}"
         "Return a single JSON object with exactly these fields:\n"
         "- title: formal business AI use case name. Do NOT include the word 'Agent'. Do NOT write an agent name. Keep close to the idea title.\n"
         "- description: 3-4 sentence overview of the AI use case and how it works\n"
@@ -1683,27 +1799,59 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
 
     safe_fields = dict(fallback_fields)  # start from fallback; overwrite if Claude succeeds
 
-    try:
-        data = await _call_anthropic(api_key, [{"role": "user", "content": user}], system, max_tokens=4096)
+    
+    required_business_case_keys = [
+        "title", "description", "business_problem_statement", "expected_benefits",
+        "solution_approach", "assumptions", "quantified_financial_benefits",
+        "total_financial_impact_summary", "implementation_cost_estimate",
+        "return_on_investment", "risk_considerations", "implementation_roadmap",
+        "recommendation", "executive_summary",
+    ]
+
+    def _to_str(v: Any) -> str:
+        if isinstance(v, list):
+            return ", ".join(str(i) for i in v)
+        return str(v) if v is not None else ""
+
+    def _strip_curly_braces(s: str) -> str:
+        s = s.strip()
+        while s.startswith("{") and s.endswith("}"):
+            s = s[1:-1].strip()
+        return s
+
+    async def _request_business_case_fields(extra_instruction: str = "") -> dict[str, Any]:
+        data = await _call_anthropic(
+            api_key, [{"role": "user", "content": user + extra_instruction}], system, max_tokens=4096
+        )
         raw_text = "".join(
             block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"
         )
-        fields = json.loads(_extract_json_object(raw_text))
-        if not isinstance(fields, dict):
+        parsed = json.loads(_extract_json_object(raw_text))
+        if not isinstance(parsed, dict):
             raise ValueError("Non-dict response")
+        return parsed
 
+    try:
+        fields = await _request_business_case_fields()
         fields.setdefault("priority", priority)
 
-        def _to_str(v: Any) -> str:
-            if isinstance(v, list):
-                return ", ".join(str(i) for i in v)
-            return str(v) if v is not None else ""
-
-        def _strip_curly_braces(s: str) -> str:
-            s = s.strip()
-            while s.startswith("{") and s.endswith("}"):
-                s = s[1:-1].strip()
-            return s
+        missing_keys = [k for k in required_business_case_keys if not _to_str(fields.get(k)).strip()]
+        if missing_keys:
+            logger.warning(
+                "spark.convert_idea business case response missing fields %s — retrying", missing_keys
+            )
+            retry_instruction = (
+                "\n\nYour previous response omitted these required fields: "
+                f"{', '.join(missing_keys)}. Return the complete JSON object again, "
+                "making sure every field listed above is present and non-empty."
+            )
+            try:
+                retry_fields = await _request_business_case_fields(retry_instruction)
+                for k in missing_keys:
+                    if _to_str(retry_fields.get(k)).strip():
+                        fields[k] = retry_fields[k]
+            except Exception as retry_exc:
+                logger.warning("spark.convert_idea business case retry failed: %s", retry_exc)
 
         # Merge into fallback so all expected keys are always present
         for k, v in fields.items():
@@ -1725,6 +1873,7 @@ async def convert_idea(request: SparkConvertRequest) -> SparkConvertResponse:
             f"Solution approach: {safe_fields.get('solution_approach', '')}\n"
             f"Dimensions: {', '.join(request.target_dimensions)}\n"
             f"{blueprint_block}"
+            f"{datahub_context_block}"
             "Return a JSON object with exactly these fields:\n"
             "- agent_name: concise agent name, max 6 words\n"
             "- description: 1–2 sentences on what the agent does\n"

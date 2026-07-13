@@ -35,6 +35,7 @@ from api.routers.docker_logs import start_log_collector
 from api.routers import claude_run
 from api.routers import azure_deploy
 from api.routers import chat_attachments
+from api.routers import lookup_values
 from api.migrations.init_tables import initialize_tables
 from api.database import get_db
 
@@ -208,6 +209,7 @@ app.include_router(docker_logs.router,      prefix="/api/v1/docker-logs", tags=[
 app.include_router(claude_run.router)
 app.include_router(azure_deploy.router)
 app.include_router(chat_attachments.router, prefix="/api/v1")
+app.include_router(lookup_values.router, prefix="/api/v1/lookup-values", tags=["Lookup Values"])
 
 # ── Risk Classification routes ────────────────────────────────────────────────
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
