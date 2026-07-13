@@ -73,6 +73,20 @@ const AddDimNodeModal: React.FC<AddDimNodeModalProps> = ({
   const labelRef = useRef<HTMLInputElement>(null);
   useEffect(() => { labelRef.current?.focus(); }, []);
 
+  // Pre-fill visibility/sensitive from the company's configured node defaults
+  // (Admin Portal → Company Preferences → Data Node Defaults) rather than a
+  // hardcoded internal/false, so a fresh form already reflects company policy.
+  useEffect(() => {
+    if (!activeCompany) return;
+    let cancelled = false;
+    blueprintApi.getCompanyNodeDefaults(activeCompany.id).then(defaults => {
+      if (cancelled) return;
+      setVisibility(defaults.visibility as VisibilityLevel);
+      setSensitive(defaults.sensitive);
+    }).catch(() => { /* keep the internal/false fallback on failure */ });
+    return () => { cancelled = true; };
+  }, [activeCompany]);
+
   // Derive dim_type_id from selected category
   const dimTypeId = dimTypes.find(t => t.category === category)?.id ?? '';
 

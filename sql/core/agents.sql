@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS core.agents (
 	company_id TEXT NOT NULL,
 	company_name TEXT,
 	agent_type TEXT DEFAULT 'Config-driven',
+	status TEXT DEFAULT 'Plan',
 	CONSTRAINT chk_agents_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
 	CONSTRAINT chk_agents_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> ''),
 	CONSTRAINT pk_core_agents PRIMARY KEY (tenant_id, company_id, agent_id)

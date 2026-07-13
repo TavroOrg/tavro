@@ -36,6 +36,7 @@ import './App.css';
 import BlueprintPage from './pages/BlueprintPage';
 import BlueprintSetupPage from './pages/BlueprintSetupPage';
 import { BlueprintProvider } from './context/BlueprintContext';
+import { LookupProvider } from './context/LookupContext';
 import PlaygroundPage from './pages/PlaygroundPage';
 import { PlaygroundProvider } from './context/PlaygroundContext';
 import CompliancePage from './pages/CompliancePage';
@@ -415,9 +416,11 @@ function App() {
                         <UseCaseProvider>
                           <PlaygroundProvider>
                             <BlueprintProvider>
-                              <ComplianceProvider>
-                                <Layout />
-                              </ComplianceProvider>
+                              <LookupProvider>
+                                <ComplianceProvider>
+                                  <Layout />
+                                </ComplianceProvider>
+                              </LookupProvider>
                             </BlueprintProvider>
                           </PlaygroundProvider>
                         </UseCaseProvider>

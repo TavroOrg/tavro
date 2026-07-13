@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SQL_CORE_DIR = Path(__file__).parent.parent.parent.parent / "sql" / "core"
+SQL_ROOT_DIR = Path(__file__).parent.parent.parent.parent / "sql"
+SQL_CORE_DIR = SQL_ROOT_DIR / "core"
+SQL_PUBLIC_DIR = SQL_ROOT_DIR / "public"
 
 
 def _split_sql_statements(sql_content: str) -> list[str]:
@@ -117,14 +119,16 @@ def _split_sql_statements(sql_content: str) -> list[str]:
 
 def _get_sql_files() -> list[Path]:
     """
-    Dynamically discover all SQL files in sql/core/ directory.
-    Returns a sorted list of file paths.
+    Dynamically discover all SQL files in sql/core/ and sql/public/ directories.
+    Returns a sorted list of file paths, core first then public.
     """
-    if not SQL_CORE_DIR.exists():
-        logger.warning("SQL_CORE_DIR does not exist: %s", SQL_CORE_DIR)
-        return []
+    sql_files: list[Path] = []
+    for sql_dir in (SQL_CORE_DIR, SQL_PUBLIC_DIR):
+        if not sql_dir.exists():
+            logger.warning("SQL directory does not exist: %s", sql_dir)
+            continue
+        sql_files.extend(sorted(sql_dir.glob("*.sql")))
 
-    sql_files = sorted(SQL_CORE_DIR.glob("*.sql"))
     if sql_files:
         logger.info("Discovered %s SQL table files to initialize", len(sql_files))
     return sql_files

@@ -16,6 +16,7 @@ import type {
 } from '../types/blueprint';
 import { getValidToken, refreshAccessToken } from './auth';
 import { parseApiError } from '../utils/errorUtils';
+import { fetchAllPages } from '../utils/fetchAllPages';
 
 const BASE = (import.meta as any).env?.VITE_TWIN_API_URL ?? '';
 const V1 = `${BASE}/api/v1`;
@@ -125,6 +126,19 @@ class BlueprintApiService {
     return req(`/companies/${id}`, { method: 'DELETE' });
   }
 
+  /** Company-wide defaults (set by the org admin in the Admin Portal → Company
+   * Preferences → Data Node Defaults) applied when pre-filling the "Add
+   * dimension" form. */
+  async getCompanyNodeDefaults(companyId: string): Promise<{ visibility: string; sensitive: boolean }> {
+    const cfg = await req<{ defaultVisibility?: string; defaultSensitive?: boolean }>(
+      `/companies/${companyId}/preferences`
+    );
+    return {
+      visibility: cfg.defaultVisibility ?? 'internal',
+      sensitive: cfg.defaultSensitive ?? false,
+    };
+  }
+
   // ── Dimension Types ────────────────────────────────────────────────────────
 
   async listDimTypes(): Promise<DimType[]> {
@@ -139,17 +153,19 @@ class BlueprintApiService {
     category?: DimCategory;
     search?: string;
     active_only?: boolean;
-    offset?: number;
-    limit?: number;
-  }): Promise<Page<DimNode>> {
-    const p = new URLSearchParams({ company_id: params.company_id });
-    if (params.dim_type_id) p.set('dim_type_id', params.dim_type_id);
-    if (params.category) p.set('category', params.category);
-    if (params.search) p.set('search', params.search);
-    if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
-    if (params.offset !== undefined) p.set('offset', String(params.offset));
-    if (params.limit !== undefined) p.set('limit', String(params.limit));
-    return req(`/dim-nodes?${p}`);
+  }): Promise<DimNode[]> {
+    return fetchAllPages<DimNode>(async (startRecord, recordRange) => {
+      const p = new URLSearchParams({
+        company_id: params.company_id,
+        start_record: String(startRecord),
+        record_range: recordRange,
+      });
+      if (params.dim_type_id) p.set('dim_type_id', params.dim_type_id);
+      if (params.category) p.set('category', params.category);
+      if (params.search) p.set('search', params.search);
+      if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
+      return req(`/dim-nodes?${p}`);
+    });
   }
 
   async getNode(id: string): Promise<DimNode> {
