@@ -57,6 +57,13 @@ def _tenant(request: Request) -> Optional[str]:
     return val.strip() or None
 
 
+def _require_tenant(request: Request) -> str:
+    tenant_id = _tenant(request)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant context.")
+    return tenant_id
+
+
 def _norm_id(value: str) -> str:
     return (value or "").strip()
 
@@ -251,7 +258,7 @@ async def list_ai_models(
     except Exception:
         start, end = start_record, start_record + 499
 
-    tenant_id = (tenant_id or "").strip() or _tenant(request)
+    tenant_id = (tenant_id or "").strip() or _require_tenant(request)
     where_clauses: List[str] = ["m.ai_model_id IS NOT NULL", "m.ai_model_id <> ''"]
     params: Dict[str, Any] = {}
     if tenant_id:
