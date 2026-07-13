@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS core.ai_models (
 	inherent_risk_classification_score NUMERIC,
 	residual_risk_classification_score NUMERIC,
 	no_of_associated_agents INTEGER,
-	agent_internal_id TEXT,
+	agent_id TEXT,
 	company_id TEXT NOT NULL,
 	company_name TEXT,
 	created_ts TIMESTAMP,

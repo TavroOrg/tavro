@@ -33,9 +33,10 @@
 --     their target tables' key is now composite-only (Critical #2), and
 --     these attachment tables don't yet carry tenant_id/company_id
 --     (Critical #6). Blocked until Critical #6 lands.
---   - agent_attachment → agents: agent_id is not unique under SCD2
---     versioning (same root cause as Critical #5 — agent_internal_id should
---     become the identity, agent_id should not be FK'd against).
+--   - agent_attachment → agents: agent_attachment.agent_source_id is the
+--     stable business key and is not unique under SCD2 versioning (same
+--     root cause as Critical #5 — agent_id, formerly agent_internal_id, is
+--     the identity; agent_source_id should not be FK'd against).
 --   - agent_tools/agent_skills/tool_tables → tools/skills: blocked on the
 --     open global-vs-tenant catalog scoping decision (README Low #4).
 --   - agent_resources: no column links it to an agent at all; needs
@@ -57,8 +58,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_configurations_agent') THEN
             ALTER TABLE core.agent_configurations
                 ADD CONSTRAINT fk_agent_configurations_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_configurations: composite FK to agents added';
         END IF;
@@ -69,8 +70,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_identifications_agent') THEN
             ALTER TABLE core.agent_identifications
                 ADD CONSTRAINT fk_agent_identifications_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_identifications: composite FK to agents added';
         END IF;
@@ -81,8 +82,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_controls_agent') THEN
             ALTER TABLE core.agent_controls
                 ADD CONSTRAINT fk_agent_controls_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_controls: composite FK to agents added';
         END IF;
@@ -93,8 +94,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_guardrails_agent') THEN
             ALTER TABLE core.agent_guardrails
                 ADD CONSTRAINT fk_agent_guardrails_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_guardrails: composite FK to agents added';
         END IF;
@@ -105,8 +106,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_memories_agent') THEN
             ALTER TABLE core.agent_memories
                 ADD CONSTRAINT fk_agent_memories_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_memories: composite FK to agents added';
         END IF;
@@ -117,8 +118,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_knowledge_sources_agent') THEN
             ALTER TABLE core.agent_knowledge_sources
                 ADD CONSTRAINT fk_agent_knowledge_sources_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_knowledge_sources: composite FK to agents added';
         END IF;
@@ -129,8 +130,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_prompt_templates_agent') THEN
             ALTER TABLE core.agent_prompt_templates
                 ADD CONSTRAINT fk_agent_prompt_templates_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_prompt_templates: composite FK to agents added';
         END IF;
@@ -141,8 +142,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_mcp_servers_agent') THEN
             ALTER TABLE core.agent_mcp_servers
                 ADD CONSTRAINT fk_agent_mcp_servers_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_mcp_servers: composite FK to agents added';
         END IF;
@@ -153,8 +154,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_llm_models_agent') THEN
             ALTER TABLE core.agent_llm_models
                 ADD CONSTRAINT fk_agent_llm_models_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_llm_models: composite FK to agents added';
         END IF;
@@ -165,8 +166,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_physical_ai_agent') THEN
             ALTER TABLE core.agent_physical_ai
                 ADD CONSTRAINT fk_agent_physical_ai_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_physical_ai: composite FK to agents added';
         END IF;
@@ -177,8 +178,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_regulations_or_frameworks_agent') THEN
             ALTER TABLE core.agent_regulations_or_frameworks
                 ADD CONSTRAINT fk_agent_regulations_or_frameworks_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_regulations_or_frameworks: composite FK to agents added';
         END IF;
@@ -189,8 +190,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_generated_code_agent') THEN
             ALTER TABLE core.agent_generated_code
                 ADD CONSTRAINT fk_agent_generated_code_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_generated_code: composite FK to agents added';
         END IF;
@@ -201,8 +202,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_data_sources_agent') THEN
             ALTER TABLE core.agent_data_sources
                 ADD CONSTRAINT fk_agent_data_sources_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_data_sources: composite FK to agents added';
         END IF;
@@ -215,8 +216,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_governance_events_agent') THEN
             ALTER TABLE core.agent_governance_events
                 ADD CONSTRAINT fk_agent_governance_events_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE SET NULL NOT VALID;
             RAISE NOTICE 'agent_governance_events: composite FK to agents added (SET NULL)';
         END IF;
@@ -228,8 +229,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_risk_assessments_agent') THEN
             ALTER TABLE core.agent_risk_assessments
                 ADD CONSTRAINT fk_agent_risk_assessments_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE RESTRICT NOT VALID;
             RAISE NOTICE 'agent_risk_assessments: composite FK to agents added (RESTRICT)';
         END IF;
@@ -248,8 +249,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_tools_agent') THEN
             ALTER TABLE core.agent_tools
                 ADD CONSTRAINT fk_agent_tools_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_tools: composite FK to agents added';
         END IF;
@@ -260,8 +261,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_skills_agent') THEN
             ALTER TABLE core.agent_skills
                 ADD CONSTRAINT fk_agent_skills_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_skills: composite FK to agents added';
         END IF;
@@ -273,8 +274,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_tables_agent') THEN
             ALTER TABLE core.agent_tables
                 ADD CONSTRAINT fk_agent_tables_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_tables: composite FK to agents added';
         END IF;
@@ -297,8 +298,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_business_applications_agent') THEN
             ALTER TABLE core.agent_business_applications
                 ADD CONSTRAINT fk_agent_business_applications_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_business_applications: composite FK to agents added';
         END IF;
@@ -320,8 +321,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_business_processes_agent') THEN
             ALTER TABLE core.agent_business_processes
                 ADD CONSTRAINT fk_agent_business_processes_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_business_processes: composite FK to agents added';
         END IF;
@@ -348,8 +349,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_business_integrations_agent') THEN
             ALTER TABLE core.agent_business_integrations
                 ADD CONSTRAINT fk_agent_business_integrations_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_business_integrations: composite FK to agents added';
         END IF;
@@ -374,8 +375,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_ai_models_agent') THEN
             ALTER TABLE core.agent_ai_models
                 ADD CONSTRAINT fk_agent_ai_models_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_ai_models: composite FK to agents added';
         END IF;
@@ -398,8 +399,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_ai_use_cases_agent') THEN
             ALTER TABLE core.agent_ai_use_cases
                 ADD CONSTRAINT fk_agent_ai_use_cases_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_ai_use_cases: composite FK to agents added';
         END IF;
@@ -422,8 +423,8 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_issues_agent') THEN
             ALTER TABLE core.agent_issues
                 ADD CONSTRAINT fk_agent_issues_agent
-                FOREIGN KEY (tenant_id, company_id, agent_internal_id)
-                REFERENCES core.agents (tenant_id, company_id, agent_internal_id)
+                FOREIGN KEY (tenant_id, company_id, agent_id)
+                REFERENCES core.agents (tenant_id, company_id, agent_id)
                 ON DELETE CASCADE NOT VALID;
             RAISE NOTICE 'agent_issues: composite FK to agents added';
         END IF;

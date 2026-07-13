@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS core.agent_risk_assessments (
 	tenant_id TEXT NOT NULL,
 	company_id TEXT NOT NULL,
 	risk_assessment_id TEXT,
-	agent_id TEXT,
+	agent_source_id TEXT,
 	assessment_name TEXT,
 	assessor_name TEXT,
 	assessment_ts timestamp,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS core.agent_risk_assessments (
 	is_current boolean,
 	created_ts timestamp,
 	updated_ts timestamp,
-	agent_internal_id TEXT,
+	agent_id TEXT,
 	summary TEXT,
 	CONSTRAINT chk_agent_risk_assessments_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
 	CONSTRAINT chk_agent_risk_assessments_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')

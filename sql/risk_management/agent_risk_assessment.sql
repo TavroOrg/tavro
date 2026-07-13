@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS risk_management.agent_risk_assessment (
   created_by TEXT,
   updated_by TEXT,
   assessment_id TEXT,
-  agent_id TEXT,
+  agent_source_id TEXT,
   aars_score decimal(10, 2),
   ai_vulnerability_scoring_system_aivss_weighting decimal(10, 2),
   aivss_score decimal(10, 2),
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS risk_management.agent_risk_assessment (
   self_modification decimal(10, 2),
   opacity_reflexivity decimal(10, 2),
   blended_risk_score decimal(10, 2),
-  agent_internal_id TEXT,
+  agent_id TEXT,
   CONSTRAINT chk_agent_risk_assessment_tenant_id_present CHECK (tenant_id IS NOT NULL AND btrim(tenant_id) <> ''),
   CONSTRAINT chk_agent_risk_assessment_company_id_present CHECK (company_id IS NOT NULL AND btrim(company_id) <> '')
 );

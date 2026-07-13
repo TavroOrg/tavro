@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS curated.agent_360 (
     tenant_id TEXT NOT NULL,
-    agent_id TEXT,
+    agent_source_id TEXT,
     agent_name TEXT,
     agent_description TEXT,
     autonomy_level TEXT,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS curated.agent_360 (
     latest_risk_class TEXT,
     latest_event_status TEXT,
     snapshot_ts timestamp,
-    agent_internal_id TEXT,
+    agent_id TEXT,
     summary TEXT,
     company_id TEXT NOT NULL,
     company_name TEXT,

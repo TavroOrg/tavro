@@ -5,8 +5,8 @@
 CREATE TABLE IF NOT EXISTS core.playground_session (
     tenant_id           TEXT NOT NULL,
     company_id          TEXT NOT NULL,
-    agent_internal_id   TEXT,
     agent_id            TEXT,
+    agent_source_id     TEXT,
     session_id          TEXT            PRIMARY KEY,
     agent_name          TEXT,
     provider            TEXT,

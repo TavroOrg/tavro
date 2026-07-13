@@ -167,17 +167,17 @@ END $$;
 DO $$
 BEGIN
 
-    -- core.agents — composite PK (tenant_id, company_id, agent_internal_id)
+    -- core.agents — composite PK (tenant_id, company_id, agent_id)
     -- No live FK targets core.agents today, so this is safe to add directly.
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pk_core_agents') THEN
             ALTER TABLE core.agents DROP CONSTRAINT IF EXISTS agents_pkey;
             ALTER TABLE core.agents
-                ADD CONSTRAINT pk_core_agents PRIMARY KEY (tenant_id, company_id, agent_internal_id);
+                ADD CONSTRAINT pk_core_agents PRIMARY KEY (tenant_id, company_id, agent_id);
             RAISE NOTICE 'core.agents: composite PK added';
         END IF;
     EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'core.agents: composite PK skipped (likely NULL tenant_id/company_id/agent_internal_id still present) — %', SQLERRM;
+        RAISE NOTICE 'core.agents: composite PK skipped (likely NULL tenant_id/company_id/agent_id still present) — %', SQLERRM;
     END;
 
     -- core.business_applications — composite PK, reusing the existing

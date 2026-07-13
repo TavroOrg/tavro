@@ -277,7 +277,7 @@ ALTER TABLE twin.context_log ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS public.agent_attachment (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id             TEXT NOT NULL,
+    agent_source_id      TEXT NOT NULL,
     filename             TEXT NOT NULL,
     mime_type            TEXT,
     file_size_bytes      INT NOT NULL,
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS public.agent_attachment (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx ON public.agent_attachment (agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx ON public.agent_attachment (agent_source_id, created_at DESC);
 
 
 -- ── 3. Seed data ──────────────────────────────────────────────────────────────

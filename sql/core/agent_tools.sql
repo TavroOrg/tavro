@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS core.agent_tools (
 	tenant_id TEXT NOT NULL,
 	company_id TEXT NOT NULL,
-	agent_internal_id TEXT,
 	agent_id TEXT,
+	agent_source_id TEXT,
 	agent_name TEXT,
 	tool_id TEXT,
 	tool_name TEXT,
