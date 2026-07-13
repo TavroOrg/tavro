@@ -734,7 +734,9 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                 return
 
             is_public = body.is_public or bool(body.ticker)
-            is_bank   = "bank" in body.industry.lower()
+            # Word-boundary match so "Databank"/"Riverbank"/"Bankruptcy Services" etc. aren't
+            # misclassified as banks (a plain substring check would match all of them).
+            is_bank   = bool(re.search(r"\bbank(ing)?\b", body.industry, re.IGNORECASE))
 
             # ── Request banner ───────────────────────────────────────────────
             log("=" * 60)
@@ -986,15 +988,18 @@ async def research_company(body: ResearchRequest, db: AsyncSession = Depends(get
                             await emit({"type": "status",
                                         "message": "AI returned an incomplete result — retrying…"})
                             messages.append({"role": "assistant", "content": data["content"]})
-                            messages.append({"role": "user", "content": [{
-                                "type":        "tool_result",
-                                "tool_use_id": schema_block["id"],
-                                "content": (
-                                    "That submission had an empty or missing 'nodes' array, which is "
-                                    "invalid. Call submit_blueprint_research again with the full set of "
-                                    "dimension nodes as instructed."
-                                ),
-                            }]})
+                            # Every tool_use block from this turn needs a matching tool_result
+                            # (Anthropic rejects the request otherwise) — not just the schema
+                            # block, in case a web_search call was also made in the same turn.
+                            tool_results = _collect_tool_results(data)
+                            for tr in tool_results:
+                                if tr["tool_use_id"] == schema_block["id"]:
+                                    tr["content"] = (
+                                        "That submission had an empty or missing 'nodes' array, which "
+                                        "is invalid. Call submit_blueprint_research again with the full "
+                                        "set of dimension nodes as instructed."
+                                    )
+                            messages.append({"role": "user", "content": tool_results})
                             data = await _call_anthropic(
                                 api_key, messages, system_prompt,
                                 tools=[BLUEPRINT_RESULT_TOOL], max_tokens=max_tokens,
