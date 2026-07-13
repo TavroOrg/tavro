@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Bot,
@@ -9,7 +9,7 @@ import {
     LayoutGrid,
     List
 } from 'lucide-react';
-import { readRoadmapConfig } from '../services/roadmapConfig';
+import { readRoadmapConfig, ROADMAP_CONFIG_UPDATED_EVENT } from '../services/roadmapConfig';
 
 interface UseCaseCatalogProps {
     useCases: any[];
@@ -118,7 +118,15 @@ const UseCaseCatalog: React.FC<UseCaseCatalogProps> = ({
         }
     };
 
-    const cfg = React.useMemo(() => readRoadmapConfig(), []);
+    // Company-wide weights — configured by the org admin in the Admin Portal.
+    // Layout.tsx syncs the cache on load/company-switch; listen so this list
+    // picks up the latest values even if it was already mounted.
+    const [cfg, setCfg] = useState(() => readRoadmapConfig());
+    useEffect(() => {
+        const handler = () => setCfg(readRoadmapConfig());
+        window.addEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+        return () => window.removeEventListener(ROADMAP_CONFIG_UPDATED_EVENT, handler);
+    }, []);
 
     const computeScores = (uc: any) => {
         const pvBV: number | null = uc.pv_business_value_score ?? null;
