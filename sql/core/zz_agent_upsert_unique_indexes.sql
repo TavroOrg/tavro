@@ -7,6 +7,12 @@
 -- The guard below detects and repairs an already-existing global-shaped
 -- index on a live database; on a fresh install the CREATE UNIQUE INDEX
 -- below just builds the correct shape directly.
+--
+-- NO EXCEPTION HANDLER around the DROP, deliberately — see
+-- audit_db/01_fix_agents_current_index_tenant_scope.sql for why: catching
+-- everything here silently swallowed real DROP failures (transient lock
+-- contention), leaving the legacy index in place while still reporting
+-- success. The IF EXISTS check already makes this safe to re-run.
 DO $$
 BEGIN
     IF EXISTS (
@@ -17,8 +23,6 @@ BEGIN
         DROP INDEX core.ux_core_agents_current;
         RAISE NOTICE 'Dropped legacy global-scope ux_core_agents_current index';
     END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'ux_core_agents_current legacy-index check skipped — %', SQLERRM;
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_core_agents_current
@@ -111,7 +115,7 @@ ON core.agent_data_sources (agent_id, source_object_id, target_object_id);
 -- ux_core_business_applications / ux_core_business_processes removed:
 -- both tables now declare their composite PK inline in
 -- sql/core/business_applications.sql / business_processes.sql. On an
--- already-existing production database, critical_01_tenant_and_composite_pk.sql
+-- already-existing production database, audit_db/02_critical_tenant_and_composite_pk.sql
 -- still promotes whatever unique index is already there under those names.
 
 -- ux_core_columns removed: column_id is now the PRIMARY KEY

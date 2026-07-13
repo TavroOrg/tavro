@@ -13,7 +13,7 @@
 -- its schema definition — every FK for that table lives here instead,
 -- consolidated in one place. This is also the exact file to run manually
 -- against an already-provisioned hosted database — see
--- audit_db/high_02_composite_foreign_keys.sql, kept in sync with this one.
+-- audit_db/03_high_composite_foreign_keys.sql, kept in sync with this one.
 --
 -- SAFE TO RUN ON A LIVE DATABASE:
 --   - Every FK is added NOT VALID: blocks new violating INSERT/UPDATE

@@ -5,7 +5,7 @@
 -- keys wherever the referenced table's key is composite (per Critical #2),
 -- and single-column keys where it is not.
 --
--- RUN AFTER critical_01_tenant_and_composite_pk.sql — every FK here targets
+-- RUN AFTER 02_critical_tenant_and_composite_pk.sql — every FK here targets
 -- a PRIMARY KEY or UNIQUE constraint added by that script.
 --
 -- SAFE TO RUN ON A LIVE DATABASE:

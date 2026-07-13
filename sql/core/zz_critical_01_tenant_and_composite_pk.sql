@@ -18,10 +18,10 @@
 -- definition — every constraint/migration statement for that table lives
 -- here instead, consolidated in one place. This is also the exact file to
 -- run manually against an already-provisioned hosted database — see
--- audit_db/critical_01_tenant_and_composite_pk.sql, which is kept in sync
+-- audit_db/02_critical_tenant_and_composite_pk.sql, which is kept in sync
 -- with this one for that purpose.
 --
--- SAFE TO RUN ON A LIVE DATABASE — see audit_db/critical_01_tenant_and_composite_pk.sql
+-- SAFE TO RUN ON A LIVE DATABASE — see audit_db/02_critical_tenant_and_composite_pk.sql
 -- for the full safety notes (NOT VALID checks, VALIDATE-then-SET-NOT-NULL
 -- promotion, idempotency, and the production notes on large tables).
 --
