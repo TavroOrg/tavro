@@ -369,13 +369,19 @@ class ZitadelProvider(OIDCProxy):
 
         tenant_from_token = _extract_org_id(claims, upstream_claims)
 
-        # Do NOT inject tenant_id from the approval DB. Tenant mapping is
-        # determined exclusively from upstream Zitadel claims (or left empty).
+        # Tenant mapping prefers upstream Zitadel org claims. External MCP
+        # clients (ChatGPT, Claude, etc.) may complete an OAuth flow that
+        # doesn't request the resourceowner/org scope, leaving no org claim
+        # on the token — fall back to the `sub` claim so tenant_id is never
+        # NULL, mirroring the portal's own org_id -> sub fallback in
+        # tavro_app/src/services/auth.ts's extractAndStoreTenantId() and
+        # server.py's set_default_company().
+        sub = claims.get("sub") or upstream_claims.get("sub")
         enriched_claims = {
             **claims,
             **upstream_claims,
             "email": approved_user.email,
-            "tenant_id": tenant_from_token or None,
+            "tenant_id": tenant_from_token or sub or None,
         }
 
         print("[DEBUG] ===== ZITADEL AUTH SUCCESS =====")
@@ -441,11 +447,13 @@ class TavroZitadelTokenVerifier(TokenVerifier):
 
         tenant_from_userinfo = _extract_org_id_from_userinfo(userinfo_claims)
 
-        # Do NOT inject tenant_id from the approval DB for direct bearer tokens.
+        # Same org-claim -> sub fallback as ZitadelProvider.load_access_token
+        # (see comment there); direct bearer tokens hit this path too when the
+        # portal token itself lacks an org claim.
         enriched_claims = {
             **userinfo_claims,
             "email": approved_user.email,
-            "tenant_id": tenant_from_userinfo or None,
+            "tenant_id": tenant_from_userinfo or userinfo_claims.get("sub") or None,
         }
 
         print("[DEBUG] ===== DIRECT ZITADEL AUTH SUCCESS =====")
