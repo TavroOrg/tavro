@@ -569,6 +569,8 @@ async def create_agent(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_agent",
             original_prompt,
@@ -2802,6 +2804,8 @@ async def create_application(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_application",
             original_prompt,
@@ -3145,6 +3149,8 @@ async def create_process(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_process",
             original_prompt,
@@ -3343,6 +3349,8 @@ async def list_integrations(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "list_integrations",
             original_prompt,
@@ -3475,6 +3483,8 @@ async def create_integration(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call(
             "create_integration",
             original_prompt,
@@ -3576,6 +3586,8 @@ async def update_integration(
     try:
         token = get_access_token()
         tenant_id = token.claims.get("tenant_id") if token else None
+        user_id = token.claims.get("sub") if token else None
+        company_id = await resolve_company_context(tenant_id, user_id, company_id)
         log_tool_call("update_integration", original_prompt, {"integration_id": integration_id}, tenant_id)
 
         payload: Dict[str, Any] = {}

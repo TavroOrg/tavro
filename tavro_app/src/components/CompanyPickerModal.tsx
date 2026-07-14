@@ -12,18 +12,18 @@ const CompanyPickerModal: React.FC = () => {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl w-full max-w-md">
-                <h2 className="text-lg font-bold text-slate-800 tracking-tight mb-1">Select a company</h2>
-                <p className="text-sm text-slate-500 mb-4">Choose which company you'd like to work in. You can switch anytime.</p>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl w-full max-w-md">
+                <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 tracking-tight mb-1">Select a company</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Choose which company you'd like to work in. You can switch anytime.</p>
                 <div className="flex flex-col gap-2 max-h-80 overflow-auto">
                     {companies.map(company => (
                         <button
                             key={company.id}
                             onClick={() => selectCompany(company)}
-                            className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-left transition-colors"
+                            className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-left transition-colors"
                         >
-                            <Building2 size={18} className="text-slate-400 shrink-0" />
-                            <span className="text-sm font-medium text-slate-700">{company.name}</span>
+                            <Building2 size={18} className="text-slate-400 dark:text-slate-500 shrink-0" />
+                            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{company.name}</span>
                         </button>
                     ))}
                 </div>
