@@ -1,7 +1,7 @@
 -- =============================================================
 -- Tavro Portal — Master Database Setup Script (OSS core schema)
 -- Version: 2025-05
--- Run order: extensions → core schema → agent attachments → seed data
+-- Run order: extensions → core schema → seed data
 --
 -- This file is OSS-only — it never defines compliance/audit tables.
 -- Enterprise builds (BUILD_MODE=enterprise) additionally load
@@ -24,7 +24,7 @@
 \echo '======================================================'
 
 -- ── 0. Extensions ─────────────────────────────────────────────────────────────
-\echo '[1/4] Loading extensions...'
+\echo '[1/3] Loading extensions...'
 
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
@@ -36,7 +36,7 @@ ALTER DATABASE tavro SET search_path = ag_catalog, "$user", public;
 
 
 -- ── 1. Schema & core types ────────────────────────────────────────────────────
-\echo '[2/4] Creating core schema...'
+\echo '[2/3] Creating core schema...'
 
 CREATE SCHEMA IF NOT EXISTS twin;
 SET search_path = twin, ag_catalog, public;
@@ -335,26 +335,13 @@ ALTER TABLE twin.source_ref  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE twin.context_log ENABLE ROW LEVEL SECURITY;
 
 
--- ── 2. Agent attachments ──────────────────────────────────────────────────────
+-- ── 2. Seed data ──────────────────────────────────────────────────────────────
 -- (Compliance/audit tables live in enterprise/sql/zz_enterprise_compliance_audit.sql,
--- baked in only when BUILD_MODE=enterprise — see Dockerfile.postgres.enterprise.)
-\echo '[3/4] Creating agent attachment table...'
-
-CREATE TABLE IF NOT EXISTS public.agent_attachment (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_source_id      TEXT NOT NULL,
-    filename             TEXT NOT NULL,
-    mime_type            TEXT,
-    file_size_bytes      INT NOT NULL,
-    file_data            BYTEA NOT NULL,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS agent_attachment_agent_idx ON public.agent_attachment (agent_source_id, created_at DESC);
-
-
--- ── 3. Seed data ──────────────────────────────────────────────────────────────
-\echo '[4/4] Loading seed data...'
+-- baked in only when BUILD_MODE=enterprise — see Dockerfile.postgres.enterprise.
+-- core.agent_attachment is defined in sql/core/agent_attachment.sql, created
+-- by tavro-api's init_tables.py on every app startup — not here, to avoid a
+-- duplicate table.)
+\echo '[3/3] Loading seed data...'
 
 -- System dim_types (blueprint categories)
 INSERT INTO twin.dim_type (name, category, system_defined, max_hops) VALUES
@@ -375,7 +362,6 @@ ON CONFLICT (name) DO NOTHING;
 \echo ' Tables created:'
 \echo '   twin.company, twin.dim_type, twin.dim_node'
 \echo '   twin.dim_edge, twin.source_ref, twin.dim_node_attachment, twin.context_log'
-\echo '   public.agent_attachment'
 \echo ''
 \echo ' Seed data loaded:'
 \echo '   10 blueprint dim_types'

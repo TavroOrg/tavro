@@ -1,3 +1,8 @@
+-- zz_ prefix is deliberate: tavro_api/api/migrations/init_tables.py runs
+-- every sql/core/*.sql file in plain alphabetical order, and this table's
+-- FK target (core.ai_models) must be created first. "ai_model_attachment"
+-- sorts before "ai_models" alphabetically ('_' < 's'), so this file is
+-- prefixed to force it to run last, after ai_models.sql.
 CREATE TABLE IF NOT EXISTS core.ai_model_attachment (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     tenant_id TEXT NOT NULL,

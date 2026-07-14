@@ -1,3 +1,9 @@
+-- zz_ prefix is deliberate: tavro_api/api/migrations/init_tables.py runs
+-- every sql/core/*.sql file in plain alphabetical order, and this table's
+-- FK target (core.business_applications) must be created first.
+-- "application_attachment" sorts before "business_applications"
+-- alphabetically ('a' < 'b'), so this file is prefixed to force it to run
+-- last, after business_applications.sql.
 CREATE TABLE IF NOT EXISTS core.application_attachment (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     tenant_id TEXT NOT NULL,
